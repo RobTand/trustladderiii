@@ -144,8 +144,14 @@ fn temporary(path: &Path) -> PathBuf {
 
 fn read_stat(file: &mut File) -> Result<Option<String>> {
     let mut stat = String::new();
-    file.read_to_string(&mut stat)?;
-    Ok(Some(stat))
+    match file.read_to_string(&mut stat) {
+        Ok(_) => Ok(Some(stat)),
+        // An open proc stat file returns ESRCH if the process exits before read.
+        Err(error) if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) => {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]
