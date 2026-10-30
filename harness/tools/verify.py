@@ -14,6 +14,9 @@ from tl3_harness.trees import git
 
 def save(repo, message):
     git(repo, "add", ".")
+    # PB snapshots give fixture files the same timestamps. Rehash equal-sized
+    # edits so Git's index stat cache cannot hide the changed assertion.
+    git(repo, "add", "--renormalize", ".")
     git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", message)
     return git(repo, "rev-parse", "HEAD").decode().strip()
 
@@ -57,6 +60,8 @@ def main():
         base = save(repo, "base fixture")
         shutil.copytree(fixtures / "round/head", repo, dirs_exist_ok=True)
         head = save(repo, "head fixture")
+        assert git(repo, "show", f"{base}:tests/test_product.py") != git(repo, "show", f"{head}:tests/test_product.py")
+        assert git(repo, "show", f"{head}:tests/test_product.py") == (repo / "tests/test_product.py").read_bytes()
         cases = [
             (Kind.DEMONSTRATING, "test_demonstrates", Verdict.PASS),
             (Kind.DEMONSTRATING, "test_does_not_demonstrate", Verdict.FAIL),
