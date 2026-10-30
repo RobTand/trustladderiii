@@ -199,7 +199,7 @@ def run(model, request, worktree, emit):
                     size += os.fstat(handle.fileno()).st_size
             except FileNotFoundError:
                 continue
-            except ValueError:
+            except (OSError, ValueError):
                 # Unknown, linked or unreadable contents cannot prove a fit.
                 size += inputs["fit_tokens"]
         reply["fits"] = size < inputs["fit_tokens"]
