@@ -192,6 +192,11 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--maker-only") {
+        maker::run(&mut database);
+        database.stop();
+        return;
+    }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
     killed_worker(&database.create("workers_kill"));

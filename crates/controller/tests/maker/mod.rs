@@ -229,9 +229,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     )
     .unwrap();
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = source.run(tx);
-    });
+    let mut source_thread = Some(thread::spawn(move || source.run(tx)));
     controller.intake(labelled()).unwrap();
     loop {
         let world = controller.world().unwrap();
@@ -253,7 +251,13 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     .all(|effect| effect.state != tl3_store::EffectState::Intended),
                 "a fixture delivery failed before its worker started"
             );
-            let Input::Observation { key, observation } = rx.recv().unwrap() else {
+            let input = rx.recv().unwrap_or_else(|_| {
+                panic!(
+                    "worker source ended: {:?}",
+                    source_thread.take().unwrap().join().unwrap()
+                )
+            });
+            let Input::Observation { key, observation } = input else {
                 panic!("worker observation required")
             };
             controller.observe(&key, observation).unwrap();
