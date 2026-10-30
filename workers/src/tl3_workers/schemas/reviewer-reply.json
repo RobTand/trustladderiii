@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-reply.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "const": "approve"
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "blocking_findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocking_finding"
+          },
+          "maxItems": 0
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      },
+      "required": [
+        "verdict",
+        "head_sha",
+        "blocking_findings",
+        "findings"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "const": "changes"
+        },
+        "blocking_findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocking_finding"
+          },
+          "minItems": 1
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      },
+      "required": [
+        "verdict",
+        "blocking_findings",
+        "findings"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "properties": {
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "problem",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "blocking_finding": {
+      "type": "object",
+      "properties": {
+        "citation": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "goal",
+                "standing_rule"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "citation",
+        "problem",
+        "evidence"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
