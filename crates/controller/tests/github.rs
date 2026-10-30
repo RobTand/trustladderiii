@@ -352,7 +352,23 @@ fn main() {
         crash_child(&args);
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--merge-pending-child")
+    {
+        steering::merge_pending_child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
+        match scenario {
+            "second" => steering::second_replacement(&database.create("second_replacement")),
+            "merge" => steering::merge_pending(&database.create("merge_pending"), "none"),
+            _ => panic!("unknown followup scenario"),
+        }
+        database.stop();
+        return;
+    }
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
@@ -395,8 +411,27 @@ fn main() {
         );
     }
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    steering::second_replacement(&database.create("second_replacement"));
+    for point in [
+        "none",
+        "EventWritten",
+        "RowsWritten",
+        "EffectsWritten",
+        "TransitionsWritten",
+        "CreditWritten",
+        "BeforeCommit",
+        "AfterCommit",
+        "InternBeforeCommit",
+        "InternAfterCommit",
+        "BeforeDispatch",
+        "AfterDispatch",
+        "BeforeReconcile",
+        "AfterReconcile",
+    ] {
+        steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+    }
     database.stop();
-    println!("28 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("44 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
