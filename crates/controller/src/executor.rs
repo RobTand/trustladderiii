@@ -140,3 +140,19 @@ impl Registry {
         }
     }
 }
+
+/// Cloned HTTP clients keep connection tasks on the runtime that first used them.
+pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: std::sync::LazyLock<std::io::Result<tokio::runtime::Runtime>> =
+        std::sync::LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(2)
+                .enable_all()
+                .build()
+        });
+    match &*RUNTIME {
+        Ok(runtime) => Ok(runtime),
+        Err(error) => Err(std::io::Error::new(error.kind(), error.to_string()).into()),
+    }
+}

@@ -304,11 +304,34 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
-fn merged(settings: &tl3_config::Store, unapproved: bool, webhook_first: bool) {
+fn watched_merge(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path());
+    api.state.lock().unwrap().merged(false);
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
+    drain(&mut controller);
+    assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert_kernel_facts(settings, 1);
+}
+fn merged(
+    settings: &tl3_config::Store,
+    unapproved: bool,
+    webhook_first: bool,
+    checks_passed: bool,
+) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path());
     api.state.lock().unwrap().merged(unapproved);
+    if !checks_passed {
+        api.state.lock().unwrap().merge_checks = json!([]);
+    }
     if !webhook_first {
         catch_up(settings, &api, &mut controller);
     }
@@ -321,12 +344,17 @@ fn merged(settings: &tl3_config::Store, unapproved: bool, webhook_first: bool) {
     );
     let facts = queue_facts(&mut controller);
     assert_eq!(facts.len(), 1);
-    assert_eq!(facts[0]["evidence"]["Merged"]["checks_passed"], true);
+    assert_eq!(
+        facts[0]["evidence"]["Merged"]["checks_passed"],
+        checks_passed
+    );
     if unapproved {
         assert_eq!(
             facts[0]["evidence"]["Merged"]["head"],
             "unapproved-real-head"
         );
+    }
+    if unapproved || !checks_passed {
         let effects = Store::open(settings).unwrap().effects().unwrap();
         assert!(effects.iter().any(
             |effect| effect.payload["output"]["Notice"]["notice"]["Note"] == "UnapprovedMerge"
@@ -649,9 +677,11 @@ fn main() {
     executor_recovery();
     println!("test executor_recovery ... ok");
     let mut database = support::Database::start();
-    merged(&database.create("merged_webhook"), false, true);
-    merged(&database.create("merged_catchup"), false, false);
-    merged(&database.create("unapproved"), true, true);
+    merged(&database.create("merged_webhook"), false, true, true);
+    merged(&database.create("merged_catchup"), false, false, true);
+    merged(&database.create("unapproved"), true, true, true);
+    merged(&database.create("missing_merge_ci"), false, true, false);
+    watched_merge(&database.create("watched"));
     println!("test merged, catch-up, restart and unapproved head ... ok");
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
@@ -664,5 +694,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("11 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("13 Mergify scenarios passed; no skips; no live upstream calls");
 }

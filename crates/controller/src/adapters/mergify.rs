@@ -116,7 +116,7 @@ pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
     records: Records,
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
 }
 impl Adapter {
     pub fn new(clients: BTreeMap<u64, GitHub>, epoch: i64, records: &Path) -> Result<Self> {
@@ -125,7 +125,7 @@ impl Adapter {
             clients,
             epoch,
             records: Records::new(records),
-            runtime: runtime()?,
+            runtime: crate::executor::runtime()?,
         })
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
@@ -192,10 +192,7 @@ impl Adapter {
         let issue = self
             .runtime
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
-        if current_head && terminal && baseline.is_none() {
-            // An unchanged terminal check belongs to the previous enqueue, not this key.
-            return Ok(Reconciliation::Absent);
-        }
+        // Without a durable intent this key has never reached the label write.
         if baseline.is_none() {
             return Ok(Reconciliation::Absent);
         }
@@ -287,11 +284,6 @@ fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
 }
 fn adapter_error(error: tl3_mergify::Error) -> Error {
     Error::Adapter(Box::new(error))
-}
-fn runtime() -> Result<tokio::runtime::Runtime> {
-    Ok(tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?)
 }
 fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
@@ -411,13 +403,13 @@ fn tracked(snapshot: &Snapshot, repo: &Repository) -> Result<Vec<Tracked>> {
 /// Sources read evidence; only the controller maps PRs to nodes and steps the kernel.
 pub struct Translator {
     clients: BTreeMap<u64, GitHub>,
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
 }
 impl Translator {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
             clients,
-            runtime: runtime()?,
+            runtime: crate::executor::runtime()?,
         })
     }
     pub fn webhook(

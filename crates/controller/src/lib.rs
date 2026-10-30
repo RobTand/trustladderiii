@@ -381,7 +381,7 @@ impl Controller {
                 &snapshot,
             );
             if active {
-                delivery.epoch = effect.epoch.get();
+                delivery = hydrate(&effect, &snapshot)?;
                 if let Ok(Reconciliation::Found(completion)) =
                     self.adapters.adapter(&delivery)?.reconcile(&delivery)
                 {

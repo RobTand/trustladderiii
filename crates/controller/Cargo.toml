@@ -14,7 +14,7 @@ tl3-github = { path = "../github" }
 tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }
 tiny_http = "0.12"
-tokio = { version = "1", features = ["rt", "time", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }

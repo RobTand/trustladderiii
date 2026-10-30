@@ -205,6 +205,10 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
             observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
             expected
         );
+        assert_eq!(
+            tl3_mergify::ci_is_infrastructure(&check),
+            payload["dequeue_reason"]["code"] == "CHECKS_TIMEOUT"
+        );
     }
 }
 

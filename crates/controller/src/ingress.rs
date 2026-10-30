@@ -191,7 +191,7 @@ impl webhook::Inbox for Inbox<'_> {
 
 pub struct CatchUp {
     clients: BTreeMap<u64, GitHub>,
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
     queue: Option<crate::adapters::mergify::Translator>,
 }
 impl CatchUp {
@@ -199,9 +199,7 @@ impl CatchUp {
         Ok(Self {
             queue: None,
             clients,
-            runtime: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
+            runtime: crate::executor::runtime()?,
         })
     }
     pub fn with_mergify(mut self) -> Result<Self> {
