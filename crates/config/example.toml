@@ -1,0 +1,102 @@
+# Slice-one config. Paths are absolute; neither ~ nor environment variables expand.
+# Deployment placeholders parse offline. Replace them before Config::load.
+# docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
+worktrees_root = "/srv/tl3/worktrees"
+
+[limits]
+# Q4, docs/state-table.md, "Fit and splits": starting fit and context sizes.
+fit_tokens = 100000
+context_tokens = 150000
+# Q6, docs/state-table.md, "Progress credit": starting reserve and free rebases.
+credit_reserve = 3
+free_rechecks = 3
+# Q29, docs/state-table.md, "Gates": slice one has one slot per repo.
+w = 1
+
+[github]
+# deploy/github-app/README.md: existing JSON with id, slug, pem, webhook_secret.
+# Runtime loads that JSON as tl3_github::AppConfig, never a second TOML secret.
+app_credentials_file = "/home/rob/.config/tl3/github-app.json"
+
+[github.rob]
+# Q2; gh api users/RobTand on 2026-10-30. Match label actors by id, not login.
+login = "RobTand"
+id = 24923402
+
+[[github.repos]]
+# Q13, Q26: slice one serves only Rob's sandbox.
+owner = "RobTand"
+name = "tl3-sandbox"
+# crates/github: GitHub::new takes the installation id separately from AppConfig.
+# Placeholder: replace with the sandbox installation's id after app setup.
+installation_id = 1
+
+[models]
+# docs/stack.md: CLIProxyAPI on beelink. workers/ uses Chat Completions at /v1.
+base_url = "http://192.168.1.120:8317/v1"
+# workers/README.md: key_file is an absolute file path, loaded only at runtime.
+key_file = "/run/tl3/model-key"
+# Q22 and workers/README.md: ordered role ladders use name, effort, budget_tokens.
+# Names below are deployment placeholders, not a claim about the proxy catalog.
+# Replace names and efforts with values served by CLIProxyAPI. Family identifies
+# the underlying model family, independent of proxy aliases.
+# Budgets are starting per-response output limits, not total run budgets.
+# An omitted effort becomes JSON null, as the workers protocol permits.
+ingest = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
+audit = [{ name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 32000 }]
+planner = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
+# Q22: attempts 1 and 2 share a model; set attempt 2 to its maximum effort/budget.
+# The proxy decides its supported maximum. These sample values need calibration.
+# Attempt 3 uses the strongest available model from a different family.
+maker = [
+    { name = "default-model", family = "default", effort = "high", budget_tokens = 32000 },
+    { name = "default-model", family = "default", effort = "xhigh", budget_tokens = 64000 },
+    { name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 64000 },
+]
+# Q22: reviewer defaults to maker[2], so its family differs from the default maker.
+# Set reviewer explicitly to override, including for a same-family review.
+# reviewer = [{ name = "alternate-model", family = "alternate", budget_tokens = 64000 }]
+# docs/state-table.md, "Rebasing": conflict repair runs an agent.
+rebaser = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
+# Q15: an agent classifies Rob's issue comments.
+comment_classifier = [{ name = "default-model", family = "default", budget_tokens = 8000 }]
+
+[prismabuild]
+# docs/stack.md and Rob's execution policy: published PB tools, not a private copy.
+tools_dir = "/mnt/shared/prismabuild-fleet/repo/tools"
+# harness.Container accepts an image ID or repository@sha256 digest, not a tag
+# or PB's content: reference. Placeholder: replace with a prepared harness image.
+container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[hindsight]
+# docs/stack.md: recall runs on dl380g10. Example port; confirm at deployment.
+endpoint = "http://127.0.0.1:8888"
+
+[status]
+# Q24: read-only LAN page. Port 8033 is a deployment starting value.
+listen = "0.0.0.0:8033"
+
+# docs/state-table.md, "Looks and stalls", and docs/stack.md, "Waits": each
+# upstream gets silence and no-progress allowances. Seconds below are tunable
+# starting values, not agreed numerical rules or work-duration deadlines.
+# Expiry requests a look; only the upstream record can establish a stall/loss.
+[allowances.agent_worker]
+silence_secs = 120
+no_progress_secs = 900
+
+[allowances.prismabuild]
+# docs/stack.md: lease renewals every 30s, loss after 300s. PB owns loss detection.
+silence_secs = 300
+no_progress_secs = 900
+
+[allowances.github_mergify]
+silence_secs = 300
+no_progress_secs = 1800
+
+[allowances.model_calls]
+silence_secs = 120
+no_progress_secs = 900
+
+[allowances.hindsight]
+silence_secs = 60
+no_progress_secs = 120
