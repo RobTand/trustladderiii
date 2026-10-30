@@ -56,7 +56,7 @@ def finish(key, request):
     save(root / f"{key}.ending", {"schema": "prismabuild.endings.v1", "complete": True,
         "endings": [{"action_key": key, "status": "executed" if state == "done" else state,
             "succeeded": state == "done", "exit_code": 0 if state == "done" else None,
-            "result": {"verified": True, "receipt_sha256": "a" * 64,
+            "result": {"verified": True, "receipt_sha256": "a" * 64 if state == "done" else None,
                        "stdout": {"path": str(log), "bytes": len(raw.encode()),
                                   "sha256": hashlib.sha256(raw.encode()).hexdigest()}}}]})
 

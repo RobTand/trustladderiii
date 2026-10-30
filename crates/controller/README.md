@@ -91,7 +91,7 @@ and upgrades. The records directory also fences older write epochs; reads of
 older jobs remain valid. Set `priority` to 0 for served work and -10 for agent
 validation. The result tool is `python3` with the published `pbwait.py` argument.
 The Python command must provide Python 3.14 on every eligible worker. For the
-current fleet, `uv run --python 3.14 --no-project` does that.
+current fleet, `uv run --python 3.14 --no-project python` does that.
 
 The adapter clones committed Git objects into its own clean checkout at the
 exact head. Dirty maker files never enter it. A bundle retains both base and
@@ -108,6 +108,8 @@ stays pending. The adapter uses `pbwait.py --endings --until cleaned --wait-s 0`
 to retrieve terminal evidence without waiting for execution. That observation
 allowance never ends a job. A withdrawal decision alone cannot confirm cleanup.
 Malformed queue records, unavailable results and unverified logs remain unknown.
+Successful actions require a CAS receipt. Failed actions use PB's verified
+immutable attempt logs and can have no success receipt.
 A valid ending whose verified log has no valid harness report reports
 `report: false`. Parsed reports bind the effect, base, head, check names, kinds,
 selectors and current `in-process` custody. Only typed fields enter parsing.

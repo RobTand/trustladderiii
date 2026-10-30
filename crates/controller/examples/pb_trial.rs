@@ -130,6 +130,7 @@ fn main() {
                 "--python".into(),
                 "3.14".into(),
                 "--no-project".into(),
+                "python".into(),
             ],
             image: args[3].clone(),
             demand: Demand {
@@ -154,7 +155,7 @@ fn main() {
                 serde_json::json!({"action_key": adapter.action_key(&delivery.key).unwrap()})
             );
         }
-        "observe" => {
+        "observe" | "observe-failure" => {
             let (sender, receiver) = mpsc::channel();
             let mut source = adapter.source();
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -171,7 +172,7 @@ fn main() {
             match receiver.recv().unwrap() {
                 Input::Observation { key, observation } => {
                     assert!(
-                        matches!(&observation, Observation::Checks { report: true, pass: true, changed_paths, .. } if changed_paths == &["value.py"])
+                        matches!(&observation, Observation::Checks { report, pass, changed_paths, .. } if *report == (args[1] == "observe") && *pass == (args[1] == "observe") && changed_paths == &["value.py"])
                     );
                     println!(
                         "{}",

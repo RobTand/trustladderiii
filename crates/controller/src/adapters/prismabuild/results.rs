@@ -120,14 +120,20 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
     }
+    let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
+        && ending.succeeded
+        && ending.exit_code == Some(0);
     let mut report = false;
     let mut pass = false;
     if let Some(evidence) = ending.result {
         if !evidence.verified
-            || evidence
-                .receipt_sha256
-                .as_ref()
-                .is_none_or(|s| s.len() != 64)
+            || (successful
+                && evidence.receipt_sha256.as_ref().is_none_or(|s| {
+                    s.len() != 64
+                        || !s
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                }))
             || evidence.stdout.bytes > 8 * 1024 * 1024
         {
             return Err(Error::Invalid(
@@ -149,8 +155,7 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
                 .iter()
                 .all(|r| !matches!(r.verdict, Verdict::InfrastructureFailure));
             pass = report
-                && ending.succeeded
-                && ending.exit_code == Some(0)
+                && successful
                 && parsed
                     .results
                     .iter()
