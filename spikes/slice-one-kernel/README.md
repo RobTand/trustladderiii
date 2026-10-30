@@ -2,6 +2,8 @@
 
 This spike builds TL3's slice-one kernel in Rust from `docs/state-table.md` version 4. It answers one question before anyone builds the controller: can the state table's rules be proven as written, at the stated bounds, in reasonable time?
 
+Version 5 of the state table adds one thing to slice one's kernel that the spike doesn't do: a note to Rob when a leaf is re-planned (Q8).
+
 ## What is here
 
 - `src/lib.rs` is the kernel: `step(world, event) -> (world, outputs)` plus `settle`, with no standard library in ordinary builds. It also holds:
@@ -36,6 +38,8 @@ The proofs are as small as they usefully get, so they run fast and can run on ev
 
 Each proof acts on request 0. Requests are interchangeable, so request 0 stands for any of them. A concrete event or phase lets Kani skip the paths that case can't reach.
 
+Each transition writes its outputs into an `Outbox`, a fixed array of at most `OUTBOX` (5) outputs, and `step` collects them into its list. An overflow is an assert, so the proofs also show that no transition emits more than that.
+
 Three guards keep the proofs honest:
 
 - `proof_of_event` and `proofs_of_phase` are exhaustive matches, so an event variant or phase without a proof doesn't compile.
@@ -63,19 +67,26 @@ These are simplifications against the state table, all deliberate:
 
 ## What the spike found
 
-- **Proving a whole step at once is too big for Kani.** Every harness that did so hit PrismaBuild's one-hour limit, even for the simplest event. Proving one transition at a time takes 2 to 10 minutes per proof and under 25 GB.
+- **Proving a whole step at once is too big for Kani.** Every harness that did so hit PrismaBuild's one-hour limit, even for the simplest event. Proving one transition at a time takes about 2 to 12 minutes per proof and at most 25 GB.
 - **Kani found states the first invariants allowed but the kernel never reaches.** Examples include a closing request still holding an open PR, a merge recorded outside a merged outcome, and a question carrying a continuation the kernel never gives it. Each became a fact in `check`. The tests check every intermediate state of 200,000 random steps, and none of the counterexamples was a reachable kernel bug.
 - **The cover checks caught a harness bug.** One harness had two cover statements and reached only one of them.
+- **A growable list on the heap is expensive for Kani.** Every merge proof needed more than 48 GB, even split by phase. Two bisects on the fleet found that the merge itself and the full invariant fit in 5 GB, and that the cost came from reading the merge's outputs back from their `Vec`. The likely cause is that a merge adds notices after a branch, so the `Vec`'s length is unknown at each push and CBMC also explores growing it. With the fixed-size outbox, the merge proofs need 5.2 GB.
 
 ## Results
 
-The first full run of the small proofs verified 54 of 69 with every cover satisfied, using about 200 CPU-minutes across dl380g10, sparky and sparklina. Of the 15 failures:
+All 81 proofs verify on commit `7a9af9b`, with every cover check satisfied, and the tests pass: the 11 scenarios, the random walks and the proof-map check. The run took 285 CPU-minutes across dl380g10, sparky and sparklina, and 16 minutes from the first start to the last finish.
 
-- 13 ran out of their memory reservation; they need about 20 GB, or splitting;
-- 1 found an invariant gap, now fixed;
-- 1 was the cover-check harness bug, now fixed.
+| Proofs | Count | Peak memory | Minutes each, median and max |
+|---|---|---|---|
+| `apply_*` | 39 | Median 4.7 GB. `apply_new_request` needs 22.3 GB. | 3.4, 6.1 |
+| `advance_*` | 14 | At most 5.9 GB | 1.9, 3.4 |
+| `progress_from_*` | 14 | Median 13.4 GB. `progress_from_queued` needs 24.5 GB. | 9.8, 11.9 |
+| `pr_merged_*` | 14 | At most 5.2 GB | 1.9, 3.3 |
 
-A full rerun is in progress.
+Earlier runs:
+
+- The first full run verified 54 of 69 smaller proofs. 13 ran out of memory, 1 found an invariant gap and 1 was the cover-check harness bug.
+- The merge proofs then kept running out of memory, at 24 GB and at 48 GB, until the outbox.
 
 ## How to run it
 
@@ -92,3 +103,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py --cwd . --anywhere --c
 ```
 
 Rust 1.99.1 and Kani 0.68.0 are installed at the same paths on dl380g10, sparky and sparklina, so `--anywhere` is accurate.
+
+- **Memory.** Most proofs fit in 10 GB. Give the `progress_from_*` proofs 20 GB, and `progress_from_queued` and `apply_new_request` 32 GB.
+- **Submit from a clean worktree.** PrismaBuild snapshots the whole checkout for every row and refuses a row whose files change mid-snapshot. Submitting from `git worktree add --detach <dir> <commit>` also ties every result to one commit.
+- **Seeing why a proof failed.** `KANI_OUTPUT=regular` shows CBMC's progress. A proof killed for running out of memory then shows how far it got.
