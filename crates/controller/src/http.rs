@@ -30,9 +30,14 @@ pub(crate) struct Control {
 }
 impl Control {
     pub(crate) fn stop(&self) {
+        self.stop_with(|| {
+            // Wake blocking accept without polling when an owner shuts the server down.
+            let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
+        });
+    }
+    fn stop_with(&self, wake: impl FnOnce()) {
         self.stopped.store(true, Ordering::Release);
-        // Wake blocking accept without polling when an owner shuts the server down.
-        let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
+        wake();
     }
 }
 impl Server {
@@ -459,3 +464,7 @@ mod tests {
         writer.join().unwrap();
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/http.rs"]
+mod loom_tests;

@@ -574,6 +574,20 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
     }
 }
 
+fn receive_request(
+    store: &mut Store,
+    secret: &[u8],
+    request: &http::Request,
+    sender: &Sender<Input>,
+    reply: std::sync::mpsc::SyncSender<u16>,
+) -> (u16, bool) {
+    let status = receive_delivery(store, secret, request);
+    if status == 202 {
+        let _ = sender.send(Input::Wake);
+    }
+    (status, reply.send(status).is_err())
+}
+
 impl Source for Webhooks {
     fn run(self, sender: Sender<Input>) -> Result<()> {
         let Self {
@@ -633,11 +647,8 @@ impl Source for Webhooks {
                     .map_err(|_| Error::Invalid("webhook receiver stopped"))?
                 {
                     WebhookMessage::Request(request, reply) => {
-                        let status = receive_delivery(&mut store, &secret, &request);
-                        if status == 202 {
-                            let _ = sender.send(Input::Wake);
-                        }
-                        let disconnected = reply.send(status).is_err();
+                        let (status, disconnected) =
+                            receive_request(&mut store, &secret, &request, &sender, reply);
                         if status == 503 || disconnected {
                             gap = true;
                         }
