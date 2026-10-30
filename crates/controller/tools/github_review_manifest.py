@@ -21,7 +21,6 @@ print(json.dumps([{
     "cwd": str(root),
     "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-github", "--all-targets", "--locked"],
     "tags": [host],
-    "anywhere": True,
     "cpus": 2,
     "demand": {"mem_gb": 6},
     "priority": -10,
