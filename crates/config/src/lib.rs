@@ -111,6 +111,13 @@ pub struct WorkerModel<'a> {
 }
 
 impl Models {
+    /// Select the first reviewer from a different family for this maker attempt.
+    pub fn reviewer_for(&self, maker_family: &str) -> Option<&Model> {
+        self.reviewer
+            .iter()
+            .find(|model| !model.family.eq_ignore_ascii_case(maker_family))
+    }
+
     pub fn worker_model<'a>(&'a self, model: &'a Model) -> WorkerModel<'a> {
         WorkerModel {
             base_url: &self.base_url,
@@ -173,7 +180,10 @@ impl Config {
             Error::Parse(format!("{}{position}", error.message()))
         })?;
         if config.models.reviewer.is_empty() {
-            config.models.reviewer.push(config.models.maker[2].clone());
+            config.models.reviewer = vec![
+                config.models.maker[0].clone(),
+                config.models.maker[2].clone(),
+            ];
         }
         config.validate()?;
         Ok(config)
@@ -300,6 +310,17 @@ impl Config {
                 "models.maker[2].family",
                 "attempt 3 must use a different family from attempt 1 (Q22)",
             ));
+        }
+        for (index, maker) in self.models.maker.iter().enumerate() {
+            if self.models.reviewer_for(&maker.family).is_none() {
+                return Err(invalid(
+                    "models.reviewer",
+                    format!(
+                        "add a reviewer from a different family than models.maker[{index}] ({}) (Q22)",
+                        maker.family
+                    ),
+                ));
+            }
         }
         if !immutable_image(&self.prismabuild.container_image) {
             return Err(invalid(

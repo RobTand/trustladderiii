@@ -12,8 +12,9 @@ and no group or other permissions. These checks never read the secret bytes.
 They follow symlinks and do not replace runtime file-open checks.
 
 The example passes offline validation. Model names, maximum effort and output
-budget, the app installation id, the container digest, and Hindsight's port are
+budget, the app installation id, and the container digest are
 deployment placeholders. Validation checks their shape, not service availability.
+Hindsight's endpoint uses dl380g10's local port 8890. Port 8888 is celestia's tunnel.
 The proxy owns the supported models and efforts. Budget means the worker's
 per-response `max_completion_tokens`, including reasoning where supported.
 It must be positive and no larger than the configured context.
@@ -21,8 +22,11 @@ It must be positive and no larger than the configured context.
 The maker has exactly three attempts. Attempts 1 and 2 share a model and family,
 attempt 2 has an explicit effort and at least attempt 1's budget, and attempt 3
 uses a different family. The operator sets the proxy's maximum effort and budget
-for attempt 2. An omitted or empty reviewer ladder defaults to maker attempt 3.
-An explicit reviewer ladder can override the family default from Q22.
+for attempt 2. An omitted or empty reviewer ladder defaults to maker attempts 1
+and 3, in that order. `models.reviewer_for(maker_family)` returns the first
+reviewer whose family differs from the current attempt's maker, ignoring ASCII
+case, or `None` if none exists. Validation requires a different-family reviewer
+for every family in the maker ladder, including with an explicit reviewer ladder.
 Other role ladders must contain at least one model. No model names or effort
 vocabulary are built into the crate.
 

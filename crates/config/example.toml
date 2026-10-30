@@ -53,9 +53,13 @@ maker = [
     { name = "default-model", family = "default", effort = "xhigh", budget_tokens = 64000 },
     { name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 64000 },
 ]
-# Q22: reviewer defaults to maker[2], so its family differs from the default maker.
-# Set reviewer explicitly to override, including for a same-family review.
-# reviewer = [{ name = "alternate-model", family = "alternate", budget_tokens = 64000 }]
+# Q22: reviewer defaults to [maker[0], maker[2]]. Each attempt selects the first
+# reviewer from a different family than that attempt's maker. An explicit ladder
+# must offer a different-family reviewer for every maker family.
+# reviewer = [
+#     { name = "default-model", family = "default", budget_tokens = 32000 },
+#     { name = "alternate-model", family = "alternate", budget_tokens = 64000 },
+# ]
 # docs/state-table.md, "Rebasing": conflict repair runs an agent.
 rebaser = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
 # Q15: an agent classifies Rob's issue comments.
@@ -69,8 +73,8 @@ tools_dir = "/mnt/shared/prismabuild-fleet/repo/tools"
 container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [hindsight]
-# docs/stack.md: recall runs on dl380g10. Example port; confirm at deployment.
-endpoint = "http://127.0.0.1:8888"
+# Hindsight listens locally on dl380g10 at 8890; 8888 is celestia's tunnel.
+endpoint = "http://127.0.0.1:8890"
 
 [status]
 # Q24: read-only LAN page. Port 8033 is a deployment starting value.

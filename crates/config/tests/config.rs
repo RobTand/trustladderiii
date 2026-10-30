@@ -29,11 +29,65 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.rob.id, 24_923_402);
     assert_eq!(config.github.rob.login, "RobTand");
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
-    assert_ne!(
-        config.models.reviewer[0].family,
-        config.models.maker[0].family
-    );
-    assert_eq!(config.models.reviewer[0].name, config.models.maker[2].name);
+    assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
+    for (maker, expected) in
+        config
+            .models
+            .maker
+            .iter()
+            .zip(["alternate-model", "alternate-model", "default-model"])
+    {
+        let reviewer = config.models.reviewer_for(&maker.family).unwrap();
+        assert!(!reviewer.family.eq_ignore_ascii_case(&maker.family));
+        assert_eq!(reviewer.name, expected);
+    }
+}
+
+#[test]
+fn omitted_and_empty_reviewer_ladders_default_to_maker_attempts_one_and_three() {
+    for source in [
+        EXAMPLE.to_string(),
+        changed(&["models", "reviewer"], Value::Array(vec![])),
+    ] {
+        let config = Config::parse(&source).unwrap();
+        assert_eq!(config.models.reviewer.len(), 2);
+        for (reviewer, maker) in config
+            .models
+            .reviewer
+            .iter()
+            .zip([&config.models.maker[0], &config.models.maker[2]])
+        {
+            assert_eq!(reviewer.name, maker.name);
+            assert_eq!(reviewer.family, maker.family);
+            assert_eq!(reviewer.effort, maker.effort);
+            assert_eq!(reviewer.budget_tokens, maker.budget_tokens);
+        }
+    }
+}
+
+#[test]
+fn reviewer_ladder_must_cover_every_maker_family() {
+    let document: Value = EXAMPLE.parse().unwrap();
+    for (role, maker_index) in [("ingest", 0), ("audit", 2)] {
+        let mut reviewers = document["models"][role].clone();
+        reviewers[0]["family"] = Value::String(
+            reviewers[0]["family"]
+                .as_str()
+                .unwrap()
+                .to_ascii_uppercase(),
+        );
+        let source = changed(&["models", "reviewer"], reviewers);
+        let error = Config::parse(&source).unwrap_err().to_string();
+        assert!(error.contains("models.reviewer"), "{error}");
+        assert!(
+            error.contains("add a reviewer from a different family"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&format!("models.maker[{maker_index}]")),
+            "{error}"
+        );
+    }
 }
 
 #[test]
@@ -342,19 +396,36 @@ fn repositories_need_valid_names_installations_and_unique_full_names() {
 #[test]
 fn explicit_reviewer_and_proxy_specific_efforts_are_supported() {
     let mut document: Value = EXAMPLE.parse().unwrap();
-    let reviewer = document["models"]["ingest"].clone();
+    let mut later_reviewer = document["models"]["audit"][0].clone();
+    later_reviewer["name"] = Value::String("later-reviewer".into());
+    let reviewers = Value::Array(vec![
+        document["models"]["ingest"][0].clone(),
+        document["models"]["audit"][0].clone(),
+        later_reviewer,
+    ]);
     document["models"]
         .as_table_mut()
         .unwrap()
-        .insert("reviewer".into(), reviewer);
+        .insert("reviewer".into(), reviewers);
     document["models"]["maker"][1]["effort"] = Value::String("proxy-specific-maximum".into());
     document["limits"]["credit_reserve"] = Value::Integer(0);
     document["limits"]["free_rechecks"] = Value::Integer(0);
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    assert_eq!(
-        config.models.reviewer[0].family,
-        config.models.maker[0].family
-    );
+    for (maker, expected) in
+        config
+            .models
+            .maker
+            .iter()
+            .zip(["alternate-model", "alternate-model", "default-model"])
+    {
+        let reviewer = config
+            .models
+            .reviewer_for(&maker.family.to_ascii_uppercase())
+            .unwrap();
+        assert!(!reviewer.family.eq_ignore_ascii_case(&maker.family));
+        assert_eq!(reviewer.name, expected);
+    }
+    assert_eq!(config.models.reviewer.len(), 3);
 }
 
 #[test]
