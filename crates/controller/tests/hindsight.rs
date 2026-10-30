@@ -24,9 +24,13 @@ struct Retain {
     lose_ack: Arc<AtomicBool>,
     status: Arc<AtomicU16>,
     require_auth: Arc<AtomicBool>,
+    hung: Arc<AtomicBool>,
 }
 impl Respond for Retain {
     fn respond(&self, request: &Request) -> ResponseTemplate {
+        if self.hung.load(Ordering::SeqCst) {
+            return ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(60));
+        }
         let status = self.status.load(Ordering::SeqCst);
         if status != 0 {
             return ResponseTemplate::new(status);
@@ -548,4 +552,124 @@ fn public_action_ids_survive_only_in_structured_test_activity() {
             "input credentials must remain redacted"
         );
     }
+}
+
+
+#[test]
+fn review2_key_recovery_clears_incident_and_later_rejection_updates_status() {
+    let f = Fixture::new();
+    let attempt = f.attempt("audit", json!({}), json!({"ok": true}));
+    memory::queue_attempt(&mut f.store(), "first", &attempt).unwrap();
+    f.retain.status.store(401, Ordering::SeqCst);
+    memory::flush(&mut f.store(), &f.hindsight()).unwrap_err();
+    f.retain.status.store(0, Ordering::SeqCst);
+    assert_eq!(f.flush(), 1);
+    assert!(!rendered_status(&f).contains("Hindsight rejected"), "successful retain clears key incident");
+    memory::queue_attempt(&mut f.store(), "later", &attempt).unwrap();
+    for status in [401, 403, 403] {
+        f.retain.status.store(status, Ordering::SeqCst);
+        memory::flush(&mut f.store(), &f.hindsight()).unwrap_err();
+        let page = rendered_status(&f);
+        assert_eq!(page.matches("Hindsight rejected TL3&#39;s key").count(), 1);
+        assert!(page.contains(&format!("HTTP {status}")), "incident reflects latest rejected status");
+        assert_eq!(connection(&f).query_one("SELECT count(*) FROM tl3_memory_health", &[]).unwrap().get::<_, i64>(0), 1);
+    }
+}
+
+#[test]
+fn review2_rejection_updates_401_to_403_without_duplicate_incident() {
+    let f = Fixture::new();
+    let mut store = f.store();
+    store.reject_memory_key(401).unwrap();
+    store.reject_memory_key(403).unwrap();
+    assert!(rendered_status(&f).contains("HTTP 403"), "latest rejection must replace stale HTTP 401");
+    assert_eq!(connection(&f).query_one("SELECT count(*) FROM tl3_memory_health", &[]).unwrap().get::<_, i64>(0), 1);
+}
+
+#[test]
+fn review2_prose_survives_and_only_sha_span_is_redacted() {
+    let f = Fixture::new();
+    let sha = "a1b2c3d4e5f6789012345678901234567890abcd";
+    let attempt = f.attempt("maker", json!({"notes": "task-runner risk-based disk-full Token: counts rose"}),
+        json!({"head": sha, "summary": format!("Committed {sha} and fixed the runner.")}));
+    memory::queue_attempt(&mut f.store(), "prose", &attempt).unwrap();
+    let rows = f.store().pending_memories(0).unwrap();
+    let record: Value = serde_json::from_str(rows[0].2["content"].as_str().unwrap()).unwrap();
+    assert_eq!(record["inputs"]["notes"], "task-runner risk-based disk-full Token: counts rose");
+    assert_eq!(record["reply"]["summary"], "Committed [redacted] and fixed the runner.");
+    assert_eq!(record["head_sha"], sha, "known maker head is structured provenance");
+}
+
+#[test]
+fn review2_capacity_parking_replays_oldest_first_on_recovery_flush() {
+    let f = Fixture::new();
+    let _store = f.store();
+    let mut db = connection(&f);
+    db.execute("INSERT INTO tl3_memory_outbox (operation_id, item) SELECT 'seed-' || n, '{}'::jsonb FROM generate_series(1, 10000) n", &[]).unwrap();
+    for role in ["audit", "maker"] {
+        let attempt = f.attempt(role, json!({}), json!({"ok": true}));
+        memory::queue_attempt(&mut f.store(), role, &attempt).unwrap();
+    }
+    // Model acknowledgements of the older active rows without 10,000 HTTP calls.
+    db.execute("DELETE FROM tl3_memory_outbox WHERE operation_id LIKE 'seed-%' AND parked_reason IS NULL", &[]).unwrap();
+    f.retain.status.store(503, Ordering::SeqCst);
+    memory::flush(&mut f.store(), &f.hindsight()).unwrap_err();
+    assert!(rendered_status(&f).contains("Parked: 2"));
+    f.retain.status.store(0, Ordering::SeqCst);
+    // Parked seeds need UUIDs accepted by the fake retain responder.
+    db.execute("UPDATE tl3_memory_outbox SET operation_id = lpad(sequence::text, 36, '0') WHERE parked_reason = 'capacity'", &[]).unwrap();
+    assert_eq!(f.flush(), 4, "recovery flush also drains capacity-parked records");
+    let requests = f._runtime.block_on(f.server.received_requests()).unwrap();
+    let ids: Vec<String> = requests.iter().skip(3).map(|r| r.body_json::<Value>().unwrap()["operation_id"].as_str().unwrap().into()).collect();
+    assert_eq!(ids, vec![format!("{:036}", 1), format!("{:036}", 2)], "capacity replay is oldest first");
+    assert!(rendered_status(&f).contains("Parked: 0"));
+}
+
+#[test]
+fn review2_http_parking_expires_after_30_days_even_without_pending_rows() {
+    let f = Fixture::new();
+    let attempt = f.attempt("audit", json!({}), json!({"ok": true}));
+    for key in ["old", "recent"] {
+        memory::queue_attempt(&mut f.store(), key, &attempt).unwrap();
+    }
+    f.retain.status.store(422, Ordering::SeqCst);
+    f.flush();
+    let mut db = connection(&f);
+    // Schema stub for the retention clock, replaced by the production migration.
+    db.batch_execute("ALTER TABLE tl3_memory_outbox ADD COLUMN IF NOT EXISTS parked_at timestamptz DEFAULT CURRENT_TIMESTAMP").unwrap();
+    db.execute("UPDATE tl3_memory_outbox SET parked_at = CURRENT_TIMESTAMP - INTERVAL '31 days' WHERE sequence = (SELECT min(sequence) FROM tl3_memory_outbox)", &[]).unwrap();
+    assert_eq!(f.flush(), 0);
+    assert_eq!(db.query_one("SELECT count(*) FROM tl3_memory_outbox WHERE parked_reason = 'http'", &[]).unwrap().get::<_, i64>(0), 1, "4xx parking expires after 30 days at flush time");
+    assert!(rendered_status(&f).contains("Parked: 1"));
+}
+
+fn retryable_status(status: u16) {
+    let f = Fixture::new();
+    let attempt = f.attempt("audit", json!({}), json!({"ok": true}));
+    memory::queue_attempt(&mut f.store(), "retryable", &attempt).unwrap();
+    f.retain.status.store(status, Ordering::SeqCst);
+    assert!(memory::flush(&mut f.store(), &f.hindsight()).is_err(), "HTTP {status} remains retryable");
+    assert_eq!(f.store().pending_memories(0).unwrap().len(), 1);
+    assert!(rendered_status(&f).contains("Parked: 0"));
+    f.retain.status.store(0, Ordering::SeqCst);
+    assert_eq!(f.flush(), 1);
+}
+#[test]
+fn review2_http_408_remains_pending() { retryable_status(408); }
+#[test]
+fn review2_http_429_remains_pending() { retryable_status(429); }
+
+#[test]
+fn review2_hung_endpoint_costs_one_timeout_per_pass_and_resumes() {
+    let f = Fixture::new();
+    for role in ["audit", "maker", "reviewer"] {
+        let attempt = f.attempt(role, json!({}), json!({"ok": true}));
+        memory::queue_attempt(&mut f.store(), role, &attempt).unwrap();
+    }
+    f.retain.hung.store(true, Ordering::SeqCst);
+    assert!(memory::flush(&mut f.store(), &f.hindsight()).is_err());
+    assert_eq!(f._runtime.block_on(f.server.received_requests()).unwrap().len(), 1, "transport error ends pass after one timeout");
+    assert_eq!(f.store().pending_memories(0).unwrap().len(), 3);
+    f.retain.hung.store(false, Ordering::SeqCst);
+    assert_eq!(f.flush(), 3, "next wake retries untouched rows");
 }

@@ -237,6 +237,9 @@ fn main() {
             Some("wiring") => {
                 retirement_review::recall_key_request_wiring(&database.create("memory_wiring"))
             }
+            Some("store-error") => retirement_review::memory_store_error_retries_retirement(
+                &database.create("memory_store_error"),
+            ),
             Some("feed") => {
                 retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"))
             }
@@ -427,6 +430,7 @@ fn main() {
     bounded_startup(&database.create("workers_bounded"));
     println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
     retirement_review::recall_key_request_wiring(&database.create("memory_wiring"));
+    retirement_review::memory_store_error_retries_retirement(&database.create("memory_store_error"));
     retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory"));
     retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
     retirement(&database.create("workers_retirement"));
