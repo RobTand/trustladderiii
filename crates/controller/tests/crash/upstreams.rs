@@ -5,11 +5,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     adapters,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Registry, Upstream},
 };
-use tl3_kernel::{Ack, EffectKind, Event, Fact, Out};
+use tl3_kernel::{Ack, EffectKind, Event, Fact};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct State {
@@ -109,7 +110,7 @@ fn desired(delivery: &Delivery) -> Option<(String, Value)> {
                 ));
             }
         },
-        Out::Notice { .. } => return None,
+        Out::Notice { .. } | Out::Comment { .. } => return None,
     };
     Some((format!("{name}:{node}"), value))
 }
@@ -386,6 +387,7 @@ pub fn verify_contracts() {
             note: None,
             question: None,
             question_context: None,
+            steering: None,
         };
         let mut executor = fake(root.path(), "merge", 1, upstream);
         let _ = executor.execute(&delivery);
