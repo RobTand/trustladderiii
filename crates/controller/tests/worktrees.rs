@@ -478,7 +478,7 @@ fn repeated_prepare_preserves_maker_work() {
             &["status", "--porcelain", "--untracked-files=all"],
         );
         let next = f.delivery(EffectKind::PrepareWorktree, 3);
-        // An interrupted fresh intent must retain the same ownership facts on restart.
+        // Restarting a fresh intent must preserve the existing maker files.
         kill(&f, &next, "before");
         let completion = found(f.adapter().reconcile(&next).unwrap());
         assert!(matches!(completion.ack, Ack::Confirmed));
@@ -532,14 +532,15 @@ fn half_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
     checkout
 }
 
-fn preexisting_half_add_is_verified_without_repair() {
+fn preexisting_half_add_is_repaired_from_git_lock() {
     for main_moves in [false, true] {
         let scratch = tempfile::tempdir().unwrap();
         let f = Fixture::create(scratch.path());
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
         let checkout = half_add(&f, &prepare);
+        let locked = initialization_lock(&checkout);
+        fs::write(&locked, "initializing\n").unwrap();
         let head = f.head(&prepare);
-        let status = git(&checkout, &["status", "--porcelain"]);
         if main_moves {
             f.advance_main(false);
         }
@@ -547,10 +548,11 @@ fn preexisting_half_add_is_verified_without_repair() {
         next.epoch = 2;
         let completion = f.adapter_at(2).execute(&next).unwrap();
         assert!(matches!(completion.ack, Ack::Confirmed));
-        assert!(!checkout.join("shared.txt").exists());
-        assert_eq!(git(&checkout, &["status", "--porcelain"]), status);
+        assert_eq!(fs::read(checkout.join("shared.txt")).unwrap(), b"base\n");
+        assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+        assert!(!locked.exists());
         assert_eq!(f.head(&next), head);
-        println!("preexisting half-add preserved, main_moves={main_moves}");
+        println!("preexisting half-add populated and unlocked, main_moves={main_moves}");
     }
 }
 
@@ -578,6 +580,7 @@ fn prepare_repairs_at_durable_base_after_main_moves() {
             Real::branch(&next).unwrap().as_str(),
         ],
     );
+    fs::write(initialization_lock(&checkout), "initializing\n").unwrap();
     found(f.adapter().reconcile(&next).unwrap());
     assert_eq!(f.head(&next), base);
     assert_eq!(
@@ -595,17 +598,19 @@ fn removal_of_unpopulated_prepare() {
         "modified",
         "untracked",
         "committed",
+        "committed_initializing",
         "unowned",
+        "unowned_initializing",
     ] {
         let scratch = tempfile::tempdir().unwrap();
         let f = Fixture::create(scratch.path());
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
-        if dirt != "unowned" {
+        if !dirt.starts_with("unowned") {
             kill(&f, &prepare, "before");
         }
         let checkout = half_add(&f, &prepare);
         match dirt {
-            "initializing" | "locked" => {
+            "initializing" | "unowned_initializing" | "locked" => {
                 let lock = git(
                     &checkout,
                     &[
@@ -617,7 +622,7 @@ fn removal_of_unpopulated_prepare() {
                 );
                 fs::write(
                     lock,
-                    if dirt == "initializing" {
+                    if dirt != "locked" {
                         "initializing\n"
                     } else {
                         "keep locked\n"
@@ -631,11 +636,14 @@ fn removal_of_unpopulated_prepare() {
             "untracked" => {
                 fs::write(checkout.join("notes.txt"), "keep notes\n").unwrap();
             }
-            "committed" => {
+            "committed" | "committed_initializing" => {
                 git(&checkout, &["reset", "--hard", "HEAD"]);
                 commit(&checkout, "maker.txt", "maker commit\n");
                 fs::remove_file(checkout.join("shared.txt")).unwrap();
                 fs::remove_file(checkout.join("maker.txt")).unwrap();
+                if dirt == "committed_initializing" {
+                    fs::write(initialization_lock(&checkout), "initializing\n").unwrap();
+                }
             }
             _ => {}
         }
@@ -643,7 +651,7 @@ fn removal_of_unpopulated_prepare() {
         let mut current = f.adapter_at(2);
         let mut remove = f.delivery(EffectKind::RemoveWorktree, 2);
         remove.epoch = 2;
-        if matches!(dirt, "none" | "initializing") {
+        if matches!(dirt, "initializing" | "unowned_initializing") {
             let completion = current.execute(&remove).unwrap();
             assert!(matches!(completion.ack, Ack::Confirmed));
             assert_removed(&f, &remove);
@@ -699,6 +707,7 @@ fn incomplete_prepare() {
                 branch.as_str(),
             ],
         );
+        fs::write(initialization_lock(&checkout), "initializing\n").unwrap();
         assert!(!checkout.join("shared.txt").exists());
         assert!(!git(&checkout, &["status", "--porcelain"]).is_empty());
         if changed_head {
@@ -845,16 +854,26 @@ fn removal_without_gitlink() {
     }
 }
 
-fn killed_git_add() {
-    let scratch = tempfile::tempdir().unwrap();
-    let f = Fixture::create(scratch.path());
+fn initialization_lock(checkout: &Path) -> std::path::PathBuf {
+    git(
+        checkout,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "locked",
+        ],
+    )
+    .into()
+}
+
+fn kill_git_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
     commit(&f.source, ".gitattributes", "shared.txt filter=park\n");
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
-    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
-    kill(&f, &prepare, "before");
-    let branch = Real::branch(&prepare).unwrap();
+    kill(f, prepare, "before");
+    let branch = Real::branch(prepare).unwrap();
     let base = git(&f.remote, &["rev-parse", "main"]);
-    let checkout = f.adapter().checkout(&prepare);
+    let checkout = f.adapter().checkout(prepare);
     fs::create_dir_all(checkout.parent().unwrap()).unwrap();
     git(&f.repo, &["branch", branch.as_str(), &base]);
     git(
@@ -903,6 +922,16 @@ fn killed_git_add() {
     filter.read_exact(&mut ready).unwrap();
     assert_eq!(ready, [1]);
     assert!(checkout.join(".git").is_file());
+    let locked = initialization_lock(&checkout);
+    assert_eq!(
+        locked.parent().unwrap().parent().unwrap(),
+        f.repo.join("worktrees")
+    );
+    assert_eq!(fs::read(&locked).unwrap(), b"initializing\n");
+    println!(
+        "{}: $GIT_DIR/worktrees/<id>/locked = initializing\\n",
+        git(&f.repo, &["--version"])
+    );
     child.kill().unwrap();
     assert_eq!(child.wait().unwrap().signal(), Some(9));
     VERIFIED_KILLS.fetch_add(1, Ordering::Relaxed);
@@ -914,18 +943,91 @@ fn killed_git_add() {
         fs::read(checkout.join("shared.txt")).unwrap_or_default(),
         b"base\n"
     );
-    found(f.adapter().reconcile(&prepare).unwrap());
     assert_eq!(
-        fs::read_to_string(checkout.join("shared.txt")).unwrap(),
-        "base\n"
+        fs::read(initialization_lock(&checkout)).unwrap(),
+        b"initializing\n"
     );
-    assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
-    found(f.adapter().reconcile(&prepare).unwrap());
-    f.adapter()
-        .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
-        .unwrap();
-    assert_removed(&f, &prepare);
-    println!("SIGKILL during git worktree add: populated before confirmation");
+    assert!(
+        checkout.join(".gitattributes").is_file(),
+        "a real kill leaves tracked files"
+    );
+    checkout
+}
+
+fn killed_git_add() {
+    for recovery in ["original", "fresh", "stale", "fenced-stale", "remove"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        let checkout = kill_git_add(&f, &prepare);
+        let locked = initialization_lock(&checkout);
+        let fenced = matches!(recovery, "fresh" | "fenced-stale" | "remove");
+        let mut current = f.adapter_at(if fenced { 2 } else { 1 });
+        if fenced {
+            assert!(matches!(
+                current.reconcile(&prepare).unwrap(),
+                Reconciliation::Absent
+            ));
+            assert!(locked.exists());
+        }
+        if recovery == "remove" {
+            let mut remove = f.delivery(EffectKind::RemoveWorktree, 2);
+            remove.epoch = 2;
+            let completion = current.execute(&remove).unwrap();
+            assert!(matches!(completion.ack, Ack::Confirmed));
+            assert_removed(&f, &remove);
+            same(&completion, &found(current.reconcile(&remove).unwrap()));
+        } else {
+            let completion = if recovery == "original" {
+                found(current.reconcile(&prepare).unwrap())
+            } else {
+                let mut next = f.delivery(EffectKind::PrepareWorktree, 2);
+                next.epoch = if fenced { 2 } else { 1 };
+                current.execute(&next).unwrap()
+            };
+            assert!(matches!(completion.ack, Ack::Confirmed));
+            assert_eq!(fs::read(checkout.join("shared.txt")).unwrap(), b"base\n");
+            assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+            assert!(!locked.exists());
+            if matches!(recovery, "stale" | "fenced-stale") {
+                fs::write(checkout.join("shared.txt"), "maker wip\n").unwrap();
+                fs::write(checkout.join("notes.txt"), "maker notes\n").unwrap();
+                let status = git(
+                    &checkout,
+                    &["status", "--porcelain", "--untracked-files=all"],
+                );
+                found(current.reconcile(&prepare).unwrap());
+                assert_eq!(
+                    fs::read(checkout.join("shared.txt")).unwrap(),
+                    b"maker wip\n"
+                );
+                assert_eq!(
+                    fs::read(checkout.join("notes.txt")).unwrap(),
+                    b"maker notes\n"
+                );
+                assert_eq!(
+                    git(
+                        &checkout,
+                        &["status", "--porcelain", "--untracked-files=all"]
+                    ),
+                    status
+                );
+            }
+        }
+        println!("SIGKILL during real git worktree add: {recovery} recovery passed");
+    }
+}
+
+fn remove_ignores_unrelated_journal_records() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    prepared(&f);
+    let journal = f.repo.join("tl3-controller");
+    fs::write(journal.join("effect-corrupt.json"), b"invalid json").unwrap();
+    fs::create_dir(journal.join("effect-unreadable.json")).unwrap();
+    let remove = f.delivery(EffectKind::RemoveWorktree, 2);
+    f.adapter().execute(&remove).unwrap();
+    assert_removed(&f, &remove);
 }
 
 fn main() {
@@ -941,6 +1043,10 @@ fn main() {
         child(&args);
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--killed-add") {
+        killed_git_add();
+        return;
+    }
     crashes();
     conflicts();
     fences_and_unknowns();
@@ -948,7 +1054,7 @@ fn main() {
     old_epoch_partial_attempts();
     fenced_rebase_before_checkout_restoration();
     repeated_prepare_preserves_maker_work();
-    preexisting_half_add_is_verified_without_repair();
+    preexisting_half_add_is_repaired_from_git_lock();
     prepare_repairs_at_durable_base_after_main_moves();
     removal_of_unpopulated_prepare();
     incomplete_prepare();
@@ -956,6 +1062,7 @@ fn main() {
     incomplete_remove();
     removal_without_gitlink();
     killed_git_add();
+    remove_ignores_unrelated_journal_records();
     println!(
         "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
         VERIFIED_KILLS.load(Ordering::Relaxed)

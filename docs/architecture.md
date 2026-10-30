@@ -259,18 +259,24 @@ terminal Git evidence returns `Absent`: its Git steps converge and the prior
 controller and all its Git children have ended. Transport or filesystem errors
 still prove no absence.
 
-Prepare records whether the branch and checkout existed when its intent was
-journalled. Only the intent that created the checkout may repair its interrupted
-population. Repair requires the head to equal the durable base ref, independent
-of a newer fetched main. A Prepare for an existing checkout only verifies its
-registration and request branch, then confirms without changing files. Maker
-commits, edits and untracked files survive every re-entry to Making. The next
-maker run sees leftover files through `git status`.
+Prepare pins its creation base before writing refs. Git keeps an administrative
+lock at `<common-git-dir>/worktrees/<id>/locked` with reason `initializing\n`
+while `worktree add` populates files, then removes it on success. Any key may
+repair an interrupted checkout only while that lock exists and the branch head
+equals the durable base ref. Repair resets to the branch, verifies the files,
+then unlocks. A newer fetched main does not replace the durable base.
+Without the initializing lock, Prepare verifies registration and branch without
+changing files, even when an older unfinished key reconciles later. Maker commits,
+edits and untracked files survive every re-entry to Making. The next maker sees
+leftover files through `git status`.
 
-Remove records a clean preflight before deletion begins. An unfinished Prepare
-may also prove ownership of an unpopulated checkout whose only entry is `.git`
-and whose head equals the durable base. A retry may finish a checkout with only
-deletions. Other edits and new files remain errors.
+Remove records a clean preflight before deletion begins. Git's initializing lock
+plus head equal to the durable base also proves that no maker ran. Partial
+tracked files from a killed checkout are safe to remove under this rule.
+Remove reads this evidence directly, so its work does not grow with the journal
+and unrelated unreadable records cannot block it. Git retains the initializing
+lock until removal ends. A retry may finish a checkout with only deletions.
+Other edits and new files remain errors.
 
 A clean rebase updates branch and recorded base atomically in the client. Recovery
 restores an interrupted checkout before returning its new SHA through controller

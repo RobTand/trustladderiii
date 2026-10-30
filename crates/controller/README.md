@@ -194,15 +194,15 @@ operation intents and terminal evidence. Changing that root requires an explicit
 migration of existing checkouts and records. Records use atomic replacement and
 sync both the file and its directory. No store migration is required.
 
-Prepare records whether its branch and checkout already existed, and pins the
-fetched main commit before creating missing resources. Only the intent that
-created the checkout may repair interrupted population. Repair requires the head
-to equal the durable base ref, even if the intent fetched a newer main.
-A Prepare for an existing checkout only verifies its registration and request
-branch, then confirms. It preserves maker commits, edits and untracked files
-across fix rounds, new attempts and other re-entries to Making. The next maker
-run sees leftover files through `git status`.
-Older intents without ownership fields treat both resources as pre-existing.
+Prepare pins fetched main before creating missing resources. Git's administrative
+lock `<common-git-dir>/worktrees/<id>/locked`, with the exact reason `initializing\n`,
+is the evidence of interrupted checkout population. Any key may repair it only
+while the branch head equals the durable base ref. Repair runs
+`reset --hard <branch>` and unlocks after verifying the files, even if main has advanced.
+Without that lock, Prepare only verifies registration and the request branch.
+It preserves maker commits, edits and untracked files across fix rounds, new
+attempts and stale intent reconciliation. The next maker sees them in `git status`.
+Earlier intents remain readable. Their checkout ownership fields are ignored.
 Push pins the delivery's exact head and leases against the last head this adapter
 published. Rebase pins its target before execution, so recovery cannot silently
 use a newer main. A clean rebase reports `Observation::Rebased`; the controller
@@ -211,10 +211,11 @@ interns its SHA before the kernel receives `RebaseClean`. A conflict reports
 head. The kernel alone selects the next phase.
 
 Teardown records that the checkout is clean before deletion begins. It also accepts
-an unpopulated checkout if an unfinished Prepare proves this adapter created it,
-its directory contains only `.git`, and its head equals the durable base ref.
-A retry may finish removal if its only changes are deletions. Edits and new files
-are refused.
+Git's initializing lock plus head equal to the durable base, even when an
+interrupted checkout left tracked files. It reads this evidence directly without
+scanning the journal. Removal keeps the lock until Git deletes the checkout.
+A retry may finish removal if its only changes are deletions. Other edits and new
+files are refused.
 It leases deletion of the recorded remote head, then removes the local branch
 and base. A dirty checkout or changed remote
 ref returns an adapter error. Unknown outcomes keep their original effect key.

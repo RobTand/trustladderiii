@@ -205,17 +205,12 @@ impl Worktrees {
     }
 
     /// Called before recording a Remove intent. No deletion has begun yet.
-    pub fn verify_removal_clean(
-        &self,
-        name: &BranchName,
-        path: &Path,
-        unfinished_prepare_created_checkout: bool,
-    ) -> Result<(), Error> {
+    pub fn verify_removal_clean(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let path = self.destination(path)?;
         if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
             self.verify_checkout(&path, name)?;
-            if unfinished_prepare_created_checkout && self.unpopulated_at_base(name, &path)? {
+            if self.initializing_at_base(name, &path)? {
                 return Ok(());
             }
             self.require_clean(&path)?;
@@ -223,19 +218,14 @@ impl Worktrees {
         Ok(())
     }
 
-    fn unpopulated_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+    fn initializing_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        if !self.initializing(path)? {
+            return Ok(false);
+        }
         let Some(base) = self.resolve_optional(&name.base_ref())? else {
             return Ok(false);
         };
-        if self.resolve_optional(&name.reference())?.as_ref() != Some(&base) {
-            return Ok(false);
-        }
-        for entry in fs::read_dir(path).map_err(|_| Error::Io)? {
-            if entry.map_err(|_| Error::Io)?.file_name() != ".git" {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(self.resolve_optional(&name.reference())?.as_ref() == Some(&base))
     }
 
     /// Requires a durable Remove intent proving cleanliness before deletion began.
@@ -244,7 +234,7 @@ impl Worktrees {
         self.remove_worktree_locked(name, path, true)
     }
 
-    /// Only the unfinished Prepare that created this checkout may repair its files.
+    /// Git's initializing lock and unchanged base authorize interrupted checkout repair.
     pub fn finish_prepare(
         &self,
         name: &BranchName,
@@ -256,56 +246,50 @@ impl Worktrees {
             return Ok(false);
         }
         self.verify_checkout(path, name)?;
-        let dirty = !self.status(path)?.is_empty();
-        let initializing = self.initializing(path)?;
+        if !self.initializing(path)? {
+            return Ok(true);
+        }
         if !writable {
-            return Ok(!dirty && !initializing);
+            return Ok(false);
         }
-        if dirty {
-            let base = self
-                .resolve_optional(&name.base_ref())?
-                .ok_or(Error::Recovery)?;
-            if self.resolve_optional(&name.reference())?.as_ref() != Some(&base) {
-                return Err(Error::Recovery);
-            }
-            // Repository ownership guarantees the killed controller's Git children have ended.
-            let lock = path_line(
-                &self
-                    .run(
-                        path,
-                        "prepare index lock",
-                        [
-                            "rev-parse",
-                            "--path-format=absolute",
-                            "--git-path",
-                            "index.lock",
-                        ],
-                    )?
-                    .stdout,
-            )?;
-            match fs::remove_file(lock) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err(Error::Io),
-            }
-            self.run(
-                path,
-                "populate prepared checkout",
-                ["reset", "--hard", &name.reference()],
-            )?;
-            self.require_clean(path)?;
+        if !self.initializing_at_base(name, path)? {
+            return Err(Error::Recovery);
         }
-        if initializing {
-            self.run(
-                &self.repo,
-                "unlock prepared checkout",
-                [
-                    OsStr::new("worktree"),
-                    OsStr::new("unlock"),
-                    path.as_os_str(),
-                ],
-            )?;
+        // Repository ownership guarantees the killed controller's Git children have ended.
+        let lock = path_line(
+            &self
+                .run(
+                    path,
+                    "prepare index lock",
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "index.lock",
+                    ],
+                )?
+                .stdout,
+        )?;
+        match fs::remove_file(lock) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::Io),
         }
+        self.run(
+            path,
+            "populate prepared checkout",
+            ["reset", "--hard", &name.reference()],
+        )?;
+        self.require_clean(path)?;
+        self.run(
+            &self.repo,
+            "unlock prepared checkout",
+            [
+                OsStr::new("worktree"),
+                OsStr::new("unlock"),
+                path.as_os_str(),
+            ],
+        )?;
         Ok(true)
     }
 
@@ -755,7 +739,8 @@ impl Worktrees {
                     self.restore_removal_gitlink(name, &path)?;
                 }
                 self.verify_checkout(&path, name)?;
-                if allow_deletions {
+                let initializing = allow_deletions && self.initializing_at_base(name, &path)?;
+                if allow_deletions && !initializing {
                     let status = self.status(&path)?;
                     if status
                         .split(|b| *b == 0)
@@ -764,32 +749,22 @@ impl Worktrees {
                     {
                         return Err(Error::DirtyWorktree);
                     }
-                } else {
+                } else if !initializing {
                     self.require_clean(&path)?;
                 }
-                if allow_deletions && self.initializing(&path)? {
-                    self.run(
-                        &self.repo,
-                        "unlock removed checkout",
-                        [
-                            OsStr::new("worktree"),
-                            OsStr::new("unlock"),
-                            path.as_os_str(),
-                        ],
-                    )?;
-                }
             }
-            self.run(
-                &self.repo,
-                "remove worktree",
-                [
-                    OsStr::new("worktree"),
-                    OsStr::new("remove"),
-                    // Only deletion-only retries need force; other dirt was refused above.
-                    OsStr::new(if allow_deletions { "--force" } else { "--" }),
-                    path.as_os_str(),
-                ],
-            )?;
+            let initializing =
+                allow_deletions && path.exists() && self.initializing_at_base(name, &path)?;
+            let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
+            if allow_deletions {
+                args.push(OsStr::new("--force"));
+            }
+            if initializing {
+                // Keep Git's evidence until removal; two forces permit a locked checkout.
+                args.push(OsStr::new("--force"));
+            }
+            args.extend([OsStr::new("--"), path.as_os_str()]);
+            self.run(&self.repo, "remove worktree", args)?;
         } else if path.exists() {
             // Recover a lost registration before removing the checkout through Git.
             if fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_none() {

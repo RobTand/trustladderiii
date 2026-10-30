@@ -28,8 +28,8 @@ let files = repo.changed_files(&base, &head)?;
 | `delete_remote_branch_at`, `delete_local_branch` | Lease remote deletion; remove the local branch and base |
 | `rebase_onto` | Rebase onto an exact target; return base and head or conflicts |
 | `branch_state` | Current `(head, base)` from the branch and recorded base refs |
-| `finish_prepare` | Repair the checkout created by the calling intent, only at its durable base |
-| `verify_removal_clean`, `resume_removal` | Verify clean or owned unpopulated checkouts, then resume deletion-only retries |
+| `finish_prepare` | Repair Git-locked initialization only at the durable base |
+| `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
 All handles sharing a common Git directory serialize operations with an in-process
@@ -64,23 +64,29 @@ whose directory disappeared is removed from Git's registry and recreated. A stal
 directory disappeared. Recovery creates a temporary registration under
 `<common-git-dir>/tl3-worktree-staging/<branch>`, initializes its index, and replaces
 the orphan's gitlink before repairing the registration. It preserves working files.
-Each Prepare intent records whether its branch and checkout already existed.
-Only the intent that created the checkout may call `finish_prepare` to repair
-interrupted population. Repair requires the branch head to equal its durable
-`refs/tl3/bases/<branch>` ref, even if main has moved. It also clears an interrupted
-index lock after the owning process and Git children have ended.
-A Prepare for an existing checkout only verifies its registration and branch.
-It confirms dirty trees and maker commits without changing files. The next maker
-run sees leftover edits and untracked files through `git status`.
+`finish_prepare` repairs files only while Git's administrative lock
+`<common-git-dir>/worktrees/<id>/locked` contains exactly `initializing\n`.
+Git creates this lock during `worktree add` and removes it on success.
+Any effect key may repair that checkout if the branch head still equals
+`refs/tl3/bases/<branch>`, even if fetched main has moved. Repair clears a stale
+index lock, runs `reset --hard <branch>`, verifies cleanliness, then unlocks.
+The owning controller and its Git children must have ended before recovery.
+Without the initializing lock, Prepare only verifies registration and branch.
+Maker commits, edits and untracked files survive, including when an older
+unfinished intent reconciles after a newer Prepare. The next maker run sees
+leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
-The controller records a clean preflight in its Remove intent. It may also accept
-an unpopulated checkout when an unfinished Prepare record proves this adapter
-created it, the directory contains only `.git`, and its head equals the durable
-base. Other dirty checkouts remain errors. Only the durable preflight authorizes
+The controller records a clean preflight in its Remove intent. Git's
+`initializing\n` lock and a branch head equal to the durable base also prove
+that no maker ran, including when a killed checkout left tracked files.
+Removal checks this evidence directly without scanning earlier effect records.
+Other dirty checkouts remain errors. Only the durable preflight authorizes
 `resume_removal`, which also accepts deletion-only interrupted removals.
+Git removes an initializing checkout with two `--force` flags, keeping its lock
+as evidence until removal ends so a crash can retry safely.
 If deletion removed `.git` first, recovery restores that link from a registration
 whose path and branch both match before checking the remaining files.
 It recovers a missing registration before removing a checkout. Repeating removal or branch

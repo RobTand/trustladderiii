@@ -74,10 +74,6 @@ struct Served {
 enum Intent {
     Prepare {
         base: String,
-        #[serde(default = "resource_existed")]
-        branch_existed: bool,
-        #[serde(default = "resource_existed")]
-        checkout_existed: bool,
     },
     Push {
         head: String,
@@ -91,11 +87,6 @@ enum Intent {
         #[serde(default)]
         clean_verified: bool,
     },
-}
-
-// Older records cannot prove that their intent created either resource.
-fn resource_existed() -> bool {
-    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -296,16 +287,8 @@ impl Served {
                     .git
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
-                let branch_existed = self.git.branch_state(branch).map_err(adapter)?.is_some();
-                let checkout_existed = match fs::read_dir(checkout) {
-                    Ok(mut entries) => entries.next().transpose()?.is_some(),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                    Err(error) => return Err(error.into()),
-                };
                 Ok(Intent::Prepare {
                     base: base.as_str().into(),
-                    branch_existed,
-                    checkout_existed,
                 })
             }
             Out::Effect {
@@ -342,11 +325,7 @@ impl Served {
                 ..
             } => {
                 self.git
-                    .verify_removal_clean(
-                        branch,
-                        checkout,
-                        self.unfinished_prepare_created_checkout(delivery)?,
-                    )
+                    .verify_removal_clean(branch, checkout)
                     .map_err(adapter)?;
                 Ok(Intent::Remove {
                     expected: read(&self.published_path(branch))?,
@@ -355,33 +334,6 @@ impl Served {
             }
             _ => Err(Error::Invalid("unsupported worktree effect")),
         }
-    }
-
-    fn unfinished_prepare_created_checkout(&self, delivery: &Delivery) -> Result<bool> {
-        for entry in fs::read_dir(&self.journal)? {
-            let path = entry?.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if !name.starts_with("effect-") || !name.ends_with(".json") {
-                continue;
-            }
-            if let Some(record) = read::<Record>(&path)?
-                && record.delivery.issue == delivery.issue
-                && record.delivery.node() == delivery.node()
-                && record.completion.is_none()
-                && matches!(
-                    record.intent,
-                    Intent::Prepare {
-                        checkout_existed: false,
-                        ..
-                    }
-                )
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     fn finish(
@@ -394,17 +346,11 @@ impl Served {
     ) -> Result<Option<Completion>> {
         let mut observations = vec![];
         match &record.intent {
-            Intent::Prepare {
-                base,
-                branch_existed,
-                checkout_existed,
-            } => {
-                if writable && !checkout_existed {
-                    if !branch_existed {
-                        self.git
-                            .create_branch_at(branch, &CommitId::new(base).map_err(adapter)?)
-                            .map_err(adapter)?;
-                    }
+            Intent::Prepare { base } => {
+                if writable {
+                    self.git
+                        .create_branch_at(branch, &CommitId::new(base).map_err(adapter)?)
+                        .map_err(adapter)?;
                     self.git
                         .create_worktree(branch, checkout)
                         .map_err(adapter)?;
@@ -412,16 +358,11 @@ impl Served {
                 if self.git.branch_state(branch).map_err(adapter)?.is_none() {
                     return Ok(None);
                 }
-                let ready = if *checkout_existed {
-                    self.git
-                        .checkout_exists(branch, checkout)
-                        .map_err(adapter)?
-                } else {
-                    self.git
-                        .finish_prepare(branch, checkout, writable)
-                        .map_err(adapter)?
-                };
-                if !ready {
+                if !self
+                    .git
+                    .finish_prepare(branch, checkout, writable)
+                    .map_err(adapter)?
+                {
                     return Ok(None);
                 }
             }
