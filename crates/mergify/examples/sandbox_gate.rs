@@ -22,6 +22,64 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &jsonwebtoken::EncodingKey::from_rsa_pem(app.pem.as_bytes())?,
     )?;
     let http = reqwest::Client::new();
+    if operation == "deliveries" {
+        let destination = PathBuf::from(subject);
+        fs::create_dir_all(&destination)?;
+        for page in 1..=20 {
+            let deliveries: Vec<serde_json::Value> = http
+                .get(format!(
+                    "https://api.github.com/app/hook/deliveries?per_page=100&page={page}"
+                ))
+                .header("User-Agent", "tl3-sandbox-gate")
+                .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+                .bearer_auth(&jwt)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            for delivery in &deliveries {
+                if !matches!(
+                    delivery["event"].as_str(),
+                    Some("check_run" | "pull_request" | "issues")
+                ) {
+                    continue;
+                }
+                let id = delivery["id"].as_u64().ok_or("delivery ID missing")?;
+                let path = destination.join(format!("{id}.json"));
+                if path.exists() {
+                    continue;
+                }
+                let detail: serde_json::Value = http
+                    .get(format!("https://api.github.com/app/hook/deliveries/{id}"))
+                    .header("User-Agent", "tl3-sandbox-gate")
+                    .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+                    .bearer_auth(&jwt)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await?;
+                let payload = &detail["request"]["payload"];
+                if payload["repository"]["full_name"] != "RobTand/tl3-sandbox" {
+                    continue;
+                }
+                fs::write(
+                    path,
+                    serde_json::to_vec_pretty(&json!({
+                        "id": id, "event": delivery["event"], "action": delivery["action"],
+                        "delivered_at": delivery["delivered_at"],
+                        "status_code": delivery["status_code"], "payload": payload
+                    }))?,
+                )?;
+                println!("recorded delivery {id}");
+            }
+            if deliveries.len() < 100 {
+                return Ok(());
+            }
+        }
+        return Err("delivery pagination limit reached".into());
+    }
     let installation: serde_json::Value = http
         .get("https://api.github.com/repos/RobTand/tl3-sandbox/installation")
         .header("User-Agent", "tl3-sandbox-gate")
@@ -87,8 +145,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if run().await.is_err() {
-        eprintln!("Sandbox operation failed; inspect REST state before retrying.");
+    if let Err(error) = run().await {
+        eprintln!("Sandbox operation failed: {error}. Inspect REST state before retrying.");
         std::process::exit(1);
     }
 }
