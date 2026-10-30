@@ -1,3 +1,6 @@
+pub mod writer;
+pub use writer::{FakeWriter, Writer};
+
 mod fake;
 mod json;
 mod process;

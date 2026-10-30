@@ -120,6 +120,7 @@ fn delivery() -> Delivery {
         round: 0,
         replanned: false,
         note: None,
+        question: None,
         question_context: None,
     }
 }

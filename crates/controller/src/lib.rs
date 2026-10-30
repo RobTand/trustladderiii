@@ -5,6 +5,8 @@ pub mod findings;
 pub mod adapters;
 pub mod cli;
 pub mod executor;
+mod http;
+pub mod ingress;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -34,6 +36,14 @@ pub enum Error {
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("writer drafts failed the message checker after two reruns")]
+    MessageRejected,
+}
+
+impl From<tl3_github::Error> for Error {
+    fn from(error: tl3_github::Error) -> Self {
+        Self::Adapter(Box::new(error))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -104,6 +114,7 @@ pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
+    github_translators: Vec<ingress::Translation>,
     held_effects: BTreeSet<String>,
 }
 impl Controller {
@@ -131,8 +142,28 @@ impl Controller {
             store,
             adapters,
             bootstrap,
+            github_translators: Vec::new(),
             held_effects: BTreeSet::new(),
         })
+    }
+
+    pub fn register_github_translator(
+        &mut self,
+        name: &str,
+        translator: impl ingress::GitHubTranslator + 'static,
+    ) {
+        assert!(
+            !name.is_empty()
+                && self
+                    .github_translators
+                    .iter()
+                    .all(|entry| entry.name != name),
+            "unique GitHub translator name required"
+        );
+        self.github_translators.push(ingress::Translation {
+            name: name.into(),
+            translator: Box::new(translator),
+        });
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
@@ -220,6 +251,26 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::GitHubComment {
+            repository,
+            comment,
+            ..
+        } = &observation
+        {
+            let id = format!(
+                "{}/{}/{}/{}",
+                repository.owner.to_ascii_lowercase(),
+                repository.name.to_ascii_lowercase(),
+                repository.installation,
+                comment.id
+            );
+            if snapshot.rows.iter().any(|row| {
+                (row.table == "github_comments" && row.id == id)
+                    || (row.table == "inbox" && row.id == format!("external:{key}"))
+            }) {
+                return Ok(());
+            }
+        }
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         commit
             .rows
@@ -652,6 +703,7 @@ impl Controller {
                 attempt: n.attempt,
                 round: n.round,
                 replanned: n.replanned,
+                question: n.question,
                 note: None,
                 question_context,
             };
@@ -728,6 +780,35 @@ impl Controller {
             _ => Vec::new(),
         };
         let event = match observation {
+            Observation::GitHubComment {
+                repository,
+                issue,
+                comment,
+            } => {
+                if comment.user.id == self.bootstrap.rob
+                    && self.bootstrap.repos.contains(&repository)
+                {
+                    let id = format!(
+                        "{}/{}/{}/{}",
+                        repository.owner.to_ascii_lowercase(),
+                        repository.name.to_ascii_lowercase(),
+                        repository.installation,
+                        comment.id
+                    );
+                    if !snapshot
+                        .rows
+                        .iter()
+                        .any(|row| row.table == "github_comments" && row.id == id)
+                    {
+                        commit.rows.push(put(
+                            "github_comments",
+                            id,
+                            json!({"repository": repository, "issue": issue, "comment": comment}),
+                        ));
+                    }
+                }
+                return Ok(None);
+            }
             Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
                 return Err(Error::Invalid(
                     "acknowledgements require an effect key; requests require authorized intake",

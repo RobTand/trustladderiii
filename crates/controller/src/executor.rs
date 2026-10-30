@@ -20,6 +20,8 @@ pub struct Delivery {
     #[serde(default)]
     pub replanned: bool,
     #[serde(default)]
+    pub question: Option<tl3_kernel::Question>,
+    #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
     pub question_context: Option<serde_json::Value>,
@@ -36,6 +38,11 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    GitHubComment {
+        repository: crate::Repository,
+        issue: u64,
+        comment: tl3_github::Comment,
+    },
     WorkerReply {
         node: NodeId,
         generation: u64,

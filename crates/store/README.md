@@ -135,6 +135,14 @@ checks the uncommitted data is invisible, kills the writer with SIGKILL,
 reopens the store and compares the complete snapshot with the first commit.
 It then reuses the killed event key successfully.
 
+Migration 4 adds GitHub ingress. `tl3_ingress` retains verified raw webhook
+bytes and complete catch-up results until intake and every registered translator
+advance past them. `ingress_after(sequence)` reads deliveries pending for those
+translators. Each translator advances its own `tl3_ingress_cursors` row only
+after applying idempotent inputs. This does not change the kernel revision.
+`Store::reconnect` replaces the ingress source's connection after a failed insert;
+the controller's ownership session is never reconnected.
+
 ## Worker data
 
 Migration 3 adds supplied worker materials and a liveness side table.

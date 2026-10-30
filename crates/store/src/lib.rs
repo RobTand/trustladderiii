@@ -44,20 +44,159 @@ pub enum Error {
 /// One synchronous connection. The controller owns its writer; readers can open others.
 pub struct Store {
     client: Client,
+    settings: tl3_config::Store,
 }
 
 const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/0001_store.sql")),
     (2, include_str!("../migrations/0002_world_arrival.sql")),
     (3, include_str!("../migrations/0003_workers.sql")),
+    (4, include_str!("../migrations/0004_ingress.sql")),
 ];
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ingress {
+    pub sequence: i64,
+    pub source: String,
+    pub delivery_key: String,
+    pub event_name: String,
+    pub payload: Vec<u8>,
+}
+
+fn ingress_row(row: Row) -> Ingress {
+    Ingress {
+        sequence: row.get(0),
+        source: row.get(1),
+        delivery_key: row.get(2),
+        event_name: row.get(3),
+        payload: row.get(4),
+    }
+}
+
+fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
+    tx.execute("DELETE FROM tl3_ingress WHERE consumed AND sequence <= (SELECT MIN(sequence) FROM tl3_ingress_consumers)", &[])?;
+    Ok(())
+}
+
 impl Store {
+    /// Replace a failed ingress session. The controller's ownership session is never reconnected.
+    pub fn reconnect(&mut self) -> Result<()> {
+        *self = Self::open(&self.settings)?;
+        Ok(())
+    }
+
+    /// Sequence cursors require one connection to insert all GitHub deliveries, including
+    /// catch-up. Concurrent inserters could commit a lower sequence after a cursor passed it.
+    pub fn ingress_after(&mut self, sequence: i64) -> Result<Vec<Ingress>> {
+        Ok(self.client.query("SELECT sequence, source, delivery_key, event_name, payload FROM tl3_ingress WHERE sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(ingress_row).collect())
+    }
+
+    /// Register the current translator set before consuming a batch. New names start at
+    /// intake's durable position; catch-up supplies recent state, not retained history.
+    pub fn register_ingress_translators(&mut self, names: &[&str]) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "DELETE FROM tl3_ingress_consumers WHERE name <> 'intake' AND NOT (name = ANY($1))",
+            &[&names],
+        )?;
+        for name in names {
+            tx.execute("INSERT INTO tl3_ingress_consumers (name, sequence) SELECT $1, sequence FROM tl3_ingress_consumers WHERE name = 'intake' ON CONFLICT (name) DO NOTHING", &[name])?;
+        }
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn translator_cursor(&mut self, name: &str) -> Result<i64> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT sequence FROM tl3_ingress_consumers WHERE name = $1",
+                &[&name],
+            )?
+            .get(0))
+    }
+
+    pub fn advance_translator(&mut self, name: &str, sequence: i64) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $2) WHERE name = $1",
+            &[&name, &sequence],
+        )?;
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The unique delivery id, event name and verified raw payload become durable together.
+    pub fn receive_ingress(
+        &mut self,
+        source: &str,
+        key: &str,
+        event_name: &str,
+        payload: &[u8],
+    ) -> Result<bool> {
+        Ok(self.client.execute(
+            "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, $3, $4) ON CONFLICT (source, delivery_key) DO NOTHING",
+            &[&source, &key, &event_name, &payload],
+        )? == 1)
+    }
+
+    pub fn pending_ingress(&mut self) -> Result<Vec<Ingress>> {
+        Ok(self.client.query(
+            "SELECT sequence, source, delivery_key, event_name, payload FROM tl3_ingress WHERE NOT consumed ORDER BY sequence LIMIT 100",
+            &[],
+        )?.into_iter().map(ingress_row).collect())
+    }
+
+    /// Call only after every input in the delivery has reached the controller store.
+    pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "UPDATE tl3_ingress SET consumed = true WHERE sequence = $1",
+            &[&sequence],
+        )?;
+        tx.execute("UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $1) WHERE name = 'intake'", &[&sequence])?;
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn ingress_cursor(&mut self, source: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT cursor FROM tl3_ingress_cursors WHERE source = $1",
+                &[&source],
+            )?
+            .map(|row| row.get(0)))
+    }
+
+    /// Persist a catch-up pass and its cursor atomically. A partial pass advances neither.
+    pub fn receive_catch_up(
+        &mut self,
+        source: &str,
+        deliveries: &[(String, Vec<u8>)],
+        cursor: &serde_json::Value,
+    ) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        for (key, payload) in deliveries {
+            tx.execute(
+                "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, 'catch-up', $3) ON CONFLICT (source, delivery_key) DO NOTHING",
+                &[&source, key, payload],
+            )?;
+        }
+        tx.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
+            settings: settings.clone(),
         };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
             return Err(Error::Invalid("store requires Postgres fsync = on"));
