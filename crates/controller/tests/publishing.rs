@@ -492,6 +492,13 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
         tl3_controller::ingress::apply(c, input).unwrap();
     }
 }
+fn patch_lines(diff: &Value) -> Vec<&str> {
+    diff.as_str()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("index "))
+        .collect()
+}
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
@@ -624,7 +631,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-    } else if mode == "rebase" {
+    } else if matches!(mode, "rebase" | "round-one-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
         let new_target = git(&f.remote, &["rev-parse", "main"]);
@@ -655,7 +662,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .collect();
     assert_eq!(
         reviews.len(),
-        if matches!(mode, "new-attempt" | "review-retry") {
+        if matches!(mode, "new-attempt" | "review-retry" | "round-one-rebase") {
             3
         } else if matches!(
             mode,
@@ -666,7 +673,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             1
         }
     );
-    if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+    if mode == "round-one-rebase" {
+        assert_eq!(c.world().unwrap().nodes[0].round, 1);
+        assert_eq!(reviews[2]["resume_session"], true);
+        assert_eq!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(
+            reviews[2]["inputs"]["base_sha"],
+            reviews[2]["inputs"]["check_base_sha"],
+            "a rebased review must start at the leaf's new check base"
+        );
+        assert_eq!(
+            patch_lines(&reviews[2]["inputs"]["diff"]),
+            [
+                "diff --git a/value.py b/value.py",
+                "--- a/value.py",
+                "+++ b/value.py",
+                "@@ -1 +1,2 @@",
+                "-def value(): return 1",
+                "+def value():",
+                "+    return 2",
+            ],
+            "rebased round 1 must contain only the leaf's own change"
+        );
+    }
+    if matches!(mode, "changes" | "new-attempt" | "review-retry" | "round-one-rebase") {
         assert_eq!(reviews[0]["resume_session"], false);
         assert_eq!(reviews[1]["resume_session"], true);
         assert_eq!(reviews[0]["session_file"], reviews[1]["session_file"]);
@@ -674,7 +704,19 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             reviews[1]["inputs"]["base_sha"],
             reviews[0]["inputs"]["head_sha"]
         );
-        assert_eq!(reviews[1]["inputs"]["diff"], "");
+        assert_eq!(
+            patch_lines(&reviews[1]["inputs"]["diff"]),
+            [
+                "diff --git a/value.py b/value.py",
+                "--- a/value.py",
+                "+++ b/value.py",
+                "@@ -1 +1,2 @@",
+                "-def value(): return 2",
+                "+def value():",
+                "+    return 2",
+            ],
+            "round 1 must contain exactly the maker's fix"
+        );
         assert!(Path::new(reviews[0]["session_file"].as_str().unwrap()).is_file());
     }
     if mode == "new-attempt" {
@@ -690,10 +732,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             reviews[2]["operation"]["generation"]
         );
     }
-    for review in &reviews {
+    for (index, review) in reviews.iter().enumerate() {
         assert_eq!(
             review["inputs"]["check_base_sha"],
-            if review["resume_session"] == true {
+            if review["resume_session"] == true
+                && !(mode == "round-one-rebase" && index == 2)
+            {
                 reviews[0]["inputs"]["base_sha"].clone()
             } else {
                 review["inputs"]["base_sha"].clone()
@@ -710,7 +754,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     if matches!(
         mode,
-        "push" | "rebase" | "before-enqueue" | "reports-latest"
+        "push" | "rebase" | "round-one-rebase" | "before-enqueue" | "reports-latest"
     ) {
         assert_ne!(
             reviews[0]["inputs"]["head_sha"],
@@ -776,7 +820,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert_eq!(state.opens, 1);
     assert_eq!(
         state.checks.len(),
-        if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+        if mode == "round-one-rebase" {
+            2
+        } else if matches!(mode, "changes" | "new-attempt" | "review-retry") {
             1
         } else {
             reviews.len()
@@ -815,7 +861,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .lines()
             .filter(|line| line.contains("--seal-only"))
             .count(),
-        if mode == "review-retry" {
+        if matches!(mode, "review-retry" | "round-one-rebase") {
             2
         } else {
             reviews.len()
@@ -946,6 +992,7 @@ fn main() {
         "merged",
         "push",
         "rebase",
+        "round-one-rebase",
         "unapproved",
         "changes",
         "new-attempt",
@@ -962,5 +1009,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("11 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("12 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

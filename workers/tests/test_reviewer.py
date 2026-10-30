@@ -327,3 +327,23 @@ def test_accepted_round_one_recheck_is_a_new_visit(review_request, session_model
     runtime.run(review_request, lambda event: None)
     assert len(observed) == 2
     assert len([m for m in observed[-1] if m.type == "human"]) == 3
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+@pytest.mark.parametrize("usage", [None, {"input_tokens": 127_499, "output_tokens": 1,
+                                        "total_tokens": 127_500}])
+def test_reviewer_stops_before_context_exhaustion(review_request, session_model, tmp_path,
+                                                 with_session, usage):
+    observed, responses = session_model
+    review_request["inputs"]["context_size"] = 150_000 if usage else 1_000
+    if with_session:
+        review_request["session_file"] = str(tmp_path / "reviewer.json")
+    responses[:] = [AIMessage(content=json.dumps(APPROVE), usage_metadata=usage)]
+    events = []
+    with pytest.raises(ValueError, match="reviewer out of room"):
+        runtime.run(review_request, events.append)
+    assert not any(event["event"] == "reply" for event in events)
+    if with_session:
+        with pytest.raises(ValueError, match="reviewer out of room"):
+            runtime.run(review_request, events.append)
+        assert len(observed) == 1, "retry must not repeat an exhausted model turn"

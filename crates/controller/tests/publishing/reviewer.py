@@ -26,18 +26,18 @@ def model(request):
         output.write(json.dumps(request) + "\n")
     reply = {"verdict": "approve", "head_sha": inputs["head_sha"],
              "blocking_findings": [], "findings": [{"problem": "Optional style concern", "evidence": "This does not break a goal or rule."}]}
-    if (mode in ("changes", "review-retry") and first) or (mode == "new-attempt" and count < 2):
+    if (mode in ("changes", "review-retry", "round-one-rebase") and first) or (mode == "new-attempt" and count < 2):
         reply = {"verdict": "changes", "blocking_findings": [{
             "citation": {"kind": "goal", "id": inputs["goals"][0]["id"]},
             "problem": "Check the result once more.", "evidence": "A fixture requests one fix round."}], "findings": []}
     class Model(FakeMessagesListChatModel):
         def _generate(self, messages, **kwargs):
-            if mode in ("changes", "new-attempt", "review-retry"):
+            if mode in ("changes", "new-attempt", "review-retry", "round-one-rebase"):
                 humans = [m for m in messages if m.type == "human"]
-                assert len(humans) == (2 if request["resume_session"] else 1)
-            if mode in ("changes", "new-attempt", "review-retry") and request["resume_session"]:
+                assert len(humans) == ((count + 1) if mode == "round-one-rebase" else (2 if request["resume_session"] else 1))
+            if mode in ("changes", "new-attempt", "review-retry", "round-one-rebase") and request["resume_session"]:
                 previous = [m for m in messages if m.type == "ai"]
-                assert len(previous) == 1
+                assert len(previous) == (count if mode == "round-one-rebase" else 1)
                 assert json.loads(previous[0].content)["verdict"] == "changes"
                 assert previous[0].additional_kwargs["reasoning_content"] == "The goal needs another check."
             if mode == "review-retry" and count == 2:
