@@ -99,6 +99,7 @@ fn replay(name: &str, expected: bool) {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         question: None,
         note: None,
         question_context: None,
