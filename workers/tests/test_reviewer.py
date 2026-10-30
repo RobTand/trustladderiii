@@ -296,17 +296,18 @@ def test_round_one_crash_and_retry_do_not_duplicate_turns(
     assert Path(review_request["session_file"]).read_bytes() == checkpoint
 
 
-def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_model, tmp_path):
+@pytest.mark.parametrize("crash_unit", ["model_turn", "tool_result"])
+def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_model, tmp_path, crash_unit):
     start_review_session(review_request, session_model, tmp_path)
     observed, responses = session_model
     responses.insert(0, AIMessage(content="", tool_calls=[{
         "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}]))
 
     def crash(event):
-        if event.get("unit") == "tool_result":
-            raise RuntimeError("injected crash after tool result")
+        if event.get("unit") == crash_unit:
+            raise RuntimeError("injected crash during tool exchange")
 
-    with pytest.raises(RuntimeError, match="after tool result"):
+    with pytest.raises(RuntimeError, match="during tool exchange"):
         runtime.run(review_request, crash)
     responses.pop(0)
     review_request["operation"]["generation"] += 1
