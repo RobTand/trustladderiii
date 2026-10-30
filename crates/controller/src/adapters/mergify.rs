@@ -262,6 +262,17 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn retire(&mut self, delivery: &Delivery) -> Result<()> {
+        for extension in ["intent", "applied", "json"] {
+            match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        std::fs::File::open(self.records.path(&delivery.key).parent().unwrap())?.sync_all()?;
+        Ok(())
+    }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
         match self.completion(delivery)? {
@@ -392,8 +403,16 @@ async fn queue_facts(
     }
     let evidence = match state.state {
         QueueState::Merged => {
-            let checks_passed = if tl3_mergify::merged_via_queue(state) {
-                true
+            // Mergify publishes its final queue result after GitHub records the merge.
+            if state
+                .check
+                .as_ref()
+                .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
+            {
+                return Ok(vec![]);
+            }
+            let checks_passed = if state.check.is_some() {
+                tl3_mergify::merged_via_queue(state)
             } else if let Some(sha) = &pull.merge_commit_sha {
                 checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
             } else {
@@ -520,7 +539,6 @@ impl Translator {
             | Event::PullRequestUnlabeled { context, .. }
             | Event::CheckRunCompleted { context, .. }
             | Event::CheckRunUpdated { context, .. }
-            | Event::CheckSuiteCompleted { context, .. }
             | Event::MergeGroup { context, .. } => context,
             _ => return Ok(vec![]),
         };
@@ -618,22 +636,17 @@ impl Translator {
             }
             Event::CheckRunCompleted { check_run, .. }
             | Event::CheckRunUpdated { check_run, .. } => {
+                if check_run.name != tl3_mergify::QUEUE_CHECK
+                    || !check_run.app.as_ref().is_some_and(|app| {
+                        app.id == tl3_mergify::MERGIFY_APP_ID && app.slug == "mergify"
+                    })
+                {
+                    return Ok(vec![]);
+                }
                 for item in tracked.iter().filter(|item| {
                     item.head == check_run.head_sha
                         && (check_run.pull_requests.is_empty()
                             || check_run
-                                .pull_requests
-                                .iter()
-                                .any(|pull| pull.number == item.number))
-                }) {
-                    facts.extend(self.look(github, repo, item)?);
-                }
-            }
-            Event::CheckSuiteCompleted { check_suite, .. } => {
-                for item in tracked.iter().filter(|item| {
-                    item.head == check_suite.head_sha
-                        && (check_suite.pull_requests.is_empty()
-                            || check_suite
                                 .pull_requests
                                 .iter()
                                 .any(|pull| pull.number == item.number))

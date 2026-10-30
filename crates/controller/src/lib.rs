@@ -299,6 +299,21 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        if let Some(row) = snapshot.rows.iter().find(|r| r.table == "retiring_effects") {
+            let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+            self.adapters.adapter(&delivery)?.retire(&delivery)?;
+            let mut commit = Commit::new(
+                format!("retire:{}:{}", row.id, snapshot.revision.get()),
+                json!({"retired": row.id}),
+                &snapshot,
+            );
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = serde_json::from_value(row.value.clone())?;
             let mut waiting_for_queue = false;
@@ -491,6 +506,9 @@ impl Controller {
                 table: "watches".into(),
                 id: row.id.clone(),
             });
+            commit
+                .rows
+                .push(put("retiring_effects", row.id.clone(), json!(delivery)));
             self.store.commit(&commit)?;
             return Ok(true);
         }
@@ -611,6 +629,9 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
+            commit
+                .rows
+                .push(put("retiring_effects", key.into(), json!(delivery)));
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Intended,

@@ -110,6 +110,10 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    /// Idempotent cleanup after dispatch and watch retirement are durable.
+    fn retire(&mut self, _delivery: &Delivery) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
