@@ -113,6 +113,7 @@ impl Fixture {
             attempt: 1,
             round: 1,
             note: None,
+            question_context: None,
         }
     }
     pub fn advance_main(&self, conflict: bool) -> String {
