@@ -29,6 +29,8 @@ fn retiring_quota_attempt_keeps_resumed_process_active() {
         question: None,
         note: None,
         question_context: None,
+        steering: None,
+        request_text: None,
     };
     active.add(&delivery, 0);
     active.add(&delivery, 1);
