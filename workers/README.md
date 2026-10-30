@@ -103,6 +103,11 @@ from the same base. Git runs with `GIT_NO_LAZY_FETCH=1` so the worktree cannot
 trigger an implicit fetch. Missing actions give no liveness. Read or parse errors
 remain outages.
 
+Maker looks use the served checkout, including after recovery or a `RunFailed`
+retry. The private `run_tests` input retains that checkout's HEAD as its parent.
+PrismaBuild seals the staged files above that parent without changing the maker's
+HEAD, index or files.
+
 Queued or claimed actions keep the agent alive. The controller registers their
 keys with PrismaBuild's bell source and disarms the agent's allowance timer.
 Without an event, it reads no action record and commits no wait state. An ending,

@@ -75,13 +75,25 @@ def _stage(worktree, root):
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+    env = {"PATH": os.defpath, "LANG": "C.UTF-8",
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_AUTHOR_NAME": "TL3", "GIT_AUTHOR_EMAIL": "tl3@example.invalid",
            "GIT_COMMITTER_NAME": "TL3", "GIT_COMMITTER_EMAIL": "tl3@example.invalid"}
-    for args in (("init", "--quiet", "--template="), ("add", "--force", "--all"),
-                 ("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
-                  "commit", "--quiet", "-m", "Freeze test input")):
-        subprocess.run(["git", *args], cwd=root, env=env, check=True,
+    commands = [("init", "--quiet", "--template=")]
+    checkout = getattr(worktree, "test_checkout", None)
+    if checkout is not None:
+        # PB's snapshot parent proves this action belongs to the maker's checkout.
+        # Keep the private harness input dirty so PB seals it above that parent.
+        commands.extend([
+            ("fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--", str(checkout), "HEAD"),
+            ("update-ref", "HEAD", "FETCH_HEAD"),
+        ])
+    commands.append(("add", "--force", "--all"))
+    if checkout is None:
+        commands.append(("commit", "--quiet", "-m", "Freeze test input"))
+    for args in commands:
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
+                       cwd=root, env=env, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

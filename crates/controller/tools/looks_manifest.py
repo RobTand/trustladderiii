@@ -7,6 +7,7 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--checkout", type=Path, default=Path(__file__).resolve().parents[3])
 parser.add_argument("--red", action="store_true", help="run the focused review regressions on dl380g10")
+parser.add_argument("--merge-regressions", action="store_true", help="run the maker wait and snapshot ownership regressions")
 args = parser.parse_args()
 root = args.checkout.resolve()
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
@@ -43,5 +44,11 @@ if args.red:
         "cwd": str(root), "tags": ["dl380g10"], "cpus": 2, "demand": {"mem_gb": 6},
         "priority": -10, "timeout_s": 3600, "env": env,
         "argv": ["bash", "-c", "cargo test -p tl3-controller --locked --test looks -- --r3; a=$?; cargo test -p tl3-controller --locked --test workers -- --r3; b=$?; cargo test -p tl3-controller --locked --test prismabuild -- --r3; c=$?; cargo test -p tl3-store --locked --test postgres -- --r3; d=$?; exit $((a|b|c|d))"],
+    }]
+if args.merge_regressions:
+    rows = [{
+        "cwd": str(root), "tags": ["dl380g10"], "cpus": 2, "demand": {"mem_gb": 6},
+        "priority": -10, "timeout_s": 3600, "env": env,
+        "argv": ["bash", "-c", "cargo test -p tl3-controller --locked --test workers -- --maker-wait; a=$?; /home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil python -m pytest workers/tests/test_pb_tests.py::test_maker_staged_submission_retains_checkout_parent -q; b=$?; exit $((a|b))"],
     }]
 print(json.dumps(rows, indent=2))

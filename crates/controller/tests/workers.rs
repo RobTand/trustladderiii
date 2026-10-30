@@ -319,13 +319,6 @@ fn main() {
         database.stop();
         return;
     }
-    quota_resumes_same_operation(&database.create("workers_quota"));
-    println!("test announced_quota_resumes_same_operation_without_failure ... ok");
-    clock_stops_stalled_worker(&database.create("workers_stall"));
-    println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
-    external_wait_survives_restart(&database.create("workers_external_wait"));
-    println!("test external_wait_persists_across_source_and_controller_restart ... ok");
-
     if args.get(1).is_some_and(|s| s == "--linked-materials") {
         for wrapped in [false, true] {
             linked_materials(
@@ -367,6 +360,12 @@ fn main() {
         database.stop();
         return;
     }
+    quota_resumes_same_operation(&database.create("workers_quota"));
+    println!("test announced_quota_resumes_same_operation_without_failure ... ok");
+    clock_stops_stalled_worker(&database.create("workers_stall"));
+    println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
+    external_wait_survives_restart(&database.create("workers_external_wait"));
+    println!("test external_wait_persists_across_source_and_controller_restart ... ok");
     for wrapped in [false, true] {
         linked_materials(
             &database.create(&format!("linked_materials_{wrapped}")),

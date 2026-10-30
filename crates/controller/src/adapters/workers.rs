@@ -550,7 +550,11 @@ impl Executor for Supervisor {
                     Some(row) => match row.external_wait {
                         Some(wait) => Look::Waiting {
                             wait,
-                            checkout: self.root(&delivery.key).join("worktree"),
+                            checkout: if protocol::delivery_role(delivery) == Some("maker") {
+                                super::worktrees::checkout_path(&self.worktrees, delivery)
+                            } else {
+                                self.root(&delivery.key).join("worktree")
+                            },
                         },
                         None => Look::Alive {
                             progress: format!("{}:{}", row.attempt, row.output_offset),
