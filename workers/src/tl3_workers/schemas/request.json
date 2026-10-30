@@ -65,6 +65,7 @@
       ],
       "additionalProperties": false
     },
+    "hindsight_key_file": {"type": ["string", "null"], "pattern": "^/"},
     "key_file": {
       "type": "string",
       "pattern": "^/"

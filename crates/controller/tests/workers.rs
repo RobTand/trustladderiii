@@ -232,9 +232,15 @@ fn main() {
     if args.get(1).is_some_and(|s| s == "--memory-review") {
         let mut database = Database::start();
         match args.get(2).map(String::as_str) {
-            Some("wiring") => retirement_review::recall_key_request_wiring(&database.create("memory_wiring")),
-            Some("feed") => retirement_review::feed_retirement_end_to_end(&database.create("memory_feed")),
-            _ => retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory")),
+            Some("wiring") => {
+                retirement_review::recall_key_request_wiring(&database.create("memory_wiring"))
+            }
+            Some("feed") => {
+                retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"))
+            }
+            _ => retirement_review::bad_memory_never_blocks_retirement(
+                &database.create("bad_memory"),
+            ),
         }
         database.stop();
         return;

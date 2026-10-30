@@ -175,6 +175,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         'port = 5432': 'port = 5543',
         '# password_file = "/run/tl3/postgres-password"': "password_file = " + json.dumps(str(config / "secrets/postgres-password")),
         '"/home/rob/.config/tl3/github-app.json"': json.dumps(str(config / "github-app.json")),
+        '# api_key_file = "/run/tl3/hindsight-key"': "api_key_file = " + json.dumps(str(config / "secrets/hindsight-key")),
         '"/run/tl3/model-key"': json.dumps(str(config / "secrets/model-key")),
         'installation_id = 1': f'installation_id = {installation}',
         'listen = "127.0.0.1:8033"': f'listen = {json.dumps(listen)}',
@@ -229,6 +230,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
         ("github", {"webhook_listen": "127.0.0.1:8081"}),
         ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
         ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
+        ("hindsight", {"api_key_file": str(config / "secrets/hindsight-key")}),
     ):
         missing = {key: toml_value(value) for key, value in fields.items()
                    if key not in data.get(table, {})}
@@ -328,7 +330,8 @@ def service(home, name):
         os.environ["TIKTOKEN_CACHE_DIR"] = cache
     for source, filename in ((config / "secrets/postgres-password", "postgres-password"),
                              (config / "github-app.json", "github-app.json"),
-                             (config / "secrets/model-key", "model-key")):
+                             (config / "secrets/model-key", "model-key"),
+                             (config / "secrets/hindsight-key", "hindsight-key")):
         text = text.replace(json.dumps(str(source)), json.dumps(str(credentials / filename)))
     target = runtime / "tl3.toml"
     write_file(target, text.encode())

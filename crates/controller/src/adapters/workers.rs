@@ -234,6 +234,7 @@ impl Supervisor {
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
+            "hindsight_key_file": self.hindsight.api_key_file,
         });
         if role == "maker" {
             request["session_file"] = json!(
@@ -358,8 +359,11 @@ impl Supervisor {
                     .file_name()
                     .to_str()
                     .is_some_and(|name| name.starts_with("attempt-"))
+                    && crate::memory::queue_attempt(store, key, &entry.path()).is_err()
                 {
-                    crate::memory::queue_attempt(store, key, &entry.path())?;
+                    eprintln!(
+                        "Hindsight memory record dropped for worker {key}; retirement continues"
+                    );
                 }
             }
         }

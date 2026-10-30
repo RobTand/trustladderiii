@@ -428,19 +428,38 @@ pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
         let config = config(settings, root.path(), "normal");
         let mut store = Store::open(settings).unwrap();
         let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
-        let run = seed(&mut store, &config, &format!("bad-memory-{bad}"), EffectState::Confirmed);
+        let run = seed(
+            &mut store,
+            &config,
+            &format!("bad-memory-{bad}"),
+            EffectState::Confirmed,
+        );
         let attempt = root_for(&config, &run.key).join("attempt-00000000");
-        fs::write(attempt.join("request.json"), json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string()).unwrap();
+        fs::write(
+            attempt.join("request.json"),
+            json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
+        )
+        .unwrap();
         fs::write(attempt.join(format!("{bad}.json")), b"broken json").unwrap();
         supervisor.retire(&mut store).unwrap();
-        assert!(!root_for(&config, &run.key).exists(), "bad memory {bad} must never block retirement");
+        assert!(
+            !root_for(&config, &run.key).exists(),
+            "bad memory {bad} must never block retirement"
+        );
         assert!(store.worker_progress(None).unwrap().is_empty());
     }
 }
 
 pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
-    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
-    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
     let server = runtime.block_on(MockServer::start());
     let (sent, received) = mpsc::channel();
     runtime.block_on(Mock::given(method("POST")).and(path("/v1/default/banks/tl3/memories"))
@@ -465,16 +484,22 @@ pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
     let run = seed(&mut store, &config, "memory-feed", EffectState::Confirmed);
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
     fs::write(attempt.join("request.json"), json!({"role":"audit", "model":{"name":"fixture"}, "inputs":{"goals":["remember me"]}, "memory":{"repo":"fixture", "request":"0"}}).to_string()).unwrap();
-    fs::write(attempt.join("memory.json"), json!({"reply":{"summary":"retired audit"}, "outcome":"succeeded"}).to_string()).unwrap();
+    fs::write(
+        attempt.join("memory.json"),
+        json!({"reply":{"summary":"retired audit"}, "outcome":"succeeded"}).to_string(),
+    )
+    .unwrap();
     fs::write(attempt.join("exit.json"), b"{\"code\":0}").unwrap();
     supervisor.retire(&mut store).unwrap();
     assert!(!root_for(&config, &run.key).exists());
-    let sent = received.recv_timeout(Duration::from_secs(30)).expect("retire wakes the authenticated Feed");
-    let record: Value = serde_json::from_str(sent["items"][0]["content"].as_str().unwrap()).unwrap();
+    let sent = received
+        .recv_timeout(Duration::from_secs(30))
+        .expect("retire wakes the authenticated Feed");
+    let record: Value =
+        serde_json::from_str(sent["items"][0]["content"].as_str().unwrap()).unwrap();
     assert_eq!(record["reply"]["summary"], "retired audit");
     assert!(!sent.to_string().contains("fixture-feed-key"));
 }
-
 
 pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
@@ -487,10 +512,24 @@ pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     let run = delivery();
     watch_run(&mut store, &run);
     let error = supervisor.execute(&run).unwrap_err();
-    assert!(matches!(error, tl3_controller::Error::Invalid("worker launcher did not claim the attempt; inspect launcher.log")));
-    let request: Value = serde_json::from_slice(&fs::read(root_for(&config, &run.key)
-        .join("attempt-00000000/request.json")).unwrap()).unwrap();
-    assert_eq!(request["hindsight_key_file"], json!(config.hindsight.api_key_file),
-        "worker scenario must carry the Hindsight credential path outside model inputs");
-    assert!(!request["inputs"].to_string().contains("never-read-fixture-key"));
+    assert!(matches!(
+        error,
+        tl3_controller::Error::Invalid(
+            "worker launcher did not claim the attempt; inspect launcher.log"
+        )
+    ));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &run.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["hindsight_key_file"],
+        json!(config.hindsight.api_key_file),
+        "worker scenario must carry the Hindsight credential path outside model inputs"
+    );
+    assert!(
+        !request["inputs"]
+            .to_string()
+            .contains("never-read-fixture-key")
+    );
 }

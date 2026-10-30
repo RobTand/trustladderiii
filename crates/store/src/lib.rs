@@ -88,6 +88,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (4, include_str!("../migrations/0004_ingress.sql")),
     (5, include_str!("../migrations/0005_worker_retirement.sql")),
     (6, include_str!("../migrations/0006_hindsight.sql")),
+    (7, include_str!("../migrations/0007_memory_parking.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,7 +120,11 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
 impl Store {
     /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
     pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
-        self.client.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+        let mut tx = self.client.transaction()?;
+        tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
+        tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+        tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity' WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -128,8 +133,28 @@ impl Store {
         &mut self,
         after: i64,
     ) -> Result<Vec<(i64, String, serde_json::Value)>> {
-        Ok(self.client.query("SELECT sequence, operation_id, item FROM tl3_memory_outbox WHERE sequence > $1 ORDER BY sequence LIMIT 64", &[&after])?
+        Ok(self.client.query("SELECT sequence, operation_id, item FROM tl3_memory_outbox WHERE sequence > $1 AND parked_reason IS NULL ORDER BY sequence LIMIT 64", &[&after])?
             .into_iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+    }
+
+    pub fn memory_item_bytes(&mut self, item: &serde_json::Value) -> Result<i32> {
+        Ok(self
+            .client
+            .query_one("SELECT octet_length($1::jsonb::text)", &[item])?
+            .get(0))
+    }
+
+    pub fn park_memory(&mut self, operation_id: &str, status: u16) -> Result<()> {
+        self.client.execute("UPDATE tl3_memory_outbox SET parked_reason = 'http', http_status = $2 WHERE operation_id = $1", &[&operation_id, &(status as i32)])?;
+        Ok(())
+    }
+
+    pub fn reject_memory_key(&mut self, status: u16) -> Result<()> {
+        let raised = self.client.execute("INSERT INTO tl3_memory_health (singleton, rejected_status) VALUES (true, $1) ON CONFLICT (singleton) DO NOTHING", &[&(status as i32)])?;
+        if raised != 0 {
+            eprintln!("Operations incident: Hindsight rejected TL3's key");
+        }
+        Ok(())
     }
 
     pub fn forget_memory(&mut self, operation_id: &str) -> Result<()> {

@@ -67,21 +67,29 @@ class Summary:
         with self.lock:
             field = "files_changed" if write else "files_read"
             paths = self.value["activity"][field]
-            if path not in paths:
-                if len(paths) < 32:
-                    paths.append(path[:256])
-                else:
-                    self.value["activity"]["truncated"] = True
+            path = path[:256]
+            if path in paths:
+                return
+            if len(paths) < 32:
+                paths.append(path)
+            elif not self.value["activity"].get("truncated"):
+                self.value["activity"]["truncated"] = True
+            else:
+                return
             self.save()
 
     def tool(self, name, args, result, error=False):
         with self.lock:
             activity = self.value["activity"]
+            changed = False
             if name in {"read", "write", "edit"} and not error:
                 field = "files_read" if name == "read" else "files_changed"
                 path = args.get("path")
-                if isinstance(path, str) and path not in activity[field] and len(activity[field]) < 32:
-                    activity[field].append(path[:256])
+                if isinstance(path, str):
+                    path = path[:256]
+                    if path not in activity[field] and len(activity[field]) < 32:
+                        activity[field].append(path)
+                        changed = True
             if name == "run_tests" and len(activity["tests"]) < 16:
                 if isinstance(result, str):
                     try:
@@ -95,7 +103,9 @@ class Summary:
                     "tests": [{"test": item.get("test"), "outcome": item.get("outcome")}
                               for item in result.get("tests", [])[:16]],
                 }))
-            self.save()
+                changed = True
+            if changed:
+                self.save()
 
     def finish(self, reply, error):
         with self.lock:
