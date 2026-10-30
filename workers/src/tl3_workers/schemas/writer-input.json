@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/writer-input.json",
+  "type": "object",
+  "properties": {
+    "kind": {"enum": ["question", "note", "summary"]},
+    "facts": {"type": "object"},
+    "violations": {
+      "type": "array",
+      "items": {"$ref": "writer-reply.json#/$defs/text"}
+    }
+  },
+  "required": ["kind", "facts"],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {"const": "question"},
+        "facts": {
+          "type": "object",
+          "properties": {
+            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "request": {"$ref": "writer-reply.json#/$defs/text"},
+            "obstacle": {"$ref": "writer-reply.json#/$defs/text"},
+            "options": {"$ref": "writer-reply.json#/$defs/options"},
+            "recommended_option": {"type": "integer", "minimum": 0, "maximum": 2},
+            "recommendation_reason": {"$ref": "writer-reply.json#/$defs/text"},
+            "how_to_answer": {"$ref": "writer-reply.json#/$defs/text"}
+          },
+          "required": [
+            "issue_title", "request", "obstacle", "options", "recommended_option",
+            "recommendation_reason", "how_to_answer"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {"const": "note"},
+        "facts": {
+          "type": "object",
+          "properties": {
+            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "request": {"$ref": "writer-reply.json#/$defs/text"},
+            "change": {"$ref": "writer-reply.json#/$defs/text"}
+          },
+          "required": ["issue_title", "request", "change"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {"const": "summary"},
+        "facts": {
+          "type": "object",
+          "properties": {
+            "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
+            "request": {"$ref": "writer-reply.json#/$defs/text"},
+            "outcome": {"$ref": "writer-reply.json#/$defs/text"},
+            "unmet_goals": {
+              "type": "array",
+              "items": {"$ref": "writer-reply.json#/$defs/text"}
+            }
+          },
+          "required": ["issue_title", "request", "outcome", "unmet_goals"],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
