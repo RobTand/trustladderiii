@@ -21,7 +21,7 @@ env = {
     "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 commands = {
-    "maker": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--test", "github", "--test", "worktrees", "--locked"],
+    "maker": ["cargo", "test", "-p", "tl3-controller", "--lib", "--test", "workers", "--test", "github", "--test", "worktrees", "--locked"],
     "planning": ["bash", "crates/controller/tools/verify-planning.sh"],
     "workers": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
 }

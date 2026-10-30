@@ -140,7 +140,12 @@ fn temporary(path: &Path) -> PathBuf {
 fn read_stat(opened: std::io::Result<File>) -> Result<Option<String>> {
     let mut file = match opened {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+        {
+            return Ok(None);
+        }
         Err(error) => return Err(error.into()),
     };
     let mut stat = String::new();
@@ -196,5 +201,12 @@ mod tests {
             Some(rustix::io::Errno::SRCH.raw_os_error())
         );
         assert_eq!(read_stat(opened).unwrap(), None);
+    }
+
+    #[test]
+    fn stat_open_permission_error_is_not_absence() {
+        let denied = std::io::Error::from_raw_os_error(rustix::io::Errno::ACCES.raw_os_error());
+        assert!(matches!(read_stat(Err(denied)), Err(Error::Io(error))
+            if error.kind() == std::io::ErrorKind::PermissionDenied));
     }
 }
