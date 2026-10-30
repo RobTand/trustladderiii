@@ -103,13 +103,26 @@ fn probe(point: &str, key: &str) {
     );
     assert_eq!(command.trim(), "continue");
 }
+fn cut_key(key: &str, event: &Value) -> String {
+    if key.starts_with("delivery:") {
+        // Recovery can cycle Sent -> Uncertain -> Intended on the same key.
+        // A revision-based cut would kill every pickup forever.
+        format!(
+            "delivery:{}:{}:{}",
+            event["effect"], event["from"], event["to"]
+        )
+    } else {
+        key.into()
+    }
+}
+
 fn hooked_store(settings: &tl3_config::Store, selected: &str) -> Store {
     let mut store = Store::open(settings).unwrap();
     let selected = selected.to_owned();
-    store.set_boundary_hook(move |point, key| {
+    store.set_boundary_hook(move |point, key, event| {
         let point = format!("{point:?}");
         if point == selected {
-            probe(&point, key);
+            probe(&point, &cut_key(key, event));
         }
     });
     store
@@ -426,7 +439,7 @@ fn verify_cuts(
     ) {
         for event in store.events_after(Revision::ZERO, u32::MAX).unwrap() {
             assert!(
-                killed.contains(&event.key),
+                killed.contains(&cut_key(&event.key, &event.payload)),
                 "{selected}: committed event {} escaped injection",
                 event.key
             );

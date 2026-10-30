@@ -14,7 +14,9 @@ Postgres and the upstream records survive every cut.
 `cargo test -p tl3-controller --test crash_safety --locked` runs separate passes
 for each save point. In a pass, the parent kills the child once per distinct
 operation key, then restarts it from the database. Repeated visits to that key
-continue normally. Each pass ends at the same world as an uninterrupted run.
+continue normally. Delivery transitions use the effect key and source and target
+states, because recovery can revisit a transition at a new audit revision.
+Each pass ends at the same world as an uninterrupted run.
 A final coverage check requires every committed operation in that pass to
 appear in the injected cuts.
 Separate passes let an earlier cut leave later save points reachable.

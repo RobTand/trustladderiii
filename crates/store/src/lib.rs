@@ -57,11 +57,16 @@ pub enum SavePoint {
     InternAfterCommit,
 }
 
-type BoundaryHook = Box<dyn FnMut(SavePoint, &str)>;
+type BoundaryHook = Box<dyn FnMut(SavePoint, &str, &serde_json::Value)>;
 
-fn boundary(hook: &mut Option<BoundaryHook>, point: SavePoint, key: &str) {
+fn boundary(
+    hook: &mut Option<BoundaryHook>,
+    point: SavePoint,
+    key: &str,
+    event: &serde_json::Value,
+) {
     if let Some(hook) = hook {
-        hook(point, key);
+        hook(point, key, event);
     }
 }
 
@@ -139,7 +144,10 @@ impl Store {
 
     /// Install before opening the controller to include bootstrap and intake.
     /// A hook must return normally or terminate the process; unwinding is not a crash.
-    pub fn set_boundary_hook(&mut self, hook: impl FnMut(SavePoint, &str) + 'static) {
+    pub fn set_boundary_hook(
+        &mut self,
+        hook: impl FnMut(SavePoint, &str, &serde_json::Value) + 'static,
+    ) {
         self.boundary_hook = Some(Box::new(hook));
     }
 
@@ -274,6 +282,7 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::EventWritten,
             &change.event_key,
+            &change.event,
         );
         for row in &change.rows {
             match row {
@@ -293,6 +302,7 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::RowsWritten,
             &change.event_key,
+            &change.event,
         );
         for effect in &change.effects {
             tx.execute("INSERT INTO tl3_effects (effect_key, epoch, kind, payload, created_revision, updated_revision) VALUES ($1, $2, $3, $4, $5, $5)",
@@ -302,6 +312,7 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::EffectsWritten,
             &change.event_key,
+            &change.event,
         );
         for transition in &change.transitions {
             if !transition.from.allows(transition.to) {
@@ -319,6 +330,7 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::TransitionsWritten,
             &change.event_key,
+            &change.event,
         );
         for entry in &change.credit {
             let inserted = tx.execute("INSERT INTO tl3_credit (node_id, reason, root_id, amount, revision) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (node_id, reason) DO NOTHING",
@@ -337,6 +349,7 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::CreditWritten,
             &change.event_key,
+            &change.event,
         );
         if next_epoch != epoch {
             tx.execute(
@@ -356,12 +369,14 @@ impl Store {
             &mut self.boundary_hook,
             SavePoint::BeforeCommit,
             &change.event_key,
+            &change.event,
         );
         tx.commit()?;
         boundary(
             &mut self.boundary_hook,
             SavePoint::AfterCommit,
             &change.event_key,
+            &change.event,
         );
         Ok(committed)
     }
@@ -453,9 +468,19 @@ impl Store {
             Some(row) => row.get(0),
             None => tx.query_one(select, params)?.get(0),
         };
-        boundary(&mut self.boundary_hook, SavePoint::InternBeforeCommit, &key);
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::InternBeforeCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
         tx.commit()?;
-        boundary(&mut self.boundary_hook, SavePoint::InternAfterCommit, &key);
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::InternAfterCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
         Ok(id)
     }
 }
