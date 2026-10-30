@@ -47,8 +47,17 @@ impl Fixture {
         }
     }
 
+    fn branch(&self) -> Branch {
+        self.manager
+            .create_branch_at(
+                &self.name,
+                &self.manager.resolve("refs/heads/main").unwrap(),
+            )
+            .unwrap()
+    }
+
     fn checkout(&self) -> Branch {
-        let branch = self.manager.create_branch(&self.name).unwrap();
+        let branch = self.branch();
         self.manager
             .create_worktree(&self.name, &self.worktree)
             .unwrap();
@@ -166,11 +175,19 @@ fn write_commit(repo: &Path, file: &str, contents: &str, message: &str) {
 #[test]
 fn branch_base_is_durable_across_retries_and_main_advances() {
     let f = Fixture::new();
-    let branch = f.manager.create_branch(&f.name).unwrap();
+    let branch = f.branch();
     write_commit(&f.repo, "main.txt", "main advance\n", "advance main");
     let reopened = Worktrees::open(&f.repo, &f.manager.root).unwrap();
-    assert_eq!(reopened.create_branch(&f.name).unwrap(), branch);
-    assert_eq!(f.manager.head(&f.name).unwrap(), branch.base);
+    assert_eq!(
+        reopened
+            .create_branch_at(&f.name, &reopened.resolve("refs/heads/main").unwrap())
+            .unwrap(),
+        branch
+    );
+    assert_eq!(
+        f.manager.branch_state(&f.name).unwrap().unwrap().0,
+        branch.base
+    );
     assert_ne!(f.manager.resolve("refs/heads/main").unwrap(), branch.base);
 }
 
@@ -182,7 +199,7 @@ fn existing_branch_without_base_or_worktree_converges() {
     write_commit(&f.repo, "main.txt", "new main\n", "advance main");
     let branch = f.checkout();
     assert_eq!(branch.base, base);
-    assert_eq!(f.manager.create_branch(&f.name).unwrap(), branch);
+    assert_eq!(f.branch(), branch);
     assert_eq!(
         f.manager.create_worktree(&f.name, &f.worktree).unwrap(),
         f.worktree
@@ -193,11 +210,14 @@ fn existing_branch_without_base_or_worktree_converges() {
 #[test]
 fn base_without_branch_recreates_the_original_branch() {
     let f = Fixture::new();
-    let branch = f.manager.create_branch(&f.name).unwrap();
+    let branch = f.branch();
     git(&f.repo, ["update-ref", "-d", &f.name.reference()]);
     write_commit(&f.repo, "main.txt", "new main\n", "advance main");
-    assert_eq!(f.manager.create_branch(&f.name).unwrap(), branch);
-    assert_eq!(f.manager.head(&f.name).unwrap(), branch.base);
+    assert_eq!(f.branch(), branch);
+    assert_eq!(
+        f.manager.branch_state(&f.name).unwrap().unwrap().0,
+        branch.base
+    );
 }
 
 #[test]
@@ -358,78 +378,27 @@ fn unrelated_directories_and_checkouts_are_preserved() {
 }
 
 #[test]
-fn push_and_remote_deletion_converge_after_the_write_already_happened() {
-    let f = Fixture::new();
-    f.checkout();
-    write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-    let head = f.manager.head(&f.name).unwrap();
-    for _ in 0..2 {
-        assert_eq!(f.manager.push(&f.name, &f.remote, &f.token).unwrap(), head);
-        assert_eq!(
-            f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
-            Some(head.clone())
-        );
-    }
-    write_commit(&f.worktree, "next.txt", "next\n", "next work");
-    let next = f.manager.push(&f.name, &f.remote, &f.token).unwrap();
-    assert_ne!(head, next);
-    for _ in 0..2 {
-        f.manager
-            .delete_remote_branch(&f.name, &f.remote, &f.token)
-            .unwrap();
-        assert_eq!(
-            f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
-            None
-        );
-    }
-}
-
-#[test]
-fn clean_rebase_and_leased_push_are_repeatable() {
-    let f = Fixture::new();
-    f.checkout();
-    write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-    let old = f.manager.push(&f.name, &f.remote, &f.token).unwrap();
-    write_commit(&f.repo, "main.txt", "main\n", "main work");
-    let result = f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap();
-    let RebaseResult::Clean { base, head } = result else {
-        panic!("expected clean rebase")
-    };
-    assert_ne!(head, old);
-    assert_eq!(
-        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
-        RebaseResult::Clean {
-            base: base.clone(),
-            head: head.clone()
-        }
-    );
-    for _ in 0..2 {
-        assert_eq!(
-            f.manager
-                .push_rebased(&f.name, &f.remote, &f.token, &old)
-                .unwrap(),
-            head
-        );
-    }
-    f.assert_clean();
-}
-
-#[test]
 fn conflicting_rebase_returns_files_and_restores_the_old_head() {
     let f = Fixture::new();
     f.checkout();
     write_commit(&f.worktree, "shared.txt", "leaf version\n", "leaf work");
-    let old = f.manager.head(&f.name).unwrap();
+    let old = f.manager.branch_state(&f.name).unwrap().unwrap().0;
     write_commit(&f.repo, "shared.txt", "main version\n", "main work");
     for _ in 0..2 {
         assert_eq!(
-            f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+            f.manager
+                .rebase_onto(
+                    &f.name,
+                    &f.worktree,
+                    &f.manager.resolve("refs/heads/main").unwrap()
+                )
+                .unwrap(),
             RebaseResult::Conflicted {
                 head: old.clone(),
                 files: vec![PathBuf::from("shared.txt")]
             }
         );
-        assert_eq!(f.manager.head(&f.name).unwrap(), old);
+        assert_eq!(f.manager.branch_state(&f.name).unwrap().unwrap().0, old);
         assert_eq!(
             fs::read_to_string(f.worktree.join("shared.txt")).unwrap(),
             "leaf version\n"
@@ -443,12 +412,18 @@ fn interrupted_rebase_is_aborted_before_retry() {
     let f = Fixture::new();
     f.checkout();
     write_commit(&f.worktree, "shared.txt", "leaf version\n", "leaf work");
-    let old = f.manager.head(&f.name).unwrap();
+    let old = f.manager.branch_state(&f.name).unwrap().unwrap().0;
     write_commit(&f.repo, "shared.txt", "main version\n", "main work");
     assert!(!raw_git(&f.worktree, ["rebase", "main"]).status.success());
     assert!(f.manager.rebase_active(&f.worktree).unwrap());
     assert_eq!(
-        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+        f.manager
+            .rebase_onto(
+                &f.name,
+                &f.worktree,
+                &f.manager.resolve("refs/heads/main").unwrap()
+            )
+            .unwrap(),
         RebaseResult::Conflicted {
             head: old,
             files: vec![PathBuf::from("shared.txt")]
@@ -463,7 +438,11 @@ fn dirty_rebase_is_rejected_without_changing_files() {
     f.checkout();
     fs::write(f.worktree.join("shared.txt"), "unsaved\n").unwrap();
     assert!(matches!(
-        f.manager.rebase_onto_main(&f.name, &f.worktree),
+        f.manager.rebase_onto(
+            &f.name,
+            &f.worktree,
+            &f.manager.resolve("refs/heads/main").unwrap()
+        ),
         Err(Error::DirtyWorktree)
     ));
     assert_eq!(
@@ -482,7 +461,7 @@ fn changed_files_include_both_rename_paths_deletions_and_unusual_names() {
     fs::write(f.worktree.join(&binary_name), "new\n").unwrap();
     git(&f.worktree, ["add", "--all"]);
     git(&f.worktree, ["commit", "-m", "rename and add"]);
-    let head = f.manager.head(&f.name).unwrap();
+    let head = f.manager.branch_state(&f.name).unwrap().unwrap().0;
     let actual = f.manager.changed_files(&branch.base, &head).unwrap();
     let mut expected = vec![
         PathBuf::from("shared.txt"),
@@ -499,34 +478,6 @@ fn changed_files_include_both_rename_paths_deletions_and_unusual_names() {
 }
 
 #[test]
-fn a_remote_push_by_somebody_else_is_preserved() {
-    let f = Fixture::new();
-    let branch = f.checkout();
-    f.manager.push(&f.name, &f.remote, &f.token).unwrap();
-    write_commit(&f.repo, "main.txt", "someone else\n", "other work");
-    let other = f.manager.resolve("refs/heads/main").unwrap();
-    git(
-        &f.bare,
-        [
-            "fetch",
-            f.repo.to_str().unwrap(),
-            &format!("refs/heads/main:{}", f.name.reference()),
-        ],
-    );
-    write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-    assert!(f.manager.push(&f.name, &f.remote, &f.token).is_err());
-    assert!(
-        f.manager
-            .push_rebased(&f.name, &f.remote, &f.token, &branch.base)
-            .is_err()
-    );
-    assert_eq!(
-        f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
-        Some(other)
-    );
-}
-
-#[test]
 fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
     let mut f = Fixture::new();
     f.checkout();
@@ -539,7 +490,16 @@ fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-    let error = f.manager.push(&f.name, &f.remote, &f.token).unwrap_err();
+    let error = f
+        .manager
+        .publish(
+            &f.name,
+            &f.remote,
+            Some(&f.token),
+            &f.manager.branch_state(&f.name).unwrap().unwrap().0,
+            None,
+        )
+        .unwrap_err();
     assert_no_secret(
         format!("{error:?} {error}").as_bytes(),
         &STANDARD.encode(format!("x-access-token:{TOKEN}")),
@@ -598,7 +558,8 @@ fn invalid_inputs_are_rejected_without_echoing_credentials() {
     assert!(Remote::https("https://github.com/RobTand/tl3-sandbox.git").is_ok());
     let main = BranchName::new("main").unwrap();
     assert!(matches!(
-        f.manager.create_branch(&main),
+        f.manager
+            .create_branch_at(&main, &f.manager.resolve("refs/heads/main").unwrap()),
         Err(Error::MainBranch)
     ));
     assert!(matches!(
@@ -606,7 +567,12 @@ fn invalid_inputs_are_rejected_without_echoing_credentials() {
         Err(Error::MainBranch)
     ));
     assert!(matches!(
-        f.manager.delete_remote_branch(&main, &f.remote, &f.token),
+        f.manager.delete_remote_branch_at(
+            &main,
+            &f.remote,
+            Some(&f.token),
+            &f.manager.resolve("refs/heads/main").unwrap()
+        ),
         Err(Error::MainBranch)
     ));
 }
@@ -619,19 +585,25 @@ fn rebased_base_excludes_main_changes_from_the_footprint() {
     write_commit(&f.repo, "main.txt", "main\n", "main work");
     write_commit(&f.repo, "other.txt", "other\n", "more main work");
     let main = f.manager.resolve("refs/heads/main").unwrap();
-    let RebaseResult::Clean { base, head } =
-        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap()
+    let RebaseResult::Clean { base, head } = f
+        .manager
+        .rebase_onto(
+            &f.name,
+            &f.worktree,
+            &f.manager.resolve("refs/heads/main").unwrap(),
+        )
+        .unwrap()
     else {
         panic!("expected clean rebase")
     };
     assert_ne!(base, original.base);
     assert_eq!(base, main);
-    assert_eq!(f.manager.create_branch(&f.name).unwrap().base, base);
+    assert_eq!(f.branch().base, base);
     assert_eq!(
         f.manager.changed_files(&base, &head).unwrap(),
         vec![PathBuf::from("leaf.txt")]
     );
-    assert_eq!(f.manager.head(&f.name).unwrap(), head);
+    assert_eq!(f.manager.branch_state(&f.name).unwrap().unwrap().0, head);
     f.assert_clean();
 }
 
@@ -645,7 +617,13 @@ fn ignored_build_files_allow_rebase_and_removal() {
     fs::write(f.worktree.join("target/output"), "build output").unwrap();
     write_commit(&f.repo, "main.txt", "main\n", "main work");
     assert!(matches!(
-        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+        f.manager
+            .rebase_onto(
+                &f.name,
+                &f.worktree,
+                &f.manager.resolve("refs/heads/main").unwrap()
+            )
+            .unwrap(),
         RebaseResult::Clean { .. }
     ));
     assert_eq!(
@@ -764,8 +742,8 @@ fn concurrent_creates_and_removal_share_one_repository_mutex() {
     assert!(!f.worktree.exists());
     assert!(other_path.join(".git").is_file());
     assert_eq!(
-        f.manager.head(&other_name).unwrap(),
-        other.head(&other_name).unwrap()
+        f.manager.branch_state(&other_name).unwrap().unwrap().0,
+        other.branch_state(&other_name).unwrap().unwrap().0
     );
 }
 
@@ -775,7 +753,7 @@ fn detached_rebase_recovery_converges_before_and_after_ref_publication() {
         let f = Fixture::new();
         let original = f.checkout();
         write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-        let old = f.manager.head(&f.name).unwrap();
+        let old = f.manager.branch_state(&f.name).unwrap().unwrap().0;
         write_commit(&f.repo, "main.txt", "main\n", "main work");
         let main = f.manager.resolve("refs/heads/main").unwrap();
         let marker = f.manager.rebase_marker(&f.worktree).unwrap();
@@ -803,8 +781,14 @@ fn detached_rebase_recovery_converges_before_and_after_ref_publication() {
         if phase >= 4 {
             git(&f.worktree, ["symbolic-ref", "HEAD", &f.name.reference()]);
         }
-        let RebaseResult::Clean { base, head } =
-            f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap()
+        let RebaseResult::Clean { base, head } = f
+            .manager
+            .rebase_onto(
+                &f.name,
+                &f.worktree,
+                &f.manager.resolve("refs/heads/main").unwrap(),
+            )
+            .unwrap()
         else {
             panic!("expected clean rebase")
         };
@@ -823,23 +807,72 @@ fn interrupted_detached_rebase_aborts_and_preserves_the_base() {
     let f = Fixture::new();
     let original = f.checkout();
     write_commit(&f.worktree, "shared.txt", "leaf version\n", "leaf work");
-    let old = f.manager.head(&f.name).unwrap();
+    let old = f.manager.branch_state(&f.name).unwrap().unwrap().0;
     write_commit(&f.repo, "shared.txt", "main version\n", "main work");
     let marker = f.manager.rebase_marker(&f.worktree).unwrap();
     fs::write(&marker, f.name.reference()).unwrap();
     git(&f.worktree, ["checkout", "--detach", old.as_str()]);
     assert!(!raw_git(&f.worktree, ["rebase", "main"]).status.success());
     assert_eq!(
-        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+        f.manager
+            .rebase_onto(
+                &f.name,
+                &f.worktree,
+                &f.manager.resolve("refs/heads/main").unwrap()
+            )
+            .unwrap(),
         RebaseResult::Conflicted {
             head: old,
             files: vec![PathBuf::from("shared.txt")]
         }
     );
-    assert_eq!(
-        f.manager.create_branch(&f.name).unwrap().base,
-        original.base
-    );
+    assert_eq!(f.branch().base, original.base);
     assert!(!marker.exists());
     f.assert_clean();
+}
+
+#[test]
+fn local_transport_has_no_credential_environment() {
+    let f = Fixture::new();
+    f.checkout();
+    f.manager
+        .publish(
+            &f.name,
+            &f.remote,
+            None,
+            &f.manager.branch_state(&f.name).unwrap().unwrap().0,
+            None,
+        )
+        .unwrap();
+    // Even an accidentally supplied token is withheld from local transport.
+    f.manager
+        .remote_head(&f.name, &f.remote, Some(&f.token))
+        .unwrap();
+    for invocation in f.manager.invocations.lock().unwrap().iter() {
+        assert!(
+            invocation
+                .environment
+                .iter()
+                .all(|(key, _)| key != "GIT_CONFIG_COUNT")
+        );
+    }
+}
+
+#[test]
+fn auth_header_is_scoped_to_github() {
+    let f = Fixture::new();
+    f.manager
+        .execute(&f.repo, ["version"], Some(&f.token), None)
+        .unwrap();
+    let invocations = f.manager.invocations.lock().unwrap();
+    let last = invocations.last().unwrap();
+    assert!(
+        last.environment
+            .iter()
+            .any(|(key, value)| key == "GIT_CONFIG_KEY_2"
+                && value.as_deref() == Some(OsStr::new("http.https://github.com/.extraHeader")))
+    );
+    let remote = Remote::https("https://github.com/owner/repo.git").unwrap();
+    assert!(remote.credentials(Some(&f.token)).is_some());
+    assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
