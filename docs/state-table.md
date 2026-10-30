@@ -677,6 +677,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 - Rob eventually answers.
 - Mergify merges only through the queue, with the required checks, and doesn't rewrite queued PRs. This needs confirming when Mergify is wired.
 - GitHub closes a PR when its branch is deleted.
+- Code under test doesn't forge its own test reports. pytest's reporter runs in the tests' own interpreter, so the harness can't rule it out. Rob decided on 2026-10-30 that hostile code isn't a concern at this point. Tamper-proof reports wait for PB #2403.
 
 ## Staging
 
