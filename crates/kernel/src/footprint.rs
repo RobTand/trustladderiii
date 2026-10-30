@@ -1,85 +1,115 @@
 use alloc::vec::Vec;
 
-use crate::FileId;
+use crate::{FileId, World};
 
-/// A set of controller-interned file IDs, with no file-count bound.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Footprint {
-    low: u64,
-    high: Vec<FileId>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+enum Repr {
+    Inline(u64),
+    Interned(usize),
+}
+
+/// A world-scoped immutable file set. Create it with World::intern_footprint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Footprint(Repr);
+
+impl Default for Footprint {
+    fn default() -> Self {
+        Self(Repr::Inline(0))
+    }
 }
 
 impl Footprint {
-    pub fn new(files: impl IntoIterator<Item = FileId>) -> Self {
-        let mut set = Self::default();
-        for file in files {
-            if file.0 < 64 {
-                set.low |= 1 << file.0;
-            } else {
-                set.high.push(file);
+    pub fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+
+    pub(crate) fn inline(bits: u64) -> Self {
+        Self(Repr::Inline(bits))
+    }
+}
+
+impl World {
+    /// Intern a sorted, deduplicated set. Handles stay valid as the world grows.
+    pub fn intern_footprint(&mut self, files: impl IntoIterator<Item = FileId>) -> Footprint {
+        let mut files: Vec<_> = files.into_iter().collect();
+        files.sort_unstable();
+        files.dedup();
+        if files.last().is_none_or(|f| f.0 < 64) {
+            let mut bits = 0;
+            for f in files {
+                bits |= 1 << f.0;
             }
+            return Footprint::inline(bits);
         }
-        set.high.sort_unstable();
-        set.high.dedup();
-        set
-    }
-
-    /// File IDs in ascending order, with no duplicates.
-    pub fn iter(&self) -> impl Iterator<Item = FileId> + '_ {
-        (0..64)
-            .filter(|i| self.low & (1 << i) != 0)
-            .map(FileId)
-            .chain(self.high.iter().copied())
-    }
-
-    pub fn len(&self) -> usize {
-        self.low.count_ones() as usize + self.high.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.low == 0 && self.high.is_empty()
-    }
-
-    pub fn is_disjoint(&self, other: &Self) -> bool {
-        if self.low & other.low != 0 {
-            return false;
+        if let Some(index) = self.file_sets.iter().position(|set| *set == files) {
+            return Footprint(Repr::Interned(index));
         }
-        for file in &self.high {
-            if other.high.contains(file) {
+        let index = self.file_sets.len();
+        self.file_sets.push(files);
+        Footprint(Repr::Interned(index))
+    }
+
+    /// Files in ascending order. An interned handle belongs to this world's table.
+    pub fn files(&self, footprint: Footprint) -> Option<impl Iterator<Item = FileId> + '_> {
+        let (bits, files) = match footprint.0 {
+            Repr::Inline(bits) => (bits, &[][..]),
+            Repr::Interned(index) => (0, self.file_sets.get(index)?.as_slice()),
+        };
+        Some(
+            (0..64)
+                .filter(move |i| bits & (1 << i) != 0)
+                .map(FileId)
+                .chain(files.iter().copied()),
+        )
+    }
+
+    /// Persist these sets in order. Restore them with intern_footprint before loading nodes.
+    pub fn file_sets(&self) -> &[Vec<FileId>] {
+        &self.file_sets
+    }
+
+    pub(crate) fn has_footprint(&self, footprint: Footprint) -> bool {
+        match footprint.0 {
+            Repr::Inline(_) => true,
+            Repr::Interned(index) => index < self.file_sets.len(),
+        }
+    }
+
+    pub(crate) fn footprints_disjoint(&self, a: Footprint, b: Footprint) -> bool {
+        if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
+            return a & b == 0;
+        }
+        for file in self.files(a).expect("interned footprint") {
+            let contains = match b.0 {
+                Repr::Inline(bits) => file.0 < 64 && bits & (1 << file.0) != 0,
+                Repr::Interned(index) => self.file_sets[index].binary_search(&file).is_ok(),
+            };
+            if contains {
                 return false;
             }
         }
         true
     }
 
-    pub(crate) fn extend(&mut self, other: Self) {
-        self.low |= other.low;
-        self.high.reserve(other.high.len());
-        for file in other.high {
-            match self.high.binary_search(&file) {
-                Ok(_) => {}
-                Err(index) => self.high.insert(index, file),
-            }
+    pub(crate) fn union_footprints(&mut self, a: Footprint, b: Footprint) -> Footprint {
+        if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
+            return Footprint::inline(a | b);
         }
-    }
-}
-
-impl FromIterator<FileId> for Footprint {
-    fn from_iter<T: IntoIterator<Item = FileId>>(files: T) -> Self {
-        Self::new(files)
+        let files: Vec<_> = self
+            .files(a)
+            .expect("interned footprint")
+            .chain(self.files(b).expect("interned footprint"))
+            .collect();
+        self.intern_footprint(files)
     }
 }
 
 #[cfg(kani)]
 impl kani::Arbitrary for Footprint {
     fn any() -> Self {
-        // The proof worlds have four densely interned files per repo. Higher
-        // IDs use the same production type and are exercised by scenarios.
-        let low = kani::any();
-        kani::assume(low < 16);
-        Self {
-            low,
-            high: Vec::new(),
-        }
+        let bits = kani::any();
+        kani::assume(bits < 16);
+        Self::inline(bits)
     }
 }

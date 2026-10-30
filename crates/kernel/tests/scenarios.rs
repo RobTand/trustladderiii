@@ -85,10 +85,20 @@ impl Run {
         self.notices.iter().any(|n| matches!(n, Notice::Ask { .. }))
     }
 
+    fn plan(&mut self, files: impl IntoIterator<Item = FileId>) {
+        let footprint = self.w.intern_footprint(files);
+        self.reply(Reply::PlanLeaf { footprint, fits: true });
+    }
+
+    fn needs_files(&mut self, files: impl IntoIterator<Item = FileId>) {
+        let files = self.w.intern_footprint(files);
+        self.reply(Reply::MakerNeedsFiles { files, fits: true });
+    }
+
     fn to_making(&mut self) {
         self.reply(Reply::IngestDone { size: 1 });
         self.reply(Reply::AuditAgrees);
-        self.reply(Reply::PlanLeaf { footprint: Footprint::new([FileId(0)]), fits: true });
+        self.plan([FileId(0)]);
         assert_eq!(self.phase(), Phase::Making);
     }
 
@@ -140,7 +150,7 @@ fn a_stuck_fix_asks_rob_only_when_credit_runs_out() {
     assert!(matches!(run.phase(), Phase::Planning { must_split: false }));
     assert_eq!(run.credit(), 1);
 
-    run.reply(Reply::PlanLeaf { footprint: Footprint::new([FileId(0)]), fits: true });
+    run.plan([FileId(0)]);
     assert_eq!((run.node().attempt, run.credit()), (1, 1));
     run.fail_attempt(&mut head); // attempt 2 of the new plan
     assert_eq!((run.node().attempt, run.credit()), (2, 0));
@@ -163,7 +173,7 @@ fn every_slice_one_phase_is_reachable() {
     run.reply(Reply::AuditAgrees);
     assert_eq!(run.phase(), Phase::Unplanned); // paused, so planning waits
     run.command(Command::Resume);
-    run.reply(Reply::PlanLeaf { footprint: Footprint::new([FileId(0)]), fits: true });
+    run.plan([FileId(0)]);
     run.command(Command::Pause);
     run.reply(Reply::MakerDone { head: HeadId(1) });
     assert_eq!(run.phase(), Phase::Ready(Resume::Checking)); // paused before the checks started
@@ -339,7 +349,7 @@ fn the_one_replan_sends_one_note_and_keeps_working() {
     assert_eq!(run.credit(), 1);
     assert_eq!(run.notices.iter().filter(|n| **n == Notice::Note(NoteKind::Replanned)).count(), 1);
     assert!(!run.asked_rob());
-    run.reply(Reply::PlanLeaf { footprint: Footprint::new([FileId(1 << 40)]), fits: true });
+    run.plan([FileId(1 << 40)]);
     run.pass(&mut head);
     run.fact(Fact::PrMerged { head, checks_passed: true });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
@@ -350,8 +360,8 @@ fn the_one_replan_sends_one_note_and_keeps_working() {
 fn a_replan_waiting_for_credit_sends_its_note_when_funded() {
     let mut run = Run::new();
     run.to_making();
-    run.reply(Reply::MakerNeedsFiles { files: Footprint::new([FileId(90)]), fits: true });
-    run.reply(Reply::MakerNeedsFiles { files: Footprint::new([FileId(91)]), fits: true });
+    run.needs_files([FileId(90)]);
+    run.needs_files([FileId(91)]);
     let mut head = HeadId(0);
     for _ in 0..3 {
         run.fail_attempt(&mut head);
@@ -368,17 +378,15 @@ fn footprints_are_sets_with_more_than_eight_wide_file_ids() {
     let mut run = Run::new();
     run.reply(Reply::IngestDone { size: 1 });
     run.reply(Reply::AuditAgrees);
-    let files = Footprint::new((0..300).rev().map(|i| FileId((1 << 40) + i)));
+    let files = run.w.intern_footprint((0..300).rev().map(|i| FileId((1 << 40) + i)));
     run.reply(Reply::PlanLeaf { footprint: files.clone(), fits: true });
     assert_eq!(run.node().footprint, files);
-    run.reply(Reply::MakerNeedsFiles {
-        files: Footprint::new([FileId(1 << 40), FileId(1 << 40), FileId(u64::MAX)]), fits: true,
-    });
+    run.needs_files([FileId(1 << 40), FileId(1 << 40), FileId(u64::MAX)]);
     let larger = run.node().footprint;
-    assert_eq!(larger.len(), 301);
-    assert_eq!(larger.iter().last(), Some(FileId(u64::MAX)));
-    assert!(!larger.is_disjoint(&files));
-    assert!(larger.is_disjoint(&Footprint::new([FileId(7)])));
+    assert_eq!(run.w.files(larger).unwrap().count(), 301);
+    assert_eq!(run.w.files(larger).unwrap().last(), Some(FileId(u64::MAX)));
+    assert!(run.w.files(files).unwrap().all(|f| run.w.files(larger).unwrap().any(|g| g == f)));
+    assert!(!run.w.files(larger).unwrap().any(|f| f == FileId(7)));
     assert_eq!(run.credit(), 3);
 }
 
@@ -428,7 +436,7 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
     for repo in [RepoId(0), RepoId(0), RepoId(1)] {
         w = step(w, Event::NewRequest { repo }).0;
     }
-    let files = Footprint::new((0..300).map(|i| FileId((1 << 40) + i)));
+    let files = w.intern_footprint((0..300).map(|i| FileId((1 << 40) + i)));
     for node in [NodeId(0), NodeId(1), NodeId(2)] {
         reply(&mut w, node, Reply::IngestDone { size: 1 });
         reply(&mut w, node, Reply::AuditAgrees);

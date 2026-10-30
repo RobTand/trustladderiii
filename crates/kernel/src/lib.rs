@@ -281,7 +281,7 @@ impl Credit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Node {
     pub phase: Phase,
@@ -487,9 +487,10 @@ pub struct World {
     pub pool_capacity: u8,
     pub next_ticket: u64,
     pub next_question: u64,
+    file_sets: Vec<Vec<FileId>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
     IngestDone { size: u8 },
@@ -555,7 +556,7 @@ pub enum Command {
     Answer { question: u64, answer: Answer },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Event {
     NewRequest { repo: RepoId },
@@ -748,6 +749,7 @@ impl World {
             pool_capacity,
             next_ticket: 0,
             next_question: 0,
+            file_sets: Vec::new(),
         }
     }
 
@@ -816,7 +818,7 @@ impl World {
                         Phase::Auditing => Reply::AuditAgrees,
                         Phase::Planning { must_split: true } => Reply::PlanSplit,
                         Phase::Planning { must_split: false } => Reply::PlanLeaf {
-                            footprint: if !n.footprint.is_empty() { n.footprint.clone() } else { Footprint::new([FileId(0)]) },
+                            footprint: if !n.footprint.is_empty() { n.footprint } else { Footprint::inline(1) },
                             fits: true,
                         },
                         Phase::Making => Reply::MakerDone {
@@ -876,7 +878,7 @@ impl World {
                 if n.holds && n.repo == RepoId(r as u64) {
                     count += 1;
                     for other in &self.nodes[..i] {
-                        if other.holds && other.repo == n.repo && !other.footprint.is_disjoint(&n.footprint) {
+                        if other.holds && other.repo == n.repo && !self.footprints_disjoint(other.footprint, n.footprint) {
                             return Err(Broken::Gate);
                         }
                     }
@@ -909,6 +911,9 @@ impl World {
         let items = agenda(n.phase);
         if n.repo.index().is_none_or(|r| r >= self.gates.len()) {
             return Err(Broken::Config);
+        }
+        if !self.has_footprint(n.footprint) {
+            return Err(Broken::Footprint);
         }
         if n.phase.is_closed() {
             if n.pos != 0 {
@@ -1177,6 +1182,7 @@ impl World {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Broken {
     Config,
+    Footprint,
     Agenda,
     Effect,
     Holds,
@@ -1454,19 +1460,15 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 // ---------------------------------------------------------------- replies
 
-fn accepts(n: &Node, reply: &Reply) -> bool {
+fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
     match (n.phase, reply) {
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
-        (
-            Phase::Planning { .. },
-            Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet,
-        ) => true,
+        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
-        (
-            Phase::Making,
-            Reply::MakerNeedsFiles { .. } | Reply::MakerCantMeet | Reply::MakerOutOfRoom,
-        ) => true,
+        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) => w.has_footprint(*files),
+        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
         // No report means the tests never ran: an infrastructure failure.
         (Phase::Checking, Reply::ChecksDone { report, .. }) => *report,
         (Phase::Reviewing, Reply::Approved { head }) => {
@@ -1497,7 +1499,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    if !accepts(n, &reply) {
+    if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         return;
     }
@@ -1564,10 +1566,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             set_phase(m, Phase::Checking);
         }
         Reply::MakerNeedsFiles { files, fits } => {
-            let m = &mut w.nodes[i];
-            if fits && !files.is_empty() && m.credit.can_spend(1) {
+            if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                let m = &mut w.nodes[i];
                 m.credit.spend(1);
-                m.footprint.extend(files);
+                m.footprint = footprint;
                 m.holds = false;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
@@ -2247,7 +2250,7 @@ fn slot_free(w: &World, i: usize) -> bool {
     let mut holders = 0u32;
     for (j, n) in w.nodes.iter().enumerate() {
         if j != i && n.holds && n.repo == me.repo {
-            if !n.footprint.is_disjoint(&me.footprint) {
+            if !w.footprints_disjoint(n.footprint, me.footprint) {
                 return false;
             }
             holders += 1;

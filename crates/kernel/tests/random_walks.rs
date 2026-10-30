@@ -22,11 +22,11 @@ impl Rng {
     }
 }
 
-fn footprint(bits: u64) -> Footprint {
-    (0..4).filter(|i| bits & (1 << i) != 0).map(FileId).collect()
+fn footprint(w: &mut World, bits: u64) -> Footprint {
+    w.intern_footprint((0..4).filter(|i| bits & (1 << i) != 0).map(FileId))
 }
 
-fn random_event(w: &World, rng: &mut Rng) -> Event {
+fn random_event(w: &mut World, rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
         return Event::NewRequest { repo: RepoId(rng.below(3)) };
     }
@@ -53,11 +53,11 @@ fn random_event(w: &World, rng: &mut Rng) -> Event {
                 1 => Reply::IngestEarlyEnd(EarlyEnd::Duplicate),
                 2 => Reply::AuditAgrees,
                 3 => Reply::AuditDisagrees,
-                4 => Reply::PlanLeaf { footprint: footprint(rng.below(16)), fits: rng.below(5) != 0 },
+                4 => Reply::PlanLeaf { footprint: footprint(w, rng.below(16)), fits: rng.below(5) != 0 },
                 5 => Reply::PlanSplit,
                 6 => Reply::PlanCantMeet,
                 7 => Reply::MakerDone { head },
-                8 => Reply::MakerNeedsFiles { files: footprint(rng.below(16)), fits: rng.below(2) == 0 },
+                8 => Reply::MakerNeedsFiles { files: footprint(w, rng.below(16)), fits: rng.below(2) == 0 },
                 9 => Reply::MakerCantMeet,
                 10 => Reply::MakerOutOfRoom,
                 11 => Reply::ChecksDone {
@@ -134,7 +134,7 @@ fn random_walks_keep_every_rule() {
             let event = if rng.below(4) == 0 {
                 w.witness().unwrap_or(Event::NewRequest { repo: RepoId(0) })
             } else {
-                random_event(&w, &mut rng)
+                random_event(&mut w, &mut rng)
             };
             let witnessed = w.witness() == Some(event.clone());
             let before = w.measure();
@@ -185,7 +185,7 @@ fn the_witness_always_finishes_the_work() {
         let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
         let mut w = World::new(&[1, 2], 2);
         for _ in 0..rng.below(300) {
-            let e = random_event(&w, &mut rng);
+            let e = random_event(&mut w, &mut rng);
             w = step(w, e).0;
         }
         for _ in 0..2_000 {
