@@ -994,22 +994,29 @@ receipt before reporting a pass.
 ## Failed notice posts
 
 A permanent writer rejection or GitHub refusal finishes the delivery as Failed.
-The same transaction retains its payload in `notice_failures`, raises an incident
-on the operations issue, and marks an active kernel question's post as failed.
-Status and the comment classifier show that failure instead of asking for an
-answer to an unseen question. A failed incident post updates status and emits
-no further post.
+The same transaction retains its payload in `notice_failures` and raises an
+incident on the operations issue, naming the request, notice kind and error class.
+Status says when an open question was never posted. A failed incident post
+updates status and emits no further post.
 
 Rob can reply `clear incident <id>` on the operations issue after fixing the cause.
-Retry creates a new delivery and writer attempt while keeping `Delivery.marker_key`
-for GitHub reconciliation. Retrying a question reissues the original question
-before its continuation can run. A closed request stays closed while its summary,
-note or correction filing retries. The payload retains a dropped change's text
-through failure and recovery.
+A healthy adapter probe can also clear the first incident. `retry_notice` creates
+a fresh delivery and writer attempt with the original `Delivery.marker_key` for
+GitHub reconciliation. Clearing and scheduling the retry share one transaction.
+The kernel world, question ID, continuation and credit stay unchanged. The
+classifier continues to offer the original question's answers. If that question
+is no longer open when the incident clears, no retry is queued.
+
+A closed request stays closed while its summary, note or correction filing
+retries. A correction filing can start a new linked request. The dropped-change
+payload retains Rob's text after its replacement row has been deleted, and the
+retried note includes that text as an indented quote.
 
 Generate ticket 87's host actions with
 `python3 crates/controller/tools/notice_review_manifest.py hosts`.
-The GitHub target includes the notice scenarios, steering and notice retry crashes
-at every store and adapter save point. The host actions also run looks, simulation
-and crash safety. The `workspace` selection runs `tools/verify.sh` through PrismaBuild.
-A kernel change also requires the full campaign from `crates/kernel/run.py manifest`.
+The GitHub target includes notices, steering and retry crashes at every store
+and adapter save point, including question 403 and incident-post failures.
+The host actions also run looks. The `workspace` selection runs `tools/verify.sh`.
+Use `all` to generate both sets. These commands run through PrismaBuild.
+There is no kernel or state-table change beyond the approved #80 tree, so this
+controller change needs no Kani campaign.

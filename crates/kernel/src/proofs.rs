@@ -207,39 +207,6 @@ fn check_apply(event: Event) {
     kani::cover!(after != before, "the event changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
-    if let Event::NoticeFailed { question, .. } = event
-        && (before.nodes[0].phase == Phase::AwaitingRob || before.nodes[0].phase.is_stopping())
-        && let Some(q) = before.nodes[0].question
-        && q.id == question
-    {
-        let mut expected = before.clone();
-        expected.nodes[0].question.as_mut().unwrap().post_failed = true;
-        assert!(after == expected);
-        assert!(out.is_empty());
-    }
-    if let Event::Command {
-        id,
-        command: Command::Answer { question, answer },
-        ..
-    } = event
-        && id > before.nodes[0].last_cmd
-        && let Some(q) = before.nodes[0].question
-        && q.id == question
-        && q.post_failed
-        && matches!(
-            (before.nodes[0].phase, answer),
-            (Phase::AwaitingRob, Answer::Continue) | (Phase::Stopping(_), Answer::Retry)
-        )
-    {
-        let next = after.nodes[0].question.unwrap();
-        assert!(!next.post_failed && next.id != q.id);
-        assert!(next.kind == q.kind && next.cont == q.cont && next.cost == q.cost);
-        assert!(after.nodes[0].credit == before.nodes[0].credit);
-        assert!(after.nodes[0].phase == before.nodes[0].phase);
-        assert!(
-            matches!(out.get(0), Some(Out::Notice { notice: Notice::Ask { question: id }, .. }) if id == next.id)
-        );
-    }
     let exempt = match event {
         Event::Ack { node, .. } => node.index(),
         Event::Command {
@@ -439,13 +406,6 @@ proof!(
     check_apply(reply(Reply::RebaseNeedsChanges))
 );
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
-proof!(
-    apply_notice_failed,
-    check_apply(Event::NoticeFailed {
-        node: NodeId(0),
-        question: kani::any()
-    })
-);
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));

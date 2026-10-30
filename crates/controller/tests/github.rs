@@ -952,7 +952,6 @@ fn writer_checks() {
         cont: tl3_kernel::Cont::Unplanned,
         cost: 0,
         clarified: false,
-        post_failed: false,
     });
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();

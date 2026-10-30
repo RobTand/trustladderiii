@@ -1035,7 +1035,6 @@ impl Controller {
                 steering: None,
                 request_text: request.source,
             };
-            self.retry_question(snapshot, &previous, &mut delivery, commit)?;
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..

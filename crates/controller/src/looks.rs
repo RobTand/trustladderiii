@@ -744,6 +744,7 @@ impl Controller {
             incident.open = false;
             let mut commit =
                 Commit::new(format!("probe:{id}"), json!({"probe_passed":id}), &snapshot);
+            self.retry_notice(&snapshot, &incident, &mut commit)?;
             commit
                 .rows
                 .push(put("incidents", id.clone(), json!(incident)));

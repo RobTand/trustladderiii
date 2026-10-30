@@ -286,8 +286,6 @@ pub struct Question {
     /// Credit the continuation needs.
     pub cost: u8,
     pub clarified: bool,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
-    pub post_failed: bool,
 }
 
 /// The request's credit ledger. The balance is derived, so it can't drift from the entries.
@@ -517,9 +515,6 @@ impl Node {
         if self.waiting_incident {
             d += 8;
         }
-        if self.question.is_some_and(|q| q.post_failed) {
-            d += 1;
-        }
         if self.question.is_some() && self.phase.is_stopping() {
             d += 4;
         }
@@ -686,10 +681,6 @@ pub enum Event {
         node: NodeId,
         seq: u64,
         ack: Ack,
-    },
-    NoticeFailed {
-        node: NodeId,
-        question: u64,
     },
     Fact {
         node: NodeId,
@@ -987,20 +978,12 @@ impl World {
                 });
             }
             if let Some(q) = n.question {
-                let answer = if q.post_failed {
-                    if n.phase.is_stopping() {
-                        Answer::Retry
-                    } else {
-                        Answer::Continue
-                    }
-                } else {
-                    match q.kind {
-                        QKind::AuditDisagreement | QKind::EffectFailed => Answer::Continue,
-                        QKind::NeedsSplitting => Answer::Stop,
-                        QKind::CantMeet => Answer::TryAgain,
-                        QKind::OutOfCredit => Answer::AddCredit(1),
-                        QKind::CleanupFailed => Answer::MarkHandled,
-                    }
+                let answer = match q.kind {
+                    QKind::AuditDisagreement | QKind::EffectFailed => Answer::Continue,
+                    QKind::NeedsSplitting => Answer::Stop,
+                    QKind::CantMeet => Answer::TryAgain,
+                    QKind::OutOfCredit => Answer::AddCredit(1),
+                    QKind::CleanupFailed => Answer::MarkHandled,
                 };
                 let command = Command::Answer {
                     question: q.id,
@@ -1241,9 +1224,6 @@ impl World {
         // Questions to Rob.
         match n.question {
             Some(q) => {
-                if q.post_failed && n.phase != Phase::AwaitingRob && !n.phase.is_stopping() {
-                    return Err(Broken::Question);
-                }
                 let price = match q.kind {
                     QKind::CantMeet | QKind::OutOfCredit => 1,
                     _ => 0,
@@ -1499,7 +1479,6 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Reply::RebaseNeedsChanges => "apply_rebase_needs_changes",
             Reply::RunFailed => "apply_run_failed",
         },
-        Event::NoticeFailed { .. } => "apply_notice_failed",
         Event::Ack { ack, .. } => match ack {
             Ack::Confirmed => "apply_ack_confirmed",
             Ack::Retryable => "apply_ack_retryable",
@@ -1608,15 +1587,6 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
                 on_ack(w, i, seq, ack, out);
             }
         }
-        Event::NoticeFailed { node, question } => {
-            if let Some(i) = w.index(node)
-                && (w.nodes[i].phase == Phase::AwaitingRob || w.nodes[i].phase.is_stopping())
-                && let Some(q) = w.nodes[i].question.as_mut()
-                && q.id == question
-            {
-                q.post_failed = true;
-            }
-        }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
                 on_fact(w, i, fact, out);
@@ -1712,7 +1682,6 @@ fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut
         cont,
         cost,
         clarified: false,
-        post_failed: false,
     });
     set_phase(m, Phase::AwaitingRob);
     notice(out, i, Notice::Ask { question: id });
@@ -2123,7 +2092,6 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
             cont: Cont::Nowhere,
             cost: 0,
             clarified: false,
-            post_failed: false,
         });
         notice(out, i, Notice::Ask { question: id });
         return;
@@ -2302,30 +2270,6 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open
-    }
-    if q.post_failed {
-        if matches!(
-            (w.nodes[i].phase, answer),
-            (Phase::AwaitingRob, Answer::Continue) | (Phase::Stopping(_), Answer::Retry)
-        ) {
-            let next = w.next_question;
-            w.next_question += 1;
-            w.nodes[i].question = Some(Question {
-                id: next,
-                post_failed: false,
-                ..q
-            });
-            notice(out, i, Notice::Ask { question: next });
-            return;
-        }
-        if w.nodes[i].phase == Phase::AwaitingRob {
-            match answer {
-                Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
-                Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
-                _ => {}
-            }
-            return;
-        }
     }
     match w.nodes[i].phase {
         Phase::Stopping(_) => match answer {

@@ -1,12 +1,18 @@
 """Print ticket 87's PrismaBuild actions from a clean commit."""
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("red", "hosts", "workspace"))
+parser.add_argument("suite", choices=("red", "hosts", "workspace", "all"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
+if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
+    raise SystemExit("Commit changes before submitting.")
+if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=root,
+                  stdout=subprocess.DEVNULL).returncode == 0:
+    raise SystemExit("Use git worktree add --detach at the commit to verify.")
 common = {
     "cwd": str(root), "cpus": 2, "demand": {"mem_gb": 8},
     "env": {
@@ -20,15 +26,16 @@ common = {
     },
     "priority": -10,
 }
-if args.suite == "hosts":
+rows = []
+if args.suite in ("hosts", "all"):
     command = ["cargo", "test", "-p", "tl3-controller", "--locked"]
-    for target in ("github", "looks", "crash_safety", "simulation"):
+    for target in ("github", "looks"):
         command.extend(["--test", target])
     rows = [{**common, "tags": [host], "argv": command}
             for host in ("dl380g10", "sparky", "sparklina")]
-else:
-    command = (["bash", "crates/controller/tools/verify.sh"] if args.suite == "workspace"
+if args.suite in ("red", "workspace", "all"):
+    command = (["bash", "crates/controller/tools/verify.sh"] if args.suite in ("workspace", "all")
                else ["cargo", "test", "-p", "tl3-controller", "--test", "github", "--locked",
                      "--", "--notice-incidents"])
-    rows = [{**common, "anywhere": True, "argv": command}]
+    rows.append({**common, "anywhere": True, "argv": command})
 print(json.dumps(rows, indent=2))

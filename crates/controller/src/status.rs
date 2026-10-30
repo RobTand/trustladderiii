@@ -92,6 +92,12 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             .map(|index| NodeId(index as u64))
             .collect();
         let mut details = load_request_details(&mut tx, &ids)?;
+        let failed_notices = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "notice_failures")
+            .map(|r| serde_json::from_value::<crate::notices::FailedNotice>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         for (index, node) in world.nodes.iter().enumerate() {
             let id = NodeId(index as u64);
             let request = request(&snapshot, id)?;
@@ -106,8 +112,11 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             } else {
                 &title
             };
-            let waiting_on = if node.question.is_some_and(|q| q.post_failed) {
-                "the question post that failed"
+            let failed_question = failed_notices.iter().any(|f| matches!(f.delivery.output,
+                    crate::executor::Output::Notice { node: n, notice: tl3_kernel::Notice::Ask { question } }
+                    if n == id && node.question.is_some_and(|q| q.id == question)));
+            let waiting_on = if failed_question {
+                "the question post that failed; the question was never posted"
             } else {
                 match node.waiting_on() {
                     Wait::Incident => "incident resolution",
