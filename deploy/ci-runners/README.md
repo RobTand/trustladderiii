@@ -90,6 +90,14 @@ lingering enabled. Run as that owner, without sudo:
 deploy/ci-runners/install.sh 1
 ```
 
+The user manager must delegate `cpuset` along with `cpu`, `memory`, and `pids`.
+On dl380g10, `/etc/systemd/system/user@1000.service.d/50-tl3-ci-cpuset.conf`
+contains `[Service]` and `Delegate=cpu cpuset memory pids`. Root's
+`systemctl daemon-reload` applies that delegation without restarting the user
+manager or its jobs. Reload the user manager afterward. Confirm that
+`systemctl show user@1000.service -p DelegateControllers` includes `cpuset`
+before setting container CPU placement.
+
 The installer rebuilds through Podman's cache, installs the scripts and unit,
 records the immutable local image ID, reloads systemd, and enables one slot.
 Rerunning it converges on the same files without restarting an active job.
