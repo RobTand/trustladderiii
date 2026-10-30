@@ -77,11 +77,14 @@ fn labelled() -> LabelledIssue {
     }
 }
 fn client(uri: &str) -> GitHub {
+    client_with_pem(uri, PEM.clone())
+}
+fn client_with_pem(uri: &str, pem: String) -> GitHub {
     GitHub::new(
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: PEM.clone(),
+            pem,
             webhook_secret: "test-secret".into(),
         },
         3,
@@ -286,8 +289,11 @@ impl Server {
     }
 }
 fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
+    adapter_with_client(client(uri), root)
+}
+fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter {
     adapters::github::Adapter::new(
-        BTreeMap::from([(3, client(uri))]),
+        BTreeMap::from([(3, client)]),
         FakeWriter,
         0,
         Policy {

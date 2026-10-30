@@ -1333,6 +1333,7 @@ pub(super) fn merge_pending(settings: &tl3_config::Store, point: &str) {
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
     let mut controller = stopping_replacement(settings, root.path(), &api);
+    fs::write(root.path().join("fixture-key.pem"), PEM.as_str()).unwrap();
     let snapshot = controller.snapshot().unwrap();
     let head = controller.world().unwrap().nodes[0].head.unwrap();
     let sha = snapshot
@@ -1459,7 +1460,11 @@ pub(super) fn merge_pending_child(args: &[String]) {
         store_cut(&format!("{point:?}"), &key);
     });
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::GitHub, adapter(&args[4], root));
+    let client = client_with_pem(
+        &args[4],
+        fs::read_to_string(root.join("fixture-key.pem")).unwrap(),
+    );
+    registry.register(Upstream::GitHub, adapter_with_client(client, root));
     let mut controller = Controller::open(store, registry, bootstrap()).unwrap();
     for _ in 0..500 {
         let progressed = controller
