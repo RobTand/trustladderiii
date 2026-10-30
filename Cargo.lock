@@ -2800,9 +2800,14 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
  "jsonschema",
  "postgres",
  "postgresql_embedded",
+ "rand 0.8.8",
+ "rsa",
  "rustix",
  "serde",
  "serde_json",
@@ -2811,11 +2816,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tl3-config",
+ "tl3-github",
  "tl3-kernel",
  "tl3-prismabuild",
  "tl3-store",
  "tl3-worktrees",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]

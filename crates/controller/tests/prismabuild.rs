@@ -111,6 +111,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         round: 0,
         note: None,
         question_context: None,
+        question: None,
         job_generation: Some(4),
         checks: Some(CheckRun {
             repository: repo,
@@ -865,8 +866,11 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     .unwrap();
     let (sender, _) = mpsc::channel();
     assert!(
-        source.spawn(sender).join().is_err(),
-        "a failed rebuild must reach the supervisor"
+        thread::spawn(move || tl3_controller::ingress::Source::run(source, sender))
+            .join()
+            .unwrap()
+            .is_err(),
+        "a failed registered source must reach the ingress supervisor"
     );
 }
 

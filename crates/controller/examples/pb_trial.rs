@@ -79,6 +79,7 @@ fn fixture(root: &Path) -> Delivery {
         round: 0,
         note: None,
         question_context: None,
+        question: None,
         job_generation: Some(1),
         checks: Some(CheckRun {
             repository: repo,

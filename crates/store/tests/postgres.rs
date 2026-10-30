@@ -33,6 +33,7 @@ fn main() {
         ("read_only_reader", read_only_reader),
         ("reader_schema_versions", reader_schema_versions),
         ("arrival_within_transaction", arrival_within_transaction),
+        ("ingress_retirement", ingress_retirement),
     ];
     for (name, test) in &cases {
         let settings = database.create(name);
@@ -510,7 +511,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3]
+        [1, 2, 3, 4]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -702,6 +703,18 @@ fn read_only_reader(settings: &tl3_config::Store) {
     let change = seed(&mut writer);
     writer.commit(&change).unwrap();
     let before = writer.load().unwrap();
+    let schema = |client: &mut Client| {
+        client
+            .query(
+                "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.get::<_, i32>(0), row.get::<_, String>(1)))
+            .collect::<Vec<_>>()
+    };
+    let migrations_before = schema(&mut raw(settings));
     let mut reader = Reader::open(settings).unwrap();
     assert_eq!(reader.load().unwrap(), before);
     for sql in [
@@ -733,13 +746,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
         assert_eq!(error.code().unwrap().code(), "25006");
     }
     assert_eq!(writer.load().unwrap(), before);
-    assert_eq!(
-        raw(settings)
-            .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
-            .unwrap()
-            .get::<_, i64>(0),
-        3
-    );
+    assert_eq!(schema(&mut raw(settings)), migrations_before);
 }
 
 fn reader_schema_versions(settings: &tl3_config::Store) {
@@ -761,7 +768,9 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             &[],
         )
         .unwrap();
-    for version in [0, 4] {
+    let expected = migrations.last().unwrap().get::<_, i32>(0);
+    let future = expected + 1;
+    for version in [0, future] {
         client
             .execute("DELETE FROM tl3_schema_migrations", &[])
             .unwrap();
@@ -773,7 +782,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap();
         assert_eq!(
             Reader::open(settings).err().unwrap().to_string(),
-            format!("schema version {version}, expected 3")
+            format!("schema version {version}, expected {expected}")
         );
     }
     client
@@ -790,18 +799,18 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
     let mut reader = Reader::open(settings).unwrap();
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 4 WHERE version = 3",
-            &[],
+            "UPDATE tl3_schema_migrations SET version = $1 WHERE version = $2",
+            &[&future, &expected],
         )
         .unwrap();
     assert_eq!(
         reader.load().unwrap_err().to_string(),
-        "schema version 4, expected 3"
+        format!("schema version {future}, expected {expected}")
     );
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 4",
-            &[],
+            "UPDATE tl3_schema_migrations SET version = $1 WHERE version = $2",
+            &[&expected, &future],
         )
         .unwrap();
     client.batch_execute("DROP TABLE tl3_world").unwrap();
@@ -809,4 +818,91 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
         Reader::open(settings).err().unwrap().to_string(),
         "database not initialized"
     );
+}
+
+fn ingress_retirement(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store
+        .register_ingress_translators(&["first", "second"])
+        .unwrap();
+    let payload = b"{ \"zen\": \"raw bytes\" }";
+    for n in 0..103 {
+        assert!(
+            store
+                .receive_ingress("github-webhook", &format!("delivery-{n}"), "ping", payload)
+                .unwrap()
+        );
+    }
+    assert!(
+        !store
+            .receive_ingress("github-webhook", "delivery-0", "ping", payload)
+            .unwrap()
+    );
+    let batch = store.pending_ingress().unwrap();
+    assert_eq!(batch.len(), 100);
+    assert_eq!(batch[0].payload, payload);
+    let mut last = 0;
+    for stored in batch {
+        last = stored.sequence;
+        store.consume_ingress(last).unwrap();
+    }
+    store.advance_translator("first", last).unwrap();
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        100,
+        "second still needs these rows"
+    );
+    store.advance_translator("second", last).unwrap();
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        3,
+        "last cursor retired the first batch"
+    );
+    for stored in store.pending_ingress().unwrap() {
+        last = stored.sequence;
+        store.advance_translator("first", last).unwrap();
+        store.advance_translator("second", last).unwrap();
+        assert!(
+            !store.ingress_after(last - 1).unwrap().is_empty(),
+            "intake has not consumed it yet"
+        );
+        store.consume_ingress(last).unwrap();
+    }
+    assert!(store.ingress_after(0).unwrap().is_empty());
+    drop(store);
+    let mut store = Store::open(settings).unwrap();
+    store
+        .register_ingress_translators(&["first", "second", "later"])
+        .unwrap();
+    assert_eq!(
+        store.translator_cursor("later").unwrap(),
+        last,
+        "new consumers start at the durable intake position even after deletion"
+    );
+    store
+        .receive_ingress("github-webhook", "recent", "ping", payload)
+        .unwrap();
+    let recent = store.pending_ingress().unwrap()[0].sequence;
+    assert_eq!(store.ingress_after(last).unwrap().len(), 1);
+    store.consume_ingress(recent).unwrap();
+    store
+        .register_ingress_translators(&["first", "second", "later", "latest"])
+        .unwrap();
+    assert_eq!(
+        store.translator_cursor("latest").unwrap(),
+        recent,
+        "late consumers skip retained history too"
+    );
+    store.advance_translator("first", recent).unwrap();
+    store.advance_translator("second", recent).unwrap();
+    assert_eq!(store.ingress_after(0).unwrap().len(), 1);
+    store.advance_translator("later", recent).unwrap();
+    assert!(store.ingress_after(0).unwrap().is_empty());
+    store
+        .receive_ingress("github-webhook", "without-translators", "ping", payload)
+        .unwrap();
+    let sequence = store.pending_ingress().unwrap()[0].sequence;
+    store.register_ingress_translators(&[]).unwrap();
+    store.consume_ingress(sequence).unwrap();
+    assert!(store.ingress_after(0).unwrap().is_empty());
 }

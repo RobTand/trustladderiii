@@ -47,6 +47,13 @@ impl Drop for RunningSource {
     }
 }
 
+impl crate::ingress::Source for Source {
+    fn run(self, sender: Sender<Input>) -> Result<()> {
+        let (_stop, stopping) = oneshot::channel();
+        self.run_with_stop(sender, stopping, None)
+    }
+}
+
 impl Source {
     pub(super) fn new(
         client: PrismaBuild,
@@ -68,36 +75,45 @@ impl Source {
     pub fn spawn(self, sender: Sender<Input>) -> RunningSource {
         let (stop, stopping) = oneshot::channel();
         let (ready, initialized) = std::sync::mpsc::sync_channel(0);
-        let thread = thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
-            let mut source = self;
-            let rebuilt = source.rebuild();
-            let _ = ready.send(());
-            let result = rebuilt.and_then(|()| {
-                runtime.block_on(async {
-                    tokio::pin!(stopping);
-                    loop {
-                        tokio::select! {
-                            _ = &mut stopping => return Ok(()),
-                            result = source.poll(&sender, Duration::from_secs(300)) => {
-                                result?;
-                            }
-                        }
-                    }
-                })
-            });
-            if let Err(error) = &result {
-                eprintln!("PrismaBuild ingress stopped: {error}");
-            }
-            result
-        });
+        let thread = thread::spawn(move || self.run_with_stop(sender, stopping, Some(ready)));
         let _ = initialized.recv();
         RunningSource {
             stop: Some(stop),
             thread: Some(thread),
         }
+    }
+
+    fn run_with_stop(
+        self,
+        sender: Sender<Input>,
+        stopping: oneshot::Receiver<()>,
+        ready: Option<std::sync::mpsc::SyncSender<()>>,
+    ) -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let mut source = self;
+        let rebuilt = source.rebuild();
+        if let Some(ready) = ready {
+            let _ = ready.send(());
+        }
+        let result = rebuilt.and_then(|()| {
+            runtime.block_on(async {
+                tokio::pin!(stopping);
+                loop {
+                    tokio::select! {
+                        _ = &mut stopping => return Ok(()),
+                        result = source.poll(&sender, Duration::from_secs(300)) => {
+                            result?;
+                        }
+                    }
+                }
+            })
+        });
+        if let Err(error) = &result {
+            eprintln!("PrismaBuild ingress stopped: {error}");
+        }
+        result
     }
 
     fn rebuild(&mut self) -> Result<()> {

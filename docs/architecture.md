@@ -122,8 +122,14 @@ ingress. Source threads send `cli::Input` values on one
 `std::sync::mpsc::Sender<Input>` to the thread that owns the `Controller`.
 That thread applies intake or calls `observe`, then drains `drive_once`.
 `observe` stays the controller entry point for those observations. Adapters do
-not reach the controller. Ticket #10 adds `ingress.rs` and this loop. The tracer
-keeps the stdin loop until that ticket lands.
+not reach the controller. `ingress.rs` owns this loop and the stdin source. GitHub
+webhooks use a separate durable ingress table before notifying the same loop.
+One ingress connection inserts both webhooks and catch-up rows. Sequence cursors
+require this single writer so commit order follows allocation order. Ingress
+stores only the event name, delivery id and raw payload. Replay parses current
+event types and skips incompatible rows with a delivery-id log. Intake and every
+registered translator must pass a row before a cursor transaction deletes it.
+New translators start at the current intake position; catch-up supplies recent state.
 Reconciliation returns Found, Absent or Pending. Absent promises that a prior
 attempt has ended. Transport errors carry no such promise.
 
@@ -167,8 +173,9 @@ speculatively here.
 
 `adapters::simulation` builds the fake registry. `simulation_with_workers`
 replaces ingest and audit with supervised Python and returns its output source.
-`tl3d` requires `--simulate` until #10 registers sources in the shared ingress
-loop. A test can replace one entry while keeping the other fakes:
+`tl3d --simulate DIRECTORY --workers` registers this source in the shared
+ingress loop alongside stdin and optional GitHub webhooks. Without `--workers`,
+all worker roles stay simulated. A test can replace one entry while keeping the other fakes:
 
 ```rust
 let mut registry = adapters::simulation(fake_records)?;
@@ -186,8 +193,9 @@ older writes after an adapter restart. Reconciliation can read earlier epochs.
 They survive controller process death. They represent upstream records, not a
 replacement for Postgres. They cover every effect kind, including rebase and
 teardown. A fake queue receipt supplies a merge fact independently of its enqueue
-acknowledgement. Production GitHub ingress and the remaining live clients stay
-with their tickets.
+acknowledgement. GitHub ingress and notice delivery can use the real receiver
+and a local REST server in simulation. Remaining live clients stay with their
+tickets.
 
 ## Commands and verification
 
@@ -209,7 +217,9 @@ world capacity requires a snapshot migration.
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after
 each line, and exits at EOF. `--drain` performs recovery without reading stdin.
-Simulation is explicit. This binary makes no live upstream calls.
+That stdin-only command uses the fake registry. Optional GitHub ingress uses a
+loopback mock. `--workers` runs the configured worker command and model endpoint,
+and keeps the daemon running after stdin closes.
 
 Submit `bash crates/controller/tools/verify.sh` through PrismaBuild. It checks
 formatting and Clippy, tests every workspace crate, and builds the kernel without
@@ -313,9 +323,9 @@ which must stop the loop so systemd can restart it.
 Delivery uses a stable `pb:<action key>` inbox key. A crash between sending and
 the marker fsync can redeliver that key. If the controller crashes before it
 persists a delivered input, its watch can recover the saved completion from the
-marker. Sources never touch the controller. The common daemon
-loop remains ticket #10's work; this ticket supplies the one-line registration
-`adapter.source().spawn(sender)` for that loop. The controller translates the
+marker. Sources never touch the controller. The source implements `ingress::Source` for
+the shared daemon loop. Register it with `sources.register(adapter.source())`.
+The shared ingress supervisor propagates its errors. The controller translates the
 changed-file evidence from `git diff base...head --name-only -z --no-renames`
 through repository-scoped path interning and supplies
 `in_footprint` to the kernel. No kernel transition or store schema changed.

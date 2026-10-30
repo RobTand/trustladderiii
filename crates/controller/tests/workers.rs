@@ -120,6 +120,7 @@ fn delivery() -> Delivery {
         note: None,
         checks: None,
         job_generation: None,
+        question: None,
         question_context: None,
     }
 }
