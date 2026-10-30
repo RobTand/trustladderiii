@@ -856,3 +856,41 @@ fn interrupted_detached_rebase_aborts_and_preserves_the_base() {
     assert!(!marker.exists());
     f.assert_clean();
 }
+
+#[test]
+fn local_transport_has_no_credential_environment() {
+    let f = Fixture::new();
+    f.checkout();
+    f.manager.push(&f.name, &f.remote, None).unwrap();
+    // Even an accidentally supplied token is withheld from local transport.
+    f.manager
+        .remote_head(&f.name, &f.remote, Some(&f.token))
+        .unwrap();
+    for invocation in f.manager.invocations.lock().unwrap().iter() {
+        assert!(
+            invocation
+                .environment
+                .iter()
+                .all(|(key, _)| key != "GIT_CONFIG_COUNT")
+        );
+    }
+}
+
+#[test]
+fn auth_header_is_scoped_to_github() {
+    let f = Fixture::new();
+    f.manager
+        .execute(&f.repo, ["version"], Some(&f.token), None)
+        .unwrap();
+    let invocations = f.manager.invocations.lock().unwrap();
+    let last = invocations.last().unwrap();
+    assert!(
+        last.environment
+            .iter()
+            .any(|(key, value)| key == "GIT_CONFIG_KEY_2"
+                && value.as_deref() == Some(OsStr::new("http.https://github.com/.extraHeader")))
+    );
+    let remote = Remote::https("https://github.com/owner/repo.git").unwrap();
+    assert!(remote.credentials(Some(&f.token)).is_some());
+    assert!(f.remote.credentials(Some(&f.token)).is_none());
+}

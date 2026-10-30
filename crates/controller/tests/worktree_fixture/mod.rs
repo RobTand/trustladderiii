@@ -99,6 +99,7 @@ impl Fixture {
                 node: NodeId(0),
                 seq,
                 kind,
+                head: None,
             },
             generation: seq,
             head_sha: None,

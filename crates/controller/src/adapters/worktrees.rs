@@ -67,7 +67,7 @@ struct Served {
     identity: Repository,
     git: Worktrees,
     remote: Remote,
-    github: Option<tl3_github::GitHub>,
+    github: Option<(tl3_github::GitHub, tokio::runtime::Runtime)>,
     journal: PathBuf,
     mutex: Arc<Mutex<()>>,
 }
@@ -155,6 +155,15 @@ impl Real {
         {
             return Err(Error::Invalid("duplicate worktree repository"));
         }
+        let github = github
+            .map(|client| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .max_blocking_threads(2)
+                    .build()
+                    .map(|runtime| (client, runtime))
+            })
+            .transpose()?;
         let git = Worktrees::open(repository, &self.root).map_err(adapter)?;
         let journal = git.common_directory().join("tl3-controller");
         fs::create_dir_all(&journal)?;
@@ -171,6 +180,16 @@ impl Real {
             .and_then(Weak::upgrade)
             .unwrap_or_default();
         mutexes.insert(journal.clone(), Arc::downgrade(&mutex));
+        let binding = journal.join("repository.json");
+        if let Some(existing) = read::<(Repository, PathBuf)>(&binding)? {
+            if !same_repo(&existing.0, &identity) || existing.1 != self.root {
+                return Err(Error::Invalid(
+                    "worktree repository or root binding changed",
+                ));
+            }
+        } else {
+            write(&binding, &(&identity, &self.root))?;
+        }
         self.repositories.push(Served {
             identity,
             git,
@@ -214,10 +233,7 @@ impl Served {
     fn token(&self) -> Result<Option<InstallationToken>> {
         self.github
             .as_ref()
-            .map(|github| {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
+            .map(|(github, runtime)| {
                 let token = runtime
                     .block_on(github.installation_token())
                     .map_err(adapter)?;
@@ -245,10 +261,7 @@ impl Served {
     fn load(&self, delivery: &Delivery) -> Result<Option<Record>> {
         let record: Option<Record> = read(&self.record_path(delivery))?;
         if let Some(record) = &record {
-            // Epoch restamping is allowed only before the original intent exists.
-            let mut original = record.delivery.clone();
-            original.epoch = delivery.epoch;
-            if serde_json::to_value(original)? != serde_json::to_value(delivery)? {
+            if serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)? {
                 return Err(Error::Invalid(
                     "worktree effect key reused with different payload",
                 ));

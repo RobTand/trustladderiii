@@ -363,20 +363,20 @@ impl Worktrees {
         token: Option<&InstallationToken>,
     ) -> Result<CommitId, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        let output = self.network(
+        self.network(
             "fetch main",
             [
                 OsStr::new("fetch"),
                 OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
                 OsStr::new("--"),
                 &remote.0,
-                OsStr::new("refs/heads/main"),
+                OsStr::new("+refs/heads/main:refs/tl3/upstream-main"),
             ],
             remote.credentials(token),
         )?;
-        drop(output);
-        let main = self.resolve("FETCH_HEAD")?;
-        self.update_refs(&format!("update refs/heads/main {}\n", main.as_str()))?;
+        let main = self.resolve("refs/tl3/upstream-main")?;
         Ok(main)
     }
 
