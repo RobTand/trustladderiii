@@ -189,17 +189,6 @@ struct Checkout {
 }
 
 impl Worktrees {
-    /// Reads main locally. The controller refreshes main before starting an operation.
-    pub fn create_branch(&self, name: &BranchName) -> Result<Branch, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.create_branch_locked(name)
-    }
-
-    pub fn head(&self, name: &BranchName) -> Result<CommitId, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.head_locked(name)
-    }
-
     pub fn create_worktree(
         &self,
         name: &BranchName,
@@ -216,14 +205,37 @@ impl Worktrees {
     }
 
     /// Called before recording a Remove intent. No deletion has begun yet.
-    pub fn verify_removal_clean(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+    pub fn verify_removal_clean(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        unfinished_prepare_created_checkout: bool,
+    ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let path = self.destination(path)?;
         if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
             self.verify_checkout(&path, name)?;
+            if unfinished_prepare_created_checkout && self.unpopulated_at_base(name, &path)? {
+                return Ok(());
+            }
             self.require_clean(&path)?;
         }
         Ok(())
+    }
+
+    fn unpopulated_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        let Some(base) = self.resolve_optional(&name.base_ref())? else {
+            return Ok(false);
+        };
+        if self.resolve_optional(&name.reference())?.as_ref() != Some(&base) {
+            return Ok(false);
+        }
+        for entry in fs::read_dir(path).map_err(|_| Error::Io)? {
+            if entry.map_err(|_| Error::Io)?.file_name() != ".git" {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Requires a durable Remove intent proving cleanliness before deletion began.
@@ -232,12 +244,11 @@ impl Worktrees {
         self.remove_worktree_locked(name, path, true)
     }
 
-    /// Only an unfinished Prepare may repair files, before any maker has run.
+    /// Only the unfinished Prepare that created this checkout may repair its files.
     pub fn finish_prepare(
         &self,
         name: &BranchName,
         path: &Path,
-        base: &CommitId,
         writable: bool,
     ) -> Result<bool, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
@@ -269,9 +280,10 @@ impl Worktrees {
             return Ok(!dirty && !initializing);
         }
         if dirty {
-            if self.resolve_optional(&name.reference())?.as_ref() != Some(base)
-                || self.resolve_optional(&name.base_ref())?.as_ref() != Some(base)
-            {
+            let base = self
+                .resolve_optional(&name.base_ref())?
+                .ok_or(Error::Recovery)?;
+            if self.resolve_optional(&name.reference())?.as_ref() != Some(&base) {
                 return Err(Error::Recovery);
             }
             // Repository ownership guarantees the killed controller's Git children have ended.
@@ -424,7 +436,13 @@ impl Worktrees {
         if !path.exists() {
             return Ok(false);
         }
-        self.verify_checkout(path, name)?;
+        let path = self.destination(path)?;
+        if !self.checkouts()?.iter().any(|checkout| {
+            checkout.path == path && checkout.branch.as_deref() == Some(&name.reference())
+        }) {
+            return Err(Error::WorktreeOccupied);
+        }
+        self.verify_checkout(&path, name)?;
         Ok(true)
     }
 

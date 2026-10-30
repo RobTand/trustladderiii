@@ -86,7 +86,10 @@ fn main() {
         ("invalid_footprints", invalid_footprints),
         ("status_is_read_only", status_is_read_only),
         ("config_permissions_and_pool", config_permissions_and_pool),
-        ("fix_round_preserves_uncommitted_work", fix_round_preserves_uncommitted_work),
+        (
+            "fix_round_preserves_uncommitted_work",
+            fix_round_preserves_uncommitted_work,
+        ),
         ("mixed_registry", mixed_registry),
         ("mixed_registry_conflict", mixed_registry_conflict),
     ];
@@ -2037,13 +2040,22 @@ impl Executor for FixRoundWorker {
         use worktree_fixture::{Fixture, commit, git};
         let mut completion = self.fake.execute(delivery)?;
         match delivery.output {
-            Out::Effect { kind: EffectKind::StartRun(Role::Make), .. } => {
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Make),
+                ..
+            } => {
                 let checkout = Fixture::open(&self.root).adapter().checkout(delivery);
                 let make = self.makes.fetch_add(1, Ordering::Relaxed);
                 if make == 1 {
                     assert_eq!(delivery.round, 1);
-                    assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "maker wip\n");
-                    assert_eq!(fs::read_to_string(checkout.join("notes.txt")).unwrap(), "maker notes\n");
+                    assert_eq!(
+                        fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+                        "maker wip\n"
+                    );
+                    assert_eq!(
+                        fs::read_to_string(checkout.join("notes.txt")).unwrap(),
+                        "maker notes\n"
+                    );
                     assert!(!git(&checkout, &["status", "--porcelain"]).is_empty());
                 }
                 let sha = commit(&checkout, "leaf.txt", &format!("maker round {make}\n"));
@@ -2051,10 +2063,21 @@ impl Executor for FixRoundWorker {
                     fs::write(checkout.join("shared.txt"), "maker wip\n").unwrap();
                     fs::write(checkout.join("notes.txt"), "maker notes\n").unwrap();
                 }
-                completion.observations = vec![Observation::Made { node: delivery.node(), generation: delivery.generation, sha }];
+                completion.observations = vec![Observation::Made {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    sha,
+                }];
             }
-            Out::Effect { kind: EffectKind::StartRun(Role::Review), .. } if delivery.round == 0 => {
-                completion.observations = vec![Observation::Kernel(Event::Reply { node: delivery.node(), generation: delivery.generation, reply: Reply::ChangesRequested })];
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Review),
+                ..
+            } if delivery.round == 0 => {
+                completion.observations = vec![Observation::Kernel(Event::Reply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    reply: Reply::ChangesRequested,
+                })];
             }
             _ => {}
         }
@@ -2073,18 +2096,39 @@ impl Executor for FixRoundWorktrees {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         use std::sync::atomic::Ordering;
         use worktree_fixture::git;
-        if matches!(delivery.output, Out::Effect { kind: EffectKind::PrepareWorktree, .. }) {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            }
+        ) {
             let count = self.prepares.fetch_add(1, Ordering::Relaxed);
             if count == 1 {
                 assert_eq!(delivery.round, 1);
                 let checkout = self.real.checkout(delivery);
                 let head = git(&checkout, &["rev-parse", "HEAD"]);
-                let status = git(&checkout, &["status", "--porcelain", "--untracked-files=all"]);
+                let status = git(
+                    &checkout,
+                    &["status", "--porcelain", "--untracked-files=all"],
+                );
                 let completion = self.real.execute(delivery)?;
                 assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), head);
-                assert_eq!(git(&checkout, &["status", "--porcelain", "--untracked-files=all"]), status);
-                assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "maker wip\n");
-                assert_eq!(fs::read_to_string(checkout.join("notes.txt")).unwrap(), "maker notes\n");
+                assert_eq!(
+                    git(
+                        &checkout,
+                        &["status", "--porcelain", "--untracked-files=all"]
+                    ),
+                    status
+                );
+                assert_eq!(
+                    fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+                    "maker wip\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(checkout.join("notes.txt")).unwrap(),
+                    "maker notes\n"
+                );
                 return Ok(completion);
             }
         }
@@ -2096,19 +2140,39 @@ impl Executor for FixRoundWorktrees {
 }
 
 fn fix_round_preserves_uncommitted_work(settings: &tl3_config::Store) {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let root = tempfile::tempdir().unwrap();
     let fixture = worktree_fixture::Fixture::create(root.path());
     let records = root.path().join("upstreams");
     let makes = Arc::new(AtomicUsize::new(0));
     let prepares = Arc::new(AtomicUsize::new(0));
     let mut registry = adapters::simulation(&records).unwrap();
-    registry.register(Upstream::Worktrees, FixRoundWorktrees { real: fixture.adapter(), prepares: prepares.clone() });
-    registry.register(Upstream::Workers, FixRoundWorker { fake: adapters::workers::Fake::new(&records), root: root.path().into(), makes: makes.clone() });
-    let mut controller = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    registry.register(
+        Upstream::Worktrees,
+        FixRoundWorktrees {
+            real: fixture.adapter(),
+            prepares: prepares.clone(),
+        },
+    );
+    registry.register(
+        Upstream::Workers,
+        FixRoundWorker {
+            fake: adapters::workers::Fake::new(&records),
+            root: root.path().into(),
+            makes: makes.clone(),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
     assert_eq!(prepares.load(Ordering::Relaxed), 2);
     assert_eq!(makes.load(Ordering::Relaxed), 2);
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
 }

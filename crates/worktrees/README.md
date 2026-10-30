@@ -4,13 +4,16 @@ Rust edition 2024 workspace adapter for the controller's Git operations on Unix.
 The crate uses the Git CLI. It does not depend on the controller or GitHub client.
 
 ```rust,no_run
-use tl3_worktrees::{BranchName, Worktrees};
+use tl3_worktrees::{BranchName, Remote, Worktrees};
 
 let repo = Worktrees::open("/srv/tl3/repos/sandbox", "/srv/tl3/worktrees")?;
 let name = BranchName::new("tl3/issue-29")?;
-let branch = repo.create_branch(&name)?;
+let remote = Remote::local("/srv/tl3/remotes/sandbox.git")?;
+let base = repo.fetch_main(&remote, None)?;
+repo.create_branch_at(&name, &base)?;
 let path = repo.create_worktree(&name, "/srv/tl3/worktrees/issue-29")?;
-let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
+let (head, base) = repo.branch_state(&name)?.expect("prepared branch");
+let files = repo.changed_files(&base, &head)?;
 # Ok::<(), tl3_worktrees::Error>(())
 ```
 
@@ -18,22 +21,21 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 
 | Method | Result |
 |---|---|
-| `create_branch` | Branch name and durable current base commit |
+| `fetch_main`, `create_branch_at` | Fetch main and create the branch at an explicit base commit |
 | `create_worktree`, `remove_worktree` | Reconcile a checkout at an explicit path |
-| `head`, `remote_head` | Local or remote commit, with absent remote branches returning `None` |
+| `remote_head` | Remote commit, with absent remote branches returning `None` |
 | `publish` | Publish an immutable head with a lease against the recorded remote head |
 | `delete_remote_branch_at`, `delete_local_branch` | Lease remote deletion; remove the local branch and base |
 | `rebase_onto` | Rebase onto an exact target; return base and head or conflicts |
 | `branch_state` | Current `(head, base)` from the branch and recorded base refs |
-| `finish_prepare` | Verify an unfinished checkout; repair only at its recorded base |
-| `verify_removal_clean`, `resume_removal` | Record a clean preflight, then resume deletion-only retries |
+| `finish_prepare` | Repair the checkout created by the calling intent, only at its durable base |
+| `verify_removal_clean`, `resume_removal` | Verify clean or owned unpopulated checkouts, then resume deletion-only retries |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-`create_branch` reads local main. For recorded effects, `fetch_main` fetches into
-`refs/tl3/upstream-main`. `create_branch_at` and `rebase_onto` use the exact
+`fetch_main` fetches into `refs/tl3/upstream-main`. `create_branch_at` and `rebase_onto` use the exact
 recorded commit without changing a checked-out main.
 The controller chooses effect identities. This client does not persist controller
 state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
@@ -62,16 +64,23 @@ whose directory disappeared is removed from Git's registry and recreated. A stal
 directory disappeared. Recovery creates a temporary registration under
 `<common-git-dir>/tl3-worktree-staging/<branch>`, initializes its index, and replaces
 the orphan's gitlink before repairing the registration. It preserves working files.
-An unfinished Prepare separately verifies the checkout against its branch head.
-If population was interrupted, `finish_prepare` resets it only while the head
-and recorded base still match. It also clears an interrupted index lock after
-the owning process and Git children have ended.
+Each Prepare intent records whether its branch and checkout already existed.
+Only the intent that created the checkout may call `finish_prepare` to repair
+interrupted population. Repair requires the branch head to equal its durable
+`refs/tl3/bases/<branch>` ref, even if main has moved. It also clears an interrupted
+index lock after the owning process and Git children have ended.
+A Prepare for an existing checkout only verifies its registration and branch.
+It confirms dirty trees and maker commits without changing files. The next maker
+run sees leftover edits and untracked files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
-The controller records a clean preflight in its Remove intent. Only that record
-authorizes `resume_removal`, which also accepts deletion-only interrupted removals.
+The controller records a clean preflight in its Remove intent. It may also accept
+an unpopulated checkout when an unfinished Prepare record proves this adapter
+created it, the directory contains only `.git`, and its head equals the durable
+base. Other dirty checkouts remain errors. Only the durable preflight authorizes
+`resume_removal`, which also accepts deletion-only interrupted removals.
 If deletion removed `.git` first, recovery restores that link from a registration
 whose path and branch both match before checking the remaining files.
 It recovers a missing registration before removing a checkout. Repeating removal or branch

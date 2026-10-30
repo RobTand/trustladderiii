@@ -471,7 +471,10 @@ fn repeated_prepare_preserves_maker_work() {
         fs::write(checkout.join("shared.txt"), "maker wip\n").unwrap();
         fs::write(checkout.join("scratch.txt"), "untracked maker notes\n").unwrap();
         let head = f.head(&prepare);
-        let status = git(&checkout, &["status", "--porcelain", "--untracked-files=all"]);
+        let status = git(
+            &checkout,
+            &["status", "--porcelain", "--untracked-files=all"],
+        );
         let next = f.delivery(EffectKind::PrepareWorktree, 3);
         // An interrupted fresh intent must retain the same ownership facts on restart.
         kill(&f, &next, "before");
@@ -479,9 +482,21 @@ fn repeated_prepare_preserves_maker_work() {
         assert!(matches!(completion.ack, Ack::Confirmed));
         same(&completion, &f.adapter().execute(&next).unwrap());
         assert_eq!(f.head(&next), head);
-        assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "maker wip\n");
-        assert_eq!(fs::read_to_string(checkout.join("scratch.txt")).unwrap(), "untracked maker notes\n");
-        assert_eq!(git(&checkout, &["status", "--porcelain", "--untracked-files=all"]), status);
+        assert_eq!(
+            fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+            "maker wip\n"
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("scratch.txt")).unwrap(),
+            "untracked maker notes\n"
+        );
+        assert_eq!(
+            git(
+                &checkout,
+                &["status", "--porcelain", "--untracked-files=all"]
+            ),
+            status
+        );
         println!("repeated Prepare preserves maker work, committed={committed}");
     }
 }
@@ -492,8 +507,24 @@ fn half_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
     let checkout = f.adapter().checkout(prepare);
     fs::create_dir_all(checkout.parent().unwrap()).unwrap();
     git(&f.repo, &["branch", branch.as_str(), &base]);
-    git(&f.repo, &["update-ref", &format!("refs/tl3/bases/{}", branch.as_str()), &base]);
-    git(&f.repo, &["worktree", "add", "--no-checkout", checkout.to_str().unwrap(), branch.as_str()]);
+    git(
+        &f.repo,
+        &[
+            "update-ref",
+            &format!("refs/tl3/bases/{}", branch.as_str()),
+            &base,
+        ],
+    );
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "--no-checkout",
+            checkout.to_str().unwrap(),
+            branch.as_str(),
+        ],
+    );
     checkout
 }
 
@@ -525,15 +556,30 @@ fn prepare_repairs_at_durable_base_after_main_moves() {
     let old = f.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = half_add(&f, &old);
     // The branch and its durable base survive, but the checkout needs creating.
-    git(&f.repo, &["worktree", "remove", "--force", checkout.to_str().unwrap()]);
+    git(
+        &f.repo,
+        &["worktree", "remove", "--force", checkout.to_str().unwrap()],
+    );
     let base = f.head(&old);
     f.advance_main(false);
     let next = f.delivery(EffectKind::PrepareWorktree, 2);
     kill(&f, &next, "before");
-    git(&f.repo, &["worktree", "add", "--no-checkout", checkout.to_str().unwrap(), Real::branch(&next).unwrap().as_str()]);
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "--no-checkout",
+            checkout.to_str().unwrap(),
+            Real::branch(&next).unwrap().as_str(),
+        ],
+    );
     found(f.adapter().reconcile(&next).unwrap());
     assert_eq!(f.head(&next), base);
-    assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "base\n");
+    assert_eq!(
+        fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+        "base\n"
+    );
     assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
 }
 
@@ -547,8 +593,12 @@ fn removal_of_unpopulated_prepare() {
         }
         let checkout = half_add(&f, &prepare);
         match dirt {
-            "modified" => { fs::write(checkout.join("shared.txt"), "keep edit\n").unwrap(); }
-            "untracked" => { fs::write(checkout.join("notes.txt"), "keep notes\n").unwrap(); }
+            "modified" => {
+                fs::write(checkout.join("shared.txt"), "keep edit\n").unwrap();
+            }
+            "untracked" => {
+                fs::write(checkout.join("notes.txt"), "keep notes\n").unwrap();
+            }
             "committed" => {
                 git(&checkout, &["reset", "--hard", "HEAD"]);
                 commit(&checkout, "maker.txt", "maker commit\n");
@@ -566,12 +616,24 @@ fn removal_of_unpopulated_prepare() {
             assert!(matches!(completion.ack, Ack::Confirmed));
             assert_removed(&f, &remove);
             same(&completion, &found(current.reconcile(&remove).unwrap()));
-            assert!(matches!(current.reconcile(&prepare).unwrap(), Reconciliation::Absent));
+            assert!(matches!(
+                current.reconcile(&prepare).unwrap(),
+                Reconciliation::Absent
+            ));
         } else {
-            let status = git(&checkout, &["status", "--porcelain", "--untracked-files=all"]);
+            let status = git(
+                &checkout,
+                &["status", "--porcelain", "--untracked-files=all"],
+            );
             assert!(current.execute(&remove).is_err(), "must preserve {dirt}");
             assert!(checkout.exists());
-            assert_eq!(git(&checkout, &["status", "--porcelain", "--untracked-files=all"]), status);
+            assert_eq!(
+                git(
+                    &checkout,
+                    &["status", "--porcelain", "--untracked-files=all"]
+                ),
+                status
+            );
         }
     }
 }

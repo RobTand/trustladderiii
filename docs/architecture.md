@@ -240,10 +240,18 @@ terminal Git evidence returns `Absent`: its Git steps converge and the prior
 controller and all its Git children have ended. Transport or filesystem errors
 still prove no absence.
 
-An unfinished Prepare verifies the checkout against its branch head. It repairs
-missing tracked files only while the head and recorded base still match, before
-a maker can run. Remove records a clean preflight before deletion begins. A retry
-may finish a checkout with only deletions; edits and new files remain errors.
+Prepare records whether the branch and checkout existed when its intent was
+journalled. Only the intent that created the checkout may repair its interrupted
+population. Repair requires the head to equal the durable base ref, independent
+of a newer fetched main. A Prepare for an existing checkout only verifies its
+registration and request branch, then confirms without changing files. Maker
+commits, edits and untracked files survive every re-entry to Making. The next
+maker run sees leftover files through `git status`.
+
+Remove records a clean preflight before deletion begins. An unfinished Prepare
+may also prove ownership of an unpopulated checkout whose only entry is `.git`
+and whose head equals the durable base. A retry may finish a checkout with only
+deletions. Other edits and new files remain errors.
 
 A clean rebase updates branch and recorded base atomically in the client. Recovery
 restores an interrupted checkout before returning its new SHA through controller

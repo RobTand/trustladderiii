@@ -90,3 +90,17 @@ fn github_installation_and_synchronous_token_bridge() {
     );
     runtime.block_on(server.verify());
 }
+
+#[test]
+fn legacy_prepare_records_do_not_claim_checkout_ownership() {
+    let intent: Intent =
+        serde_json::from_value(json!({"Prepare": {"base": "a".repeat(40)}})).unwrap();
+    assert!(matches!(
+        intent,
+        Intent::Prepare {
+            branch_existed: true,
+            checkout_existed: true,
+            ..
+        }
+    ));
+}

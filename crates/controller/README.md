@@ -133,10 +133,15 @@ operation intents and terminal evidence. Changing that root requires an explicit
 migration of existing checkouts and records. Records use atomic replacement and
 sync both the file and its directory. No store migration is required.
 
-Prepare pins the fetched main commit before creating branch, base and checkout.
-Before confirming an unfinished Prepare, it verifies the checkout matches its head.
-A partial checkout is repopulated only if its head is still the recorded base.
-No maker has run at that point. Completed Prepare records never repair maker files.
+Prepare records whether its branch and checkout already existed, and pins the
+fetched main commit before creating missing resources. Only the intent that
+created the checkout may repair interrupted population. Repair requires the head
+to equal the durable base ref, even if the intent fetched a newer main.
+A Prepare for an existing checkout only verifies its registration and request
+branch, then confirms. It preserves maker commits, edits and untracked files
+across fix rounds, new attempts and other re-entries to Making. The next maker
+run sees leftover files through `git status`.
+Older intents without ownership fields treat both resources as pre-existing.
 Push pins the delivery's exact head and leases against the last head this adapter
 published. Rebase pins its target before execution, so recovery cannot silently
 use a newer main. A clean rebase reports `Observation::Rebased`; the controller
@@ -144,8 +149,11 @@ interns its SHA before the kernel receives `RebaseClean`. A conflict reports
 `RebaseNeedsChanges` after aborting and verifying a clean checkout at the old
 head. The kernel alone selects the next phase.
 
-Teardown records that the checkout is clean before deletion begins. A retry may
-finish removal if its only changes are deletions. Edits and new files are refused.
+Teardown records that the checkout is clean before deletion begins. It also accepts
+an unpopulated checkout if an unfinished Prepare proves this adapter created it,
+its directory contains only `.git`, and its head equals the durable base ref.
+A retry may finish removal if its only changes are deletions. Edits and new files
+are refused.
 It leases deletion of the recorded remote head, then removes the local branch
 and base. A dirty checkout or changed remote
 ref returns an adapter error. Unknown outcomes keep their original effect key.
