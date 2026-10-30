@@ -142,6 +142,7 @@ impl Source {
     }
 
     fn register_waits(&mut self, root: std::path::PathBuf) -> Result<()> {
+        let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
         for path in wait_paths(&root)? {
             let wait: WaitSubscription = serde_json::from_slice(&std::fs::read(path)?)?;
             let _: ActionKey = wait.wait.key.parse().map_err(super::adapter_error)?;
