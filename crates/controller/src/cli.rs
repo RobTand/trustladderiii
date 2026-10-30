@@ -1,5 +1,6 @@
 use crate::{
-    Bootstrap, Controller, Error, LabelledIssue, Result, adapters, executor::Observation, status, status_web,
+    Bootstrap, Controller, Error, LabelledIssue, Result, adapters, executor::Observation, status,
+    status_web,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, net::SocketAddr, path::PathBuf};
@@ -7,6 +8,7 @@ use tl3_store::{Reader, Store};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
+    Wake,
     LabelledIssue(LabelledIssue),
     Observation {
         key: String,
@@ -31,7 +33,11 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         match args.next().as_deref() {
             Some("status") => false,
             Some("status-serve") => true,
-            _ => return Err(Error::Invalid("usage: tl3 {status|status-serve} --config FILE")),
+            _ => {
+                return Err(Error::Invalid(
+                    "usage: tl3 {status|status-serve} --config FILE",
+                ));
+            }
         }
     };
     let mut path = None;
@@ -69,7 +75,11 @@ fn arguments(daemon: bool) -> Result<Arguments> {
 }
 
 pub fn status() -> Result<()> {
-    let Arguments { config, serve_status, .. } = arguments(false)?;
+    let Arguments {
+        config,
+        serve_status,
+        ..
+    } = arguments(false)?;
     if serve_status {
         status_web::serve(&config)
     } else {
@@ -93,8 +103,15 @@ pub fn daemon() -> Result<()> {
     let bootstrap = Bootstrap::from_config(&config)?;
     let mut adapters = adapters::simulation(&simulation)?;
     let mut sources = crate::ingress::Sources::default();
-    let listen = github_listen.or(config.github.webhook_listen);
+    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
+        github_api
+            .as_ref()
+            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
+    });
     if let Some(listen) = listen {
+        if !listen.ip().is_loopback() {
+            return Err(Error::Invalid("webhook listen address must be loopback"));
+        }
         let api = github_api.ok_or(Error::Invalid(
             "simulation webhooks require --github-api with a loopback mock server",
         ))?;

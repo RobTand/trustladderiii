@@ -67,6 +67,7 @@ fn labelled() -> LabelledIssue {
         repo: "sandbox".into(),
         installation: 3,
         number: 12,
+        title: "Add a blue button".into(),
         actor: 42,
         label: "tl3".into(),
     }
@@ -264,7 +265,7 @@ fn post(address: SocketAddr, id: &str, comment: bool, body: Value, signature_val
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    write!(stream, "POST /webhooks/github HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len(), if comment { "issue_comment" } else { "issues" }).unwrap();
+    write!(stream, "POST /github/events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len(), if comment { "issue_comment" } else { "issues" }).unwrap();
     stream.write_all(&body).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
@@ -385,7 +386,6 @@ fn gap_catch_up(settings: &tl3_config::Store) {
     let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     api.state.lock().unwrap().gap = true;
     control.gap();
-    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     control.stop();
     handle.join().unwrap().unwrap();

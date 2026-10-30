@@ -294,6 +294,14 @@ impl Config {
         )?;
         absolute("models.key_file", &self.models.key_file)?;
         absolute("prismabuild.tools_dir", &self.prismabuild.tools_dir)?;
+        if let Some(address) = self.github.webhook_listen
+            && (!address.ip().is_loopback() || address.port() == 0)
+        {
+            return Err(invalid(
+                "github.webhook_listen",
+                "use a loopback address with a nonzero port; cloudflared forwards locally",
+            ));
+        }
         github_name("github.rob.login", &self.github.rob.login, false)?;
         if self.github.rob.id == 0 {
             return Err(invalid(

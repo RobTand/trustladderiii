@@ -44,6 +44,7 @@ pub enum Error {
 /// One synchronous connection. The controller owns its writer; readers can open others.
 pub struct Store {
     client: Client,
+    settings: tl3_config::Store,
 }
 
 const MIGRATIONS: &[(i32, &str)] = &[
@@ -53,6 +54,21 @@ const MIGRATIONS: &[(i32, &str)] = &[
 ];
 
 impl Store {
+    /// Replace a failed ingress session. The controller's ownership session is never reconnected.
+    pub fn reconnect(&mut self) -> Result<()> {
+        *self = Self::open(&self.settings)?;
+        Ok(())
+    }
+
+    pub fn ingress_after(&mut self, sequence: i64) -> Result<Vec<(i64, serde_json::Value)>> {
+        Ok(self.client.query("SELECT sequence, payload FROM tl3_ingress WHERE sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
+    pub fn set_ingress_cursor(&mut self, source: &str, cursor: &serde_json::Value) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
+        Ok(())
+    }
+
     /// Sources have separate connections and never change the controller revision.
     /// The unique delivery key and its complete payload become durable together.
     pub fn receive_ingress(
@@ -117,6 +133,7 @@ impl Store {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
+            settings: settings.clone(),
         };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
             return Err(Error::Invalid("store requires Postgres fsync = on"));

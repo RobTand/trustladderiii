@@ -402,6 +402,8 @@ fn decorated_paths_and_line_suffixes_are_rejected() {
         "“src/main.rs”",
         "‘src/main.rs’",
         "src/main.rs:12",
+        "src/main.rs:12:5",
+        "**src/main.rs:12:5**",
         "**src/main.rs:12**",
         "workers/src/",
         "workers/src",

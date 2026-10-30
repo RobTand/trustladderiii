@@ -25,7 +25,7 @@ pub struct Draft {
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
     pub internal_terms: Vec<String>,
-    /// Repo-relative files and directories in the served repo and TL3's repo.
+    /// Repo-relative files and directories from the request delivery.
     pub known_paths: BTreeSet<String>,
 }
 
@@ -195,10 +195,17 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
         let token = token
             .trim_start_matches(punctuation)
             .trim_end_matches(|c| c == '.' || punctuation.contains(&c));
-        let token = token
-            .rsplit_once(':')
-            .filter(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
-            .map_or(token, |(path, _)| path);
+        let mut token = token;
+        for _ in 0..2 {
+            if let Some((path, suffix)) = token.rsplit_once(':')
+                && !suffix.is_empty()
+                && suffix.bytes().all(|b| b.is_ascii_digit())
+            {
+                token = path;
+            } else {
+                break;
+            }
+        }
         is_path(token, &policy.known_paths)
     }) {
         errors.push(Violation::FilePath);

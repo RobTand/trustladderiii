@@ -72,6 +72,9 @@ fn recorded_payloads_parse_into_the_expected_variants() {
             verify_and_parse(b"throwaway", &signature(body), "delivery-1", name, body).unwrap();
         let event = delivery.event.unwrap();
         let actual = match event {
+            Event::PullRequestUpdated { .. } | Event::MergeGroup { .. } => {
+                panic!("unexpected variant")
+            }
             Event::IssueLabeled {
                 actor,
                 label,

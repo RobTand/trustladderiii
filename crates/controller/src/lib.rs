@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod cli;
 pub mod executor;
+mod http;
 pub mod ingress;
 mod snapshot;
 pub mod status;
@@ -110,6 +111,7 @@ pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
+    github_translators: Vec<ingress::Translation>,
 }
 impl Controller {
     pub fn open(mut store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -136,7 +138,27 @@ impl Controller {
             store,
             adapters,
             bootstrap,
+            github_translators: Vec::new(),
         })
+    }
+
+    pub fn register_github_translator(
+        &mut self,
+        name: &str,
+        translator: impl ingress::GitHubTranslator + 'static,
+    ) {
+        assert!(
+            !name.is_empty()
+                && self
+                    .github_translators
+                    .iter()
+                    .all(|entry| entry.name != name),
+            "unique GitHub translator name required"
+        );
+        self.github_translators.push(ingress::Translation {
+            name: name.into(),
+            translator: Box::new(translator),
+        });
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
