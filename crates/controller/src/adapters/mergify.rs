@@ -58,19 +58,35 @@ pub struct QueueFact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
-    Merged { head: String, checks_passed: bool },
-    CiFailed { check: u64, infra: bool },
-    Conflict { check: u64 },
-    DequeuedByPerson { at: DateTime<Utc> },
-    ClosedByPerson { at: DateTime<Utc> },
-    PushByOther { head: String },
+    Merged {
+        head: String,
+        checks_passed: bool,
+    },
+    CiFailed {
+        check: u64,
+        head: String,
+        infra: bool,
+    },
+    Conflict {
+        check: u64,
+        head: String,
+    },
+    DequeuedByPerson {
+        at: DateTime<Utc>,
+    },
+    ClosedByPerson {
+        at: DateTime<Utc>,
+    },
+    PushByOther {
+        head: String,
+    },
 }
 impl QueueFact {
     pub(crate) fn identity(&self) -> String {
         let evidence = match &self.evidence {
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed { check, .. } => format!("ci:{check}"),
-            Evidence::Conflict { check } => format!("conflict:{check}"),
+            Evidence::Conflict { check, .. } => format!("conflict:{check}"),
             Evidence::DequeuedByPerson { at } => format!("dequeued:{at}"),
             Evidence::ClosedByPerson { at } => format!("closed:{at}"),
             Evidence::PushByOther { head } => format!("push:{head}"),
@@ -136,7 +152,7 @@ impl Adapter {
         }
         let facts = self
             .runtime
-            .block_on(queue_facts(github, &delivery.repository, &state))?
+            .block_on(queue_facts(github, &delivery.repository, &state, head))?
             .into_iter()
             .map(Observation::Queue)
             .collect();
@@ -285,9 +301,12 @@ async fn queue_facts(
     github: &GitHub,
     repo: &Repository,
     state: &tl3_mergify::Observation,
+    expected_head: &str,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
-    if is_merge_queue_pr(pull) {
+    if is_merge_queue_pr(pull)
+        || (state.state != QueueState::Merged && pull.head.sha != expected_head)
+    {
         return Ok(vec![]);
     }
     let evidence = match state.state {
@@ -308,12 +327,13 @@ async fn queue_facts(
         }
         QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
             check: check.id,
+            head: pull.head.sha.clone(),
             infra: tl3_mergify::ci_is_infrastructure(check),
         }),
-        QueueState::Conflict => state
-            .check
-            .as_ref()
-            .map(|check| Evidence::Conflict { check: check.id }),
+        QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
+            check: check.id,
+            head: pull.head.sha.clone(),
+        }),
         _ => None,
     };
     Ok(evidence
@@ -439,7 +459,10 @@ impl Translator {
                     && !is_merge_queue_pr(pull_request)
                 {
                     let state = tl3_mergify::observe(pull_request.clone(), &[], "");
-                    facts.extend(self.runtime.block_on(queue_facts(github, repo, &state))?);
+                    facts.extend(
+                        self.runtime
+                            .block_on(queue_facts(github, repo, &state, ""))?,
+                    );
                 }
             }
             Event::PullRequestClosed {
@@ -526,7 +549,8 @@ impl Translator {
             .runtime
             .block_on(Mergify::new(github.clone()).read(&full_name(repo), item.number, &item.head))
             .map_err(adapter_error)?;
-        self.runtime.block_on(queue_facts(github, repo, &state))
+        self.runtime
+            .block_on(queue_facts(github, repo, &state, &item.head))
     }
     pub fn catch_up(
         &self,

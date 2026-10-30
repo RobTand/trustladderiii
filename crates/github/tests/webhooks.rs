@@ -66,12 +66,30 @@ fn recorded_payloads_parse_into_the_expected_variants() {
             include_bytes!("fixtures/check-suite-completed.json").as_slice(),
             6,
         ),
+        (
+            "pull_request",
+            include_bytes!("fixtures/pull-request-unlabeled.json").as_slice(),
+            7,
+        ),
+        (
+            "merge_group",
+            include_bytes!("fixtures/merge-group-checks-requested.json").as_slice(),
+            8,
+        ),
     ];
     for (name, body, expected) in fixtures {
         let delivery =
             verify_and_parse(b"throwaway", &signature(body), "delivery-1", name, body).unwrap();
         let event = delivery.event.unwrap();
         let actual = match event {
+            Event::PullRequestUnlabeled { label, .. } => {
+                assert_eq!(label.name, "tl3-queue");
+                7
+            }
+            Event::MergeGroup { merge_group, .. } => {
+                assert_eq!(merge_group.head_sha, "batch-head");
+                8
+            }
             Event::IssueLabeled {
                 actor,
                 label,

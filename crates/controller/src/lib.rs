@@ -688,6 +688,15 @@ impl Controller {
                 );
                 use adapters::mergify::Evidence;
                 let value = json!(&fact);
+                if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =
+                    &fact.evidence
+                {
+                    let observed = self.head(node, head)?;
+                    if world.nodes[node.0 as usize].head != Some(observed) {
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                }
                 let fact = match fact.evidence {
                     Evidence::Merged {
                         head,
