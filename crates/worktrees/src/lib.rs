@@ -132,6 +132,17 @@ impl InstallationToken {
 pub struct Remote(OsString);
 
 impl Remote {
+    fn credentials<'a>(
+        &self,
+        token: Option<&'a InstallationToken>,
+    ) -> Option<&'a InstallationToken> {
+        if self.0.to_string_lossy().starts_with("https://github.com/") {
+            token
+        } else {
+            None
+        }
+    }
+
     pub fn https(value: &str) -> Result<Self, Error> {
         let url = Url::parse(value).map_err(|_| Error::Remote)?;
         if url.scheme() != "https"
@@ -148,7 +159,12 @@ impl Remote {
 
     pub fn local(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = fs::canonicalize(path).map_err(|_| Error::Remote)?;
-        Ok(Self(path.into_os_string()))
+        Ok(Self(
+            Url::from_file_path(path)
+                .map_err(|_| Error::Remote)?
+                .as_str()
+                .into(),
+        ))
     }
 }
 
@@ -173,17 +189,6 @@ struct Checkout {
 }
 
 impl Worktrees {
-    /// Reads main locally. The controller refreshes main before starting an operation.
-    pub fn create_branch(&self, name: &BranchName) -> Result<Branch, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.create_branch_locked(name)
-    }
-
-    pub fn head(&self, name: &BranchName) -> Result<CommitId, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.head_locked(name)
-    }
-
     pub fn create_worktree(
         &self,
         name: &BranchName,
@@ -196,7 +201,119 @@ impl Worktrees {
     /// Refuses dirty checkouts. It never discards a maker's uncommitted files.
     pub fn remove_worktree(&self, name: &BranchName, path: impl AsRef<Path>) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.remove_worktree_locked(name, path)
+        self.remove_worktree_locked(name, path, false)
+    }
+
+    /// Called before recording a Remove intent. No deletion has begun yet.
+    pub fn verify_removal_clean(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let path = self.destination(path)?;
+        if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
+            self.verify_checkout(&path, name)?;
+            if self.initializing_at_base(name, &path)? {
+                return Ok(());
+            }
+            self.require_clean(&path)?;
+        }
+        Ok(())
+    }
+
+    fn initializing_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        if !self.initializing(path)? {
+            return Ok(false);
+        }
+        let Some(base) = self.resolve_optional(&name.base_ref())? else {
+            return Ok(false);
+        };
+        Ok(self.resolve_optional(&name.reference())?.as_ref() == Some(&base))
+    }
+
+    /// Requires a durable Remove intent proving cleanliness before deletion began.
+    pub fn resume_removal(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.remove_worktree_locked(name, path, true)
+    }
+
+    /// Git's initializing lock and unchanged base authorize interrupted checkout repair.
+    pub fn finish_prepare(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        writable: bool,
+    ) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        self.verify_checkout(path, name)?;
+        if !self.initializing(path)? {
+            return Ok(true);
+        }
+        if !writable {
+            return Ok(false);
+        }
+        if !self.initializing_at_base(name, path)? {
+            return Err(Error::Recovery);
+        }
+        // Repository ownership guarantees the killed controller's Git children have ended.
+        let lock = path_line(
+            &self
+                .run(
+                    path,
+                    "prepare index lock",
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "index.lock",
+                    ],
+                )?
+                .stdout,
+        )?;
+        match fs::remove_file(lock) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::Io),
+        }
+        self.run(
+            path,
+            "populate prepared checkout",
+            ["reset", "--hard", &name.reference()],
+        )?;
+        self.require_clean(path)?;
+        self.run(
+            &self.repo,
+            "unlock prepared checkout",
+            [
+                OsStr::new("worktree"),
+                OsStr::new("unlock"),
+                path.as_os_str(),
+            ],
+        )?;
+        Ok(true)
+    }
+
+    fn initializing(&self, path: &Path) -> Result<bool, Error> {
+        let locked = path_line(
+            &self
+                .run(
+                    path,
+                    "prepare registration lock",
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "locked",
+                    ],
+                )?
+                .stdout,
+        )?;
+        match fs::read(locked) {
+            // Git translates this reason. execute sets LC_ALL=C for every Git child.
+            Ok(reason) => Ok(reason == b"initializing\n"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(Error::Io),
+        }
     }
 
     pub fn delete_local_branch(&self, name: &BranchName) -> Result<(), Error> {
@@ -204,55 +321,194 @@ impl Worktrees {
         self.delete_local_branch_locked(name)
     }
 
-    pub fn push(
-        &self,
-        name: &BranchName,
-        remote: &Remote,
-        token: &InstallationToken,
-    ) -> Result<CommitId, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.push_locked(name, remote, token)
-    }
-
-    /// Publishes only if the remote still has the controller's recorded head.
-    pub fn push_rebased(
-        &self,
-        name: &BranchName,
-        remote: &Remote,
-        token: &InstallationToken,
-        expected: &CommitId,
-    ) -> Result<CommitId, Error> {
-        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.push_rebased_locked(name, remote, token, expected)
-    }
-
     pub fn remote_head(
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Option<CommitId>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.remote_head_locked(name, remote, token)
     }
 
-    pub fn delete_remote_branch(
+    /// Creates both refs at the operation's durably recorded base.
+    pub fn create_branch_at(&self, name: &BranchName, base: &CommitId) -> Result<Branch, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        if self.resolve_optional(&name.reference())?.is_none()
+            && self.resolve_optional(&name.base_ref())?.is_none()
+        {
+            self.update_refs(&format!(
+                "create {} {}\ncreate {} {}\n",
+                name.reference(),
+                base.as_str(),
+                name.base_ref(),
+                base.as_str()
+            ))?;
+        }
+        self.create_branch_locked(name)
+    }
+
+    pub fn recover_rebase(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_repository(path)?;
+        let marker = self.rebase_marker(path)?;
+        if marker.exists() {
+            self.restore_rebase_checkout(path, name, &marker)?;
+        }
+        self.verify_checkout(path, name)?;
+        self.require_clean(path)
+    }
+
+    pub fn rebase_complete(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        self.verify_repository(path)?;
+        if self.rebase_marker(path)?.exists() || self.rebase_active(path)? {
+            return Ok(false);
+        }
+        self.verify_checkout(path, name)?;
+        Ok(self.status(path)?.is_empty())
+    }
+
+    /// Deletes only the head recorded by the teardown effect, never a newer push.
+    pub fn delete_remote_branch_at(
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
+        expected: &CommitId,
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.delete_remote_branch_locked(name, remote, token)
+        leaf(name)?;
+        let token = remote.credentials(token);
+        if self.remote_head_locked(name, remote, token)?.is_none() {
+            return Ok(());
+        }
+        let reference = name.reference();
+        let lease = format!("--force-with-lease={reference}:{}", expected.as_str());
+        self.network(
+            "delete recorded remote branch",
+            [
+                OsStr::new("push"),
+                OsStr::new("--porcelain"),
+                OsStr::new(&lease),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!(":{reference}")),
+            ],
+            token,
+        )?;
+        Ok(())
     }
 
-    pub fn rebase_onto_main(
+    pub fn common_directory(&self) -> &Path {
+        &self.common
+    }
+
+    pub fn branch_state(&self, name: &BranchName) -> Result<Option<(CommitId, CommitId)>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        match (
+            self.resolve_optional(&name.reference())?,
+            self.resolve_optional(&name.base_ref())?,
+        ) {
+            (Some(head), Some(base)) => Ok(Some((head, base))),
+            (None, None) => Ok(None),
+            _ => Err(Error::Recovery),
+        }
+    }
+
+    pub fn checkout_exists(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        let path = self.destination(path)?;
+        if !self.checkouts()?.iter().any(|checkout| {
+            checkout.path == path && checkout.branch.as_deref() == Some(&name.reference())
+        }) {
+            return Err(Error::WorktreeOccupied);
+        }
+        self.verify_checkout(&path, name)?;
+        Ok(true)
+    }
+
+    /// Fetches only main, with the same credential and transport policy as pushes.
+    pub fn fetch_main(
+        &self,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+    ) -> Result<CommitId, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.network(
+            "fetch main",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new("+refs/heads/main:refs/tl3/upstream-main"),
+            ],
+            remote.credentials(token),
+        )?;
+        let main = self.resolve("refs/tl3/upstream-main")?;
+        Ok(main)
+    }
+
+    /// Uses the effect's immutable head and the last head this controller published.
+    pub fn publish(
         &self,
         name: &BranchName,
-        path: impl AsRef<Path>,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+        head: &CommitId,
+        expected: Option<&CommitId>,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let token = remote.credentials(token);
+        let actual = self.remote_head_locked(name, remote, token)?;
+        if actual.as_ref() == Some(head) {
+            return Ok(());
+        }
+        if actual.as_ref() != expected {
+            return Err(Error::Git {
+                operation: "remote branch changed",
+                code: None,
+            });
+        }
+        let reference = name.reference();
+        let lease = format!(
+            "--force-with-lease={reference}:{}",
+            expected.map_or("", CommitId::as_str)
+        );
+        self.network(
+            "publish head",
+            [
+                OsStr::new("push"),
+                OsStr::new("--porcelain"),
+                OsStr::new(&lease),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!("{}:{reference}", head.as_str())),
+            ],
+            token,
+        )?;
+        Ok(())
+    }
+
+    pub fn rebase_onto(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
     ) -> Result<RebaseResult, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.rebase_onto_main_locked(name, path)
+        self.rebase_onto_locked(name, path, target)
     }
 
     pub fn changed_files(&self, base: &CommitId, head: &CommitId) -> Result<Vec<PathBuf>, Error> {
@@ -471,6 +727,7 @@ impl Worktrees {
         &self,
         name: &BranchName,
         path: impl AsRef<Path>,
+        allow_deletions: bool,
     ) -> Result<(), Error> {
         leaf(name)?;
         let path = self.destination(path.as_ref())?;
@@ -479,28 +736,77 @@ impl Worktrees {
                 return Err(Error::WorktreeOccupied);
             }
             if path.exists() {
+                if allow_deletions && !path.join(".git").exists() {
+                    self.restore_removal_gitlink(name, &path)?;
+                }
                 self.verify_checkout(&path, name)?;
-                self.require_clean(&path)?;
+                let initializing = allow_deletions && self.initializing_at_base(name, &path)?;
+                if allow_deletions && !initializing {
+                    let status = self.status(&path)?;
+                    if status
+                        .split(|b| *b == 0)
+                        .filter(|entry| !entry.is_empty())
+                        .any(|entry| !matches!(entry.get(..3), Some(b" D " | b"D  ")))
+                    {
+                        return Err(Error::DirtyWorktree);
+                    }
+                } else if !initializing {
+                    self.require_clean(&path)?;
+                }
             }
-            self.run(
-                &self.repo,
-                "remove worktree",
-                [
-                    OsStr::new("worktree"),
-                    OsStr::new("remove"),
-                    path.as_os_str(),
-                ],
-            )?;
+            let initializing =
+                allow_deletions && path.exists() && self.initializing_at_base(name, &path)?;
+            let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
+            if allow_deletions {
+                args.push(OsStr::new("--force"));
+            }
+            if initializing {
+                // Keep Git's evidence until removal; two forces permit a locked checkout.
+                args.push(OsStr::new("--force"));
+            }
+            args.extend([OsStr::new("--"), path.as_os_str()]);
+            self.run(&self.repo, "remove worktree", args)?;
         } else if path.exists() {
             // Recover a lost registration before removing the checkout through Git.
             if fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_none() {
                 fs::remove_dir(&path).map_err(|_| Error::Io)?;
             } else {
                 self.create_worktree_locked(name, &path)?;
-                self.remove_worktree_locked(name, &path)?;
+                self.remove_worktree_locked(name, &path, allow_deletions)?;
             }
         }
         Ok(())
+    }
+
+    fn restore_removal_gitlink(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let link = path.join(".git");
+        // A removal may delete the gitlink before any tracked files. Reattach only
+        // the surviving registration whose branch and recorded gitdir both match.
+        match fs::symlink_metadata(&link) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err(Error::WorktreeOccupied),
+        }
+        for entry in fs::read_dir(self.common.join("worktrees")).map_err(|_| Error::Io)? {
+            let admin = entry.map_err(|_| Error::Io)?.path();
+            let gitdir = fs::read(admin.join("gitdir")).map_err(|_| Error::Io)?;
+            if path_line(&gitdir)? != link {
+                continue;
+            }
+            if fs::read(admin.join("HEAD")).map_err(|_| Error::Io)?
+                != format!("ref: {}\n", name.reference()).as_bytes()
+            {
+                return Err(Error::WorktreeOccupied);
+            }
+            let mut temporary = tempfile::NamedTempFile::new_in(path).map_err(|_| Error::Io)?;
+            temporary.write_all(b"gitdir: ").map_err(|_| Error::Io)?;
+            temporary
+                .write_all(admin.as_os_str().as_encoded_bytes())
+                .map_err(|_| Error::Io)?;
+            temporary.write_all(b"\n").map_err(|_| Error::Io)?;
+            temporary.persist_noclobber(&link).map_err(|_| Error::Io)?;
+            return Ok(());
+        }
+        Err(Error::WorktreeOccupied)
     }
 
     fn delete_local_branch_locked(&self, name: &BranchName) -> Result<(), Error> {
@@ -519,82 +825,13 @@ impl Worktrees {
         ))
     }
 
-    fn push_locked(
-        &self,
-        name: &BranchName,
-        remote: &Remote,
-        token: &InstallationToken,
-    ) -> Result<CommitId, Error> {
-        leaf(name)?;
-        let head = self.head_locked(name)?;
-        let reference = name.reference();
-        // Read and lease the remote ref so retries cannot overwrite somebody else's push.
-        let previous = self.remote_head_locked(name, remote, token)?;
-        let lease = format!(
-            "--force-with-lease={reference}:{}",
-            previous.as_ref().map_or("", CommitId::as_str)
-        );
-        if previous.as_ref() != Some(&head) {
-            if let Some(previous) = &previous {
-                let known = self.resolve_optional(previous.as_str())?;
-                if known.is_none() || !self.is_ancestor(previous, &head)? {
-                    return Err(Error::Git {
-                        operation: "push would overwrite remote work",
-                        code: None,
-                    });
-                }
-            }
-            self.network(
-                "push",
-                [
-                    OsStr::new("push"),
-                    OsStr::new("--porcelain"),
-                    OsStr::new(&lease),
-                    OsStr::new("--"),
-                    &remote.0,
-                    OsStr::new(&format!("{}:{reference}", head.as_str())),
-                ],
-                token,
-            )?;
-        }
-        Ok(head)
-    }
-
-    fn push_rebased_locked(
-        &self,
-        name: &BranchName,
-        remote: &Remote,
-        token: &InstallationToken,
-        expected: &CommitId,
-    ) -> Result<CommitId, Error> {
-        leaf(name)?;
-        let head = self.head_locked(name)?;
-        if self.remote_head_locked(name, remote, token)?.as_ref() == Some(&head) {
-            return Ok(head);
-        }
-        let reference = name.reference();
-        let lease = format!("--force-with-lease={reference}:{}", expected.as_str());
-        self.network(
-            "push rebased branch",
-            [
-                OsStr::new("push"),
-                OsStr::new("--porcelain"),
-                OsStr::new(&lease),
-                OsStr::new("--"),
-                &remote.0,
-                OsStr::new(&format!("{}:{reference}", head.as_str())),
-            ],
-            token,
-        )?;
-        Ok(head)
-    }
-
     fn remote_head_locked(
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Option<CommitId>, Error> {
+        let token = remote.credentials(token);
         let output = self.network(
             "read remote branch",
             [
@@ -617,36 +854,11 @@ impl Worktrees {
         Ok(Some(commit_line(hash)?))
     }
 
-    fn delete_remote_branch_locked(
-        &self,
-        name: &BranchName,
-        remote: &Remote,
-        token: &InstallationToken,
-    ) -> Result<(), Error> {
-        leaf(name)?;
-        if let Some(head) = self.remote_head_locked(name, remote, token)? {
-            let reference = name.reference();
-            let lease = format!("--force-with-lease={reference}:{}", head.as_str());
-            self.network(
-                "delete remote branch",
-                [
-                    OsStr::new("push"),
-                    OsStr::new("--porcelain"),
-                    OsStr::new(&lease),
-                    OsStr::new("--"),
-                    &remote.0,
-                    OsStr::new(&format!(":{reference}")),
-                ],
-                token,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn rebase_onto_main_locked(
+    fn rebase_onto_locked(
         &self,
         name: &BranchName,
         path: impl AsRef<Path>,
+        target: &CommitId,
     ) -> Result<RebaseResult, Error> {
         leaf(name)?;
         let path = fs::canonicalize(path).map_err(|_| Error::Io)?;
@@ -680,7 +892,7 @@ impl Worktrees {
         self.require_clean(&path)?;
         let old_head = self.head_locked(name)?;
         let old_base = self.create_branch_locked(name)?.base;
-        let main = self.resolve("refs/heads/main")?;
+        let main = target.clone();
         let mut temporary = tempfile::NamedTempFile::new_in(marker.parent().ok_or(Error::Io)?)
             .map_err(|_| Error::Io)?;
         temporary
@@ -814,20 +1026,6 @@ impl Worktrees {
         fs::remove_file(marker).map_err(|_| Error::Io)
     }
 
-    fn is_ancestor(&self, base: &CommitId, head: &CommitId) -> Result<bool, Error> {
-        let output = self.execute(
-            &self.repo,
-            ["merge-base", "--is-ancestor", base.as_str(), head.as_str()],
-            None,
-            None,
-        )?;
-        match output.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => Err(git_error("check ancestry", &output)),
-        }
-    }
-
     fn verify_checkout(&self, path: &Path, name: &BranchName) -> Result<(), Error> {
         self.verify_repository(path)?;
         let branch = self.run(path, "worktree branch", ["symbolic-ref", "HEAD"])?;
@@ -850,16 +1048,26 @@ impl Worktrees {
     }
 
     fn require_clean(&self, path: &Path) -> Result<(), Error> {
-        let output = self.run(
-            path,
-            "worktree status",
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        )?;
-        if output.stdout.is_empty() {
+        if self.status(path)?.is_empty() {
             Ok(())
         } else {
             Err(Error::DirtyWorktree)
         }
+    }
+
+    fn status(&self, path: &Path) -> Result<Vec<u8>, Error> {
+        let output = self.run(
+            path,
+            "worktree status",
+            [
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+        )?;
+        Ok(output.stdout)
     }
 
     fn rebase_active(&self, path: &Path) -> Result<bool, Error> {
@@ -950,16 +1158,13 @@ impl Worktrees {
         &self,
         operation: &'static str,
         args: I,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Output, Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        success(
-            operation,
-            self.execute(&self.repo, args, Some(token), None)?,
-        )
+        success(operation, self.execute(&self.repo, args, token, None)?)
     }
 
     fn execute<I, S>(
@@ -991,6 +1196,16 @@ impl Worktrees {
                 "-c",
                 "core.hooksPath=/dev/null",
                 "-c",
+                "credential.helper=",
+                "-c",
+                "http.followRedirects=false",
+                "-c",
+                "protocol.allow=never",
+                "-c",
+                "protocol.https.allow=always",
+                "-c",
+                "protocol.file.allow=always",
+                "-c",
                 "core.fsmonitor=false",
                 "-c",
                 "commit.gpgsign=false",
@@ -1020,7 +1235,7 @@ impl Worktrees {
             for (index, (key, value)) in [
                 ("credential.helper", ""),
                 ("http.extraHeader", ""),
-                ("http.extraHeader", header.as_str()),
+                ("http.https://github.com/.extraHeader", header.as_str()),
                 ("http.followRedirects", "false"),
                 ("protocol.allow", "never"),
                 ("protocol.https.allow", "always"),

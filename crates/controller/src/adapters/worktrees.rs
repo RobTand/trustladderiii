@@ -1,10 +1,19 @@
 use super::record::Records;
 use crate::{
-    Result,
+    Error, Repository, Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
-use std::path::Path;
-use tl3_kernel::{EffectKind, Out};
+
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
+use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
 pub struct Fake(Records);
 impl Fake {
@@ -37,3 +46,561 @@ impl Executor for Fake {
         self.0.reconcile(delivery)
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Boundary {
+    BeforeApply,
+    AfterApply,
+}
+
+/// One controller process owns every served repository and its Git subprocesses.
+/// Keep the common Git directory when restarting, including tl3-controller records.
+pub struct Real {
+    root: PathBuf,
+    epoch: i64,
+    repositories: Vec<Served>,
+}
+
+struct Served {
+    identity: Repository,
+    git: Worktrees,
+    remote: Remote,
+    github: Option<(tl3_github::GitHub, tokio::runtime::Runtime)>,
+    journal: PathBuf,
+    mutex: Arc<Mutex<()>>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum Intent {
+    Prepare {
+        base: String,
+    },
+    Push {
+        head: String,
+        expected: Option<String>,
+    },
+    Rebase {
+        target: String,
+    },
+    Remove {
+        expected: Option<String>,
+        #[serde(default)]
+        clean_verified: bool,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+struct Record {
+    delivery: Delivery,
+    intent: Intent,
+    completion: Option<Completion>,
+}
+
+fn adapter(error: impl std::error::Error + Send + Sync + 'static) -> Error {
+    Error::Adapter(Box::new(error))
+}
+
+impl Real {
+    pub fn new(root: impl AsRef<Path>, epoch: i64) -> Result<Self> {
+        fs::create_dir_all(root.as_ref())?;
+        Ok(Self {
+            root: fs::canonicalize(root)?,
+            epoch,
+            repositories: vec![],
+        })
+    }
+
+    /// Local fixtures use file transport and never obtain or pass credentials.
+    pub fn serve_local(
+        &mut self,
+        identity: Repository,
+        repository: &Path,
+        remote: &Path,
+    ) -> Result<()> {
+        self.serve(
+            identity,
+            repository,
+            Remote::local(remote).map_err(adapter)?,
+            None,
+        )
+    }
+
+    pub fn serve_github(
+        &mut self,
+        identity: Repository,
+        repository: &Path,
+        github: tl3_github::GitHub,
+    ) -> Result<()> {
+        if github.installation_id() != identity.installation {
+            return Err(Error::Invalid("worktree GitHub installation mismatch"));
+        }
+        let remote = Remote::https(&format!(
+            "https://github.com/{}/{}.git",
+            identity.owner, identity.name
+        ))
+        .map_err(adapter)?;
+        self.serve(identity, repository, remote, Some(github))
+    }
+
+    fn serve(
+        &mut self,
+        identity: Repository,
+        repository: &Path,
+        remote: Remote,
+        github: Option<tl3_github::GitHub>,
+    ) -> Result<()> {
+        if self
+            .repositories
+            .iter()
+            .any(|r| same_repo(&r.identity, &identity))
+        {
+            return Err(Error::Invalid("duplicate worktree repository"));
+        }
+        let github = github
+            .map(|client| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .max_blocking_threads(2)
+                    .build()
+                    .map(|runtime| (client, runtime))
+            })
+            .transpose()?;
+        let git = Worktrees::open(repository, &self.root).map_err(adapter)?;
+        let journal = git.common_directory().join("tl3-controller");
+        fs::create_dir_all(&journal)?;
+        File::open(git.common_directory())?.sync_all()?;
+        type Mutexes = Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>;
+        static MUTEXES: OnceLock<Mutexes> = OnceLock::new();
+        let mut mutexes = MUTEXES
+            .get_or_init(Mutex::default)
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        mutexes.retain(|_, mutex| mutex.strong_count() > 0);
+        let mutex = mutexes
+            .get(&journal)
+            .and_then(Weak::upgrade)
+            .unwrap_or_default();
+        mutexes.insert(journal.clone(), Arc::downgrade(&mutex));
+        drop(mutexes);
+        let guard = mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        let binding = journal.join("repository.json");
+        if let Some(existing) = read::<(Repository, PathBuf)>(&binding)? {
+            if !same_repo(&existing.0, &identity) || existing.1 != self.root {
+                return Err(Error::Invalid(
+                    "worktree repository or root binding changed",
+                ));
+            }
+        } else {
+            write(&binding, &(&identity, &self.root))?;
+        }
+        let fence = read::<i64>(&journal.join("epoch.json"))?.unwrap_or(0);
+        write(&journal.join("epoch.json"), &fence.max(self.epoch))?;
+        drop(guard);
+        self.repositories.push(Served {
+            identity,
+            git,
+            remote,
+            github,
+            journal,
+            mutex,
+        });
+        Ok(())
+    }
+
+    pub fn branch(delivery: &Delivery) -> Result<BranchName> {
+        BranchName::new(format!(
+            "tl3/issue-{}-node-{}",
+            delivery.issue,
+            delivery.node().0
+        ))
+        .map_err(adapter)
+    }
+
+    pub fn checkout(&self, delivery: &Delivery) -> PathBuf {
+        let owner = hex(delivery.repository.owner.to_ascii_lowercase().as_bytes());
+        let repo = hex(delivery.repository.name.to_ascii_lowercase().as_bytes());
+        self.root.join(owner).join(repo).join(format!(
+            "issue-{}-node-{}",
+            delivery.issue,
+            delivery.node().0
+        ))
+    }
+
+    fn repository(&self, delivery: &Delivery) -> Result<&Served> {
+        self.repositories
+            .iter()
+            .find(|r| same_repo(&r.identity, &delivery.repository))
+            .ok_or(Error::Invalid("unserved worktree repository"))
+    }
+}
+
+impl Served {
+    fn token(&self) -> Result<Option<InstallationToken>> {
+        self.github
+            .as_ref()
+            .map(|(github, runtime)| {
+                let token = runtime
+                    .block_on(github.installation_token())
+                    .map_err(adapter)?;
+                InstallationToken::new(token).map_err(adapter)
+            })
+            .transpose()
+    }
+
+    fn fence(&self) -> Result<i64> {
+        Ok(read::<i64>(&self.journal.join("epoch.json"))?.unwrap_or(0))
+    }
+
+    fn published_path(&self, branch: &BranchName) -> PathBuf {
+        self.journal.join(format!(
+            "published-{}.json",
+            hex(branch.as_str().as_bytes())
+        ))
+    }
+
+    fn record_path(&self, delivery: &Delivery) -> PathBuf {
+        self.journal
+            .join(format!("effect-{}.json", hex(delivery.key.as_bytes())))
+    }
+
+    fn load(&self, delivery: &Delivery) -> Result<Option<Record>> {
+        let record: Option<Record> = read(&self.record_path(delivery))?;
+        if let Some(record) = &record
+            && serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)?
+        {
+            return Err(Error::Invalid(
+                "worktree effect key reused with different payload",
+            ));
+        }
+        Ok(record)
+    }
+
+    fn intent(&self, delivery: &Delivery, branch: &BranchName, checkout: &Path) -> Result<Intent> {
+        match delivery.output {
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            } => {
+                let base = self
+                    .git
+                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .map_err(adapter)?;
+                Ok(Intent::Prepare {
+                    base: base.as_str().into(),
+                })
+            }
+            Out::Effect {
+                kind: EffectKind::Push,
+                ..
+            } => {
+                let head = CommitId::new(
+                    delivery
+                        .head_sha
+                        .clone()
+                        .ok_or(Error::Invalid("push needs an exact head"))?,
+                )
+                .map_err(adapter)?;
+                let expected = read(&self.published_path(branch))?;
+                Ok(Intent::Push {
+                    head: head.as_str().into(),
+                    expected,
+                })
+            }
+            Out::Effect {
+                kind: EffectKind::StartRebase,
+                ..
+            } => {
+                let target = self
+                    .git
+                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .map_err(adapter)?;
+                Ok(Intent::Rebase {
+                    target: target.as_str().into(),
+                })
+            }
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            } => {
+                self.git
+                    .verify_removal_clean(branch, checkout)
+                    .map_err(adapter)?;
+                Ok(Intent::Remove {
+                    expected: read(&self.published_path(branch))?,
+                    clean_verified: true,
+                })
+            }
+            _ => Err(Error::Invalid("unsupported worktree effect")),
+        }
+    }
+
+    fn finish(
+        &self,
+        record: &mut Record,
+        branch: &BranchName,
+        checkout: &Path,
+        writable: bool,
+        hook: &mut impl FnMut(Boundary),
+    ) -> Result<Option<Completion>> {
+        let mut observations = vec![];
+        match &record.intent {
+            Intent::Prepare { base } => {
+                if writable {
+                    self.git
+                        .create_branch_at(branch, &CommitId::new(base).map_err(adapter)?)
+                        .map_err(adapter)?;
+                    self.git
+                        .create_worktree(branch, checkout)
+                        .map_err(adapter)?;
+                }
+                if self.git.branch_state(branch).map_err(adapter)?.is_none() {
+                    return Ok(None);
+                }
+                if !self
+                    .git
+                    .finish_prepare(branch, checkout, writable)
+                    .map_err(adapter)?
+                {
+                    return Ok(None);
+                }
+            }
+            Intent::Push { head, expected } => {
+                let head = CommitId::new(head).map_err(adapter)?;
+                let expected = expected
+                    .as_ref()
+                    .map(CommitId::new)
+                    .transpose()
+                    .map_err(adapter)?;
+                let token = self.token()?;
+                if writable {
+                    self.git
+                        .publish(
+                            branch,
+                            &self.remote,
+                            token.as_ref(),
+                            &head,
+                            expected.as_ref(),
+                        )
+                        .map_err(adapter)?;
+                }
+                if self
+                    .git
+                    .remote_head(branch, &self.remote, token.as_ref())
+                    .map_err(adapter)?
+                    .as_ref()
+                    != Some(&head)
+                {
+                    return Ok(None);
+                }
+                write(&self.published_path(branch), &head.as_str())?;
+            }
+            Intent::Rebase { target } => {
+                let target = CommitId::new(target).map_err(adapter)?;
+                let Some((head, base)) = self.git.branch_state(branch).map_err(adapter)? else {
+                    return Ok(None);
+                };
+                let result = if base == target {
+                    // Finish any checkout restoration interrupted after the atomic ref update.
+                    if writable {
+                        self.git.recover_rebase(branch, checkout).map_err(adapter)?;
+                    } else if !self
+                        .git
+                        .rebase_complete(branch, checkout)
+                        .map_err(adapter)?
+                    {
+                        return Ok(None);
+                    }
+                    if !self
+                        .git
+                        .checkout_exists(branch, checkout)
+                        .map_err(adapter)?
+                    {
+                        return Ok(None);
+                    }
+                    RebaseResult::Clean { base, head }
+                } else if writable {
+                    self.git
+                        .rebase_onto(branch, checkout, &target)
+                        .map_err(adapter)?
+                } else {
+                    return Ok(None);
+                };
+                observations.push(match result {
+                    RebaseResult::Clean { head, .. } => Observation::Rebased {
+                        node: record.delivery.node(),
+                        generation: record.delivery.generation,
+                        sha: head.as_str().into(),
+                    },
+                    RebaseResult::Conflicted { .. } => Observation::Kernel(Event::Reply {
+                        node: record.delivery.node(),
+                        generation: record.delivery.generation,
+                        reply: Reply::RebaseNeedsChanges,
+                    }),
+                });
+            }
+            Intent::Remove {
+                expected,
+                clean_verified,
+            } => {
+                let token = self.token()?;
+                let remote = self
+                    .git
+                    .remote_head(branch, &self.remote, token.as_ref())
+                    .map_err(adapter)?;
+                if writable {
+                    if *clean_verified {
+                        self.git.resume_removal(branch, checkout).map_err(adapter)?;
+                    } else {
+                        self.git
+                            .remove_worktree(branch, checkout)
+                            .map_err(adapter)?;
+                    }
+                    if let Some(remote) = remote {
+                        if expected.as_deref() != Some(remote.as_str()) {
+                            return Err(Error::Invalid("teardown remote branch changed"));
+                        }
+                        self.git
+                            .delete_remote_branch_at(branch, &self.remote, token.as_ref(), &remote)
+                            .map_err(adapter)?;
+                    }
+                    self.git.delete_local_branch(branch).map_err(adapter)?;
+                }
+                if self.git.branch_state(branch).map_err(adapter)?.is_some()
+                    || self
+                        .git
+                        .checkout_exists(branch, checkout)
+                        .map_err(adapter)?
+                    || self
+                        .git
+                        .remote_head(branch, &self.remote, token.as_ref())
+                        .map_err(adapter)?
+                        .is_some()
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        hook(Boundary::AfterApply);
+        let completion = Completion::confirmed(observations);
+        record.completion = Some(completion.clone());
+        write(&self.record_path(&record.delivery), record)?;
+        Ok(Some(completion))
+    }
+}
+
+impl Real {
+    /// Exposes durable boundaries for process-level crash verification.
+    pub fn execute_with(
+        &mut self,
+        delivery: &Delivery,
+        mut hook: impl FnMut(Boundary),
+    ) -> Result<Completion> {
+        let repo = self.repository(delivery)?;
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        if delivery.epoch < repo.fence()? {
+            return Err(adapter(std::io::Error::other(
+                "worktree upstream refused an older controller epoch",
+            )));
+        }
+        write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
+        let branch = Self::branch(delivery)?;
+        let mut record = match repo.load(delivery)? {
+            Some(record) => record,
+            None => {
+                let record = Record {
+                    delivery: delivery.clone(),
+                    intent: repo.intent(delivery, &branch, &self.checkout(delivery))?,
+                    completion: None,
+                };
+                write(&repo.record_path(delivery), &record)?;
+                record
+            }
+        };
+        if let Some(completion) = record.completion {
+            return Ok(completion);
+        }
+        hook(Boundary::BeforeApply);
+        repo.finish(
+            &mut record,
+            &branch,
+            &self.checkout(delivery),
+            true,
+            &mut hook,
+        )?
+        .ok_or(Error::Invalid(
+            "worktree operation has no terminal evidence",
+        ))
+    }
+}
+
+impl Executor for Real {
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.execute_with(delivery, |_| {})
+    }
+
+    fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        let repo = self.repository(delivery)?;
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        let Some(mut record) = repo.load(delivery)? else {
+            // No Git mutation occurs until the effect intent is durable.
+            return Ok(Reconciliation::Absent);
+        };
+        if let Some(completion) = record.completion {
+            return Ok(Reconciliation::Found(completion));
+        }
+        let writable = delivery.epoch >= repo.fence()?;
+        Ok(
+            match repo.finish(
+                &mut record,
+                &Self::branch(delivery)?,
+                &self.checkout(delivery),
+                writable,
+                &mut |_| {},
+            )? {
+                Some(completion) => Reconciliation::Found(completion),
+                None if !writable => Reconciliation::Absent,
+                None => Reconciliation::Pending,
+            },
+        )
+    }
+}
+
+fn same_repo(a: &Repository, b: &Repository) -> bool {
+    a.owner.eq_ignore_ascii_case(&b.owner)
+        && a.name.eq_ignore_ascii_case(&b.name)
+        && a.installation == b.installation
+}
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+fn write(path: &Path, value: &impl Serialize) -> Result<()> {
+    let temporary = path.with_extension("tmp");
+    let mut file = File::create(&temporary)?;
+    file.write_all(&serde_json::to_vec(value)?)?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    File::open(
+        path.parent()
+            .ok_or(Error::Invalid("record parent missing"))?,
+    )?
+    .sync_all()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
