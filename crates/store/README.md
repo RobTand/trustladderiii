@@ -108,7 +108,7 @@ on an ephemeral port, using a current-thread runtime. The downloaded binaries,
 database and fixture password files live in its unique job temporary directory.
 Nothing uses Docker or deployment credentials. Postgres keeps fsync and
 synchronous_commit enabled. Tests run sequentially against separate databases
-on that child server. Both Linux x86_64 and aarch64 archives come from Theseus;
+on that child server. Both Linux x86_64 and aarch64 archives come from Zonky;
 Ubuntu hosted runners use the same fixture. Initial setup time is printed in
 the job log. The first run also compiles the Rust dependencies.
 

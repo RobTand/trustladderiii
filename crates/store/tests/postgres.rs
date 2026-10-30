@@ -56,6 +56,7 @@ impl Database {
             .unwrap();
         let root = scratch.path();
         let settings = Settings {
+            releases_url: "https://github.com/zonkyio/embedded-postgres-binaries".into(),
             version: VersionReq::parse("=17.4.0").unwrap(),
             installation_dir: root.join("binaries"),
             password_file: root.join("pgpass"),
