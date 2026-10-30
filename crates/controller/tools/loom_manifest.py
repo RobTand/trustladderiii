@@ -34,7 +34,7 @@ rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
     "demand": {"mem_gb": 6}, "env": env,
     "priority": -10, "timeout_s": 3600,
-    "argv": ["bash", "crates/controller/tools/verify.sh"],
+    "argv": ["bash", "-c", "bash crates/controller/tools/verify.sh && cargo tree -p tl3-controller --edges normal --prefix none > production-dependencies.txt && if rg '^loom v' production-dependencies.txt; then exit 1; fi"],
 })
 rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
