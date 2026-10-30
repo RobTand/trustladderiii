@@ -167,7 +167,15 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok(Some(Completion::confirmed(vec![Observation::Checks {
+    Ok(Some(completion(job, report, pass)?))
+}
+
+pub(super) fn unknown(job: &Job) -> Result<Completion> {
+    completion(job, false, false)
+}
+
+fn completion(job: &Job, report: bool, pass: bool) -> Result<Completion> {
+    Ok(Completion::confirmed(vec![Observation::Checks {
         node: job.delivery.node(),
         generation: job.delivery.generation,
         action_key: job.action.to_string(),
@@ -180,7 +188,7 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
         changed_paths: job.changed_paths.clone(),
         report,
         pass,
-    }])))
+    }]))
 }
 
 fn parse(raw: &[u8], job: &Job) -> Option<Report> {

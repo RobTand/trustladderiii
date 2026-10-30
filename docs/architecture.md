@@ -222,18 +222,40 @@ identifies the job to withdraw after the node changes generation.
 The adapter freezes a clean head checkout, bundles both commits and snapshots
 that bundle with a trusted harness copy. It seals without publication, fsyncs
 the effect's action key in its private durable directory, then publishes that
-exact CAS request. That directory is scoped to one store and its single
+exact CAS request. It then deletes the sealed `.input` bundle. Startup removes
+inputs left behind after a durable `.job` binding. That directory is scoped to one store and its single
 controller owner. A durable epoch fence rejects old writes. Results still
 reconcile by their original key and epoch. Existing PB records prevent repeated
 publication, including failed and withdrawn actions. PB owns stalls; the
 adapter sets a tests progress contract and max attempts 1, with no duration
-limit.
+limit. Only `execute` seals or publishes. `reconcile` returns `Absent` without
+a `.job`, because no attempt can have been published without that binding.
+A saved seal with no PB record remains `Pending`; reconciliation never publishes
+it, including when the effect is Cancelling.
 
-`prismabuild::Source` runs on its own thread with a `Sender<Input>`. It watches
-only the adapter's saved action keys, rescans on bell reset and retries failed
-per-key reads. It verifies cleaned endings and report-log digests before
-sending checks evidence. Sources never touch the controller. The common daemon
+`prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter sends new effect keys through a bounded 64-entry broadcast channel.
+The source rebuilds its active set once at startup, then blocks on that channel
+and PB's filtered bell together. An empty active set waits only for a key or
+shutdown. There is no periodic source wake-up or directory scan. Channel lag
+triggers a recovery scan. Bell resets rescan active keys; the client retains its
+capped transport backoff when the bell is unavailable.
+
+The source verifies cleaned endings and report-log digests before sending checks
+evidence. After delivery it fsyncs a `.done` marker containing the completion,
+then removes the job from memory. Restarts and recovery scans skip those records
+before parsing them. The channel and active set do not retain historical jobs;
+small `.job` and `.done` records remain for idempotence and recovery. A terminal
+ending that cannot be read or verified produces one `report: false, pass: false`
+observation and the same durable marker. It is never retried by the source.
+A waiting cleanup stays active until another bell event. Queue read errors stay
+unknown and are reconsidered on later hints, resets or restart.
+
+Delivery uses a stable `pb:<action key>` inbox key. A crash between sending and
+the marker fsync can redeliver that key. If the controller crashes before it
+persists a delivered input, its watch can recover the saved completion from the
+marker. Sources never touch the controller. The common daemon
 loop remains ticket #10's work; this ticket supplies the one-line registration
 `adapter.source().spawn(sender)` for that loop. The controller translates the
-changed-file evidence through repository-scoped path interning and supplies
+changed-file evidence from `git diff base...head --name-only -z --no-renames`
+through repository-scoped path interning and supplies
 `in_footprint` to the kernel. No kernel transition or store schema changed.

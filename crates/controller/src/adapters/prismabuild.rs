@@ -59,7 +59,7 @@ use std::{
     time::Duration,
 };
 use tl3_prismabuild::{
-    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, SubmissionStatus, SubmitAction,
+    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, SubmitAction,
     Tool,
 };
 
@@ -89,6 +89,7 @@ pub struct Adapter {
     client: PrismaBuild,
     settings: Settings,
     runtime: tokio::runtime::Runtime,
+    keys: tokio::sync::broadcast::Sender<String>,
 }
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
@@ -134,9 +135,20 @@ impl Adapter {
             ));
         }
         fs::create_dir_all(&settings.records)?;
+        // A crash after the binding fsync may have interrupted input removal.
+        for entry in fs::read_dir(&settings.records)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "input")
+                && path.with_extension("job").exists()
+            {
+                fs::remove_dir_all(path)?;
+                File::open(&settings.records)?.sync_all()?;
+            }
+        }
         Ok(Self {
             client,
             settings,
+            keys: tokio::sync::broadcast::channel(64).0,
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
@@ -144,7 +156,7 @@ impl Adapter {
     }
 
     pub fn source(&self) -> Source {
-        Source::new(self.client.clone(), self.settings.clone())
+        Source::new(self.client.clone(), self.settings.clone(), self.keys.subscribe())
     }
 
     pub fn action_key(&self, effect_key: &str) -> Result<Option<ActionKey>> {
@@ -176,6 +188,7 @@ impl Adapter {
 
     fn submit(&self, delivery: &Delivery) -> Result<Job> {
         if let Some(job) = self.job(&delivery.key)? {
+            self.remove_input(&delivery.key)?;
             return Ok(job);
         }
         let input = self
@@ -226,7 +239,18 @@ impl Adapter {
                 .join(format!("{}.job", encoded(&delivery.key))),
             &job,
         )?;
+        self.remove_input(&delivery.key)?;
         Ok(job)
+    }
+
+    fn remove_input(&self, key: &str) -> Result<()> {
+        let input = self.settings.records.join(format!("{}.input", encoded(key)));
+        match fs::remove_dir_all(input) {
+            Ok(()) => File::open(&self.settings.records)?.sync_all()?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
     }
 
     fn targets(&self, delivery: &Delivery) -> Result<Vec<Job>> {
@@ -240,6 +264,12 @@ impl Adapter {
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {
+        let done = self.settings.records.join(format!("{}.done", encoded(&job.delivery.key)));
+        match fs::read(done) {
+            Ok(bytes) => return Ok(Reconciliation::Found(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.into()),
+        }
         let record = self
             .runtime
             .block_on(self.client.read(&job.action))
@@ -268,6 +298,7 @@ impl Executor for Adapter {
                 ..
             } => {
                 let job = self.submit(delivery)?;
+                let _ = self.keys.send(delivery.key.clone());
                 if self
                     .runtime
                     .block_on(self.client.read(&job.action))
@@ -307,31 +338,10 @@ impl Executor for Adapter {
                 kind: EffectKind::SubmitChecks,
                 ..
             } => {
-                let job = match self.job(&delivery.key)? {
-                    Some(job) => job,
-                    None => {
-                        // No runnable work can exist before this binding. Reassert the same effect;
-                        // unavailable input stays uncertain instead of spinning through Absent.
-                        self.fence(delivery.epoch)?;
-                        self.submit(delivery)?
-                    }
+                let Some(job) = self.job(&delivery.key)? else {
+                    // Publication requires this durable binding, so no attempt can exist without it.
+                    return Ok(Reconciliation::Absent);
                 };
-                if self
-                    .runtime
-                    .block_on(self.client.read(&job.action))
-                    .map_err(adapter_error)?
-                    .is_none()
-                {
-                    // Reassert only the original immutable request. An older epoch may read, never publish.
-                    self.fence(delivery.epoch)?;
-                    let submission = self
-                        .runtime
-                        .block_on(self.client.publish(&job.action))
-                        .map_err(adapter_error)?;
-                    if submission.status != SubmissionStatus::CacheHit {
-                        return Ok(Reconciliation::Found(Completion::confirmed(vec![])));
-                    }
-                }
                 self.check_result(&job)
             }
             Out::Effect {

@@ -139,8 +139,7 @@ pub(super) fn stage(
             "--no-renames",
             "--name-only",
             "-z",
-            &run.base_sha,
-            head,
+            &format!("{}...{head}", run.base_sha),
             "--",
         ],
     )?;
