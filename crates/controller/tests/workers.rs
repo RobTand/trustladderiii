@@ -1113,14 +1113,18 @@ fn bounded_startup(settings: &tl3_config::Store) {
 
 fn retirement(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "normal");
+    let config = config(settings, root.path(), "blocked");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let run = delivery();
     watch_run(&mut store, &run);
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&run).unwrap();
-    terminal(&mut supervisor, &run);
+    wait(|| root.path().join("entered").exists());
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(source.active_runs(), 1);
     let run_root = root_for(&config, &run.key);
     unwatch(&mut store, &run);
     supervisor.retire(&mut store).unwrap();
@@ -1221,6 +1225,13 @@ fn retirement(settings: &tl3_config::Store) {
         1,
         "SIGKILL retains the durable cleanup queue"
     );
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        source.active_runs(),
+        0,
+        "retirement drops source watches even when files disappear before refresh"
+    );
+    assert!(rx.try_recv().is_err());
     let mut restarted = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     restarted.retire(&mut store).unwrap();
     restarted.retire(&mut store).unwrap();
