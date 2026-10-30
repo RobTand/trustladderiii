@@ -24,6 +24,7 @@ fn retiring_quota_attempt_keeps_resumed_process_active() {
         paths: vec![],
         attempt: 1,
         round: 1,
+        replanned: false,
         checks: None,
         job_generation: None,
         question: None,
