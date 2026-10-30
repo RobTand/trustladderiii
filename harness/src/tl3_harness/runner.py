@@ -11,6 +11,9 @@ import pytest
 
 def missing_name(error):
     root = Path.cwd()
+    # Pytest wraps import failures in Collector.CollectError during collection.
+    while error is not None and not isinstance(error, (ImportError, AttributeError)):
+        error = error.__cause__ or error.__context__
     if isinstance(error, AttributeError) and isinstance(error.obj, types.ModuleType):
         source = getattr(error.obj, "__file__", None)
         if source and Path(source).is_relative_to(root):
