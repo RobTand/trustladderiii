@@ -13,10 +13,9 @@ slot=${1:?Usage: runner-slot.sh SLOT}
 container="tl3-ci-runner-$slot"
 runner="tl3-dl380g10-slot-$slot-$(date +%s)-${RANDOM}"
 options=()
-if [[ -n ${CI_RUNNER_CPUSET:-} ]]; then
-    [[ "$CI_RUNNER_CPUSET" =~ ^[0-9,-]+$ ]] || exit 1
-    options+=(--cpuset-cpus "$CI_RUNNER_CPUSET")
-fi
+cpuset=${CI_RUNNER_CPUSET:-40-79}
+[[ "$cpuset" =~ ^[0-9,-]+$ ]] || exit 1
+options+=(--cpuset-cpus "$cpuset")
 
 # Only this host process uses gh's login. Never trace or persist the JIT response.
 jit_config=$(gh api --method POST \
@@ -24,15 +23,18 @@ jit_config=$(gh api --method POST \
     -f "name=$runner" -F runner_group_id=1 -f work_folder=_work \
     -f 'labels[]=self-hosted' -f 'labels[]=linux' -f 'labels[]=x64' \
     -f 'labels[]=tl3-fleet' --jq .encoded_jit_config 2>/dev/null) || {
-    echo "JIT registration failed for slot $slot; systemd will back off" >&2
+    status=$?
+    echo "JIT registration failed for slot $slot (gh exit $status); systemd will back off" >&2
     exit 1
 }
 [[ -n "$jit_config" && "$jit_config" != null ]] || exit 1
+# systemd 259 retains the backoff counter across successful automatic restarts.
+systemd-notify RESTART_RESET=1
 echo "Starting $runner"
 
 # stdin carries the one-job credential, outside Podman's command and environment.
 printf '%s\n' "$jit_config" | podman run --rm --interactive \
-    --name "$container" --pull=never --cpus=2 --memory=6g --memory-swap=6g \
+    --name "$container" --pull=never --cpus=4 --memory=6g --memory-swap=6g \
     --pids-limit=1024 --network=private --http-proxy=false \
     --cap-drop=all --security-opt=no-new-privileges \
     --label io.trustladder.ci-slot="$slot" \
