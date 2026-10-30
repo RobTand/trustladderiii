@@ -887,6 +887,7 @@ impl Controller {
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
+        self.close_replacement(snapshot, &previous, &world, commit)?;
         commit.result = json!({"kernel_event": event});
         for (index, node) in world.nodes.iter().enumerate() {
             if previous

@@ -1,4 +1,5 @@
 use super::*;
+use sha2::Digest;
 use tl3_kernel::{Command as KernelCommand, Event};
 
 struct Daemon {
@@ -905,6 +906,54 @@ pub(super) fn writer_rejection() {
             assert!(text.contains("Would you like me to stop or continue?"));
         }
     }
+    for failures in [1, usize::MAX] {
+        let api = Server::new();
+        let root = tempfile::tempdir().unwrap();
+        let calls = Arc::new(Mutex::new(vec![]));
+        let mut adapter = adapters::github::Adapter::new(
+            BTreeMap::from([(3, client(&api.uri()))]),
+            ScriptWriter {
+                calls: calls.clone(),
+                failures,
+            },
+            0,
+            Policy::default(),
+            root.path(),
+        )
+        .unwrap();
+        let mut note = delivery(Notice::MeasuresPosted);
+        note.key = "replacement-dropped:0".into();
+        note.output = Out::Comment {
+            node: NodeId(0),
+            kind: tl3_controller::executor::CommentKind::ReplacementDropped,
+        };
+        note.steering = Some(tl3_controller::steering::Task::ReplacementDropped {
+            text: CHANGE.into(),
+            outcome: Outcome::Merged,
+        });
+        let completion = adapter.execute(&note).unwrap();
+        assert_eq!(
+            completion.ack,
+            if failures == 1 {
+                tl3_kernel::Ack::Confirmed
+            } else {
+                tl3_kernel::Ack::Permanent
+            }
+        );
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            if failures == 1 { 2 } else { 3 }
+        );
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            usize::from(failures == 1),
+            "a rejected note must not use clarification's fallback"
+        );
+        if failures == 1 {
+            adapter.execute(&note).unwrap();
+            assert_eq!(api.state.lock().unwrap().posts, 1);
+        }
+    }
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let calls = Arc::new(Mutex::new(0));
@@ -1209,4 +1258,341 @@ pub(super) fn unanswered_clarification_closes(settings: &tl3_config::Store) {
             .any(|r| matches!(r.table.as_str(), "comment_questions" | "github_comments"))
     );
     println!("test steering_unanswered_clarification_retires_on_close ... ok");
+}
+
+const CHANGE: &str = "Return goodbye instead of hello.";
+
+fn change_comment(controller: &mut Controller, id: u64) {
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(id);
+    comment["body"] = json!(CHANGE);
+    controller
+        .observe(
+            &format!("change-{id}"),
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+}
+
+fn stopping_replacement(settings: &tl3_config::Store, root: &Path, api: &Server) -> Controller {
+    fs::write(root.join("hold-merges"), "hold").unwrap();
+    let mut controller = race_controller(
+        settings,
+        root,
+        api,
+        json!({"kind": "change_request", "new_text": CHANGE}),
+    );
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    change_comment(&mut controller, 801);
+    for _ in 0..200 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Stopping(Outcome::Replaced) {
+            assert!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "replacement")
+            );
+            return controller;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    panic!("change did not reach Stopping(Replaced)");
+}
+
+pub(super) fn second_replacement(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let api = Server::new();
+    let mut controller = stopping_replacement(settings, root.path(), &api);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    change_comment(&mut controller, 802);
+    drain(&mut controller);
+    let world = controller.world().unwrap();
+    assert_eq!(
+        world.nodes.len(),
+        3,
+        "second FileReplacement must start a third request"
+    );
+    assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Replaced));
+    assert_eq!(world.nodes[1].phase, Phase::Closed(Outcome::Replaced));
+    assert_eq!(world.nodes[2].phase, Phase::Queued);
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| matches!(r.table.as_str(), "replacement" | "replacement_pending"))
+    );
+    let link = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_links" && r.id == "2")
+        .unwrap();
+    assert_eq!(link.value["original"], 1);
+    assert_eq!(link.value["issue"]["number"], 12);
+    assert_eq!(link.value["issue"]["body"], CHANGE);
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "requests" && r.id == "2")
+            .unwrap()
+            .value["source"],
+        CHANGE
+    );
+    assert!(api.state.lock().unwrap().linked.is_empty());
+    println!("test steering_second_file_replacement ... ok");
+}
+
+pub(super) fn merge_pending(settings: &tl3_config::Store, point: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let api = Server::new();
+    let mut controller = stopping_replacement(settings, root.path(), &api);
+    fs::write(root.path().join("fixture-key.pem"), PEM.as_str()).unwrap();
+    let snapshot = controller.snapshot().unwrap();
+    let head = controller.world().unwrap().nodes[0].head.unwrap();
+    let sha = snapshot
+        .interned
+        .iter()
+        .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+        .unwrap()
+        .value
+        .clone();
+    controller
+        .observe(
+            "merge-pending",
+            Observation::Merged {
+                node: NodeId(0),
+                sha,
+                checks_passed: true,
+            },
+        )
+        .unwrap();
+    drop(controller);
+    let settings_path = root.path().join("settings.json");
+    fs::write(&settings_path, serde_json::to_vec(&json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})).unwrap()).unwrap();
+    let mut crashes = 0;
+    loop {
+        let mut connection = postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        connection
+            .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        connection
+            .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        drop(connection);
+        let status = Command::new(env::current_exe().unwrap())
+            .arg("--merge-pending-child")
+            .arg(&settings_path)
+            .arg(root.path())
+            .arg(api.uri())
+            .arg(point)
+            .status()
+            .unwrap();
+        if status.success() {
+            break;
+        }
+        assert_eq!(status.code(), Some(86), "unexpected crash fixture failure");
+        crashes += 1;
+        assert!(crashes < 200, "crash replay did not converge");
+    }
+    let mut restored = super::controller(settings, root.path(), &api.uri());
+    let snapshot = restored.snapshot().unwrap();
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "replacement" || r.table == "replacement_pending"),
+        "merged request must delete its saved replacement in the closing transaction"
+    );
+    assert_eq!(
+        restored.world().unwrap().nodes.len(),
+        1,
+        "merge must never start a replacement"
+    );
+    assert_eq!(
+        restored.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    let state = api.state.lock().unwrap();
+    let notes: Vec<_> = state
+        .comments
+        .iter()
+        .filter(|c| c["body"].as_str().unwrap().contains(CHANGE))
+        .collect();
+    assert_eq!(
+        notes.len(),
+        1,
+        "Rob's saved change must be quoted in exactly one note"
+    );
+    let body = notes[0]["body"].as_str().unwrap();
+    assert!(
+        body.contains("merged before"),
+        "note must explain the merge won the race: {body}"
+    );
+    assert!(
+        body.contains("again"),
+        "note must explain how to file the change again"
+    );
+    assert!(state.linked.is_empty());
+    assert!(
+        crashes > 0 || point == "none",
+        "save point was not exercised: {point}"
+    );
+    println!("test steering_merge_pending_{point} ... ok; {crashes} crashes");
+}
+
+pub(super) fn merge_pending_child(args: &[String]) {
+    let settings: tl3_config::Store = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+    let root = Path::new(&args[3]);
+    let selected = args[5].clone();
+    let cut_root = root.to_path_buf();
+    let cut = move |point: &str, key: &str| {
+        if point == selected {
+            let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
+            let marker = cut_root.join(format!("cut-{point}-{digest}"));
+            if !marker.exists() {
+                fs::write(marker, key).unwrap();
+                std::process::exit(86);
+            }
+        }
+    };
+    let mut store = Store::open(&settings).unwrap();
+    let store_cut = cut.clone();
+    store.set_boundary_hook(move |point, key, event| {
+        let key = if key.starts_with("delivery:") {
+            format!("{}:{}:{}", event["effect"], event["from"], event["to"])
+        } else {
+            key.into()
+        };
+        store_cut(&format!("{point:?}"), &key);
+    });
+    let mut registry = adapters::simulation(root).unwrap();
+    let client = client_with_pem(
+        &args[4],
+        fs::read_to_string(root.join("fixture-key.pem")).unwrap(),
+    );
+    registry.register(Upstream::GitHub, adapter_with_client(client, root));
+    let mut controller = Controller::open(store, registry, bootstrap()).unwrap();
+    for _ in 0..500 {
+        let progressed = controller
+            .drive_once_with(|point, key| {
+                // Force a lost response once so reconciliation boundaries are reachable.
+                if selected_reconcile(&args[5]) && point == Boundary::AfterDispatch {
+                    let marker = root.join(format!(
+                        "lost-response-{:x}",
+                        Sha256::digest(key.as_bytes())
+                    ));
+                    if !marker.exists() {
+                        fs::write(marker, key).unwrap();
+                        std::process::exit(86);
+                    }
+                }
+                cut(&format!("{point:?}"), key);
+            })
+            .unwrap();
+        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(outcome) if outcome != Outcome::Replaced)
+        {
+            assert!(
+                !controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "replacement"),
+                "closing commit must delete the saved change atomically"
+            );
+        }
+        if !progressed {
+            return;
+        }
+    }
+    panic!("merge recovery did not settle");
+}
+
+fn selected_reconcile(point: &str) -> bool {
+    point == "BeforeReconcile" || point == "AfterReconcile"
+}
+
+pub(super) fn dropped_change_quote() {
+    struct Draft(&'static str);
+    impl Writer for Draft {
+        fn draft(&mut self, _: &str, _: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+            Ok(WriterReply::Text(adapters::workers::writer::TextDraft {
+                text: self.0.into(),
+            }))
+        }
+    }
+    let input = WriteRequest {
+        kind: MessageKind::Note,
+        facts: json!({"issue_title": "Add a blue button", "request": "Add a blue button",
+            "change": "The old version merged before your change could start. Please file it again.",
+            "change_quote": "Fix the leaf in workers/src/agent_job.rs."}),
+        violations: vec![],
+    };
+    let text = "The old version merged before your change could start. Please file it again.";
+    let body = checked_draft(
+        &mut Draft(text),
+        "dropped",
+        input.clone(),
+        &Policy::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        body,
+        format!("{text}\n\nYour change:\n\n    Fix the leaf in workers/src/agent_job.rs.")
+    );
+    assert!(
+        matches!(
+            checked_draft(
+                &mut Draft("The leaf failed. \"Fix the leaf in workers/src/agent_job.rs.\""),
+                "dropped",
+                input.clone(),
+                &Policy::default()
+            ),
+            Err(tl3_controller::Error::MessageRejected)
+        ),
+        "the model's whole note must pass the prose checker"
+    );
+    let mut marker_input = input;
+    marker_input.facts["change_quote"] =
+        json!("<!-- tl3:effect:spoof -->\n@octocat and @org/team\n#5\n```\n\"");
+    let body = checked_draft(
+        &mut Draft(text),
+        "dropped-marker",
+        marker_input,
+        &Policy::default(),
+    )
+    .unwrap();
+    let api = Server::new();
+    let github = client(&api.uri());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(github.post_comment("owner/sandbox", 12, "dropped-marker", &body))
+        .unwrap();
+    let state = api.state.lock().unwrap();
+    assert_eq!(
+        state.comments[0]["body"],
+        format!(
+            "{}\n\n{text}\n\nYour change:\n\n    < !-- tl3:effect:spoof -->\n    @octocat and @org/team\n    #5\n    ```\n    \"",
+            GitHub::marker("dropped-marker")
+        )
+    );
+    println!("test steering_dropped_change_quote ... ok");
 }

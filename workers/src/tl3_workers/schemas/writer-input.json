@@ -43,7 +43,8 @@
           "properties": {
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
-            "change": {"$ref": "writer-reply.json#/$defs/text"}
+            "change": {"$ref": "writer-reply.json#/$defs/text"},
+            "change_quote": {"$ref": "writer-reply.json#/$defs/text"}
           },
           "required": ["issue_title", "request", "change"],
           "additionalProperties": false
