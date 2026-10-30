@@ -306,7 +306,7 @@ fn maker_ladder_obeys_q22_and_budget_bounds() {
         Config::parse(&toml::to_string(&document).unwrap())
             .unwrap_err()
             .to_string()
-            .contains("3 elements")
+            .contains("length 3")
     );
 }
 
@@ -342,7 +342,11 @@ fn repositories_need_valid_names_installations_and_unique_full_names() {
 #[test]
 fn explicit_reviewer_and_proxy_specific_efforts_are_supported() {
     let mut document: Value = EXAMPLE.parse().unwrap();
-    document["models"]["reviewer"] = document["models"]["ingest"].clone();
+    let reviewer = document["models"]["ingest"].clone();
+    document["models"]
+        .as_table_mut()
+        .unwrap()
+        .insert("reviewer".into(), reviewer);
     document["models"]["maker"][1]["effort"] = Value::String("proxy-specific-maximum".into());
     document["limits"]["credit_reserve"] = Value::Integer(0);
     document["limits"]["free_rechecks"] = Value::Integer(0);
