@@ -221,7 +221,7 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
         .claim_worker("fixture-progress", "0", epoch, 0)
         .unwrap();
     store
-        .record_worker_progress("fixture-progress", 0, 10, "model_turn")
+        .record_worker_progress("fixture-progress", 0, 10, "model_turn", None)
         .unwrap();
     let status = status::load(&mut Reader::open(settings).unwrap()).unwrap();
     assert!(
@@ -998,7 +998,7 @@ impl WaitingMaker {
         matches!(
             d.output,
             Out::Effect {
-                kind: EffectKind::StartRun(tl3_kernel::Role::Maker),
+                kind: EffectKind::StartRun(tl3_kernel::Role::Make),
                 ..
             }
         )
@@ -1154,7 +1154,7 @@ fn worker_look_does_not_read_github_deliveries(settings: &tl3_config::Store) {
     drain(&mut c);
     c.look_now().unwrap();
     assert_eq!(reads.get(), 1);
-    clock.advance(1);
+    clock.advance(3);
     c.look_due().unwrap();
     assert_eq!(
         reads.get(),
