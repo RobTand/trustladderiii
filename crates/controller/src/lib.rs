@@ -143,11 +143,11 @@ impl Controller {
             json!({"comment_backfill": true}),
             &snapshot,
         );
-        for row in snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == "github_comments" && r.value.get("classification").is_none())
-        {
+        for row in snapshot.rows.iter().filter(|r| {
+            r.table == "github_comments"
+                && r.value.get("classification").is_none()
+                && r.value["ignored"] != true
+        }) {
             if !snapshot
                 .rows
                 .iter()

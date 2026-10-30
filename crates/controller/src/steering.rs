@@ -59,7 +59,7 @@ impl Controller {
             if row.value["comment"]["user"]["id"] != self.bootstrap.rob
                 || !self.bootstrap.repos.contains(&repository)
             {
-                continue;
+                return self.ignore_comment(snapshot, &row.id);
             }
             let Some(binding) = snapshot.rows.iter().find(|r| {
                 r.table == "requests"
@@ -71,7 +71,7 @@ impl Controller {
                                 && pr.value["number"] == row.value["issue"]
                         }))
             }) else {
-                continue;
+                return self.ignore_comment(snapshot, &row.id);
             };
             let node = NodeId(
                 binding
@@ -133,6 +133,29 @@ impl Controller {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    fn ignore_comment(&mut self, snapshot: &Snapshot, id: &str) -> Result<bool> {
+        let mut commit = Commit::new(
+            format!("ignore-comment:{id}"),
+            json!({"comment_ignored": id}),
+            snapshot,
+        );
+        commit.rows.push(RowChange::Delete {
+            table: "unclassified_comments".into(),
+            id: id.into(),
+        });
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "github_comments" && r.id == id)
+        {
+            let mut value = row.value.clone();
+            value["ignored"] = json!(true);
+            commit.rows.push(put("github_comments", id.into(), value));
+        }
+        self.store.commit(&commit)?;
+        Ok(true)
     }
 
     pub(crate) fn classified(
@@ -228,7 +251,7 @@ impl Controller {
         if current_answer {
             if let Some(text) = reply["new_text"].as_str()
                 && !n.phase.is_closed()
-                && !n.phase.is_stopping()
+                && !matches!(n.phase, tl3_kernel::Phase::Stopping(_))
             {
                 commit.rows.push(put(
                     "replacement",
