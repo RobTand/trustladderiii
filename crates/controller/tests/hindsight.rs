@@ -287,3 +287,33 @@ fn failed_run_without_summary_is_retained_and_size_is_bounded() {
     assert!(record["reason"].as_str().unwrap().contains("exit"));
     assert!(record.to_string().contains("truncated"));
 }
+
+#[test]
+fn authenticated_retain_loads_a_runtime_key_without_recording_it() {
+    let f = Fixture::new();
+    let key = f.scratch.path().join("fixture-hindsight-key");
+    fs::write(&key, "fixture-hindsight-authentication\n").unwrap();
+    let text = include_str!("../../config/example.toml")
+        .replace(
+            "[hindsight]",
+            &format!("[hindsight]\napi_key_file = {key:?}"),
+        )
+        .replace("http://127.0.0.1:8890", &f.server.uri());
+    let config = tl3_config::Config::parse(&text)
+        .expect("Hindsight supports a separate runtime credential file");
+    let attempt = f.attempt(
+        "audit",
+        json!({"goals": ["Fix greeting"]}),
+        json!({"verdict": "agree"}),
+    );
+    memory::queue_attempt(&mut f.store(), "run:authenticated-audit", &attempt).unwrap();
+    assert_eq!(memory::flush(&mut f.store(), &config.hindsight).unwrap(), 1);
+    let requests = f._runtime.block_on(f.server.received_requests()).unwrap();
+    assert_eq!(
+        requests[0].headers.get("authorization").unwrap(),
+        "Bearer fixture-hindsight-authentication"
+    );
+    assert!(
+        !String::from_utf8_lossy(&requests[0].body).contains("fixture-hindsight-authentication")
+    );
+}
