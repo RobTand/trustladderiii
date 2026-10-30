@@ -128,6 +128,12 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
 }
 
 fn check_state(check: &CheckRun) -> QueueState {
+    if matches!(
+        check.conclusion.as_deref(),
+        Some("timed_out" | "startup_failure")
+    ) {
+        return QueueState::FailedCi;
+    }
     let Some(output) = &check.output else {
         return QueueState::Unknown;
     };
@@ -200,5 +206,38 @@ fn payload_state(json: &str) -> Option<QueueState> {
             _ => QueueState::Dequeued,
         },
         _ => QueueState::Unknown,
+    })
+}
+
+/// A timeout reports runner/setup failure rather than a test failure.
+pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
+    if matches!(
+        check.conclusion.as_deref(),
+        Some("timed_out" | "startup_failure")
+    ) {
+        return true;
+    }
+    check
+        .output
+        .as_ref()
+        .and_then(|output| output.summary.as_ref())
+        .and_then(|summary| summary.split_once("<span itemprop=\"mergify.v1."))
+        .and_then(|(_, encoded)| encoded.split_once('"'))
+        .and_then(|(encoded, _)| STANDARD.decode(encoded).ok())
+        .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok())
+        .is_some_and(|payload| {
+            payload.version == 1
+                && payload
+                    .dequeue_reason
+                    .is_some_and(|reason| reason.code == "CHECKS_TIMEOUT")
+        })
+}
+
+/// The selected check belongs to Mergify on the original PR head.
+pub fn merged_via_queue(observation: &Observation) -> bool {
+    observation.check.as_ref().is_some_and(|check| {
+        check.status == "completed"
+            && check.conclusion.as_deref() == Some("success")
+            && check_state(check) == QueueState::Merged
     })
 }

@@ -40,6 +40,7 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Queue(crate::adapters::mergify::QueueFact),
     GitHubComment {
         repository: crate::Repository,
         issue: u64,
@@ -99,9 +100,31 @@ pub enum Observation {
     },
 }
 
+/// The upstream record read by a look. Equality means no observed progress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ProgressToken {
+    Mergify(crate::adapters::mergify::Progress),
+}
+
+/// Stored in a watch's `progress` field. The first read has no previous token.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WatchProgress {
+    pub previous: Option<ProgressToken>,
+    pub current: ProgressToken,
+}
+
+impl WatchProgress {
+    pub fn changed(&self) -> bool {
+        self.previous.as_ref() != Some(&self.current)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
     pub ack: Ack,
+    /// Progress from this read, even when it produces no kernel observations.
+    #[serde(default)]
+    pub progress: Option<ProgressToken>,
     pub observations: Vec<Observation>,
 }
 
@@ -109,6 +132,7 @@ impl Completion {
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
             ack: Ack::Confirmed,
+            progress: None,
             observations,
         }
     }
@@ -128,6 +152,10 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    /// Idempotent cleanup after dispatch and watch retirement are durable.
+    fn retire_delivery(&mut self, _delivery: &Delivery) -> Result<()> {
+        Ok(())
+    }
     /// Reclaim upstream evidence after the controller has drained durable work.
     fn retire(&mut self, _store: &mut tl3_store::Store) -> Result<()> {
         Ok(())
@@ -161,11 +189,12 @@ pub fn upstream(output: Out) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
-    pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
-        for adapter in self.0.values_mut() {
-            adapter.retire(store)?;
+    pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) {
+        for (upstream, adapter) in &mut self.0 {
+            if let Err(error) = adapter.retire(store) {
+                eprintln!("adapter retirement failed for {upstream:?}: {error}");
+            }
         }
-        Ok(())
     }
     pub fn register(&mut self, upstream: Upstream, executor: impl Executor + 'static) {
         self.0.insert(upstream, Box::new(executor));
@@ -176,5 +205,21 @@ impl Registry {
             Some(adapter) => Ok(adapter.as_mut()),
             None => Err(crate::Error::Invalid("missing upstream adapter")),
         }
+    }
+}
+
+/// Cloned HTTP clients keep connection tasks on the runtime that first used them.
+pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: std::sync::LazyLock<std::io::Result<tokio::runtime::Runtime>> =
+        std::sync::LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(2)
+                .enable_all()
+                .build()
+        });
+    match &*RUNTIME {
+        Ok(runtime) => Ok(runtime),
+        Err(error) => Err(std::io::Error::new(error.kind(), error.to_string()).into()),
     }
 }

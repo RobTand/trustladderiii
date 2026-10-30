@@ -55,7 +55,7 @@ pub struct Adapter {
     writer: Box<dyn Writer>,
     epoch: i64,
     policy: Policy,
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
     fake: Fake,
 }
 impl Adapter {
@@ -71,9 +71,7 @@ impl Adapter {
             writer: Box::new(writer),
             epoch,
             policy,
-            runtime: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
+            runtime: crate::executor::runtime()?,
             fake: Fake::new(simulation),
         })
     }
@@ -161,6 +159,7 @@ impl Executor for Adapter {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected) => {
                     return Ok(Completion {
+                        progress: None,
                         ack: Ack::Permanent,
                         observations: vec![],
                     });

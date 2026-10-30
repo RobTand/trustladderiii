@@ -343,15 +343,13 @@ fn comment_input(
 
 pub struct CatchUp {
     clients: BTreeMap<u64, GitHub>,
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
 }
 impl CatchUp {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
             clients,
-            runtime: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
+            runtime: crate::executor::runtime()?,
         })
     }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
@@ -362,6 +360,10 @@ impl CatchUp {
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;
+        // Sources can finish their first catch-up before Controller::open initializes the store.
+        let world = (!snapshot.rows.is_empty())
+            .then(|| crate::snapshot::decode(&snapshot))
+            .transpose()?;
         let mut deliveries = Vec::new();
         let mut notifications = Vec::new();
         let mut cursor = None;
@@ -380,7 +382,16 @@ impl CatchUp {
                         .ok()
                         .map(|request| (r.id.clone(), request))
                 })
-                .filter(|(_, request)| request.repo == *repo)
+                .filter(|(id, request)| {
+                    request.repo == *repo
+                        && id
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| {
+                                world.as_ref().and_then(|world| world.nodes.get(index))
+                            })
+                            .is_some_and(|node| !matches!(node.phase, tl3_kernel::Phase::Closed(_)))
+                })
                 .map(|(id, _)| id)
                 .collect();
             let tracked_heads = snapshot
