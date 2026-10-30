@@ -86,6 +86,14 @@ pub(super) fn stage(
     {
         return Err(Error::Invalid("invalid check plan, repository or commit"));
     }
+    if harness
+        .canonicalize()?
+        .starts_with(run.repository.canonicalize()?)
+    {
+        return Err(Error::Invalid(
+            "install the trusted harness outside the served repository",
+        ));
+    }
     if root.exists() {
         fs::remove_dir_all(root)?;
     }
