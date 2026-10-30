@@ -1,7 +1,8 @@
 # TL3 workers
 
 `workers/` is a Python 3.14 uv project. It runs one agent role per process and
-has no controller dependency. Its first roles are `ingest` and `audit`.
+has no controller dependency. `.python-version` selects standard CPython with the
+GIL. Its first roles are `ingest` and `audit`.
 
 ```bash
 cd workers
@@ -206,8 +207,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
   --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
   --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
   --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 \
+  --env CARGO_BUILD_JOBS=2 \
   --env LANGSMITH_TRACING=false --env LANGCHAIN_TRACING_V2=false \
-  --detach -- /home/rob/.local/bin/uv run --locked --python 3.14 pytest -q
+  --detach -- /home/rob/.local/bin/uv run --locked --python 3.14+gil pytest -q
 ```
 
 The first run downloads dependencies from PyPI before the tests start.

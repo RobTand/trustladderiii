@@ -3,6 +3,7 @@ from importlib.resources import files
 import json
 from pathlib import Path
 import socket
+import sys
 
 from jsonschema import Draft202012Validator, ValidationError
 from langchain.agents.middleware import AgentMiddleware
@@ -220,6 +221,45 @@ def test_excluded_tool_is_rejected_and_progress_is_streamed(tmp_path, request_do
         {"event": "reply", "role": "ingest", "reply": BRIEF},
     ]
     assert "private fixture" not in result.stderr
+
+
+def test_tool_dispatch_rejects_excluded_read(request_doc, monkeypatch):
+    observed = []
+
+    class RecordingFake(FakeMessagesListChatModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    fake = RecordingFake(responses=[
+        AIMessage(content="", tool_calls=[{
+            "name": "read_file", "args": {"file_path": "/anything"},
+            "id": "read-1", "type": "tool_call",
+        }]),
+        AIMessage(content=json.dumps(BRIEF)),
+    ])
+    monkeypatch.setattr(runtime, "create_model", lambda request: fake)
+    runtime.run(request_doc, lambda event: None)
+    assert len(observed) == 2
+    tool_result = observed[1][-1]
+    assert tool_result.type == "tool"
+    assert tool_result.status == "error"
+    assert tool_result.text == "Error: read_file is not available."
+
+
+def test_provider_error_does_not_print_secrets(request_doc, monkeypatch, capsys):
+    from tl3_workers.__main__ import main
+    import io
+
+    def fail(request):
+        raise RuntimeError("fixture-secret-value " + request["key_file"])
+
+    monkeypatch.setattr(runtime, "create_model", fail)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(request_doc)))
+    monkeypatch.setattr(sys, "argv", ["tl3_workers", "run"])
+    monkeypatch.chdir(request_doc["worktree"])
+    assert main() == 1
+    assert capsys.readouterr() == ("", "tl3_workers: run failed\n")
 
 
 def test_schema_files_are_packaged_and_refs_resolve(request_doc):
