@@ -84,6 +84,13 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     assert json.loads((submission[1] / "waited.json").read_text()) == ["--endings", "--until", "cleaned", KEY]
 
 
+@pytest.mark.parametrize("schema", ["prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"])
+def test_published_submission_schemas(submission, schema):
+    script = submission[1] / "pbrun.py"
+    script.write_text(script.read_text().replace("prismabuild.submission.v1", schema))
+    assert call(submission, Summary().result)["status"] == "completed"
+
+
 def test_whole_suite(submission):
     assert call(submission, Summary().result)["status"] == "completed"
     args = json.loads((submission[1] / "submitted.json").read_text())

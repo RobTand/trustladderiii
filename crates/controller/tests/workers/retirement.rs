@@ -71,10 +71,10 @@ pub(super) fn summaries_and_states(settings: &tl3_config::Store) {
     let confirmed = seed(&mut store, &config, "confirmed", EffectState::Confirmed);
     // Retire in reverse progress order. Older evidence cannot replace the last progress.
     store
-        .record_worker_progress(&failed.key, 0, 20, "model_turn")
+        .record_worker_progress(&failed.key, 0, 20, "model_turn", None)
         .unwrap();
     store
-        .record_worker_progress(&confirmed.key, 0, 20, "tool_result")
+        .record_worker_progress(&confirmed.key, 0, 20, "tool_result", None)
         .unwrap();
     let mut connection = postgres::Config::new()
         .host(&settings.host)
@@ -178,7 +178,7 @@ pub(super) fn summaries_and_states(settings: &tl3_config::Store) {
     assert_eq!(last_progress(settings), None);
     let late = seed(&mut store, &config, "late", EffectState::Confirmed);
     store
-        .record_worker_progress(&late.key, 0, 20, "model_turn")
+        .record_worker_progress(&late.key, 0, 20, "model_turn", None)
         .unwrap();
     supervisor.retire(&mut store).unwrap();
     assert_eq!(last_progress(settings), None);

@@ -147,7 +147,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
                 code, submitted = _json_command(command)
-                if code or submitted.get("schema") != "prismabuild.submission.v1":
+                if code or submitted.get("schema") not in (
+                        "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):
                     raise ValueError("PrismaBuild refused submission")
                 key = submitted["action_key"]
                 if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
