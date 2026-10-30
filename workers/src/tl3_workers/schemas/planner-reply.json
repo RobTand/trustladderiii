@@ -66,7 +66,7 @@
             "type": "string",
             "minLength": 1
           },
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true
         },
         "checks": {
@@ -87,7 +87,7 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true
               },
               "goal_ids": {
@@ -96,7 +96,7 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true,
                 "description": "Zero-based positions in inputs.ingest.goals."
               }
@@ -108,16 +108,24 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 1
+          "minItems": 0
         },
         "no_design_questions": {
-          "const": true
+          "type": "boolean"
         },
         "lands_on_its_own": {
-          "const": true
+          "type": "boolean"
         },
         "forecast": {
           "$ref": "#/$defs/forecast"
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Code-owned rule violations. The model must omit this field."
         }
       },
       "required": [
@@ -157,7 +165,7 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true,
                 "description": "Zero-based positions in inputs.ingest.goals."
               },
@@ -178,10 +186,18 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 2
+          "minItems": 0
         },
         "forecast": {
           "$ref": "#/$defs/forecast"
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Code-owned rule violations. The model must omit this field."
         }
       },
       "required": [
@@ -212,6 +228,14 @@
         },
         "forecast": {
           "$ref": "#/$defs/forecast"
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Code-owned rule violations. The model must omit this field."
         }
       },
       "required": [

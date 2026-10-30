@@ -602,6 +602,40 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let question_context = if let Out::Notice {
+                notice: tl3_kernel::Notice::Ask { question },
+                ..
+            } = output
+            {
+                let plan = commit
+                    .rows
+                    .iter()
+                    .rev()
+                    .find_map(|row| match row {
+                        RowChange::Put { table, id, value }
+                            if table == "plans" && id == &node.0.to_string() =>
+                        {
+                            Some(value.clone())
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        snapshot
+                            .rows
+                            .iter()
+                            .find(|r| r.table == "plans" && r.id == node.0.to_string())
+                            .map(|r| r.value.clone())
+                    });
+                let context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                commit.rows.push(put(
+                    "question_context",
+                    question.to_string(),
+                    context.clone(),
+                ));
+                Some(context)
+            } else {
+                None
+            };
             let delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
@@ -615,6 +649,7 @@ impl Controller {
                 attempt: n.attempt,
                 round: n.round,
                 note: None,
+                question_context,
             };
             if matches!(
                 output,
@@ -655,6 +690,28 @@ impl Controller {
         Ok(())
     }
 
+    fn footprint(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        node: NodeId,
+        paths: &[String],
+    ) -> Result<tl3_kernel::Footprint> {
+        let request = request(snapshot, node)?;
+        let repo = self
+            .store
+            .intern_repo(&request.repo.owner, &request.repo.name)?;
+        let files = paths
+            .iter()
+            .map(|p| {
+                self.store
+                    .intern_path(repo, p)
+                    .map(|id| tl3_kernel::FileId(id.get() as u64))
+            })
+            .collect::<tl3_store::Result<Vec<_>>>()?;
+        Ok(world.intern_footprint(files))
+    }
+
     fn translate(
         &mut self,
         snapshot: &Snapshot,
@@ -686,8 +743,9 @@ impl Controller {
                     (n.phase, role.as_str()),
                     (tl3_kernel::Phase::Ingesting, "ingest")
                         | (tl3_kernel::Phase::Auditing, "audit")
+                        | (tl3_kernel::Phase::Planning { .. }, "planner")
                 );
-                let mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         return Ok(Some(Event::Reply {
@@ -697,7 +755,48 @@ impl Controller {
                         }));
                     }
                 };
-                let document = if role == "ingest" { "briefs" } else { "audits" };
+                let document = match role.as_str() {
+                    "ingest" => "briefs",
+                    "audit" => "audits",
+                    _ => "plans",
+                };
+                if role == "planner" {
+                    commit.rows.push(put(
+                        "plan_reports",
+                        format!("{}:{generation}", node.0),
+                        reply.clone(),
+                    ));
+                    let mut findings = self
+                        .store
+                        .worker_document(&node.0.to_string(), "findings")?
+                        .unwrap_or(json!([]));
+                    let reports = findings
+                        .as_array_mut()
+                        .ok_or(Error::Invalid("findings must be text reports"))?;
+                    for violation in reply["violations"].as_array().unwrap() {
+                        if !reports.contains(violation) {
+                            reports.push(violation.clone());
+                        }
+                    }
+                    if let Some(report) = reply["report"].as_str() {
+                        reports.push(json!(report));
+                    }
+                    commit
+                        .rows
+                        .push(put("findings", node.0.to_string(), findings));
+                    if let Reply::PlanLeaf { fits, .. } = mapped {
+                        let paths = reply["files"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|p| p.as_str().unwrap().to_owned())
+                            .collect::<Vec<_>>();
+                        mapped = Reply::PlanLeaf {
+                            footprint: self.footprint(snapshot, world, node, &paths)?,
+                            fits,
+                        };
+                    }
+                }
                 commit
                     .rows
                     .push(put(document, node.0.to_string(), reply.clone()));
@@ -719,28 +818,14 @@ impl Controller {
                 generation,
                 paths,
                 fits,
-            } => {
-                let request = request(snapshot, node)?;
-                let repo = self
-                    .store
-                    .intern_repo(&request.repo.owner, &request.repo.name)?;
-                let files = paths
-                    .iter()
-                    .map(|p| {
-                        self.store
-                            .intern_path(repo, p)
-                            .map(|id| tl3_kernel::FileId(id.get() as u64))
-                    })
-                    .collect::<tl3_store::Result<Vec<_>>>()?;
-                Event::Reply {
-                    node,
-                    generation,
-                    reply: Reply::PlanLeaf {
-                        footprint: world.intern_footprint(files),
-                        fits,
-                    },
-                }
-            }
+            } => Event::Reply {
+                node,
+                generation,
+                reply: Reply::PlanLeaf {
+                    footprint: self.footprint(snapshot, world, node, &paths)?,
+                    fits,
+                },
+            },
             Observation::Made {
                 node,
                 generation,

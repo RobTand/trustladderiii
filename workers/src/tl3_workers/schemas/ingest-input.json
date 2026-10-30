@@ -35,6 +35,38 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "overhead_tokens": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Named overhead constants from controller config, summed by code."
+        }
+      },
+      "required": [
+        "fit_tokens",
+        "context_tokens",
+        "overhead_tokens"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
