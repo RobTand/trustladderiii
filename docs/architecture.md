@@ -87,8 +87,9 @@ Simulation fakes persist receipts and delivery counts in a separate directory.
 They survive controller process death. They represent upstream records, not a
 replacement for Postgres. They cover every effect kind, including rebase and
 teardown. A fake queue receipt supplies a merge fact independently of its enqueue
-acknowledgement. Production GitHub ingress, process supervision and live clients
-remain the following tickets.
+acknowledgement. GitHub ingress and notice delivery can use the real receiver and a local REST
+server in simulation. Worker process supervision and live startup remain the
+following tickets.
 
 ## Commands and verification
 

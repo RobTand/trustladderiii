@@ -79,6 +79,8 @@ Rob's comments stay in `github_comments` for ticket #14 to classify.
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
 PR effects still use this module's fake until ticket #13.
+The checker includes TL3's tracked paths, generated during the build, the
+request's declared paths, and any further paths supplied in the adapter policy.
 
 The `github` integration target uses the recorded webhook fixtures, the actual
 HTTP receiver, a local REST server and embedded Postgres. It covers delivery
