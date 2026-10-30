@@ -20,7 +20,7 @@ command = ["cargo", "test", "--locked", "--all-targets"]
 for package in ("controller", "store", "github", "worktrees", "prismabuild", "mergify"):
     command += ["-p", f"tl3-{package}"]
 rows = [{
-    "cwd": str(root), "argv": command, "cpus": 2, "demand": {"mem_gb": 6},
+    "cwd": str(root), "argv": ["bash", "-c", "cargo test -p tl3-controller --test publishing --locked && " + " ".join(command)], "cpus": 2, "demand": {"mem_gb": 6},
     "tags": [host], "env": env, "priority": -10,
 } for host in ("dl380g10", "sparky", "sparklina")]
 if args.suite == "workspace":

@@ -155,7 +155,7 @@ impl Default for State {
             reopens: 0,
             closes: 0,
             operations: vec![],
-            queue_fixture: "waiting",
+            queue_fixture: "running",
         }
     }
 }
@@ -601,7 +601,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 break;
             }
         }
-        server.api.state.lock().unwrap().queue_fixture = "waiting";
+        server.api.state.lock().unwrap().queue_fixture = "running";
         drain(&mut c, &mut source, &mut store, Phase::Queued);
     }
     let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
