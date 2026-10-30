@@ -900,27 +900,291 @@ pub(super) fn writer_rejection() {
         root.path(),
     )
     .unwrap();
-    let note = delivery(Notice::MeasuresPosted);
+    for output in [
+        Out::Notice {
+            node: NodeId(0),
+            notice: Notice::MeasuresPosted,
+        },
+        Out::Comment {
+            node: NodeId(0),
+            kind: tl3_controller::executor::CommentKind::Clarify,
+        },
+    ] {
+        let mut note = delivery(Notice::MeasuresPosted);
+        note.output = output;
+        note.steering = Some(tl3_controller::steering::Task::ClarifyComment {
+            question: "Would you like me to stop or continue?".into(),
+            excerpt: "Maybe do that".into(),
+        });
+        assert!(
+            matches!(adapter.execute(&note), Err(tl3_controller::Error::Io(error))
+            if error.kind() == std::io::ErrorKind::ConnectionReset)
+        );
+    }
     assert_eq!(
-        adapter.execute(&note).unwrap().ack,
-        tl3_kernel::Ack::Confirmed
+        *calls.lock().unwrap(),
+        2,
+        "transport errors propagate without rejection reruns"
     );
-    adapter.execute(&note).unwrap();
-    assert_eq!(*calls.lock().unwrap(), 3);
-    assert_eq!(api.state.lock().unwrap().posts, 1);
-    assert!(
-        api.state.lock().unwrap().comments[0]["body"]
-            .as_str()
-            .unwrap()
-            .contains("Could you rephrase it?")
-    );
-    println!("test steering_writer_reruns_then_posts_checked_fallback ... ok");
+    assert_eq!(api.state.lock().unwrap().posts, 0);
+    println!("test steering_writer_rejections_and_transport_errors ... ok");
 }
 
 struct BrokenWriter(Arc<Mutex<usize>>);
 impl Writer for BrokenWriter {
     fn draft(&mut self, _: &str, _: &WriteRequest) -> tl3_controller::Result<WriterReply> {
         *self.0.lock().unwrap() += 1;
-        Err(tl3_controller::Error::Invalid("fixture failed writer run"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "fixture writer transport failed",
+        )
+        .into())
     }
+}
+
+struct RaceWorkers {
+    fake: adapters::workers::Fake,
+    reply: Value,
+}
+impl Executor for RaceWorkers {
+    fn execute(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        if delivery.is_classifier() {
+            return Ok(tl3_controller::executor::Completion::confirmed(vec![
+                Observation::Classified {
+                    key: delivery.key.clone(),
+                    reply: Some(self.reply.clone()),
+                },
+            ]));
+        }
+        self.fake.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(delivery)
+    }
+}
+
+fn race_controller(
+    settings: &tl3_config::Store,
+    root: &Path,
+    api: &Server,
+    reply: Value,
+) -> Controller {
+    let mut registry = adapters::simulation(root).unwrap();
+    registry.register(Upstream::GitHub, adapter(&api.uri(), root));
+    registry.register(
+        Upstream::Workers,
+        RaceWorkers {
+            fake: adapters::workers::Fake::new(root),
+            reply,
+        },
+    );
+    Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap()
+}
+
+fn race_comment(controller: &mut Controller) {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../fixtures/steering/comment.json")).unwrap();
+    controller
+        .observe(
+            "race-comment",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(fixture["comment"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+}
+
+pub(super) fn replacement_race(settings: &tl3_config::Store, race: &str) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller = race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({"kind": "change_request", "new_text": "Return goodbye instead of hello."}),
+    );
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let snapshot = controller.snapshot().unwrap();
+    let head = controller.world().unwrap().nodes[0].head.unwrap();
+    let sha = snapshot
+        .interned
+        .iter()
+        .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+        .unwrap()
+        .value
+        .clone();
+    race_comment(&mut controller);
+    for _ in 0..200 {
+        if controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "replacement_pending")
+        {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "replacement_pending" && r.id == "0")
+    );
+    assert_eq!(controller.world().unwrap().nodes.len(), 1);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Replaced)
+    );
+    match race {
+        "label" => {
+            let mut label = labelled();
+            label.delivery = "replacement-window-label".into();
+            controller.intake(label.clone()).unwrap();
+            controller.intake(label).unwrap();
+            assert_eq!(controller.world().unwrap().nodes.len(), 2);
+        }
+        "merge" => {
+            controller
+                .observe(
+                    "late-window-merge",
+                    Observation::Merged {
+                        node: NodeId(0),
+                        sha,
+                        checks_passed: true,
+                    },
+                )
+                .unwrap();
+            assert!(controller.drive_once().unwrap());
+            let world = controller.world().unwrap();
+            assert_eq!(world.nodes.len(), 1);
+            assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Merged));
+            assert_eq!(world.nodes[0].credit.earned, 1);
+            assert!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "replacement_pending")
+            );
+            assert!(controller.drive_once().unwrap());
+        }
+        "crash" => {
+            drop(controller);
+            api.state.lock().unwrap().fail_reads = true;
+            controller = super::controller(settings, root.path(), &api.uri());
+            assert!(controller.drive_once().unwrap());
+            assert_eq!(
+                controller.world().unwrap().nodes.len(),
+                2,
+                "recovery starts the replacement even while GitHub reads fail"
+            );
+            api.state.lock().unwrap().fail_reads = false;
+        }
+        _ => unreachable!(),
+    }
+    let snapshot = controller.snapshot().unwrap();
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "requests" && r.id == "1")
+            .unwrap()
+            .value["source"],
+        "Return goodbye instead of hello."
+    );
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "request_links" && r.id == "1")
+            .unwrap()
+            .value["issue"]["body"],
+        "Return goodbye instead of hello."
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| matches!(r.table.as_str(), "replacement" | "replacement_pending"))
+    );
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes.len(), 2);
+    assert!(!api.state.lock().unwrap().closed);
+    println!("test steering_replacement_window_{race} ... ok");
+}
+
+pub(super) fn unanswered_clarification_closes(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller = race_controller(
+        settings,
+        root.path(),
+        &api,
+        json!({"kind": "unsure", "question": "Would you like me to stop or continue?"}),
+    );
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    race_comment(&mut controller);
+    drain(&mut controller);
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "comment_questions")
+    );
+    controller
+        .observe(
+            "close-without-an-answer",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: KernelCommand::Stop,
+            }),
+        )
+        .unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Stopped)
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| matches!(r.table.as_str(), "comment_questions" | "github_comments"))
+    );
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .comment_retired("owner/sandbox/3/10000")
+            .unwrap()
+    );
+    race_comment(&mut controller);
+    drain(&mut controller);
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| matches!(r.table.as_str(), "comment_questions" | "github_comments"))
+    );
+    println!("test steering_unanswered_clarification_retires_on_close ... ok");
 }

@@ -2,7 +2,7 @@ use crate::executor::{CommentKind, Delivery, Output};
 use crate::{Controller, Error, Repository, Request, Result, put, request, snapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tl3_kernel::{Answer, Command, Event, NodeId, Notice, QKind, World};
+use tl3_kernel::{Answer, Command, Event, NodeId, QKind, World};
 use tl3_store::{Commit, NewEffect, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -173,10 +173,7 @@ impl Controller {
                     && r.value["phase"].get("Closed").is_some()
             });
             let pending = snapshot.rows.iter().any(|r| {
-                (matches!(
-                    r.table.as_str(),
-                    "unclassified_comments" | "comment_questions"
-                ) && r.id == row.id)
+                (r.table == "unclassified_comments" && r.id == row.id)
                     || (r.table == "comment_jobs"
                         && r.value["steering"]["Classify"]["comment_key"] == row.id)
             }) || snapshot.pending_effects.iter().any(|e| {
@@ -188,10 +185,12 @@ impl Controller {
                     json!({"comment_retired": row.id}),
                     snapshot,
                 );
-                commit.rows.push(RowChange::Delete {
-                    table: "github_comments".into(),
-                    id: row.id.clone(),
-                });
+                for table in ["github_comments", "comment_questions"] {
+                    commit.rows.push(RowChange::Delete {
+                        table: table.into(),
+                        id: row.id.clone(),
+                    });
+                }
                 self.store.commit(&commit)?;
                 return Ok(true);
             }
@@ -410,42 +409,70 @@ impl Controller {
         }))
     }
 
-    pub(crate) fn steering_delivery(
+    pub(crate) fn pending_replacement(
         &self,
         snapshot: &Snapshot,
-        commit: &Commit,
-        delivery: &mut Delivery,
+        commit: &mut Commit,
+        node: NodeId,
     ) -> Result<()> {
-        let table = match delivery.output {
-            Output::Notice {
-                notice: Notice::FileReplacement,
-                ..
-            } => "replacement",
-            _ => return Ok(()),
-        };
-        let id = delivery.node().0.to_string();
+        let id = node.0.to_string();
         let value = commit
             .rows
             .iter()
             .rev()
-            .find_map(|r| match r {
+            .find_map(|row| match row {
                 RowChange::Put {
-                    table: t,
-                    id: i,
+                    table,
+                    id: key,
                     value,
-                } if t == table && *i == id => Some(value),
+                } if table == "replacement" && *key == id => Some(value.clone()),
                 _ => None,
             })
             .or_else(|| {
                 snapshot
                     .rows
                     .iter()
-                    .find(|r| r.table == table && r.id == id)
-                    .map(|r| &r.value)
+                    .find(|row| row.table == "replacement" && row.id == id)
+                    .map(|row| row.value.clone())
             })
             .ok_or(Error::Invalid("steering notice context missing"))?;
-        delivery.steering = Some(serde_json::from_value(value.clone())?);
+        commit.rows.push(put("replacement_pending", id, value));
         Ok(())
+    }
+
+    pub(crate) fn start_replacement(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        for pending in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "replacement_pending")
+        {
+            let original = NodeId(
+                pending
+                    .id
+                    .parse()
+                    .map_err(|_| Error::Invalid("invalid request node"))?,
+            );
+            let old = request(snapshot, original)?;
+            if crate::latest_request(snapshot, &old.repo, old.issue)
+                .is_none_or(|latest| latest.id != pending.id)
+            {
+                continue;
+            }
+            let mut commit = Commit::new(
+                format!("start-replacement:{}", pending.id),
+                json!({"replacement": original}),
+                snapshot,
+            );
+            let issue = replacement_issue(snapshot, original, &pending.value)?;
+            if let Some(event) =
+                self.linked_request(snapshot, old.repo, issue, original, &mut commit)?
+            {
+                self.apply(snapshot, snapshot::decode(snapshot)?, event, &mut commit)?;
+            }
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub(crate) fn linked_request(
@@ -459,6 +486,14 @@ impl Controller {
         let old = request(snapshot, original)?;
         if old.repo != repository {
             return Err(Error::Invalid("linked request repository mismatch"));
+        }
+        if issue.number == old.issue
+            && !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "replacement_pending" && row.id == original.0.to_string())
+        {
+            return Ok(None);
         }
         let labelled = crate::LabelledIssue {
             delivery: commit.event_key.clone(),
@@ -487,15 +522,15 @@ impl Controller {
                 )
             }
         };
-        if event.is_some() {
-            for row in &mut commit.rows {
-                if let RowChange::Put { table, id, value } = row
-                    && table == "requests"
-                    && *id == node.0.to_string()
-                {
-                    value["source"] = json!(issue.body);
-                }
-            }
+        let source = json!(issue.body);
+        if let Some(RowChange::Put { value, .. }) = commit.rows.iter_mut().find(|row| {
+            matches!(row, RowChange::Put { table, id, .. } if table == "requests" && *id == node.0.to_string())
+        }) {
+            value["source"] = source;
+        } else {
+            let mut binding = request(snapshot, node)?;
+            binding.source = issue.body.clone();
+            commit.rows.push(put("requests", node.0.to_string(), json!(binding)));
         }
         commit.rows.push(put(
             "request_links",
@@ -504,6 +539,34 @@ impl Controller {
         ));
         Ok(event)
     }
+}
+
+pub(crate) fn replacement_issue(
+    snapshot: &Snapshot,
+    original: NodeId,
+    value: &Value,
+) -> Result<tl3_github::Issue> {
+    let Task::FileRequest {
+        text,
+        since,
+        correction: false,
+        ..
+    } = serde_json::from_value(value.clone())?
+    else {
+        return Err(Error::Invalid("invalid pending replacement"));
+    };
+    let old = request(snapshot, original)?;
+    Ok(tl3_github::Issue {
+        number: old.issue,
+        title: old.title,
+        body: Some(text),
+        state: "open".into(),
+        updated_at: since
+            .parse()
+            .map_err(|_| Error::Invalid("invalid replacement timestamp"))?,
+        labels: vec![],
+        pull_request: None,
+    })
 }
 
 fn queue_comment(commit: &mut Commit, delivery: Delivery) {

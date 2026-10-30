@@ -278,13 +278,35 @@ impl Controller {
         let repo_id = self.store.intern_repo(&repo.owner, &repo.name)?;
         let issue_id = self.store.intern_issue(repo_id, issue.number)?.get();
         let existing = latest_request(snapshot, &repo, issue.number);
-        let replaceable = existing.is_none_or(|row| {
-            row.id.parse::<usize>().ok().is_some_and(|id| {
-                world.nodes[id].phase == tl3_kernel::Phase::Closed(tl3_kernel::Outcome::Replaced)
-            })
+        let pending = existing.and_then(|request| {
+            snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "replacement_pending" && row.id == request.id)
         });
-        if replaceable {
+        if existing.is_none() || pending.is_some() {
             let node = world.nodes.len().to_string();
+            let source = if let Some(pending) = pending {
+                let original = NodeId(
+                    pending
+                        .id
+                        .parse()
+                        .map_err(|_| Error::Invalid("invalid request node"))?,
+                );
+                let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
+                commit.rows.push(put("request_links", node.clone(), json!({
+                    "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
+                })));
+                for table in ["replacement_pending", "replacement"] {
+                    commit.rows.push(RowChange::Delete {
+                        table: table.into(),
+                        id: pending.id.clone(),
+                    });
+                }
+                replacement.body
+            } else {
+                None
+            };
             commit.rows.push(put(
                 "requests",
                 node,
@@ -293,7 +315,7 @@ impl Controller {
                     issue: issue.number,
                     title: issue.title.clone(),
                     issue_id,
-                    source: None,
+                    source,
                 }),
             ));
             return Ok(Some(Event::NewRequest {
@@ -416,7 +438,10 @@ impl Controller {
                 return Ok(true);
             }
         }
-        if self.retire_comment(&snapshot)? || self.schedule_comment(&snapshot)? {
+        if self.start_replacement(&snapshot)?
+            || self.retire_comment(&snapshot)?
+            || self.schedule_comment(&snapshot)?
+        {
             return Ok(true);
         }
         let mut progressed = false;
@@ -782,6 +807,14 @@ impl Controller {
         commit.result = json!({"kernel_event": event});
         let dictionary = self.store.load()?.interned;
         for (index, output) in outputs.into_iter().enumerate() {
+            if let Out::Notice {
+                node,
+                notice: tl3_kernel::Notice::FileReplacement,
+            } = output
+            {
+                self.pending_replacement(snapshot, commit, node)?;
+                continue;
+            }
             let (node, key) = match output {
                 Out::Effect { node, seq, .. } => (node, format!("effect:{}:{seq}", node.0)),
                 Out::Notice { node, .. } => (
@@ -863,7 +896,7 @@ impl Controller {
             } else {
                 None
             };
-            let mut delivery = Delivery {
+            let delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
                 output: output.into(),
@@ -883,7 +916,6 @@ impl Controller {
                 steering: None,
                 request_text: request.source,
             };
-            self.steering_delivery(snapshot, commit, &mut delivery)?;
             if matches!(
                 output,
                 Out::Effect {

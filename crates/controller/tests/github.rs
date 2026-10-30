@@ -388,8 +388,15 @@ fn main() {
     steering::credit(&database.create("steering_credit"));
     steering::answer_replacement(&database.create("answer_replacement"));
     steering::writer_rejection();
+    for race in ["label", "merge", "crash"] {
+        steering::replacement_race(
+            &database.create(&format!("replacement_window_{race}")),
+            race,
+        );
+    }
+    steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
     database.stop();
-    println!("24 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("28 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -820,18 +827,24 @@ fn writer_checks() {
     )
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
-    assert_eq!(
-        rejecting.execute(&draft).unwrap().ack,
-        tl3_kernel::Ack::Confirmed
-    );
-    assert_eq!(calls.lock().unwrap().len(), 3);
-    assert_eq!(api.state.lock().unwrap().posts, posted + 1);
-    assert!(
-        api.state.lock().unwrap().comments.last().unwrap()["body"]
-            .as_str()
-            .unwrap()
-            .contains("Could you rephrase it?")
-    );
+    for notice in [
+        Notice::Ask { question: 9 },
+        Notice::Summary(Outcome::Stopped),
+    ] {
+        calls.lock().unwrap().clear();
+        draft.output = Out::Notice {
+            node: NodeId(0),
+            notice,
+        };
+        assert_eq!(
+            rejecting.execute(&draft).unwrap().ack,
+            tl3_kernel::Ack::Permanent
+        );
+        assert_eq!(calls.lock().unwrap().len(), 3);
+        let state = api.state.lock().unwrap();
+        assert_eq!(state.posts, posted);
+        assert!(!state.closed, "a rejected summary must not close the issue");
+    }
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {

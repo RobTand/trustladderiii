@@ -134,13 +134,7 @@ pub fn checked_draft(
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
     for attempt in 0..3 {
-        let reply = match writer.draft(&format!("{key}:writer:{attempt}"), &input) {
-            Ok(reply) => reply,
-            Err(_) => {
-                input.violations = vec!["The previous draft failed. Return the requested message in the required format.".into()];
-                continue;
-            }
-        };
+        let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
         if input.kind == MessageKind::Clarification
             && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text)
                 && text.text.contains(&format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap())))

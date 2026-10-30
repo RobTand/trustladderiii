@@ -47,7 +47,7 @@ use tl3_github::{
     CloseReason, GitHub,
     message::{OptionDraft, Policy},
 };
-use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
+use tl3_kernel::{Ack, NoteKind, Notice, Outcome, QKind};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
 /// PR effects stay on the tracer fake until ticket 13 replaces them here.
@@ -233,12 +233,26 @@ impl Executor for Adapter {
             );
             let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
                 Ok(draft) => draft,
-                Err(Error::MessageRejected) => {
-                    // A rejected draft still leaves Rob a checked reply under this marker.
+                Err(Error::MessageRejected)
+                    if matches!(
+                        delivery.output,
+                        Out::Comment {
+                            kind: CommentKind::Clarify,
+                            ..
+                        }
+                    ) =>
+                {
                     let fallback = "I couldn't act on your comment. Could you rephrase it?";
                     tl3_github::message::check_prose(fallback, &policy)
                         .map_err(|_| Error::MessageRejected)?;
                     fallback.into()
+                }
+                Err(Error::MessageRejected) => {
+                    return Ok(Completion {
+                        progress: None,
+                        ack: Ack::Permanent,
+                        observations: vec![],
+                    });
                 }
                 Err(error) => return Err(error),
             };

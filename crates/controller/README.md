@@ -189,15 +189,18 @@ rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
-Three rejected or failed drafts post a fixed, checked request to rephrase.
+Three rejected comment clarifications post a fixed, checked request to rephrase.
+Other rejected notices fail permanently and post nothing. Writer transport errors
+leave the delivery unconfirmed.
 The reply uses the original effect marker, so recovery does not restart the
 writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
 PR effects still use this module's fake until ticket #13. Incident notices stay
-on the fake until the operations issue is wired in. Replacement and correction
-notices create linked issues with the `tl3` label.
+on the fake until the operations issue is wired in. Replacements start a new
+request on the same issue from Rob's text. Corrections create linked issues
+with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
 It rejects both `:line` and `:line:column` suffixes.
@@ -688,7 +691,11 @@ answer to a kernel question becomes its existing `Answer::Unclear`; the kernel
 allows one clarification. Comment uncertainty never changes a kernel question.
 
 The existing `FileReplacement` notice starts a replacement on the same issue
-after closing as Replaced. Its source is Rob's new text. The issue stays open,
+after closing as Replaced. The closure commit records Rob's new text in a
+`replacement_pending` row keyed by the old request. Intake or the next drive
+starts the new request from that row and deletes both replacement rows in the
+same commit. A late merge still corrects the old request and does not cancel
+the pending replacement. Startup needs no GitHub read. The issue stays open,
 and intake, status and comment routing use its latest request. A complaint on a
 closed request files a correction directly from the comment pipeline, keyed by comment ID. The closed node receives no event.
 Only corrections create a new issue. The GitHub adapter uses a stable marker, the
@@ -716,6 +723,8 @@ python3 crates/controller/tools/steering_review_manifest.py hosts > /tmp/tl3-ste
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-steering-hosts.json
 ```
 
+The `steering` selection runs the GitHub target, including steering races,
+on all three hosts. The `writer` selection runs the Python writer tests once.
 The `workspace` selection generates the portable full check. Inspect each
 terminal result, logs and CAS receipt. No kernel rule or proof changes.
 
