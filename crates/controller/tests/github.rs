@@ -1447,7 +1447,8 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         while !condition() {
             assert!(
                 started.elapsed() < Duration::from_secs(90),
-                "daemon did not produce expected evidence"
+                "daemon did not produce expected evidence: {:?}",
+                received.try_iter().collect::<Vec<_>>()
             );
             thread::sleep(Duration::from_millis(10));
         }
@@ -1495,6 +1496,20 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
                 event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "audit"
             })
     });
+    wait(&mut || store.worker_document("0", "plans").unwrap().is_some());
+    // This ingress fixture has fake maker/check evidence. Publishing tests own real review.
+    let stop = Input::Observation {
+        key: "stop-after-planning".into(),
+        observation: Observation::Kernel(tl3_kernel::Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: tl3_kernel::Command::Stop,
+        }),
+    };
+    let stdin = daemon.0.stdin.as_mut().unwrap();
+    serde_json::to_writer(&mut *stdin, &stop).unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
     wait(&mut || api.state.lock().unwrap().closed);
     wait(&mut || {
         let snapshot = store.load().unwrap();

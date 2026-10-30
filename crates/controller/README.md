@@ -209,7 +209,8 @@ rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 `adapters::simulation_with_workers` replaces ingest, audit, planning and review with
 Python worker processes and returns a `WorkerOutputSource`. Making remains on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
-the audit's objections. Missing materials block dispatch.
+the audit's objections. Missing materials block dispatch. Review also needs
+committed Git and check evidence, which the default maker and check fakes do not supply.
 
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
