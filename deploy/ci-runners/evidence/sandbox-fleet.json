@@ -1,0 +1,255 @@
+{
+  "captured_at": "2026-10-30T20:58:43.214537+00:00",
+  "red_commit": "dc7c3b535cdd821a67ee0721652f8c2784793801",
+  "green_code_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+  "sandbox_pull": {
+    "author": "tl3-robtand[bot]",
+    "head": "f8c33aa93a21882db1e50b65d18e996ced469288",
+    "html_url": "https://github.com/RobTand/tl3-sandbox/pull/28",
+    "mergeable_state": "blocked",
+    "merged": false,
+    "number": 28
+  },
+  "runners": {
+    "runners": [
+      {
+        "busy": false,
+        "labels": [
+          "self-hosted",
+          "linux",
+          "x64",
+          "tl3-sandbox-fleet"
+        ],
+        "name": "tl3-sandbox-dl380g10-slot-1-1793393844-13423",
+        "status": "online"
+      },
+      {
+        "busy": false,
+        "labels": [
+          "self-hosted",
+          "linux",
+          "x64",
+          "tl3-sandbox-fleet"
+        ],
+        "name": "tl3-sandbox-dl380g10-slot-2-1793393572-22187",
+        "status": "online"
+      }
+    ],
+    "total_count": 2
+  },
+  "canary": {
+    "jobs": [
+      {
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/tl3-sandbox/actions/runs/41127152074/job/124308516362",
+        "id": 124308516362,
+        "labels": [
+          "self-hosted",
+          "linux",
+          "x64",
+          "tl3-sandbox-fleet"
+        ],
+        "name": "Sandbox tests",
+        "runner_name": "tl3-sandbox-dl380g10-slot-1-1793393571-22486",
+        "status": "completed"
+      }
+    ]
+  },
+  "containers": [
+    {
+      "name": "tl3-ci-runner-sandbox-1",
+      "image": "baba335bb444432c458b281cbf9ead37ae99339ccf7d9cf4156a931bd33fa4b3",
+      "mounts": [],
+      "binds": [],
+      "nano_cpus": 2000000000,
+      "memory": 6442450944,
+      "memory_swap": 6442450944,
+      "cap_drop": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_SETFCAP",
+        "CAP_SETGID",
+        "CAP_SETPCAP",
+        "CAP_SETUID",
+        "CAP_SYS_CHROOT"
+      ],
+      "security_opt": [
+        "no-new-privileges"
+      ],
+      "host_token_in_environment": false
+    },
+    {
+      "name": "tl3-ci-runner-sandbox-2",
+      "image": "baba335bb444432c458b281cbf9ead37ae99339ccf7d9cf4156a931bd33fa4b3",
+      "mounts": [],
+      "binds": [],
+      "nano_cpus": 2000000000,
+      "memory": 6442450944,
+      "memory_swap": 6442450944,
+      "cap_drop": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_SETFCAP",
+        "CAP_SETGID",
+        "CAP_SETPCAP",
+        "CAP_SETUID",
+        "CAP_SYS_CHROOT"
+      ],
+      "security_opt": [
+        "no-new-privileges"
+      ],
+      "host_token_in_environment": false
+    }
+  ],
+  "idempotent_reinstall": {
+    "invocations_preserved": true,
+    "before": "Id=tl3-ci-runner-sandbox@1.service\nInvocationID=4c01ee6f11d742c5bb515ab4ecda050d\n\nId=tl3-ci-runner-sandbox@2.service\nInvocationID=c7428f7a0cec47ae8ce73d258bdc17e1\n",
+    "after": "Id=tl3-ci-runner-sandbox@1.service\nInvocationID=4c01ee6f11d742c5bb515ab4ecda050d\n\nId=tl3-ci-runner-sandbox@2.service\nInvocationID=c7428f7a0cec47ae8ce73d258bdc17e1\n"
+  },
+  "actions": [
+    {
+      "kind": "red",
+      "action_key": "8073b78d54f9a452be12545f4207bf254f89487e0e4e0645ea475d78294c7638",
+      "host": "dl380g10",
+      "exit_code": 1,
+      "source_commit": "dc7c3b535cdd821a67ee0721652f8c2784793801",
+      "terminal_verified": true,
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "stdout_sha256": "f8deb7f655be9d029d5122bc9a41a17341965903027eb86f1fc5684bbd9f2b5a",
+      "stderr_sha256": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f",
+      "test_summaries": [
+        "FAIL: test_sandbox_install_is_idempotent_and_separate (test_runners.RunnerTests.test_sandbox_install_is_idempotent_and_separate)",
+        "FAIL: test_sandbox_rejects_third_slot_before_registration (test_runners.RunnerTests.test_sandbox_rejects_third_slot_before_registration)",
+        "FAIL: test_sandbox_slot_registers_only_for_sandbox (test_runners.RunnerTests.test_sandbox_slot_registers_only_for_sandbox)",
+        "Ran 4 tests in 0.266s",
+        "FAILED (failures=3)"
+      ]
+    },
+    {
+      "kind": "green-dl380g10",
+      "action_key": "45a3f71fb725b96a26210b807b9209129897ac21a061a6e99fba57833e1ca944",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "35972e09df83f00ebe192812b50f00753b09b80607cc66f9c176b6500e4e7ba9",
+      "stdout_sha256": "1399ee649b6ed4cb6237382f7273cba99a9c4dd0f65c369544dc9f007871e6b1",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "payload_sha256": "204ed6582ee713b4fd8d6e086aa1e658a64e08bab4d29869b9ee9cf3cfe5aa9c",
+      "test_summaries": [
+        "Ran 4 tests in 1.049s",
+        "OK",
+        "Ran 28 tests in 0.032s",
+        "OK"
+      ]
+    },
+    {
+      "kind": "green-sparky",
+      "action_key": "0991811d3850007a261f0cac58486cfa0ad34e6ae2e17fd1c534368b707951df",
+      "host": "sparky",
+      "exit_code": 0,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "749a5914d130589e5a16f5246f3c51ea9917e3e268b5fef830eb856b62b98996",
+      "stdout_sha256": "54c081ad3974e0920f882f0b1b7e2253c9fedfac98370c3a01c83b9fcbdf98d7",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "payload_sha256": "d428c90d5d4d087f74759cf135102a2992486ad34dceda97f9c6aae14fbec376",
+      "test_summaries": [
+        "Ran 4 tests in 0.373s",
+        "OK",
+        "Ran 28 tests in 0.009s",
+        "OK"
+      ]
+    },
+    {
+      "kind": "green-sparklina",
+      "action_key": "b15c774cf8d504a36e6829ddf132fd79c323fd5c1227befccdcbad2161eb0875",
+      "host": "sparklina",
+      "exit_code": 0,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "b3bf0a56eae90be9857d2f956422d7f5689916960096fa83db31bffb3193b077",
+      "stdout_sha256": "bbd1c4843b8f535a0cb161657fd4ff13216fc352007d7f9abaef1c39ccaee853",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "payload_sha256": "f7aab7066f567d988263ab4fd93238bef940152eaced20ead702c71850596a4a",
+      "test_summaries": [
+        "Ran 4 tests in 0.367s",
+        "OK",
+        "Ran 28 tests in 0.009s",
+        "OK"
+      ]
+    },
+    {
+      "kind": "helper-build",
+      "action_key": "8f4fae7d900ba17c8c4ca8c29d00912e0d9116e1f88f2f3012eda620cf4cd392",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "f35bbd3e896bf69811f128a51c6f02182d2ea83141a2c2440e934975c1785275",
+      "stdout_sha256": "b96d76ea15f6b760a836dc69f90c73f8de6541806b41e0d3e0717fe7a0af8aaa",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "payload_sha256": "ab01068eef22809f40895a61cc3e38b3c76a233124d34a1739d9f9abdb5c1616",
+      "test_summaries": []
+    },
+    {
+      "kind": "app-workflow-branch-denied",
+      "action_key": "03543eea0846c8c6a3dc1bc03c382d69be78663221daabf6e7f3bf6b69aac0f4",
+      "host": "dl380g10",
+      "exit_code": 1,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "stdout_sha256": "e9c6c9931bcc936007d731cbfa76916b69c5b6b94784ddc70bdbe2aa171b01d1",
+      "stderr_sha256": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f",
+      "test_summaries": []
+    },
+    {
+      "kind": "open-app-pr",
+      "action_key": "b842d983f9d6249614e428ae1c6ee82f962005d64177c3e5fcd13a74203f0216",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "source_commit": "025c741e6919e88c93e3a68dddc302db322c9949",
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "4c35044b8c77906af7febe9f1a06905eb742b6e6ac6b7b7545d689ab4b150755",
+      "stdout_sha256": "60dd2c694670a4fa7f1399ad509c63e58dd42f164a960d943b90b3a85693588b",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "payload_sha256": "b32f176da83f8e2c230c5847f7d6766867703cb07323a980894d77c258c98d37",
+      "test_summaries": []
+    },
+    {
+      "kind": "live-settings-before-merge",
+      "action_key": "a7595d6852c91721f1afe631a6daa851484015ca16fe1169e67e91f1d08d2e7d",
+      "host": "dl380g10",
+      "exit_code": 1,
+      "terminal_verified": true,
+      "receipt_verified": false,
+      "stdout_sha256": "19dfbd443de23e83060e4d67a54527ecee60da2c382e79e2ae65a4bb331f66ef",
+      "result": [
+        "files..github/workflows/tests.yml: expected \"628e0331efc14ebb5fd0b7d3fedbb0edb0b90d55da54571bfb2990d035c36690\", got \"6136e52f425d8e74432a3a5022d67d6492344cea296588a6665ed5cfae582f1d\"",
+        "FAIL: 1 difference(s) or incomplete reads"
+      ],
+      "pending": "Rerun after sandbox PR #28 merges; only the workflow hash differs."
+    }
+  ],
+  "skips": [],
+  "missing_tools": [
+    "Host ShellCheck unavailable; bash syntax checked through PrismaBuild. CI image includes ShellCheck."
+  ],
+  "handoff": "Coordinator records Rob code-owner approval on sandbox PR #28 head f8c33aa93a21882db1e50b65d18e996ced469288 and queues it. Rerun the live settings checker after merge before queueing this TL3 PR."
+}
