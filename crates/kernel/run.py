@@ -36,17 +36,19 @@ if mode == "manifest":
         "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "1",
         "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1", "RUST_TEST_THREADS": "1",
     }
-    proofs = re.findall(r"^proof!\(\s*(\w+),", (HERE / "src/proofs.rs").read_text(), re.M)
+    source = (HERE / "src/proofs.rs").read_text()
+    proofs = re.findall(r"^proof!\(\s*(\w+),", source, re.M)
+    replies = set(re.findall(r"^proof!\(\s*(\w+),\s*check_apply\(\s*reply\(", source, re.M))
     selected = names or ["tests", *proofs]
     if set(selected) - {"tests", *proofs}:
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
         if name in {"apply_new_request", "progress_from_queued"}:
-            memory = 64
+            memory = 32
         elif name.startswith("progress_from_"):
-            memory = 40
-        elif name.startswith("apply_"):
+            memory = 24
+        elif name in replies:
             memory = 32
         else:
             memory = 10

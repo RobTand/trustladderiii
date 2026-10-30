@@ -151,10 +151,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance and merge proofs reserve 10 GiB, event proofs reserve 32 GiB, and progress proofs reserve 40 GiB.
-`progress_from_queued` and `apply_new_request` reserve 64 GiB.
-These budgets account for the larger symbolic state from production IDs and optional heads.
-A progress proof measured 26.8 GiB after exhausting the spike's 20 GiB reservation.
+Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 32 GiB, and progress proofs reserve 24 GiB.
+`progress_from_queued` and `apply_new_request` reserve 32 GiB.
+These budgets use measurements from the production representation: reply proofs peaked at 21.8 GiB, progress proofs at 19.1 GiB and new requests at 27.9 GiB.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.
 Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
