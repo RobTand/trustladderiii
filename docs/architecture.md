@@ -116,8 +116,8 @@ same transaction, so it cannot also resend the superseded effect.
 `executor::Executor` exposes `execute` and `reconcile`. `Delivery` carries the
 key, epoch, kernel output, operation generation, repository, issue, PR, exact
 SHA, paths, attempt and round. The PR binding is refreshed before dispatch.
-`Completion` carries an acknowledgement and observations. An asynchronous start
-can acknowledge immediately. Late replies and webhooks enter through `tl3d`'s
+`Completion` carries an acknowledgement, observations and an optional progress
+token from the upstream read. An asynchronous start can acknowledge immediately. Late replies and webhooks enter through `tl3d`'s
 ingress. Source threads send `cli::Input` values on one
 `std::sync::mpsc::Sender<Input>` to the thread that owns the `Controller`.
 That thread applies intake or calls `observe`, then drains `drive_once`.

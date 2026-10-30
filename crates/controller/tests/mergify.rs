@@ -1497,5 +1497,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("29 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("38 Mergify scenarios passed; no skips; no live upstream calls");
 }
