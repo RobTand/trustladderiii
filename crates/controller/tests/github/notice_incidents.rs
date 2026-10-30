@@ -1,4 +1,5 @@
 use super::*;
+use sha2::Digest;
 use tl3_controller::executor::Completion;
 use tl3_kernel::{EffectKind, Event, Reply, Role};
 
