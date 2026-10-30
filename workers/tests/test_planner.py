@@ -223,8 +223,8 @@ def test_protected_paths_are_rejected(tmp_path, planner_request, monkeypatch, pr
     else:
         reply["pieces"][1]["files"] = [path]
     monkeypatch.chdir(planner_request["worktree"])
-    with pytest.raises(ValueError, match="declared file matches a protected path"):
-        check_reply(planner_request["inputs"], reply)
+    check_reply(planner_request["inputs"], reply)
+    assert any("protected path" in report for report in reply["violations"])
 
 
 @pytest.mark.parametrize("proposal,files", [
