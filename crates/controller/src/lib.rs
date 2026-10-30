@@ -299,20 +299,15 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
-        if let Some(row) = snapshot.rows.iter().find(|r| r.table == "retiring_effects") {
-            let delivery: Delivery = serde_json::from_value(row.value.clone())?;
-            self.adapters.adapter(&delivery)?.retire(&delivery)?;
-            let mut commit = Commit::new(
-                format!("retire:{}:{}", row.id, snapshot.revision.get()),
-                json!({"retired": row.id}),
-                &snapshot,
-            );
-            commit.rows.push(RowChange::Delete {
-                table: row.table.clone(),
-                id: row.id.clone(),
-            });
-            self.store.commit(&commit)?;
-            return Ok(true);
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "retiring_effects")
+        {
+            match self.retire_effect(&snapshot, row) {
+                Ok(()) => return Ok(true),
+                Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
+            }
         }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = serde_json::from_value(row.value.clone())?;
@@ -491,7 +486,20 @@ impl Controller {
                         continue;
                     }
                 };
-                if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
+                if completion.ack != Ack::Confirmed {
+                    continue;
+                }
+                if completion.observations.is_empty() {
+                    let progress_changed = record_progress(
+                        &snapshot,
+                        &mut commit,
+                        &row.id,
+                        completion.progress.as_ref(),
+                    )?;
+                    if progress_changed {
+                        self.store.commit(&commit)?;
+                        return Ok(true);
+                    }
                     continue;
                 }
                 for (index, observation) in completion.observations.iter().enumerate() {
@@ -506,13 +514,29 @@ impl Controller {
                 table: "watches".into(),
                 id: row.id.clone(),
             });
-            commit
-                .rows
-                .push(put("retiring_effects", row.id.clone(), json!(delivery)));
+            queue_retirement(&mut commit, &delivery);
             self.store.commit(&commit)?;
             return Ok(true);
         }
         Ok(progressed)
+    }
+
+    fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
+        let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+        if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+            self.adapters.adapter(&delivery)?.retire(&delivery)?;
+        }
+        let mut commit = Commit::new(
+            format!("retire:{}:{}", row.id, snapshot.revision.get()),
+            json!({"retired": row.id}),
+            snapshot,
+        );
+        commit.rows.push(RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
+        self.store.commit(&commit)?;
+        Ok(())
     }
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
@@ -629,9 +653,7 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
-            commit
-                .rows
-                .push(put("retiring_effects", key.into(), json!(delivery)));
+            queue_retirement(&mut commit, &delivery);
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Intended,
@@ -639,6 +661,7 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
             for (index, observation) in completion.observations.iter().enumerate() {
                 commit.rows.push(put(
                     "inbox",
@@ -1169,4 +1192,46 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
+    if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+        commit.rows.push(put(
+            "retiring_effects",
+            delivery.key.clone(),
+            json!(delivery),
+        ));
+    }
+}
+
+fn record_progress(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    key: &str,
+    token: Option<&executor::ProgressToken>,
+) -> Result<bool> {
+    let Some(token) = token else { return Ok(false) };
+    let Some(row) = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "watches" && row.id == key)
+    else {
+        return Ok(false);
+    };
+    let previous: Option<executor::WatchProgress> = row
+        .value
+        .get("progress")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()?;
+    let progress = executor::WatchProgress {
+        previous: previous.as_ref().map(|progress| progress.current.clone()),
+        current: token.clone(),
+    };
+    if previous.as_ref() == Some(&progress) {
+        return Ok(false);
+    }
+    let mut value = row.value.clone();
+    value["progress"] = json!(progress);
+    commit.rows.push(put("watches", key.into(), value));
+    Ok(true)
 }

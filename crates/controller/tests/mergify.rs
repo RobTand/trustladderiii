@@ -757,9 +757,20 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
         Phase::Closed(Outcome::Stopped)
     );
     api.state.lock().unwrap().merged(false);
+    // GitHub merges first, catch-up observes it while the queue check still runs.
+    deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
+    drain(&mut controller);
+    catch_up(settings, &api, &mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Stopped)
+    );
     api.state.lock().unwrap().checks = fixture("merged", "checks");
     if webhook {
-        deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
+        let mut body = webhook_fixture();
+        body["action"] = json!("completed");
+        body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+        deliver(settings, &api, "check_run", &body);
         drain(&mut controller);
     } else {
         catch_up(settings, &api, &mut controller);
@@ -932,14 +943,18 @@ fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
     assert_kernel_facts(settings, 0);
 }
 
-fn outside_merge_checks(settings: &tl3_config::Store, passed: bool, has_checks: bool) {
+fn outside_merge_checks(settings: &tl3_config::Store, passed: bool, has_checks: bool, stale: bool) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path(), true);
     {
         let mut state = api.state.lock().unwrap();
         state.merged(false);
-        state.checks = json!([]);
+        state.checks = if stale {
+            fixture("waiting", "checks")
+        } else {
+            json!([])
+        };
         let sha = state.pull["merge_commit_sha"].clone();
         state.merge_checks = json!([
             {"id":900,"name":"CI","head_sha":sha,"status":"completed","conclusion":if passed { "success" } else { "failure" }},
@@ -1015,6 +1030,207 @@ fn delayed_merge(settings: &tl3_config::Store, passed: bool, webhook: bool) {
     assert_eq!(incident, !passed);
     catch_up(settings, &api, &mut controller);
     assert_kernel_facts(settings, 1);
+}
+
+fn progress(controller: &mut Controller) -> tl3_controller::executor::WatchProgress {
+    let snapshot = controller.snapshot().unwrap();
+    let watch = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "watches" && row.value["output"]["Effect"]["kind"] == "Enqueue")
+        .unwrap();
+    serde_json::from_value(watch.value["progress"].clone()).unwrap()
+}
+
+fn stalled_merge_progress(settings: &tl3_config::Store) {
+    use tl3_controller::executor::{ProgressToken, WatchProgress};
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    drain(&mut controller);
+    let before = progress(&mut controller).current;
+    api.state.lock().unwrap().merged(false);
+    assert!(controller.drive_once().unwrap());
+    let changed = progress(&mut controller);
+    assert!(changed.changed());
+    assert_eq!(changed.previous, Some(before));
+    let ProgressToken::Mergify(token) = &changed.current;
+    assert_eq!(
+        token.merged_at.as_deref(),
+        Some("2026-10-30T01:00:00+00:00")
+    );
+    assert_eq!(
+        token.merge_commit_sha,
+        api.state.lock().unwrap().pull["merge_commit_sha"]
+            .as_str()
+            .map(String::from)
+    );
+    let check = token.queue_check.as_ref().unwrap();
+    assert_eq!(check.status, "in_progress");
+    assert!(check.conclusion.is_none());
+    assert_eq!(check.title.as_deref(), Some("Running merge queue checks"));
+    assert_eq!(
+        check.id,
+        api.state.lock().unwrap().checks()[0]["id"]
+            .as_u64()
+            .unwrap()
+    );
+    drop(controller);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Mergify,
+        api.adapter(&root.path().join("mergify"), 0),
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    assert_eq!(progress(&mut controller), changed);
+    assert!(controller.drive_once().unwrap());
+    let unchanged = progress(&mut controller);
+    assert!(!unchanged.changed());
+    assert_eq!(unchanged.previous.as_ref(), Some(&unchanged.current));
+    assert!(
+        !controller.drive_once().unwrap(),
+        "unchanged tokens must not spin the driver"
+    );
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_kernel_facts(settings, 0);
+    // Each selected check field participates in the token comparison.
+    for field in ["id", "status", "conclusion", "title"] {
+        let previous = progress(&mut controller).current;
+        {
+            let mut state = api.state.lock().unwrap();
+            match field {
+                "id" => state.checks[0]["id"] = json!(9999),
+                "status" => state.checks[0]["status"] = json!("queued"),
+                "conclusion" => state.checks[0]["conclusion"] = json!("neutral"),
+                "title" => state.checks[0]["output"]["title"] = json!("In merge queue"),
+                _ => unreachable!(),
+            }
+        }
+        assert!(controller.drive_once().unwrap());
+        let read: WatchProgress = progress(&mut controller);
+        assert!(read.changed());
+        assert_eq!(read.previous, Some(previous));
+        drain(&mut controller);
+    }
+}
+
+fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    api.state.lock().unwrap().merged(true);
+    match path {
+        "webhook" => deliver(settings, &api, "pull_request", &pull_event(&api, "closed")),
+        "catchup" => catch_up(settings, &api, &mut controller),
+        "watch" => (),
+        _ => unreachable!(),
+    }
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert_kernel_facts(settings, 1);
+    let effects = Store::open(settings).unwrap().effects().unwrap();
+    assert!(
+        effects.iter().any(
+            |effect| effect.payload["output"]["Notice"]["notice"]["Note"] == "UnapprovedMerge"
+        )
+    );
+    assert_eq!(
+        api.state.lock().unwrap().checks()[0]["status"],
+        "in_progress"
+    );
+}
+
+struct RetireError(Adapter);
+impl Executor for RetireError {
+    fn execute(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        self.0.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.0.reconcile(delivery)
+    }
+    fn retire(&mut self, _: &Delivery) -> tl3_controller::Result<()> {
+        Err(tl3_controller::Error::Invalid("fixture retire error"))
+    }
+}
+
+fn retirement_does_not_block(settings: &tl3_config::Store, missing_upstream: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    drain(&mut controller);
+    let snapshot = controller.snapshot().unwrap();
+    let mut old = delivery();
+    old.key = "old-retirement".into();
+    if missing_upstream {
+        old.output = Out::Effect {
+            node: NodeId(0),
+            seq: 1,
+            kind: EffectKind::SubmitChecks,
+        };
+    }
+    let mut commit = tl3_store::Commit::new("inject-retirement", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "retiring_effects".into(),
+        id: old.key.clone(),
+        value: json!(old),
+    });
+    drop(controller);
+    Store::open(settings).unwrap().commit(&commit).unwrap();
+    let mut registry = if missing_upstream {
+        tl3_controller::executor::Registry::default()
+    } else {
+        adapters::simulation(root.path()).unwrap()
+    };
+    if !missing_upstream {
+        registry.register(
+            Upstream::Mergify,
+            RetireError(api.adapter(&root.path().join("mergify"), 0)),
+        );
+    }
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    if missing_upstream {
+        assert!(controller.drive_once().unwrap());
+        assert!(
+            !controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.id == old.key && row.table == "retiring_effects")
+        );
+    } else {
+        controller
+            .observe(
+                "stop-with-retire-error",
+                tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                    node: NodeId(0),
+                    id: 1,
+                    command: tl3_kernel::Command::Stop,
+                }),
+            )
+            .unwrap();
+        drain(&mut controller);
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Closed(Outcome::Stopped)
+        );
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.id == old.key && row.table == "retiring_effects")
+        );
+    }
 }
 
 fn marker_files(root: &Path) -> Vec<std::path::PathBuf> {
@@ -1193,9 +1409,11 @@ fn main() {
     late_merge_after_close(&database.create("late_webhook"), true);
     late_merge_after_close(&database.create("late_catchup"), false);
     translator_retries_after_api_failure(&database.create("translation_retry"));
-    outside_merge_checks(&database.create("outside_pass"), true, true);
-    outside_merge_checks(&database.create("outside_fail"), false, true);
-    outside_merge_checks(&database.create("outside_no_ci"), false, false);
+    outside_merge_checks(&database.create("outside_pass"), true, true, false);
+    outside_merge_checks(&database.create("outside_fail"), false, true, false);
+    outside_merge_checks(&database.create("outside_no_ci"), false, false, false);
+    outside_merge_checks(&database.create("stale_final_pass"), true, true, true);
+    outside_merge_checks(&database.create("stale_final_fail"), false, true, true);
     for passed in [true, false] {
         for webhook in [true, false] {
             delayed_merge(
@@ -1205,6 +1423,12 @@ fn main() {
             );
         }
     }
+    stalled_merge_progress(&database.create("stalled_progress"));
+    for path in ["webhook", "catchup", "watch"] {
+        unapproved_merge_does_not_wait(&database.create(&format!("unapproved_{path}")), path);
+    }
+    retirement_does_not_block(&database.create("retire_error"), false);
+    retirement_does_not_block(&database.create("retire_missing_upstream"), true);
     marker_retirement(&database.create("retire_confirmed"), true);
     marker_retirement(&database.create("retire_uncertain"), false);
     merged(&database.create("merged_webhook"), false, true, true);

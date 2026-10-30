@@ -315,16 +315,39 @@ its intent, applied marker and receipt. Restart retries interrupted cleanup.
 The controller commits each queue fact's identity with its kernel step in
 `queue_facts`. Person actions use GitHub issue-event IDs in both delivery paths.
 These rows are pruned when a node closes. Catch-up and merge-group reads exclude
-closed nodes. Merges report the PR's actual head. A successful Mergify check
+closed nodes, except that merge webhooks, catch-up and queue-check events can
+correct a closed node without a recorded merge. Merges report the PR's actual head. A successful Mergify check
 reporting "Merged via merge queue" proves queue CI passed before the merge.
 Outside merges use checks on the actual merge commit. Completed `neutral` and
 `skipped` checks pass. That commit usually has no CI yet when the merge webhook
 arrives, so an outside merge usually reports false and the kernel raises an
 unapproved-merge incident. This reflects the merge commit's own evidence.
-If a Mergify queue check exists but is not final, no merge fact is emitted yet.
-Its completed check-run event or catch-up supplies the final evidence while the
-node remains open. Only the queue check from the Mergify app triggers check-event
+A final Mergify check with any other title, such as "Merge queue is ready",
+is no queue evidence. It uses the same merge-commit CI fallback as an outside merge.
+If the merged head equals the node's current approved head and the Mergify queue
+check is not final, no merge fact is emitted yet. Its completed check-run event
+or catch-up supplies the final evidence. A merge of any other head is reported
+immediately, even while the queue check runs, so the kernel raises its incident. Only the queue check from the Mergify app triggers check-event
 reads; check suites and other check runs are ignored.
+
+A reconciliation completion includes `executor::ProgressToken::Mergify` even
+when it has no observations. The public `mergify::Progress` contains GitHub's
+`merged_at` and `merge_commit_sha`, plus the selected queue check's `id`, `status`,
+`conclusion` and `title`. A missing check is `None`. The controller stores
+`executor::WatchProgress` in the watch row's `progress` field, with `previous`
+and `current` tokens. `changed()` compares them. The first read has no previous
+token. Repeated identical reads leave equal tokens and cause no further commits.
+The comparison survives restart and leaves with the watch, so it does not retain
+finished history. Retirement errors are logged and retried on a later drive;
+they do not stop inbox or effect processing. Only Mergify retirement calls an
+adapter because only this adapter owns per-effect files requiring retirement.
+
+Ticket #15 owns allowances and scheduled looks. On an unchanged authoritative
+read after the progress allowance, it can report: "GitHub merged at X, Mergify
+check Y still in_progress", using `merged_at`, `queue_check.id` and
+`queue_check.status`. The read itself sets no timer and emits no stall incident.
+The kernel currently has no Mergify-stall fact. Ticket #15 must supply that path;
+this adapter does not change kernel rules.
 
 Create a clean detached worktree at the final commit, then submit its host checks:
 

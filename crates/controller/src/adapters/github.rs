@@ -159,6 +159,7 @@ impl Executor for Adapter {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected) => {
                     return Ok(Completion {
+                        progress: None,
                         ack: Ack::Permanent,
                         observations: vec![],
                     });

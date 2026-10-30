@@ -691,6 +691,7 @@ impl tl3_controller::executor::Executor for RetryWorker {
             .or_default() += 1;
         if std::mem::take(&mut self.first) {
             return Ok(tl3_controller::executor::Completion {
+                progress: None,
                 ack: tl3_kernel::Ack::Retryable,
                 observations: vec![],
             });
@@ -1119,6 +1120,7 @@ impl Executor for FaultyWorker {
                 Fault::Pending => return Ok(Reconciliation::Pending),
                 Fault::Found(ack) => {
                     return Ok(Reconciliation::Found(Completion {
+                        progress: None,
                         ack,
                         observations: vec![],
                     }));

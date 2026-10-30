@@ -81,9 +81,31 @@ pub enum Observation {
     },
 }
 
+/// The upstream record read by a look. Equality means no observed progress.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ProgressToken {
+    Mergify(crate::adapters::mergify::Progress),
+}
+
+/// Stored in a watch's `progress` field. The first read has no previous token.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WatchProgress {
+    pub previous: Option<ProgressToken>,
+    pub current: ProgressToken,
+}
+
+impl WatchProgress {
+    pub fn changed(&self) -> bool {
+        self.previous.as_ref() != Some(&self.current)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
     pub ack: Ack,
+    /// Progress from this read, even when it produces no kernel observations.
+    #[serde(default)]
+    pub progress: Option<ProgressToken>,
     pub observations: Vec<Observation>,
 }
 
@@ -91,6 +113,7 @@ impl Completion {
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
             ack: Ack::Confirmed,
+            progress: None,
             observations,
         }
     }

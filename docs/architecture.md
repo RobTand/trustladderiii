@@ -260,8 +260,15 @@ The controller registers the Mergify translator in
 It translates durable webhook and catch-up deliveries on the controller thread.
 Only updates to `Mergify Merge Queue` from the Mergify app and merge groups
 trigger queue reads of open nodes. Check suites do not identify that queue check.
-If GitHub records a merge before its queue check finishes, merge evidence waits
-for the completed check-run event or catch-up. No timer drives the read.
+If GitHub records a merge of the approved head before its queue check finishes,
+merge evidence waits for the completed check-run event or catch-up. Other merged
+heads report immediately. Closed nodes without a recorded merge also accept the
+final check event. No timer drives the read.
+Each look returns a public progress token containing merge time, merge commit and
+the queue check's ID, status, conclusion and title. The watch durably keeps the
+previous and current tokens, even when the read produces no kernel fact. Ticket
+#15 compares them for stalls. Unchanged reads stop committing after the comparison
+is recorded. Retirement logs cleanup errors and continues driving other work.
 Person actions use issue-event IDs in both paths.
 Merge identities use the actual PR head, and failure identities use the Mergify
 check ID. The controller resolves repository and PR bindings and commits a

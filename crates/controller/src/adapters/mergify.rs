@@ -133,6 +133,40 @@ impl QueueFact {
     }
 }
 
+/// Authoritative PR and selected queue-check values from one reconciliation read.
+/// A missing check is distinct from an unfinished check. This token sets no deadline.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Progress {
+    /// GitHub's merge time in RFC 3339 format.
+    pub merged_at: Option<String>,
+    pub merge_commit_sha: Option<String>,
+    pub queue_check: Option<QueueCheckProgress>,
+}
+
+/// The newest Mergify queue check on the PR's current head.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct QueueCheckProgress {
+    pub id: u64,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub title: Option<String>,
+}
+
+impl From<&tl3_mergify::Observation> for Progress {
+    fn from(state: &tl3_mergify::Observation) -> Self {
+        Self {
+            merged_at: state.pull_request.merged_at.map(|time| time.to_rfc3339()),
+            merge_commit_sha: state.pull_request.merge_commit_sha.clone(),
+            queue_check: state.check.as_ref().map(|check| QueueCheckProgress {
+                id: check.id,
+                status: check.status.clone(),
+                conclusion: check.conclusion.clone(),
+                title: check.output.as_ref().map(|output| output.title.clone()),
+            }),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Attempt {
     before: Option<CheckRun>,
@@ -237,7 +271,11 @@ impl Adapter {
                             .as_ref()
                             .is_some_and(|before| before.before != state.check))))
         {
-            return Ok(Reconciliation::Found(Completion::confirmed(observations)));
+            let mut completion = Completion::confirmed(observations);
+            completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
+                &state,
+            )));
+            return Ok(Reconciliation::Found(completion));
         }
         let github = &self.clients[&delivery.repository.installation];
         let (number, _) = enqueue(delivery)?;
@@ -404,14 +442,20 @@ async fn queue_facts(
     let evidence = match state.state {
         QueueState::Merged => {
             // Mergify publishes its final queue result after GitHub records the merge.
-            if state
-                .check
-                .as_ref()
-                .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
+            if pull.head.sha == expected_head
+                && state
+                    .check
+                    .as_ref()
+                    .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
             {
                 return Ok(vec![]);
             }
-            let checks_passed = if state.check.is_some() {
+            let checks_passed = if state.check.as_ref().is_some_and(|check| {
+                check
+                    .output
+                    .as_ref()
+                    .is_some_and(|output| output.title == "Merged via merge queue")
+            }) {
                 tl3_mergify::merged_via_queue(state)
             } else if let Some(sha) = &pull.merge_commit_sha {
                 checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
@@ -462,12 +506,27 @@ fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
         })
 }
 
+fn approved_head(snapshot: &Snapshot, node: NodeId) -> Result<String> {
+    let world: World = crate::snapshot::decode(snapshot)?;
+    Ok(world.nodes[node.0 as usize]
+        .approved
+        .and_then(|head| {
+            snapshot
+                .interned
+                .iter()
+                .find(|entry| entry.kind == InternKind::Commit && entry.id == head.0 as i64)
+                .map(|entry| entry.value.clone())
+        })
+        .unwrap_or_default())
+}
+
 struct Tracked {
     number: u64,
     head: String,
+    approved: String,
     known_heads: Vec<String>,
 }
-fn tracked(snapshot: &Snapshot, repo: &Repository) -> Result<Vec<Tracked>> {
+fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Result<Vec<Tracked>> {
     let world: World = crate::snapshot::decode(snapshot)?;
     let mut result = Vec::new();
     for row in snapshot
@@ -480,10 +539,10 @@ fn tracked(snapshot: &Snapshot, repo: &Repository) -> Result<Vec<Tracked>> {
                 .parse()
                 .map_err(|_| Error::Invalid("invalid PR node"))?,
         );
-        if matches!(
-            world.nodes[node.0 as usize].phase,
-            tl3_kernel::Phase::Closed(_)
-        ) || crate::request(snapshot, node)?.repo != *repo
+        let n = &world.nodes[node.0 as usize];
+        if (matches!(n.phase, tl3_kernel::Phase::Closed(_))
+            && (!include_closed || n.merged.is_some()))
+            || crate::request(snapshot, node)?.repo != *repo
         {
             continue;
         }
@@ -508,6 +567,7 @@ fn tracked(snapshot: &Snapshot, repo: &Repository) -> Result<Vec<Tracked>> {
                 .as_u64()
                 .ok_or(Error::Invalid("invalid PR number"))?,
             head,
+            approved: approved_head(snapshot, node)?,
             known_heads,
         });
     }
@@ -555,7 +615,7 @@ impl Translator {
             .clients
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
-        let tracked = tracked(snapshot, repo)?;
+        let open = tracked(snapshot, repo, false)?;
         let mut facts = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
@@ -576,10 +636,11 @@ impl Translator {
                     let checks = self
                         .runtime
                         .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
-                    let state = tl3_mergify::observe(pull_request.clone(), &checks, "");
+                    let head = approved_head(snapshot, node)?;
+                    let state = tl3_mergify::observe(pull_request.clone(), &checks, &head);
                     facts.extend(
                         self.runtime
-                            .block_on(queue_facts(github, repo, &state, ""))?,
+                            .block_on(queue_facts(github, repo, &state, &head))?,
                     );
                 }
             }
@@ -599,9 +660,7 @@ impl Translator {
                 ..
             } => {
                 if is_merge_queue_pr(pull_request)
-                    || !tracked
-                        .iter()
-                        .any(|item| item.number == pull_request.number)
+                    || !open.iter().any(|item| item.number == pull_request.number)
                 {
                     return Ok(vec![]);
                 }
@@ -643,7 +702,7 @@ impl Translator {
                 {
                     return Ok(vec![]);
                 }
-                for item in tracked.iter().filter(|item| {
+                for item in tracked(snapshot, repo, true)?.iter().filter(|item| {
                     item.head == check_run.head_sha
                         && (check_run.pull_requests.is_empty()
                             || check_run
@@ -655,7 +714,7 @@ impl Translator {
                 }
             }
             Event::MergeGroup { .. } => {
-                for item in &tracked {
+                for item in &open {
                     facts.extend(self.look(github, repo, item)?);
                 }
             }
@@ -669,7 +728,7 @@ impl Translator {
             .block_on(Mergify::new(github.clone()).read(&full_name(repo), item.number, &item.head))
             .map_err(adapter_error)?;
         self.runtime
-            .block_on(queue_facts(github, repo, &state, &item.head))
+            .block_on(queue_facts(github, repo, &state, &item.approved))
     }
     pub fn catch_up(
         &self,
@@ -703,14 +762,15 @@ impl Translator {
                 )
                 && world.nodes[node.0 as usize].merged.is_none()
             {
-                let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, "");
+                let head = approved_head(snapshot, node)?;
+                let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
                 facts.extend(
                     self.runtime
-                        .block_on(queue_facts(github, repo, &state, ""))?,
+                        .block_on(queue_facts(github, repo, &state, &head))?,
                 );
             }
         }
-        for item in tracked(snapshot, repo)? {
+        for item in tracked(snapshot, repo, false)? {
             // Reread tracked PRs even when their updated_at is outside the catch-up window.
             facts.extend(self.look(github, repo, &item)?);
             let pull = self
