@@ -124,7 +124,7 @@ impl Run {
         self.reply(Reply::MakerNeedsFiles { files, fits: true });
     }
 
-    fn to_making(&mut self) {
+    fn start_making(&mut self) {
         self.reply(Reply::IngestDone { size: 1 });
         self.reply(Reply::AuditAgrees);
         self.plan([FileId(0)]);
@@ -153,7 +153,7 @@ impl Run {
 #[test]
 fn a_clean_request_merges_without_asking_rob() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.fact(Fact::PrMerged {
@@ -170,7 +170,7 @@ fn a_clean_request_merges_without_asking_rob() {
 #[test]
 fn a_stuck_fix_asks_rob_only_when_credit_runs_out() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     assert_eq!(run.credit(), 4);
     let mut head = HeadId(0);
 
@@ -275,7 +275,7 @@ fn an_audit_disagreement_is_revised_once_before_rob_hears() {
 #[test]
 fn a_queued_pr_can_still_merge_while_paused() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.command(Command::Pause);
@@ -309,7 +309,7 @@ fn a_late_answer_is_ignored() {
 #[test]
 fn cleanup_that_fails_waits_for_rob_then_closes() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.send(Event::Fact {
@@ -335,7 +335,7 @@ fn cleanup_that_fails_waits_for_rob_then_closes() {
 #[test]
 fn a_crash_loop_reaches_rob_after_its_second_incident() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     run.reply(Reply::RunFailed);
     assert!(!run.node().waiting_incident);
     run.reply(Reply::RunFailed);
@@ -355,7 +355,7 @@ fn a_crash_loop_reaches_rob_after_its_second_incident() {
 #[test]
 fn a_push_by_someone_else_is_checked_and_reviewed_again() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.fact(Fact::PushByOther { head: HeadId(7) });
@@ -370,7 +370,7 @@ fn a_push_by_someone_else_is_checked_and_reviewed_again() {
 #[test]
 fn a_late_merge_after_a_stop_corrects_the_record() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.command(Command::Stop);
@@ -415,7 +415,7 @@ fn two_requests_share_one_slot_first_come_first_served() {
 #[test]
 fn the_one_replan_sends_one_note_and_keeps_working() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(1 << 40);
     for _ in 0..2 {
         run.fail_attempt(&mut head);
@@ -453,7 +453,7 @@ fn the_one_replan_sends_one_note_and_keeps_working() {
 #[test]
 fn a_replan_waiting_for_credit_sends_its_note_when_funded() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     run.needs_files([FileId(90)]);
     run.needs_files([FileId(91)]);
     let mut head = HeadId(0);
@@ -503,7 +503,7 @@ fn footprints_are_sets_with_more_than_eight_wide_file_ids() {
 #[test]
 fn approval_is_one_exact_wide_head() {
     let mut run = Run::new();
-    run.to_making();
+    run.start_making();
     let mut head = HeadId(1 << 40);
     run.pass(&mut head);
     let old = head;

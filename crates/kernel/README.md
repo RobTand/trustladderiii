@@ -165,7 +165,7 @@ To generate a smaller campaign, name `tests` or the proof harnesses:
 python3 crates/kernel/run.py manifest tests apply_conflict > /tmp/tl3-kernel-campaign.json
 ```
 
-Inside an admitted action, `run.py tests` builds the workspace in ordinary `no_std` mode and runs the scenarios, random walks and proof-map check.
+Inside an admitted action, `run.py tests` checks formatting and Clippy, builds the workspace in ordinary `no_std` mode and runs the scenarios, random walks and proof-map check.
 `run.py prove NAME...` runs the named harnesses. Omitting the names runs every proof sequentially, so use the campaign for a full fleet run.
 The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUTPUT=regular` shows CBMC's detailed progress.
 
