@@ -804,10 +804,13 @@ raises its incident. The incident reads the merge time and queue-check title
 and status from the watch's `WatchProgress`. Worker declarations of outside waits
 are described in the [worker protocol](../../workers/README.md). A live declared
 wait has no timer and stores no heartbeat or sample token. Its action key joins
-the PrismaBuild source's bell awaited set. Endings and bell resets request a
-look for that effect. The subscription is durable until progress or retirement
-removes it. The action's snapshot parent must belong to the declaring run's
-worktree branch; missing or foreign records give no liveness.
+the PrismaBuild source's bell awaited set. Endings request a look for that
+effect. Bell resets reread the record and request a look only if it has ended or
+errored. The subscription is durable until progress or retirement removes it.
+The action's snapshot parent must be an ancestor of HEAD in the declaring run's
+worktree. A wait whose action has unrelated lineage gives no liveness. Sibling
+runs from the same base cannot be distinguished by this check. Git runs with
+`GIT_NO_LAZY_FETCH=1`. Missing records give no liveness.
 
 When a failed write's allowance expires, authoritative absence counts that
 delivery as retryable through the kernel. A transport error never proves absence.

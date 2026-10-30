@@ -144,9 +144,17 @@ impl Source {
     fn register_waits(&mut self, root: std::path::PathBuf) -> Result<()> {
         let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
         for path in wait_paths(&root)? {
-            let wait: WaitSubscription = serde_json::from_slice(&std::fs::read(path)?)?;
-            let _: ActionKey = wait.wait.key.parse().map_err(super::adapter_error)?;
-            self.waits.insert(wait.delivery.key.clone(), wait);
+            let result = (|| -> Result<WaitSubscription> {
+                let wait: WaitSubscription = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let _: ActionKey = wait.wait.key.parse().map_err(super::adapter_error)?;
+                Ok(wait)
+            })();
+            match result {
+                Ok(wait) => {
+                    self.waits.insert(wait.delivery.key.clone(), wait);
+                }
+                Err(error) => eprintln!("PrismaBuild wait {} skipped: {error}", path.display()),
+            }
         }
         Ok(())
     }
@@ -206,7 +214,7 @@ impl Source {
                     !matches!(record.state, ActionState::Queued | ActionState::Claimed)
                 })
             });
-            if changes.reset || ended || record.is_err() {
+            if ended || record.is_err() {
                 for wait in self
                     .waits
                     .values()

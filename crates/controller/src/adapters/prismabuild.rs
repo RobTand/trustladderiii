@@ -122,6 +122,7 @@ fn read_wait(
         return Ok(WaitRecord::Ended);
     };
     let status = std::process::Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .arg("--no-replace-objects")
         .arg("-C")
         .arg(checkout)

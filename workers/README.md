@@ -97,13 +97,17 @@ require 64 lowercase hexadecimal digits. Unknown owners cannot grant liveness.
 The supervisor persists the declaration with the output offset and attempt.
 A restart preserves it without refreshing agent progress. The look reads
 PrismaBuild's action record and verifies that `checkout_snapshot.parent` is an
-ancestor of HEAD in the declaring run's worktree. Foreign or missing actions
-give no liveness. Read or parse errors remain outages.
+ancestor of HEAD in the declaring run's worktree. A wait whose action has
+unrelated lineage gives no liveness. This check cannot distinguish sibling runs
+from the same base. Git runs with `GIT_NO_LAZY_FETCH=1` so the worktree cannot
+trigger an implicit fetch. Missing actions give no liveness. Read or parse errors
+remain outages.
 
 Queued or claimed actions keep the agent alive. The controller registers their
 keys with PrismaBuild's bell source and disarms the agent's allowance timer.
 Without an event, it reads no action record and commits no wait state. An ending,
-loss, withdrawal or bell reset requests a look. Missing records also count as
+loss or withdrawal requests a look. A bell reset rereads the record and requests
+a look only if the record has ended or errored. Missing records also count as
 ended. The first ending starts the agent's own no-progress allowance once.
 Progress, replacement and completion remove the subscription.
 
