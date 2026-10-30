@@ -50,7 +50,8 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Save this action key and verify it with `pbwait.py --endings`. Installation does
 not enable or start any unit. It copies the release binaries, Python packages,
 unit files and the wrapper. It also adds the operations issue identity expected
-by the looks adapter. No credential values enter the checkout or build snapshot.
+by the looks adapter and fills a missing Hindsight bank, preserving its endpoint.
+No credential values enter the checkout or build snapshot.
 
 ## Preflight
 

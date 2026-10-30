@@ -229,6 +229,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
     for table, fields in (
         ("github", {"webhook_listen": "127.0.0.1:8081"}),
         ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
+        ("hindsight", {"bank": tomllib.loads(defaults)["hindsight"]["bank"]}),
         ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
     ):
         missing = {key: toml_value(value) for key, value in fields.items()
