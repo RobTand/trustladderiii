@@ -500,6 +500,12 @@ impl Config {
                 }
             }
         }
+        if self.models.planner.len() < 2 {
+            return Err(invalid(
+                "models.planner",
+                "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
+            ));
+        }
         let [first, second, third] = &self.models.maker;
         if first.name != second.name || first.family != second.family {
             return Err(invalid(

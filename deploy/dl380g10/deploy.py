@@ -214,8 +214,15 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
     if not destination.exists():
         write_file(destination, defaults.encode())
         return
+    ignored = [flag for flag, value in (("--image", image), ("--primary", primary), ("--alternate", alternate))
+               if value]
+    if ignored:
+        print(f"Config exists, so {', '.join(ignored)} had no effect; edit {destination} instead.")
     original = destination.read_text()
     data = tomllib.loads(original)
+    if not data.get("github", {}).get("repos"):
+        raise SystemExit(f"{destination} has no [[github.repos]] entry. Restore it from a "
+                         "tl3.toml.*.bak backup, or move the file aside to generate a new one.")
     text = original
     # Deployment migrations fill missing fields. Existing values always win.
     for table, fields in (
@@ -308,7 +315,7 @@ def install(args):
     for unit in (HERE / "units").glob("*.service"):
         shutil.copy2(unit, units / unit.name)
     run(["systemctl", "--user", "daemon-reload"])
-    print("Units installed; config parses. Full Config::load still needs the model-key file.")
+    print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
 
 
 def service(home, name):
