@@ -1,5 +1,9 @@
 #[cfg(loom)]
+pub(crate) use loom::sync::atomic;
+#[cfg(loom)]
 pub(crate) use loom::sync::{Arc, Mutex};
+#[cfg(not(loom))]
+pub(crate) use std::sync::atomic;
 #[cfg(loom)]
 pub(crate) mod thread {
     pub(crate) use loom::thread::yield_now;

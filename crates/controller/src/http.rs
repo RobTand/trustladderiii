@@ -1,12 +1,9 @@
+use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::{Error, Result};
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc,
-    },
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -113,7 +110,7 @@ fn accept_connections(
             }
         };
         if open
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                 (count < MAX_CONNECTIONS).then_some(count + 1)
             })
             .is_err()
