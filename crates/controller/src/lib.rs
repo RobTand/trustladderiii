@@ -7,6 +7,10 @@ pub mod cli;
 pub mod clock;
 pub mod executor;
 mod http;
+mod sync;
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/mod.rs"]
+mod loom_tests;
 pub mod ingress;
 pub mod looks;
 mod snapshot;

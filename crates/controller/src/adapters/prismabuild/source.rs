@@ -1,3 +1,4 @@
+use crate::sync::{Arc, Mutex, mpsc::Sender};
 use super::{
     Job, Settings, WaitSubscription, job_paths, node_job_paths, node_root, read_job, record_path,
     results, retire_superseded, wait_paths, write,
@@ -5,7 +6,6 @@ use super::{
 use crate::{Result, cli::Input};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, mpsc::Sender},
     thread,
     time::Duration,
 };
@@ -294,3 +294,7 @@ impl Source {
         Ok(count)
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../../../tests/loom/bell.rs"]
+mod loom_tests;

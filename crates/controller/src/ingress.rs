@@ -1,4 +1,5 @@
 use crate::http;
+use crate::sync::{Arc, mpsc::{self, Sender}, thread};
 use crate::{
     Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
@@ -11,11 +12,6 @@ use std::{
     collections::BTreeMap,
     io::{self, BufRead},
     net::SocketAddr,
-    sync::{
-        Arc,
-        mpsc::{self, Sender},
-    },
-    thread,
 };
 use tl3_github::{
     GitHub, ServedRepo,
@@ -74,19 +70,19 @@ impl Sources {
             let input = match controller.next_look_in()? {
                 Some(wait) => match self.receiver.recv_timeout(wait) {
                     Ok(input) => input,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         controller.look_due()?;
                         while controller.drive_once()? {}
                         continue;
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 },
                 None => match self.receiver.recv() {
                     Ok(input) => input,
                     Err(_) => break,
                 },
             };
-            for exit in self.exits.try_iter() {
+            while let Ok(exit) = self.exits.try_recv() {
                 exit?;
             }
             drain(controller)?;
@@ -94,7 +90,7 @@ impl Sources {
             controller.look_due()?;
             while controller.drive_once()? {}
         }
-        for exit in self.exits {
+        while let Ok(exit) = self.exits.recv() {
             exit?;
         }
         Ok(())
@@ -473,7 +469,7 @@ impl CatchUp {
 }
 
 enum WebhookMessage {
-    Request(http::Request, mpsc::SyncSender<u16>),
+    Request(http::Request, std::sync::mpsc::SyncSender<u16>),
     Gap,
     Stop,
     ServerExit(Result<()>),
@@ -586,7 +582,7 @@ impl Source for Webhooks {
         } = self;
         let requests = control.0.sender.clone();
         let exits = requests.clone();
-        let server_thread = thread::spawn(move || {
+        let server_thread = std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 server.serve(move |connection| {
                     let (status, head) = match connection.read(http::MAX_BODY) {
@@ -594,7 +590,7 @@ impl Source for Webhooks {
                         Ok(request) if request.method != "POST" => (405, request.method == "HEAD"),
                         Ok(request) if request.path != "/github/events" => (404, false),
                         Ok(request) => {
-                            let (reply, response) = mpsc::sync_channel(1);
+                            let (reply, response) = std::sync::mpsc::sync_channel(1);
                             if requests
                                 .send(WebhookMessage::Request(request, reply))
                                 .is_err()
@@ -658,3 +654,7 @@ impl Source for Webhooks {
         result
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/ingress.rs"]
+mod loom_tests;

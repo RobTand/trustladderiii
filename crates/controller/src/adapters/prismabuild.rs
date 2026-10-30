@@ -1,3 +1,4 @@
+use crate::sync::{Arc, Mutex};
 use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
@@ -57,7 +58,6 @@ use std::{
     fs::{self, File},
     io::Write,
     path::PathBuf,
-    sync::{Arc, Mutex},
     time::Duration,
 };
 use tl3_prismabuild::{

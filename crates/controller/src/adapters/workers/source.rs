@@ -1,3 +1,4 @@
+use crate::sync::mpsc::Sender;
 use super::{
     ActiveRuns, inspect, latest,
     process::{self, read},
@@ -20,7 +21,6 @@ use std::{
     mem::MaybeUninit,
     os::fd::OwnedFd,
     path::PathBuf,
-    sync::mpsc::Sender,
 };
 use tl3_store::Store;
 
@@ -559,3 +559,7 @@ mod tests {
         assert!(!ready_name(".ready-0123.42-1.tmp"));
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../../../tests/loom/workers.rs"]
+mod loom_tests;
