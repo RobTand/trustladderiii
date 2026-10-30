@@ -11,6 +11,7 @@ queue_rules:
       - label = tl3-queue
       - check-success = @tl3-robtand/TL3 approval
     branch_protection_injection_mode: none
+    merge_bot_account: RobTand
     merge_conditions:
       - check-success = Sandbox tests
     merge_method: merge

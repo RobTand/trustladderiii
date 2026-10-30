@@ -136,6 +136,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let pull = github.open_pull_request(repo, &request).await?;
             println!("sandbox PR {}", pull.number);
         }
+        "tree" | "commit" => {
+            let payload = serde_json::from_slice(&fs::read(subject)?)?;
+            let resource = if operation == "tree" {
+                "trees"
+            } else {
+                "commits"
+            };
+            let sha = post_git_object(&http, &github, "https://api.github.com", resource, &payload)
+                .await?;
+            println!("{sha}");
+        }
         "approve" => {
             let check = github
                 .create_check_run(
@@ -206,13 +217,29 @@ fn trial_pull_request(branch: String, title: String, body: String) -> NewPullReq
 }
 
 async fn post_git_object(
-    _http: &reqwest::Client,
-    _github: &GitHub,
-    _api_url: &str,
-    _resource: &str,
-    _payload: &serde_json::Value,
+    http: &reqwest::Client,
+    github: &GitHub,
+    api_url: &str,
+    resource: &str,
+    payload: &serde_json::Value,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    todo!("post sandbox Git objects with the App installation token")
+    let object: serde_json::Value = http
+        .post(format!(
+            "{api_url}/repos/RobTand/tl3-sandbox/git/{resource}"
+        ))
+        .header("User-Agent", "tl3-sandbox-gate")
+        .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+        .bearer_auth(github.installation_token().await?)
+        .json(payload)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(object["sha"]
+        .as_str()
+        .ok_or("Git object SHA missing")?
+        .into())
 }
 
 #[cfg(test)]
@@ -256,10 +283,15 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path(format!("/repos/RobTand/tl3-sandbox/git/{resource}")))
-            .and(header("authorization", "Bearer fake-app-installation-token"))
+            .and(header(
+                "authorization",
+                "Bearer fake-app-installation-token",
+            ))
             .and(header("X-GitHub-Api-Version", tl3_github::API_VERSION))
             .and(body_json(&payload))
-            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"sha": "created-object"})))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(json!({"sha": "created-object"})),
+            )
             .expect(1)
             .mount(&server)
             .await;
@@ -276,10 +308,17 @@ mod tests {
                 max_retries: 0,
                 ..ClientOptions::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
         let sha = post_git_object(
-            &reqwest::Client::new(), &github, &server.uri(), resource, &payload,
-        ).await.unwrap();
+            &reqwest::Client::new(),
+            &github,
+            &server.uri(),
+            resource,
+            &payload,
+        )
+        .await
+        .unwrap();
         assert_eq!(sha, "created-object");
         server.verify().await;
     }
@@ -294,9 +333,12 @@ mod tests {
 
     #[tokio::test]
     async fn commit_post_uses_app_installation_token_and_preserves_parent() {
-        assert_app_git_write("commits", json!({
-            "message": "Sandbox trial", "tree": "new-tree", "parents": ["original-main"]
-        })).await;
+        assert_app_git_write(
+            "commits",
+            json!({
+                "message": "Sandbox trial", "tree": "new-tree", "parents": ["original-main"]
+            }),
+        )
+        .await;
     }
-
 }
