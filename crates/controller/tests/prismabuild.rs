@@ -570,7 +570,7 @@ fn unreadable_ending_is_reported_once() {
             .count(),
         1
     );
-    assert_eq!(observed(completion(&mut adapter, &first)).0, false);
+    assert!(!observed(completion(&mut adapter, &first)).0);
     let running = adapter.source().spawn(sender);
     assert!(matches!(
         receiver.recv_timeout(Duration::from_millis(1250)),

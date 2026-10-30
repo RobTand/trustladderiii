@@ -221,10 +221,10 @@ identifies the job to withdraw after the node changes generation.
 
 The adapter freezes a clean head checkout, bundles both commits and snapshots
 that bundle with a trusted harness copy. It seals without publication, fsyncs
-the effect's action key in its private durable directory, then publishes that
-exact CAS request. It then deletes the sealed `.input` bundle. Startup removes
-inputs left behind after a durable `.job` binding. That directory is scoped to one store and its single
-controller owner. A durable epoch fence rejects old writes. Results still
+the effect's action key in its private durable directory, deletes the sealed
+`.input` bundle, then publishes that exact CAS request. Startup removes inputs
+left behind after a durable `.job` binding. The records directory is scoped to
+one store and its single controller owner. A durable epoch fence rejects old writes. Results still
 reconcile by their original key and epoch. Existing PB records prevent repeated
 publication, including failed and withdrawn actions. PB owns stalls; the
 adapter sets a tests progress contract and max attempts 1, with no duration
@@ -233,7 +233,8 @@ a `.job`, because no attempt can have been published without that binding.
 A saved seal with no PB record remains `Pending`; reconciliation never publishes
 it, including when the effect is Cancelling.
 
-`prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter sends new effect keys through a bounded 64-entry broadcast channel.
+`prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter
+sends new effect keys through a bounded 64-entry broadcast channel.
 The source rebuilds its active set once at startup, then blocks on that channel
 and PB's filtered bell together. An empty active set waits only for a key or
 shutdown. There is no periodic source wake-up or directory scan. Channel lag
