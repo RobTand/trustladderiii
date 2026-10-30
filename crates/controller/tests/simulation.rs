@@ -57,6 +57,7 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("write_outage_goes_idle", write_outage_goes_idle),
         ("labelled_issue_closes", labelled_issue_closes),
         (
             "restart_without_duplicate_deliveries",
@@ -531,6 +532,54 @@ fn sent_but_absent(settings: &tl3_config::Store) {
     let mut controller = open(settings, &records);
     drain(&mut controller);
     assert_finished(&mut controller, &records, settings);
+}
+
+struct WriteDown {
+    calls: std::rc::Rc<std::cell::Cell<u64>>,
+}
+impl Executor for WriteDown {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        self.calls.set(self.calls.get() + 1);
+        Err(tl3_controller::Error::Adapter(Box::new(
+            std::io::Error::other("fixture write outage"),
+        )))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Absent)
+    }
+}
+fn write_outage_goes_idle(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Workers, WriteDown { calls: calls.clone() });
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    let before = controller.snapshot().unwrap().revision.get();
+    let mut progressed = 0;
+    for _ in 0..60 {
+        progressed += u64::from(controller.drive_once().unwrap());
+    }
+    let snapshot = controller.snapshot().unwrap();
+    let revisions = snapshot.revision.get() - before;
+    println!("write outage: drive_once_true={progressed}/60 revisions_added={revisions} attempts={} deliveries={:?}",
+        calls.get(), adapters::delivery_counts(root.path()).unwrap());
+    assert_eq!(progressed, 2, "write outage must go idle after Sent and Uncertain");
+    assert_eq!(revisions, 2);
+    assert_eq!(calls.get(), 1);
+    assert!(adapters::delivery_counts(root.path()).unwrap().is_empty());
+    assert!(!controller.drive_once().unwrap());
+    assert_eq!(controller.snapshot().unwrap(), snapshot);
+
+    controller.observe("new-input", Observation::PullRequest { node: NodeId(0), number: 100 }).unwrap();
+    drain(&mut controller);
+    assert_eq!(calls.get(), 2, "the next observation retries exactly once");
+    let mut next = labelled();
+    next.delivery = "next-input".into();
+    controller.intake(next).unwrap();
+    drain(&mut controller);
+    assert_eq!(calls.get(), 3, "the next intake retries exactly once");
 }
 
 struct DeferredWorker(adapters::workers::Fake);
