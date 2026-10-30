@@ -1,6 +1,26 @@
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::collections::BTreeMap;
 use tl3_github::webhook::*;
+
+#[derive(Default)]
+struct MemoryInbox {
+    deliveries: BTreeMap<String, Delivery>,
+}
+
+impl Inbox for MemoryInbox {
+    type Error = std::convert::Infallible;
+    fn insert(&mut self, delivery: Delivery) -> Result<bool, Self::Error> {
+        use std::collections::btree_map::Entry;
+        match self.deliveries.entry(delivery.id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(delivery);
+                Ok(true)
+            }
+            Entry::Occupied(_) => Ok(false),
+        }
+    }
+}
 
 fn signature(body: &[u8]) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(b"throwaway").unwrap();

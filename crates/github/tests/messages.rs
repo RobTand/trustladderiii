@@ -216,11 +216,21 @@ fn quotes_robs_title_verbatim_without_scanning_it() {
         let mut d = draft();
         d.issue_title = title.into();
         d.request_quote = title.into();
-        let policy = Policy { internal_terms: vec!["RepoSlot".into()] };
+        let policy = Policy {
+            internal_terms: vec!["RepoSlot".into()],
+        };
         let checked = check(&d, &policy).unwrap();
-        assert!(checked.as_str().starts_with(&format!("You asked for \"{title}\".")));
+        assert!(
+            checked
+                .as_str()
+                .starts_with(&format!("You asked for \"{title}\"."))
+        );
         d.obstacle = "The leaf needs attention.".into();
-        assert!(check(&d, &policy).unwrap_err().contains(&Violation::InternalVocabulary));
+        assert!(
+            check(&d, &policy)
+                .unwrap_err()
+                .contains(&Violation::InternalVocabulary)
+        );
     }
 }
 
@@ -251,7 +261,15 @@ fn actual_internal_names_are_supplied_by_policy() {
     for name in ["effectKey", "RepoSlot", "AwaitingRob", "TL3"] {
         let mut d = draft();
         d.obstacle = format!("The {name} needs attention.");
-        assert!(check(&d, &Policy { internal_terms: vec![name.into()] })
-            .unwrap_err().contains(&Violation::InternalNameOrId));
+        assert!(
+            check(
+                &d,
+                &Policy {
+                    internal_terms: vec![name.into()]
+                }
+            )
+            .unwrap_err()
+            .contains(&Violation::InternalNameOrId)
+        );
     }
 }

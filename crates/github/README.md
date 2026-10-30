@@ -6,9 +6,13 @@ without depending on it. It uses REST only.
 ## Client
 
 Deserialize the app's credential JSON into `AppConfig`. Its fields are `id`, `slug`,
-`pem`, `webhook_secret`, `client_id` and `client_secret`, as described in
+`pem` and `webhook_secret`, as described in
 [app setup](../../deploy/github-app/README.md). The crate never opens a credential file.
+Unused `client_id` and `client_secret` JSON fields are ignored during deserialization.
 Credentials and tokens have no debug implementation. Errors omit response bodies and tokens.
+The client keeps only the app id, slug and parsed signing key, plus its installation token.
+Keep the webhook secret separately for the verifier before passing the config to the client.
+The client drops the PEM text and webhook secret after construction.
 
 `GitHub::new(config, installation_id, ClientOptions::default())` creates a clonable
 client. It signs RS256 JWTs with the app id, backdates issuance by 60 seconds and
@@ -27,7 +31,7 @@ Public operations:
 | Methods | Purpose |
 |---|---|
 | `issue`, `comments` | Read an issue and all pages of comments |
-| `post_comment`, `edit_comment`, `find_comment`, `reconcile_comments`, `delete_comment` | Post, edit, find and deduplicate comments |
+| `post_comment`, `edit_comment`, `reconcile_comments`, `delete_comment` | Post, edit and deduplicate comments |
 | `close_issue` | Close with `Completed` or `NotPlanned` |
 | `create_check_run`, `check_runs`, `check_suites` | Create a check with a head and external id; read all check pages |
 | `open_pull_request`, `pull_request`, `pull_requests_for_branch`, `close_pull_request` | Open, inspect, reconcile and close PRs |
@@ -83,8 +87,8 @@ Webhook signatures authenticate GitHub delivery, not permission to start work.
 `webhook::receive(..., inbox)` verifies and inserts a delivery through `Inbox`.
 Its unique insert must atomically persist the delivery id and event. Return false
 for a duplicate. Commit failures must leave both absent so redelivery can retry.
-`MemoryInbox` is for tests and loses its contents on restart. Production implements
-`Inbox` with the controller's database transaction. After persistence, the controller
+Production implements `Inbox` with the controller's database transaction.
+The in-memory inbox exists only in the test suite. After persistence, the controller
 feeds stored events to the kernel. A delivery must never be marked consumed before
 its event is durable.
 
@@ -95,7 +99,11 @@ before the pass starts and rounded down to a whole second. Queries look back one
 additional second because GitHub timestamps have second precision and its since
 filters exclude the boundary. It includes open and closed issues updated since the
 cursor, repository comments, label changes with their original actors, and PRs
-updated since the cursor. PR listing is independent of issue timestamps. It rereads
+updated since the cursor. PR listing sorts by update time, newest first, and stops at
+the first row older than the cursor, independently of issue timestamps. Label recovery
+uses the repository-wide `/issues/events` endpoint, which includes issue numbers,
+labels, actors and timestamps. It reads all event pages because GitHub documents no
+`since` filter or chronological ordering for that endpoint. It rereads
 checks on every supplied `tracked_heads` entry and every changed PR head, since a
 check can finish without updating an issue.
 
@@ -116,14 +124,19 @@ two-sentence obstacle, two or three actions with outcomes, a recommendation inde
 and reason, and answer instructions. The original title comes from the issue,
 not from the message-writing agent.
 
-The checker scans every rendered field for internal vocabulary, code identifiers,
-hashes, issue ids, file paths and recognizable logs. Matching normalizes Unicode
-and strips invisible formatting characters. `Policy::internal_terms` adds actual
+The checker scans only TL3-written fields for the vocabulary leaf, lineage, replan
+and measure, including inflections and re-plan. It also checks code identifiers,
+hashes, issue ids, file paths and recognizable logs. Plain English such as yes/no,
+and/or and 24/7 passes, as do product names such as GitHub, PostgreSQL and YouTube.
+Matching normalizes Unicode and strips invisible formatting characters. `Policy::internal_terms` adds actual
 internal names and ids known to the controller. It must include identifiers that
-have no recognizable code shape. Required fields are checked for nonempty text.
+have no recognizable code shape, including internal CamelCase names.
+Paths need a root, explicit relative prefix, directory structure, known source
+directory or file extension. A slash alone does not establish a path.
+Required fields are checked for nonempty text.
 The checker cannot prove that prose is true, that an outcome follows from an option,
 or that advice is sensible. Those remain the writer's and reviewer's responsibility.
-Quoted issue titles go through the same rejection rules.
+The original issue title is quoted verbatim and excluded from content scanning.
 
 ## Verification
 
@@ -131,23 +144,23 @@ Run the integration tests against their in-process fake HTTP servers through
 PrismaBuild. Tests generate a throwaway RSA key. They never read real credentials
 or call GitHub. Fixture provenance is in [tests/fixtures](tests/fixtures/README.md).
 
-From a clean commit, submit with 4 CPUs, 8 GiB, `--anywhere`, and:
+From a clean commit, submit with 2 CPUs, 4 GiB, `--anywhere`, and:
 
 ```text
 PATH=/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 RUSTUP_HOME=/home/rob/.rustup
 CARGO_HOME=/home/rob/.cargo
 KANI_HOME=/home/rob/.kani
-CARGO_BUILD_JOBS=4
-RUST_TEST_THREADS=4
+CARGO_BUILD_JOBS=2
+RUST_TEST_THREADS=2
 OMP_NUM_THREADS=1
 MKL_NUM_THREADS=1
 OPENBLAS_NUM_THREADS=1
 ```
 
-The verification command is `cargo test --manifest-path crates/github/Cargo.toml --locked`.
-Run `cargo clippy --manifest-path crates/github/Cargo.toml --all-targets --locked -- -D warnings`
-in the admitted action too. A submission acknowledgement is not a pass.
+With the action's working directory set to `crates/github`, run `cargo test --locked`,
+then `cargo clippy --all-targets --locked -- -D warnings` in the admitted action.
+A submission acknowledgement is not a pass.
 
 GitHub references: [JWT claims](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app),
 [REST rate limits and retries](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api),

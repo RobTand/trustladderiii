@@ -36,8 +36,6 @@ fn config() -> AppConfig {
         slug: "factory".into(),
         pem: KEYS.0.clone(),
         webhook_secret: "unused-fake".into(),
-        client_id: "fake-client".into(),
-        client_secret: "unused-fake".into(),
     }
 }
 fn options(server: &MockServer) -> ClientOptions {
@@ -50,11 +48,14 @@ fn options(server: &MockServer) -> ClientOptions {
     }
 }
 async fn client(server: &MockServer) -> GitHub {
+    client_with_options(server, options(server)).await
+}
+async fn client_with_options(server: &MockServer, opts: ClientOptions) -> GitHub {
     Mock::given(method("POST")).and(path("/app/installations/3/access_tokens"))
         .and(header("x-github-api-version",API_VERSION))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({"token":"fake-token","expires_at":(Utc::now()+ChronoDuration::hours(1)).to_rfc3339()})))
         .expect(1).mount(server).await;
-    GitHub::new(config(), 3, options(server)).unwrap()
+    GitHub::new(config(), 3, opts).unwrap()
 }
 fn fixture(name: &str) -> Value {
     let bytes: &[u8] = match name {
@@ -543,7 +544,10 @@ async fn check_external_id_reconciles_only_the_apps_own_check() {
     get(
         &server,
         "/repos/owner/sandbox/commits/abc1234/check-runs",
-        json!({"check_runs":[foreign,fixture("check_run")]}),
+        json!({"check_runs":[{
+            "id": 21, "name": "approval", "head_sha": "abc1234",
+            "external_id": "approval-key", "status": "completed", "conclusion": "success", "app": null
+        }, foreign,fixture("check_run")]}),
     )
     .await;
     assert_eq!(
@@ -584,8 +588,8 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
         json!([fixture("comment")]),
     )
     .await;
-    get(&server,"/repos/owner/sandbox/issues/12/events",json!([
-        {"id":1,"event":"labeled","actor":{"id":42,"login":"owner"},"label":{"name":"tl3"},"created_at":"2026-10-30T01:00:00Z"},
+    get(&server,"/repos/owner/sandbox/issues/events",json!([
+        {"id":1,"event":"labeled","actor":{"id":42,"login":"owner"},"label":{"name":"tl3"},"created_at":"2026-10-30T01:00:00Z","issue":{"number":12}},
         {"id":2,"event":"closed","created_at":"2026-10-30T01:00:00Z"}
     ])).await;
     get(
@@ -646,4 +650,312 @@ async fn rejects_unsafe_urls_and_does_not_follow_cross_origin_redirects() {
         github.issue("../sandbox", 12).await,
         Err(Error::Config(_))
     ));
+}
+
+#[tokio::test]
+async fn timed_out_post_reconciles_a_committed_comment_before_another_write() {
+    let server = MockServer::start().await;
+    let mut opts = options(&server);
+    opts.request_timeout = Duration::from_millis(500);
+    let github = client_with_options(&server, opts).await;
+    let posted = Arc::new(AtomicUsize::new(0));
+    let committed = posted.clone();
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/sandbox/issues/12/comments"))
+        .respond_with(move |_: &Request| {
+            ResponseTemplate::new(200).set_body_json(if committed.load(Ordering::SeqCst) == 0 {
+                json!([])
+            } else {
+                json!([bot_comment(9, "key")])
+            })
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let committed = posted.clone();
+    Mock::given(method("POST"))
+        .and(path("/repos/owner/sandbox/issues/12/comments"))
+        .respond_with(move |_: &Request| {
+            committed.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(201)
+                .set_body_json(bot_comment(9, "key"))
+                .set_delay(Duration::from_secs(2))
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+    assert!(matches!(
+        github
+            .post_comment("owner/sandbox", 12, "key", "Done")
+            .await,
+        Err(Error::Transport)
+    ));
+    assert_eq!(posted.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        github
+            .post_comment("owner/sandbox", 12, "key", "Done")
+            .await
+            .unwrap()
+            .id,
+        9
+    );
+    assert_eq!(posted.load(Ordering::SeqCst), 1);
+    let requests = server.received_requests().await.unwrap();
+    let methods: Vec<_> = requests.iter().map(|r| r.method.as_str()).collect();
+    assert_eq!(methods, ["POST", "GET", "POST", "GET"]);
+}
+
+#[tokio::test]
+async fn retries_patch_and_delete_without_changing_the_mutation() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/owner/sandbox/issues/comments/9"))
+        .and(body_json(
+            json!({"body":format!("{}\n\nUpdated", GitHub::marker("key"))}),
+        ))
+        .respond_with(OnceThen {
+            calls: AtomicUsize::new(0),
+            first: ResponseTemplate::new(503),
+            then: ResponseTemplate::new(200).set_body_json(bot_comment(9, "key")),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    assert_eq!(
+        github
+            .edit_comment("owner/sandbox", 9, "key", "Updated")
+            .await
+            .unwrap()
+            .id,
+        9
+    );
+    Mock::given(method("DELETE"))
+        .and(path("/repos/owner/sandbox/issues/comments/9"))
+        .respond_with(OnceThen {
+            calls: AtomicUsize::new(0),
+            first: ResponseTemplate::new(502),
+            then: ResponseTemplate::new(404),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    github.delete_comment("owner/sandbox", 9).await.unwrap();
+}
+
+#[tokio::test]
+async fn unauthorized_token_is_invalidated_for_the_next_call_across_clones() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/app/installations/3/access_tokens"))
+        .respond_with(OnceThen {
+            calls: AtomicUsize::new(0),
+            first: ResponseTemplate::new(201).set_body_json(json!({
+                "token":"expired-token", "expires_at":(Utc::now()+ChronoDuration::hours(1)).to_rfc3339()
+            })),
+            then: ResponseTemplate::new(201).set_body_json(json!({
+                "token":"fresh-token", "expires_at":(Utc::now()+ChronoDuration::hours(1)).to_rfc3339()
+            })),
+        })
+        .expect(2).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/sandbox/issues/12"))
+        .and(header("authorization", "Bearer expired-token"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/sandbox/issues/12"))
+        .and(header("authorization", "Bearer fresh-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("issue")))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let github = GitHub::new(config(), 3, options(&server)).unwrap();
+    assert!(matches!(
+        github.issue("owner/sandbox", 12).await,
+        Err(Error::Http { status: 401 })
+    ));
+    github.clone().issue("owner/sandbox", 12).await.unwrap();
+    github.issue("owner/sandbox", 12).await.unwrap();
+}
+
+#[tokio::test]
+async fn rate_limited_post_waits_and_reconciles_before_trying_again() {
+    for status in [429, 403] {
+        let server = MockServer::start().await;
+        let github = client(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/issues/12/comments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/owner/sandbox/issues/12/comments"))
+            .respond_with(OnceThen {
+                calls: AtomicUsize::new(0),
+                first: ResponseTemplate::new(status).insert_header("retry-after", "1"),
+                then: ResponseTemplate::new(201).set_body_json(bot_comment(9, "key")),
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            github.post_comment("owner/sandbox", 12, "key", "Done").await,
+            Err(Error::RateLimited { retry_after }) if retry_after == Duration::from_secs(1)
+        ));
+        let retry_started = std::time::Instant::now();
+        github
+            .clone()
+            .post_comment("owner/sandbox", 12, "key", "Done")
+            .await
+            .unwrap();
+        assert!(retry_started.elapsed() >= Duration::from_millis(900));
+        let requests = server.received_requests().await.unwrap();
+        let methods: Vec<_> = requests.iter().map(|r| r.method.as_str()).collect();
+        assert_eq!(methods, ["POST", "GET", "POST", "GET", "POST"]);
+    }
+}
+
+#[tokio::test]
+async fn catch_up_stops_pr_pages_at_the_cursor_and_reads_repository_label_events() {
+    for recent_count in [0, 101] {
+        let server = MockServer::start().await;
+        let github = client(&server).await;
+        let since = "2026-10-29T00:00:00Z".parse().unwrap();
+        get(
+            &server,
+            "/repos/owner/sandbox/issues",
+            json!([fixture("issue"), fixture("issue")]),
+        )
+        .await;
+        get(&server, "/repos/owner/sandbox/issues/comments", json!([])).await;
+        let mut recent = fixture("pull_request");
+        recent["updated_at"] = json!("2026-10-29T00:00:00Z");
+        let mut old = fixture("pull_request");
+        old["updated_at"] = json!("2026-10-28T23:59:59Z");
+        let rows: Vec<_> = std::iter::repeat_n(recent, recent_count)
+            .chain(std::iter::repeat_n(old, 100))
+            .collect();
+        let page_count = recent_count / 100 + 1;
+        for (page, chunk) in rows.chunks(100).take(page_count).enumerate() {
+            Mock::given(method("GET"))
+                .and(path("/repos/owner/sandbox/pulls"))
+                .and(query_param("sort", "updated"))
+                .and(query_param("direction", "desc"))
+                .and(query_param("state", "all"))
+                .and(query_param("per_page", "100"))
+                .and(query_param("page", (page + 1).to_string()))
+                .respond_with(ResponseTemplate::new(200).set_body_json(chunk))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/pulls"))
+            .and(query_param("page", (page_count + 1).to_string()))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let old_event = json!({"id":1,"event":"labeled","actor":{"id":99,"login":"other"},
+            "label":{"name":"tl3"},"created_at":"2026-10-28T23:59:59Z","issue":{"number":12}});
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/issues/events"))
+            .and(query_param("page", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![old_event; 100]))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/issues/events"))
+            .and(query_param("page", "2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"id":2,"event":"labeled","actor":{"id":42,"login":"owner"},
+                    "label":{"name":"tl3"},"created_at":"2026-10-29T00:00:00Z","issue":{"number":14}},
+                {"id":3,"event":"unlabeled","actor":{"id":99,"login":"other"},
+                    "label":{"name":"tl3"},"created_at":"2026-10-30T00:00:00Z","issue":{"number":15}},
+                {"id":4,"event":"closed"}
+            ])))
+            .expect(1).mount(&server).await;
+        get(
+            &server,
+            "/repos/owner/sandbox/commits/abc1234/check-runs",
+            json!({"check_runs":[{
+                "id":22,"name":"approval","head_sha":"abc1234","external_id":null,
+                "status":"queued","conclusion":null,"app":null
+            }]}),
+        )
+        .await;
+        get(
+            &server,
+            "/repos/owner/sandbox/commits/abc1234/check-suites",
+            json!({"check_suites":[]}),
+        )
+        .await;
+        let result = github
+            .catch_up(
+                &[ServedRepo {
+                    full_name: "owner/sandbox".into(),
+                    tracked_heads: vec!["abc1234".into()],
+                }],
+                since,
+            )
+            .await
+            .unwrap();
+        let changes = &result.repositories[0];
+        assert_eq!(changes.pull_requests.len(), recent_count);
+        assert_eq!(changes.check_runs.len(), 1);
+        assert!(changes.check_runs[0].app.is_none());
+        assert_eq!(changes.labels.len(), 2);
+        assert_eq!(changes.labels[0].0, 14);
+        assert_eq!(changes.labels[0].1.actor.id, 42);
+        assert_eq!(changes.labels[1].0, 15);
+        assert_eq!(changes.labels[1].1.event, "unlabeled");
+        assert_eq!(changes.labels[1].1.actor.id, 99);
+    }
+}
+
+#[tokio::test]
+async fn unfinished_check_requests_omit_the_conclusion_field() {
+    for (status, status_text) in [
+        (CheckStatus::Queued, "queued"),
+        (CheckStatus::InProgress, "in_progress"),
+    ] {
+        let server = MockServer::start().await;
+        let github = client(&server).await;
+        get(
+            &server,
+            "/repos/owner/sandbox/commits/abc1234/check-runs",
+            json!({"check_runs":[]}),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/owner/sandbox/check-runs"))
+            .and(body_json(json!({
+                "name":"approval", "head_sha":"abc1234", "external_id":"approval-key", "status":status_text
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "id":22, "name":"approval", "head_sha":"abc1234", "external_id":"approval-key",
+                "status":status_text, "conclusion":null, "app":null
+            })))
+            .expect(1).mount(&server).await;
+        let check = github
+            .create_check_run(
+                "owner/sandbox",
+                &NewCheckRun {
+                    name: "approval".into(),
+                    head_sha: "abc1234".into(),
+                    external_id: "approval-key".into(),
+                    status,
+                    conclusion: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(check.status, status_text);
+        assert!(check.app.is_none());
+    }
 }

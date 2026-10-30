@@ -78,7 +78,7 @@ pub struct CheckRun {
     pub external_id: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
-    pub app: CheckApp,
+    pub app: Option<CheckApp>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -127,6 +127,7 @@ pub struct NewCheckRun {
     pub head_sha: String,
     pub external_id: String,
     pub status: CheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conclusion: Option<CheckConclusion>,
 }
 

@@ -54,19 +54,22 @@ impl CheckedMessage {
 }
 
 static VOCABULARY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-    r"(?i)\b(?:tl3|trustladder(?:iii)?|lea(?:f|ves)|lineages?|re[ -]?plans?|measur(?:e|es|ement|ements|ing)|nodes?|generations?|effects?|outbox|settle|ingesting|auditing|unplanned|awaitingrob|kernel|footprints?|epochs?)\b"
-).unwrap()
+    Regex::new(r"(?i)\b(?:lea(?:f|ves)|lineages?|re[ -]?plans?|measur(?:e|es|ement|ements|ing))\b")
+        .unwrap()
 });
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
+    // CamelCase alone also describes product names. Actual internal names belong in Policy.
     Regex::new(
-    r"(?x)(?:(?i:\b[0-9a-f]{7,}\b|\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\b[a-z]+[A-Z][a-zA-Z0-9]*\b|\b[A-Z][a-z]+[A-Z][a-zA-Z0-9]*\b|\#[0-9]+|<!--)"
-).unwrap()
+        r"(?x)(?:(?i:\b[0-9a-f]{7,40}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\#[0-9]+|<!--)",
+    )
+    .unwrap()
 });
 static PATH: LazyLock<Regex> = LazyLock::new(|| {
+    // A single slash also occurs in English. Require a root, directory structure or extension.
     Regex::new(
-    r"(?ix)(?:[/\\][\w.-]+[/\\]|[a-z]:\\|~/|\.\./|\b[\w.-]+/[^\s]+|\b[\w.-]+\.(?:rs|py|ts|tsx|js|json|toml|yaml|yml|md|log|txt|sql|sh)\b)"
-).unwrap()
+        r#"(?ix)(?: (?:^|[\s"'`(])[/\\][\w.-]+ | \b[a-z]:\\ | ~/ | \.\.?[/\\] | \b(?:src|crates|tests|docs|bin|lib)/[\w.-]+ | \b[\w.-]+(?:[/\\][\w.-]+){2,} | \b[\w.-]+\.(?:rs|py|ts|tsx|js|json|toml|yaml|yml|md|log|txt|sql|sh)\b )"#,
+    )
+    .unwrap()
 });
 static LOG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -136,7 +139,15 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         ));
     }
     rendered.push_str(&format!("\n{}", draft.how_to_answer));
-    let normalized = normalize(&rendered);
+    let mut written = vec![draft.obstacle.as_str()];
+    for option in &draft.options {
+        written.extend([option.action.as_str(), option.outcome.as_str()]);
+    }
+    written.extend([
+        draft.recommendation_reason.as_str(),
+        draft.how_to_answer.as_str(),
+    ]);
+    let normalized = normalize(&written.join("\n"));
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }

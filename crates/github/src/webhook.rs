@@ -2,7 +2,6 @@ use crate::*;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Context {
@@ -80,25 +79,6 @@ pub enum WebhookError {
 pub trait Inbox {
     type Error;
     fn insert(&mut self, delivery: Delivery) -> Result<bool, Self::Error>;
-}
-
-#[derive(Default)]
-pub struct MemoryInbox {
-    pub deliveries: BTreeMap<String, Delivery>,
-}
-
-impl Inbox for MemoryInbox {
-    type Error = std::convert::Infallible;
-    fn insert(&mut self, delivery: Delivery) -> Result<bool, Self::Error> {
-        use std::collections::btree_map::Entry;
-        match self.deliveries.entry(delivery.id.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert(delivery);
-                Ok(true)
-            }
-            Entry::Occupied(_) => Ok(false),
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]

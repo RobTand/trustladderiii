@@ -16,8 +16,6 @@ pub struct AppConfig {
     pub slug: String,
     pub pem: String,
     pub webhook_secret: String,
-    pub client_id: String,
-    pub client_secret: String,
 }
 
 #[derive(Clone, Debug)]
@@ -63,7 +61,8 @@ struct Token {
 }
 
 struct Inner {
-    config: AppConfig,
+    app_id: u64,
+    slug: String,
     key: EncodingKey,
     installation: u64,
     http: reqwest::Client,
@@ -113,7 +112,8 @@ impl GitHub {
             .build()
             .map_err(|_| Error::Config("could not build HTTP client"))?;
         Ok(Self(Arc::new(Inner {
-            config,
+            app_id: config.id,
+            slug: config.slug,
             key,
             installation,
             http,
@@ -139,7 +139,7 @@ impl GitHub {
             &Claims {
                 iat: now.timestamp() - 60,
                 exp: now.timestamp() + 540,
-                iss: self.0.config.id.to_string(),
+                iss: self.0.app_id.to_string(),
             },
             &self.0.key,
         )
@@ -349,22 +349,8 @@ impl GitHub {
         format!("<!-- tl3:effect:{} -->", hex::encode(effect_key.as_bytes()))
     }
 
-    pub async fn find_comment(
-        &self,
-        repo: &str,
-        number: u64,
-        effect_key: &str,
-    ) -> Result<Option<Comment>, Error> {
-        let marker = Self::marker(effect_key);
-        Ok(self
-            .comments(repo, number)
-            .await?
-            .into_iter()
-            .find(|c| self.owns_comment(c) && c.body.lines().any(|line| line == marker)))
-    }
-
     fn owns_comment(&self, comment: &Comment) -> bool {
-        comment.user.login == format!("{}[bot]", self.0.config.slug)
+        comment.user.login == format!("{}[bot]", self.0.slug)
     }
 
     /// Serializes posts across clones. Cross-process races converge via reconciliation.
@@ -473,7 +459,8 @@ impl GitHub {
             .await?
             .into_iter()
             .find(|r| {
-                r.external_id.as_deref() == Some(&check.external_id) && r.app.id == self.0.config.id
+                r.external_id.as_deref() == Some(&check.external_id)
+                    && r.app.as_ref().is_some_and(|app| app.id == self.0.app_id)
             })
         {
             return Ok(existing);
@@ -620,41 +607,52 @@ impl GitHub {
                 .list(format!("{path}/issues/comments"), query, None)
                 .await?;
             let mut labels = Vec::new();
-            let pulls: Vec<PullRequest> = self
-                .list(
-                    format!("{path}/pulls"),
-                    vec![
-                        ("state".into(), "all".into()),
-                        ("sort".into(), "updated".into()),
-                        ("direction".into(), "desc".into()),
-                    ],
-                    None,
-                )
-                .await?;
-            let pull_requests: Vec<_> = pulls
-                .into_iter()
-                .filter(|pull| pull.updated_at >= since)
-                .collect();
-            let mut heads: BTreeSet<_> = repo.tracked_heads.iter().cloned().collect();
-            heads.extend(pull_requests.iter().map(|pull| pull.head.sha.clone()));
-            for issue in &issues {
-                let events: Vec<Value> = self
-                    .list(
-                        format!("{path}/issues/{}/events", issue.number),
-                        vec![],
+            let mut pull_requests = Vec::new();
+            for page in 1.. {
+                let pulls: Vec<PullRequest> = self
+                    .request(
+                        Method::GET,
+                        format!("{path}/pulls"),
+                        vec![
+                            ("state".into(), "all".into()),
+                            ("sort".into(), "updated".into()),
+                            ("direction".into(), "desc".into()),
+                            ("per_page".into(), "100".into()),
+                            ("page".into(), page.to_string()),
+                        ],
                         None,
                     )
                     .await?;
-                for event in events {
-                    if matches!(
-                        event.get("event").and_then(Value::as_str),
-                        Some("labeled" | "unlabeled")
-                    ) {
-                        let event: LabelChange =
-                            serde_json::from_value(event).map_err(|_| Error::Response)?;
-                        if event.created_at >= since {
-                            labels.push((issue.number, event));
-                        }
+                let done = pulls.len() < 100 || pulls.iter().any(|pull| pull.updated_at < since);
+                pull_requests.extend(
+                    pulls
+                        .into_iter()
+                        .take_while(|pull| pull.updated_at >= since),
+                );
+                if done {
+                    break;
+                }
+            }
+            let mut heads: BTreeSet<_> = repo.tracked_heads.iter().cloned().collect();
+            heads.extend(pull_requests.iter().map(|pull| pull.head.sha.clone()));
+            // This endpoint has no since filter or documented chronological ordering.
+            let events: Vec<Value> = self
+                .list(format!("{path}/issues/events"), vec![], None)
+                .await?;
+            for event in events {
+                if matches!(
+                    event.get("event").and_then(Value::as_str),
+                    Some("labeled" | "unlabeled")
+                ) {
+                    let number = event
+                        .get("issue")
+                        .and_then(|issue| issue.get("number"))
+                        .and_then(Value::as_u64)
+                        .ok_or(Error::Response)?;
+                    let event: LabelChange =
+                        serde_json::from_value(event).map_err(|_| Error::Response)?;
+                    if event.created_at >= since {
+                        labels.push((number, event));
                     }
                 }
             }
