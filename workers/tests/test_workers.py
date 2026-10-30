@@ -295,3 +295,15 @@ def test_schema_files_are_packaged_and_refs_resolve(request_doc):
     broken["ingest"]["goals"] = []
     with pytest.raises(ValidationError):
         validate("audit-input", broken)
+
+
+def test_announced_quota_ends_without_counting_a_failed_run(tmp_path, request_doc):
+    import time
+    before = int(time.time() * 1000)
+    result = start_worker(tmp_path, request_doc, [], mode="quota")
+    assert result.exit_code == 0
+    assert len(result.events) == 1
+    assert result.events[0]["event"] == "quota"
+    assert result.events[0]["role"] == request_doc["role"]
+    assert result.events[0]["reset_ms"] >= before + 600_000
+    assert "secret provider text" not in result.stderr

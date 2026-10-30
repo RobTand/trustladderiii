@@ -217,6 +217,19 @@ pub struct MergeGroup {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HookDelivery {
+    pub id: u64,
+    pub status_code: Option<u16>,
+    pub delivered_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HookDeliveryPage {
+    pub deliveries: Vec<HookDelivery>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckPullRequest {
     pub number: u64,
 }
