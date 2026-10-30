@@ -86,7 +86,10 @@ impl World {
         #[cfg(kani)]
         {
             // Assert before pruning: the four-file proof fixture must stay inline.
-            assert!(false, "interned footprints are outside the bounded proof fixture");
+            assert!(
+                false,
+                "interned footprints are outside the bounded proof fixture"
+            );
             kani::assume(false);
         }
 
@@ -109,7 +112,10 @@ impl World {
         #[cfg(kani)]
         {
             // Assert before pruning: the four-file proof fixture must stay inline.
-            assert!(false, "interned footprints are outside the bounded proof fixture");
+            assert!(
+                false,
+                "interned footprints are outside the bounded proof fixture"
+            );
             kani::assume(false);
         }
 

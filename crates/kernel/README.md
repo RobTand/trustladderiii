@@ -3,7 +3,7 @@
 `tl3-kernel` implements slice one of [the state table](../../docs/state-table.md), version 5.
 It is an edition-2024 Rust crate in the root Cargo workspace, with `no_std` plus `alloc` in ordinary builds.
 It does no I/O. The controller commits its decisions and carries out its outputs.
-The root workspace contains the kernel. `crates/github` keeps its independent Cargo manifest and lockfile.
+The root workspace contains the kernel. The existing config, GitHub, Mergify, PrismaBuild and worktree packages keep their independent Cargo manifests and lockfiles.
 
 ## Controller API
 

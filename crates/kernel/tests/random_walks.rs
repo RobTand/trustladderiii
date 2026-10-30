@@ -28,7 +28,9 @@ fn footprint(w: &mut World, bits: u64) -> Footprint {
 
 fn random_event(w: &mut World, rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
-        return Event::NewRequest { repo: RepoId(rng.below(3)) };
+        return Event::NewRequest {
+            repo: RepoId(rng.below(3)),
+        };
     }
     let i = rng.below(w.nodes.len() as u64) as usize;
     let n = w.nodes[i].clone();
@@ -42,22 +44,42 @@ fn random_event(w: &mut World, rng: &mut Rng) -> Event {
                     1 => Ack::Permanent,
                     _ => Ack::Confirmed,
                 };
-                Event::Ack { node, seq: e.seq, ack }
+                Event::Ack {
+                    node,
+                    seq: e.seq,
+                    ack,
+                }
             }
-            None => Event::Ack { node, seq: rng.below(5), ack: Ack::Confirmed },
+            None => Event::Ack {
+                node,
+                seq: rng.below(5),
+                ack: Ack::Confirmed,
+            },
         },
         4..=7 => {
-            let generation = if rng.below(10) == 0 { n.generation.saturating_sub(1) } else { n.generation };
+            let generation = if rng.below(10) == 0 {
+                n.generation.saturating_sub(1)
+            } else {
+                n.generation
+            };
             let reply = match rng.below(17) {
-                0 => Reply::IngestDone { size: rng.below(4) as u8 },
+                0 => Reply::IngestDone {
+                    size: rng.below(4) as u8,
+                },
                 1 => Reply::IngestEarlyEnd(EarlyEnd::Duplicate),
                 2 => Reply::AuditAgrees,
                 3 => Reply::AuditDisagrees,
-                4 => Reply::PlanLeaf { footprint: footprint(w, rng.below(16)), fits: rng.below(5) != 0 },
+                4 => Reply::PlanLeaf {
+                    footprint: footprint(w, rng.below(16)),
+                    fits: rng.below(5) != 0,
+                },
                 5 => Reply::PlanSplit,
                 6 => Reply::PlanCantMeet,
                 7 => Reply::MakerDone { head },
-                8 => Reply::MakerNeedsFiles { files: footprint(w, rng.below(16)), fits: rng.below(2) == 0 },
+                8 => Reply::MakerNeedsFiles {
+                    files: footprint(w, rng.below(16)),
+                    fits: rng.below(2) == 0,
+                },
                 9 => Reply::MakerCantMeet,
                 10 => Reply::MakerOutOfRoom,
                 11 => Reply::ChecksDone {
@@ -65,31 +87,53 @@ fn random_event(w: &mut World, rng: &mut Rng) -> Event {
                     pass: rng.below(3) != 0,
                     in_footprint: rng.below(8) != 0,
                 },
-                12 => Reply::Approved { head: if rng.below(2) == 0 { n.head.unwrap_or(head) } else { head } },
+                12 => Reply::Approved {
+                    head: if rng.below(2) == 0 {
+                        n.head.unwrap_or(head)
+                    } else {
+                        head
+                    },
+                },
                 13 => Reply::ChangesRequested,
                 14 => Reply::RebaseClean { head },
                 15 => Reply::RebaseNeedsChanges,
                 _ => Reply::RunFailed,
             };
-            Event::Reply { node, generation, reply }
+            Event::Reply {
+                node,
+                generation,
+                reply,
+            }
         }
         8..=9 => {
             let fact = match rng.below(7) {
                 0 => Fact::PrMerged {
-                    head: if rng.below(2) == 0 { n.head.unwrap_or(head) } else { head },
+                    head: if rng.below(2) == 0 {
+                        n.head.unwrap_or(head)
+                    } else {
+                        head
+                    },
                     checks_passed: rng.below(4) != 0,
                 },
                 1 => Fact::PrClosedByPerson,
                 2 => Fact::PrDequeuedByPerson,
                 3 => Fact::PushByOther { head },
-                4 => Fact::CiFailed { infra: rng.below(2) == 0 },
+                4 => Fact::CiFailed {
+                    infra: rng.below(2) == 0,
+                },
                 5 => Fact::Conflict,
-                _ => Fact::IncidentCleared { by_rob: rng.below(2) == 0 },
+                _ => Fact::IncidentCleared {
+                    by_rob: rng.below(2) == 0,
+                },
             };
             Event::Fact { node, fact }
         }
         _ => {
-            let id = if rng.below(10) == 0 { n.last_cmd } else { n.last_cmd + 1 };
+            let id = if rng.below(10) == 0 {
+                n.last_cmd
+            } else {
+                n.last_cmd + 1
+            };
             let command = match rng.below(10) {
                 0 => Command::Stop,
                 1 => Command::ChangeRequest,
@@ -145,24 +189,55 @@ fn random_walks_keep_every_rule() {
             // transition lowers its node's settle rank.
             let (_, _, trace) = step_traced(w.clone(), event.clone());
             for (k, mid) in trace.iter().enumerate() {
-                assert!(mid.consistent(), "seed {seed}: {:?} after transition {k} of {event:?}\nfrom {w:#?}\nto {mid:#?}\ntrace before: {:#?}", mid.check(), if k > 0 { Some(&trace[k - 1]) } else { None });
+                assert!(
+                    mid.consistent(),
+                    "seed {seed}: {:?} after transition {k} of {event:?}\nfrom {w:#?}\nto {mid:#?}\ntrace before: {:#?}",
+                    mid.check(),
+                    if k > 0 { Some(&trace[k - 1]) } else { None }
+                );
             }
             for pair in trace.windows(2) {
                 let (a, b) = (&pair[0], &pair[1]);
-                let lowered = a.nodes.iter().zip(&b.nodes).any(|(x, y)| y.settle_rank() < x.settle_rank());
-                let raised = a.nodes.iter().zip(&b.nodes).any(|(x, y)| y.settle_rank() > x.settle_rank());
-                assert!(lowered && !raised, "seed {seed}: settle rank didn't fall during {event:?}");
+                let lowered = a
+                    .nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .any(|(x, y)| y.settle_rank() < x.settle_rank());
+                let raised = a
+                    .nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .any(|(x, y)| y.settle_rank() > x.settle_rank());
+                assert!(
+                    lowered && !raised,
+                    "seed {seed}: settle rank didn't fall during {event:?}"
+                );
             }
-            assert!(next.valid(), "seed {seed}: invalid world after {event:?}\nfrom {w:#?}\nto {next:#?}");
+            assert!(
+                next.valid(),
+                "seed {seed}: invalid world after {event:?}\nfrom {w:#?}\nto {next:#?}"
+            );
             assert!(next.is_settled(), "seed {seed}: unsettled after {event:?}");
             if witnessed {
-                assert!(next.measure() < before, "seed {seed}: witness {event:?} didn't make progress");
+                assert!(
+                    next.measure() < before,
+                    "seed {seed}: witness {event:?} didn't make progress"
+                );
             }
             for o in &out {
-                if let Out::Effect { node, kind: EffectKind::Enqueue, head, .. } = *o {
+                if let Out::Effect {
+                    node,
+                    kind: EffectKind::Enqueue,
+                    head,
+                    ..
+                } = *o
+                {
                     let n = &next.nodes[node.index().unwrap()];
                     let h = head.expect("an enqueue names its head");
-                    assert!(n.approved == Some(h) && n.checked == Some(h), "seed {seed}: unapproved enqueue");
+                    assert!(
+                        n.approved == Some(h) && n.checked == Some(h),
+                        "seed {seed}: unapproved enqueue"
+                    );
                 }
             }
             for n in &next.nodes {
@@ -171,7 +246,11 @@ fn random_walks_keep_every_rule() {
             w = next;
             steps += 1;
         }
-        merged += w.nodes.iter().filter(|n| n.phase == Phase::Closed(Outcome::Merged)).count() as u64;
+        merged += w
+            .nodes
+            .iter()
+            .filter(|n| n.phase == Phase::Closed(Outcome::Merged))
+            .count() as u64;
     }
     println!("random walks: {steps} steps, {merged} requests merged, phases seen: {phases:?}");
     println!("most settle passes, by number of requests 0..=4: {passes_by_size:?}");
@@ -194,6 +273,9 @@ fn the_witness_always_finishes_the_work() {
             w = step(w, e).0;
             assert!(w.measure() < before);
         }
-        assert!(w.nodes.iter().all(|n| n.phase.is_closed()), "seed {seed}: {w:#?}");
+        assert!(
+            w.nodes.iter().all(|n| n.phase.is_closed()),
+            "seed {seed}: {w:#?}"
+        );
     }
 }

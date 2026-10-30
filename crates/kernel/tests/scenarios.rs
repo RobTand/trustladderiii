@@ -4,7 +4,11 @@
 use std::collections::BTreeSet;
 use tl3_kernel::*;
 
-const CHECKS_PASS: Reply = Reply::ChecksDone { report: true, pass: true, in_footprint: true };
+const CHECKS_PASS: Reply = Reply::ChecksDone {
+    report: true,
+    pass: true,
+    in_footprint: true,
+};
 
 struct Run {
     w: World,
@@ -15,8 +19,12 @@ struct Run {
 
 impl Run {
     fn new() -> Run {
-        let mut run =
-            Run { w: World::new(&[1, 1], 1), cmd: 0, seen: BTreeSet::new(), notices: Vec::new() };
+        let mut run = Run {
+            w: World::new(&[1, 1], 1),
+            cmd: 0,
+            seen: BTreeSet::new(),
+            notices: Vec::new(),
+        };
         run.send(Event::NewRequest { repo: RepoId(0) });
         run.confirm();
         run
@@ -53,7 +61,11 @@ impl Run {
     fn confirm(&mut self) {
         for _ in 0..64 {
             let Some(e) = self.node().effect else { return };
-            self.send(Event::Ack { node: NodeId(0), seq: e.seq, ack: Ack::Confirmed });
+            self.send(Event::Ack {
+                node: NodeId(0),
+                seq: e.seq,
+                ack: Ack::Confirmed,
+            });
         }
         panic!("effects never stopped");
     }
@@ -61,24 +73,38 @@ impl Run {
     fn reply(&mut self, reply: Reply) {
         self.confirm();
         let generation = self.node().generation;
-        self.send(Event::Reply { node: NodeId(0), generation, reply });
+        self.send(Event::Reply {
+            node: NodeId(0),
+            generation,
+            reply,
+        });
         self.confirm();
     }
 
     fn fact(&mut self, fact: Fact) {
-        self.send(Event::Fact { node: NodeId(0), fact });
+        self.send(Event::Fact {
+            node: NodeId(0),
+            fact,
+        });
         self.confirm();
     }
 
     fn command(&mut self, command: Command) {
         self.cmd += 1;
-        self.send(Event::Command { node: NodeId(0), id: self.cmd, command });
+        self.send(Event::Command {
+            node: NodeId(0),
+            id: self.cmd,
+            command,
+        });
         self.confirm();
     }
 
     fn answer(&mut self, answer: Answer) {
         let q = self.node().question.expect("an open question");
-        self.command(Command::Answer { question: q.id, answer });
+        self.command(Command::Answer {
+            question: q.id,
+            answer,
+        });
     }
 
     fn asked_rob(&self) -> bool {
@@ -87,7 +113,10 @@ impl Run {
 
     fn plan(&mut self, files: impl IntoIterator<Item = FileId>) {
         let footprint = self.w.intern_footprint(files);
-        self.reply(Reply::PlanLeaf { footprint, fits: true });
+        self.reply(Reply::PlanLeaf {
+            footprint,
+            fits: true,
+        });
     }
 
     fn needs_files(&mut self, files: impl IntoIterator<Item = FileId>) {
@@ -127,7 +156,10 @@ fn a_clean_request_merges_without_asking_rob() {
     run.to_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
-    run.fact(Fact::PrMerged { head, checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head,
+        checks_passed: true,
+    });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
     assert_eq!(run.credit(), 5); // 1 leaf + 3 reserve, then +1 for the merge
     assert!(!run.asked_rob());
@@ -162,7 +194,10 @@ fn a_stuck_fix_asks_rob_only_when_credit_runs_out() {
     assert_eq!((q.kind, q.cost), (QKind::OutOfCredit, 1));
 
     run.answer(Answer::AddCredit(3));
-    assert_eq!((run.phase(), run.node().attempt, run.credit()), (Phase::Making, 3, 2));
+    assert_eq!(
+        (run.phase(), run.node().attempt, run.credit()),
+        (Phase::Making, 3, 2)
+    );
 }
 
 #[test]
@@ -188,7 +223,10 @@ fn every_slice_one_phase_is_reachable() {
     assert_eq!(run.phase(), Phase::Checking); // a new head is checked and reviewed again
     run.reply(CHECKS_PASS);
     run.reply(Reply::Approved { head: HeadId(2) });
-    run.fact(Fact::PrMerged { head: HeadId(2), checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head: HeadId(2),
+        checks_passed: true,
+    });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
     let mut seen = run.seen.clone();
 
@@ -201,8 +239,20 @@ fn every_slice_one_phase_is_reachable() {
     seen.extend(asked.seen.iter().copied());
 
     for phase in [
-        "Ingesting", "Auditing", "Unplanned", "Planning", "Ready", "Making", "Checking",
-        "Reviewing", "Publishing", "Queued", "Rebasing", "AwaitingRob", "Stopping", "Closed",
+        "Ingesting",
+        "Auditing",
+        "Unplanned",
+        "Planning",
+        "Ready",
+        "Making",
+        "Checking",
+        "Reviewing",
+        "Publishing",
+        "Queued",
+        "Rebasing",
+        "AwaitingRob",
+        "Stopping",
+        "Closed",
     ] {
         assert!(seen.contains(phase), "{phase} was never reached");
     }
@@ -230,7 +280,10 @@ fn a_queued_pr_can_still_merge_while_paused() {
     run.pass(&mut head);
     run.command(Command::Pause);
     assert_eq!(run.phase(), Phase::Queued);
-    run.fact(Fact::PrMerged { head, checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head,
+        checks_passed: true,
+    });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
 }
 
@@ -245,7 +298,10 @@ fn a_late_answer_is_ignored() {
     run.command(Command::Stop);
     assert!(run.phase().is_closed());
     let before = run.w.clone();
-    run.command(Command::Answer { question, answer: Answer::Continue });
+    run.command(Command::Answer {
+        question,
+        answer: Answer::Continue,
+    });
     assert_eq!(run.w.nodes[0].phase, before.nodes[0].phase);
     assert_eq!(run.w.nodes[0].credit, before.nodes[0].credit);
 }
@@ -256,10 +312,20 @@ fn cleanup_that_fails_waits_for_rob_then_closes() {
     run.to_making();
     let mut head = HeadId(0);
     run.pass(&mut head);
-    run.send(Event::Fact { node: NodeId(0), fact: Fact::PrMerged { head, checks_passed: true } });
+    run.send(Event::Fact {
+        node: NodeId(0),
+        fact: Fact::PrMerged {
+            head,
+            checks_passed: true,
+        },
+    });
     // Removing the worktree fails for good: cleanup holds on and asks Rob.
     let e = run.node().effect.expect("teardown in flight");
-    run.send(Event::Ack { node: NodeId(0), seq: e.seq, ack: Ack::Permanent });
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: e.seq,
+        ack: Ack::Permanent,
+    });
     assert_eq!(run.phase(), Phase::Stopping(Outcome::Merged));
     assert_eq!(run.node().question.unwrap().kind, QKind::CleanupFailed);
     run.answer(Answer::MarkHandled);
@@ -294,7 +360,10 @@ fn a_push_by_someone_else_is_checked_and_reviewed_again() {
     run.pass(&mut head);
     run.fact(Fact::PushByOther { head: HeadId(7) });
     assert_eq!(run.phase(), Phase::Checking);
-    assert_eq!((run.node().head, run.node().checked), (Some(HeadId(7)), None));
+    assert_eq!(
+        (run.node().head, run.node().checked),
+        (Some(HeadId(7)), None)
+    );
     assert!(!run.asked_rob());
 }
 
@@ -306,10 +375,16 @@ fn a_late_merge_after_a_stop_corrects_the_record() {
     run.pass(&mut head);
     run.command(Command::Stop);
     assert_eq!(run.phase(), Phase::Closed(Outcome::Stopped));
-    run.fact(Fact::PrMerged { head, checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head,
+        checks_passed: true,
+    });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
     assert_eq!(run.credit(), 5);
-    run.fact(Fact::PrMerged { head, checks_passed: true }); // credit applies once
+    run.fact(Fact::PrMerged {
+        head,
+        checks_passed: true,
+    }); // credit applies once
     assert_eq!(run.credit(), 5);
 }
 
@@ -330,7 +405,11 @@ fn two_requests_share_one_slot_first_come_first_served() {
         assert!(next.nodes.iter().filter(|n| n.holds).count() <= 1);
         w = next;
     }
-    assert!(w.nodes.iter().all(|n| n.phase == Phase::Closed(Outcome::Merged)));
+    assert!(
+        w.nodes
+            .iter()
+            .all(|n| n.phase == Phase::Closed(Outcome::Merged))
+    );
 }
 
 #[test]
@@ -347,13 +426,28 @@ fn the_one_replan_sends_one_note_and_keeps_working() {
     assert!(!run.node().holds);
     assert!(run.node().replanned);
     assert_eq!(run.credit(), 1);
-    assert_eq!(run.notices.iter().filter(|n| **n == Notice::Note(NoteKind::Replanned)).count(), 1);
+    assert_eq!(
+        run.notices
+            .iter()
+            .filter(|n| **n == Notice::Note(NoteKind::Replanned))
+            .count(),
+        1
+    );
     assert!(!run.asked_rob());
     run.plan([FileId(1 << 40)]);
     run.pass(&mut head);
-    run.fact(Fact::PrMerged { head, checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head,
+        checks_passed: true,
+    });
     assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
-    assert_eq!(run.notices.iter().filter(|n| **n == Notice::Note(NoteKind::Replanned)).count(), 1);
+    assert_eq!(
+        run.notices
+            .iter()
+            .filter(|n| **n == Notice::Note(NoteKind::Replanned))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -370,7 +464,13 @@ fn a_replan_waiting_for_credit_sends_its_note_when_funded() {
     assert!(!run.notices.contains(&Notice::Note(NoteKind::Replanned)));
     run.answer(Answer::AddCredit(1));
     assert_eq!(run.phase(), Phase::Planning { must_split: false });
-    assert_eq!(run.notices.iter().filter(|n| **n == Notice::Note(NoteKind::Replanned)).count(), 1);
+    assert_eq!(
+        run.notices
+            .iter()
+            .filter(|n| **n == Notice::Note(NoteKind::Replanned))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -378,14 +478,24 @@ fn footprints_are_sets_with_more_than_eight_wide_file_ids() {
     let mut run = Run::new();
     run.reply(Reply::IngestDone { size: 1 });
     run.reply(Reply::AuditAgrees);
-    let files = run.w.intern_footprint((0..300).rev().map(|i| FileId((1 << 40) + i)));
-    run.reply(Reply::PlanLeaf { footprint: files.clone(), fits: true });
+    let files = run
+        .w
+        .intern_footprint((0..300).rev().map(|i| FileId((1 << 40) + i)));
+    run.reply(Reply::PlanLeaf {
+        footprint: files.clone(),
+        fits: true,
+    });
     assert_eq!(run.node().footprint, files);
     run.needs_files([FileId(1 << 40), FileId(1 << 40), FileId(u64::MAX)]);
     let larger = run.node().footprint;
     assert_eq!(run.w.files(larger).unwrap().count(), 301);
     assert_eq!(run.w.files(larger).unwrap().last(), Some(FileId(u64::MAX)));
-    assert!(run.w.files(files).unwrap().all(|f| run.w.files(larger).unwrap().any(|g| g == f)));
+    assert!(
+        run.w
+            .files(files)
+            .unwrap()
+            .all(|f| run.w.files(larger).unwrap().any(|g| g == f))
+    );
     assert!(!run.w.files(larger).unwrap().any(|f| f == FileId(7)));
     assert_eq!(run.credit(), 3);
 }
@@ -405,8 +515,14 @@ fn approval_is_one_exact_wide_head() {
     run.reply(CHECKS_PASS);
     run.reply(Reply::Approved { head });
     assert_eq!(run.node().approved, Some(head));
-    run.fact(Fact::PrMerged { head: old, checks_passed: true });
-    assert!(run.notices.contains(&Notice::Note(NoteKind::UnapprovedMerge)));
+    run.fact(Fact::PrMerged {
+        head: old,
+        checks_passed: true,
+    });
+    assert!(
+        run.notices
+            .contains(&Notice::Note(NoteKind::UnapprovedMerge))
+    );
     assert_eq!(run.node().merged, Some(old));
 }
 
@@ -416,9 +532,23 @@ fn repo_and_node_ids_do_not_truncate() {
     w = step(w, Event::NewRequest { repo: RepoId(299) }).0;
     assert_eq!(w.nodes[0].repo, RepoId(299));
     let before = w.clone();
-    w = step(w, Event::Command { node: NodeId(1 << 32), id: 1, command: Command::Stop }).0;
+    w = step(
+        w,
+        Event::Command {
+            node: NodeId(1 << 32),
+            id: 1,
+            command: Command::Stop,
+        },
+    )
+    .0;
     assert_eq!(w, before);
-    w = step(w, Event::NewRequest { repo: RepoId(u64::MAX) }).0;
+    w = step(
+        w,
+        Event::NewRequest {
+            repo: RepoId(u64::MAX),
+        },
+    )
+    .0;
     assert_eq!(w, before);
 }
 
@@ -427,9 +557,25 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
     fn reply(w: &mut World, node: NodeId, reply: Reply) {
         let i = node.index().unwrap();
         while let Some(e) = w.nodes[i].effect {
-            *w = step(w.clone(), Event::Ack { node, seq: e.seq, ack: Ack::Confirmed }).0;
+            *w = step(
+                w.clone(),
+                Event::Ack {
+                    node,
+                    seq: e.seq,
+                    ack: Ack::Confirmed,
+                },
+            )
+            .0;
         }
-        *w = step(w.clone(), Event::Reply { node, generation: w.nodes[i].generation, reply }).0;
+        *w = step(
+            w.clone(),
+            Event::Reply {
+                node,
+                generation: w.nodes[i].generation,
+                reply,
+            },
+        )
+        .0;
         assert!(w.valid());
     }
     let mut w = World::new(&[2, 1], 3);
@@ -440,14 +586,37 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
     for node in [NodeId(0), NodeId(1), NodeId(2)] {
         reply(&mut w, node, Reply::IngestDone { size: 1 });
         reply(&mut w, node, Reply::AuditAgrees);
-        reply(&mut w, node, Reply::PlanLeaf { footprint: files.clone(), fits: true });
+        reply(
+            &mut w,
+            node,
+            Reply::PlanLeaf {
+                footprint: files.clone(),
+                fits: true,
+            },
+        );
     }
     assert_eq!(w.nodes[0].phase, Phase::Making);
     assert_eq!(w.nodes[1].phase, Phase::Ready(Resume::Making));
     assert_eq!(w.nodes[2].phase, Phase::Making);
-    w = step(w, Event::Command { node: NodeId(0), id: 1, command: Command::Stop }).0;
+    w = step(
+        w,
+        Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Stop,
+        },
+    )
+    .0;
     while let Some(e) = w.nodes[0].effect {
-        w = step(w, Event::Ack { node: NodeId(0), seq: e.seq, ack: Ack::Confirmed }).0;
+        w = step(
+            w,
+            Event::Ack {
+                node: NodeId(0),
+                seq: e.seq,
+                ack: Ack::Confirmed,
+            },
+        )
+        .0;
     }
     assert_eq!(w.nodes[1].phase, Phase::Making);
     assert!(w.nodes[1].holds && w.nodes[2].holds);
@@ -463,18 +632,36 @@ fn interned_footprints_keep_their_handles_across_growth_and_restore() {
     let inline = run.node().footprint;
     run.needs_files([FileId(64), FileId(65), FileId(u64::MAX)]);
     let expanded = run.node().footprint;
-    let expected = vec![FileId(0), FileId(63), FileId(64), FileId(65), FileId(u64::MAX)];
+    let expected = vec![
+        FileId(0),
+        FileId(63),
+        FileId(64),
+        FileId(65),
+        FileId(u64::MAX),
+    ];
     assert_eq!(run.w.files(expanded).unwrap().collect::<Vec<_>>(), expected);
-    assert_eq!(run.w.files(inline).unwrap().collect::<Vec<_>>(), vec![FileId(0), FileId(63)]);
+    assert_eq!(
+        run.w.files(inline).unwrap().collect::<Vec<_>>(),
+        vec![FileId(0), FileId(63)]
+    );
     let count = run.w.file_sets().len();
-    assert_eq!(run.w.intern_footprint(expected.iter().copied().rev()), expanded);
+    assert_eq!(
+        run.w.intern_footprint(expected.iter().copied().rev()),
+        expanded
+    );
     assert_eq!(run.w.file_sets().len(), count);
     let mut restored = World::new(&[1, 1], 1);
     for files in run.w.file_sets() {
         restored.intern_footprint(files.iter().copied());
     }
-    assert_eq!(restored.files(expanded).unwrap().collect::<Vec<_>>(), expected);
-    assert_eq!(restored.files(inline).unwrap().collect::<Vec<_>>(), vec![FileId(0), FileId(63)]);
+    assert_eq!(
+        restored.files(expanded).unwrap().collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        restored.files(inline).unwrap().collect::<Vec<_>>(),
+        vec![FileId(0), FileId(63)]
+    );
 }
 
 #[test]
@@ -485,7 +672,10 @@ fn an_unknown_footprint_handle_is_a_failed_reply() {
     let mut other = World::new(&[1], 1);
     let foreign = other.intern_footprint([FileId(1000)]);
     assert!(run.w.files(foreign).is_none());
-    run.reply(Reply::PlanLeaf { footprint: foreign, fits: true });
+    run.reply(Reply::PlanLeaf {
+        footprint: foreign,
+        fits: true,
+    });
     assert_eq!(run.phase(), Phase::Planning { must_split: false });
     assert_eq!(run.node().run_failures, 1);
 }

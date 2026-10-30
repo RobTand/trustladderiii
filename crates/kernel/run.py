@@ -34,9 +34,9 @@ if mode == "manifest":
         "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
         "RUSTUP_HOME": "/home/rob/.rustup", "CARGO_HOME": "/home/rob/.cargo",
         "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "1",
-        "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
+        "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1", "RUST_TEST_THREADS": "1",
     }
-    proofs = re.findall(r"^proof!\((\w+),", (HERE / "src/proofs.rs").read_text(), re.M)
+    proofs = re.findall(r"^proof!\(\s*(\w+),", (HERE / "src/proofs.rs").read_text(), re.M)
     selected = names or ["tests", *proofs]
     if set(selected) - {"tests", *proofs}:
         sys.exit("unknown proof name")
@@ -56,6 +56,12 @@ if mode == "manifest":
     print(json.dumps(rows, indent=2))
     sys.exit(0)
 if mode == "tests":
+    code = step("format", ["cargo", "fmt", "--all", "--", "--check"])
+    if code:
+        sys.exit(code)
+    code = step("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"])
+    if code:
+        sys.exit(code)
     code = step("workspace build (no_std)", ["cargo", "build", "--workspace", "--release"])
     if code:
         sys.exit(code)
