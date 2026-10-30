@@ -1,0 +1,24 @@
+[
+  {
+    "id": 6452902350,
+    "body": "Queued \u2014 the merge queue status continues in [this comment \u2193](https://github.com/RobTand/prismabuild/pull/2408#issuecomment-6456415955).",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-27T20:34:14Z",
+    "updated_at": "2026-10-27T23:46:50Z",
+    "issue_url": "https://api.github.com/repos/RobTand/prismabuild/issues/2408"
+  },
+  {
+    "id": 6456415955,
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"merged\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-10-27T23:46:08.560231+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-10-27T23:46:49.087143+00:00\"}\n-*- Mergify Payload End -*-\n-->\n\n### \u2705 Merged into `main` as `d732d07` at 23:46 UTC\n\n1 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Tue 27 Oct, 23:46 \u00b7 rule `default` \u00b7 triggered by @RobTand with the [`@mergifyio queue` command](https://github.com/RobTand/prismabuild/pull/2408#issuecomment-6456388243)\n- \u2705 **Passed** \u00b7 in place\n- \u2705 **Merged** 23:46 \u00b7 `d732d07` \u00b7 merge\n\n<details>\n<summary>Merge conditions: 2 of 2 met</summary>\n\n**This pull request**\n\n| | Condition | Required by |\n|:--:|:--|:--|\n| \u2705 | [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) | GitHub branch protection |\n\n**The batch, tested in place**\n\n| | Condition | Required by |\n|:--:|:--|:--|\n| \u2705 | any of: `check-success = issue-link`, `check-neutral = issue-link`, `check-skipped = issue-link` | GitHub branch protection |\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismabuild/queues/status?branch=main&pull=2408) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-27T23:46:49Z",
+    "updated_at": "2026-10-27T23:46:49Z",
+    "issue_url": "https://api.github.com/repos/RobTand/prismabuild/issues/2408"
+  }
+]

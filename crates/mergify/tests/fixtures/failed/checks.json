@@ -1,0 +1,53 @@
+[
+  {
+    "id": 123697861571,
+    "name": "Mergify Merge Queue",
+    "head_sha": "4a57d273120a83951bcf0a2bc4174878fb3b97ce",
+    "external_id": "queue:62987",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Dequeued \u2014 checks failed",
+      "summary": "### \u274c Left the queue \u00b7 `Python Unit Tests (3)` fails with this pull request\n\n44 min in the queue, 32 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Thu 29 Oct, 19:59 \u00b7 rule `default` \u00b7 triggered by @Shllokkk with the [`@mergifyio queue` command](https://github.com/frappe/erpnext/pull/62987#issuecomment-6506961223)\n- \u274c **Checks failed (attempt 1/2)** 20:10 \u00b7 draft #63030\n  - \u274c [`Python Unit Tests (3)`](https://github.com/frappe/erpnext/actions/runs/40946589283/job/123705366725) ([job log](https://github.com/frappe/erpnext/actions/runs/40946589283/job/123705366725))\n- \u274c **Checks failed (attempt 2/2)** \u00b7 draft #63031\n- \ud83d\udeab **Left the queue** 20:43 \u00b7 `4a57d27`\n\n**The failure is in this pull request.** It failed tested alone on top of `develop`.\n\n**Reason**\n\nThe merge conditions cannot be satisfied due to failing checks\n\n- `Python Unit Tests (3)`\n\nFailing checks:\n- \u274c [`Python Unit Tests (3)`](https://github.com/frappe/erpnext/actions/runs/40949076997/job/123713925397) ([job log](https://github.com/frappe/erpnext/actions/runs/40949076997/job/123713925397))\n\n**To get back in the queue**\n\n- Push a fix: the pull request is queued again once its queue conditions match.\n- If the failure is a flake, comment `@mergifyio queue` to queue it again as it is.\n\n<details>\n<summary>Merge conditions: 6 of 7 met</summary>\n\n**This pull request**\n\n| | Condition | Required by |\n|:--:|:--|:--|\n| \u2705 | `#review-threads-unresolved = 0` | GitHub branch protection |\n| \u2705 | [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) | GitHub branch protection |\n\n**The batch, tested on draft #63031**\n\n| | Condition |\n|:--:|:--|\n| \u274c | `check-success=Python Unit Tests (3)` |\n| \u2705 | `check-success=Patch Test` |\n| \u2705 | `check-success=Python Unit Tests (1)` |\n| \u2705 | `check-success=Python Unit Tests (2)` |\n| \u2705 | `check-success=Python Unit Tests (4)` |\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/frappe/repos/erpnext/queues/status?branch=develop&pull=62987) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null
+    }
+  },
+  {
+    "id": 123682213953,
+    "name": "Mergify Merge Queue",
+    "head_sha": "4a57d273120a83951bcf0a2bc4174878fb3b97ce",
+    "external_id": "engine:62987",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merge queue is ready",
+      "summary": "This pull request can be added to the merge queue.\n\nUse `@Mergifyio queue` or the [Mergify dashboard](https://dashboard.mergify.com) to queue this pull request for merging.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1jbG9zZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiLWNvbmZsaWN0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6Ii1kcmFmdCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiItbWVyZ2lmeS1jb25maWd1cmF0aW9uLWNoYW5nZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvQ29uZmlndXJhdGlvbiBjaGFuZ2VkIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9Db25maWd1cmF0aW9uIGhhcyBiZWVuIGRlbGV0ZWQiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgLT4gY29uZmlndXJhdGlvbiBjaGFuZ2UgcmVxdWlyZW1lbnRzIn0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImFsbCBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6IiNyZXZpZXctdGhyZWFkcy11bnJlc29sdmVkID0gMCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGVlMSBHaXRIdWIgYnJhbmNoIHByb3RlY3Rpb24ifSx7ImRlc2NyaXB0aW9uIjoiYmFzZX49XihkZXZlbG9wfHZlcnNpb24tMTUtaG90Zml4fHZlcnNpb24tMTYtaG90Zml4KSQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzPWxpbnRlcnMiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItcmV2aWV3LWFwcHJvdmVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9LHsiZGVzY3JpcHRpb24iOiJsYWJlbCE9ZG9udC1tZXJnZSIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIGNvbmRpdGlvbnMgb2YgcXVldWUgcnVsZSBgYWxvbmVgIn0seyJkZXNjcmlwdGlvbiI6ImFsbCBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6IiNyZXZpZXctdGhyZWFkcy11bnJlc29sdmVkID0gMCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGVlMSBHaXRIdWIgYnJhbmNoIHByb3RlY3Rpb24ifSx7ImRlc2NyaXB0aW9uIjoiYmFzZX49XihkZXZlbG9wfHZlcnNpb24tMTUtaG90Zml4fHZlcnNpb24tMTYtaG90Zml4KSQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzPWxpbnRlcnMiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItcmV2aWV3LWFwcHJvdmVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9LHsiZGVzY3JpcHRpb24iOiJsYWJlbCE9ZG9udC1tZXJnZSIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIGNvbmRpdGlvbnMgb2YgcXVldWUgcnVsZSBgZGVmYXVsdGAifV0sIm5vdGUiOiJcdWQ4M2RcdWRkMDAgcXVldWUgY29uZGl0aW9ucyJ9XX0\"></span>",
+      "text": null
+    }
+  },
+  {
+    "id": 123682208931,
+    "name": "Summary",
+    "head_sha": "4a57d273120a83951bcf0a2bc4174878fb3b97ce",
+    "external_id": "62987",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "4 potential rules",
+      "summary": "### Rule: backport to develop (backport)\n- [ ] `label=\"backport develop\"`\n- [ ] `merged` [\ud83d\udccc backport requirement]\n\n### Rule: backport to version\\-14\\-hotfix (backport)\n- [ ] `label=\"backport version-14-hotfix\"`\n- [ ] `merged` [\ud83d\udccc backport requirement]\n\n### Rule: backport to version\\-15\\-hotfix (backport)\n- [ ] `label=\"backport version-15-hotfix\"`\n- [ ] `merged` [\ud83d\udccc backport requirement]\n\n### Rule: backport to version\\-16\\-hotfix (backport)\n- [ ] `label=\"backport version-16-hotfix\"`\n- [ ] `merged` [\ud83d\udccc backport requirement]\n\n<hr />\n<details>\n<summary>1 not applicable rule</summary>\n\n### Rule: Auto\\-close PRs on stable branch (close, comment)\n- [ ] all of:\n  - [ ] any of:\n    - [ ] `base=version-12`\n    - [ ] `base=version-13`\n    - [ ] `base=version-14`\n    - [ ] `base=version-15`\n    - [ ] `base=version-16`\n  - [X] all of:\n    - [X] `author!=ankush`\n    - [X] `author!=deepeshgarg007`\n    - [X] `author!=frappe-pr-bot`\n    - [X] `author!=frappe-release-bot[bot]`\n    - [X] `author!=gavindsouza`\n    - [X] `author!=mergify[bot]`\n    - [X] `author!=nabinhait`\n    - [X] `author!=rohitwaghchaure`\n    - [X] `author!=surajshetty3416`\n\n</details>\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]

@@ -1,0 +1,53 @@
+[
+  {
+    "id": 122355616748,
+    "name": "Rule: Queue enqueue PRs (queue)",
+    "head_sha": "b6308f7a3bccf48105ff2d4f04891a7c299e6bc2",
+    "external_id": "",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "There are no queue conditions matching",
+      "summary": "There are queue conditions defined in the configuration, but none matches. The pull request has not been queued.\n\nDetails:\n* Queue `default`: \n- [ ] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `default`]\n- [ ] any of [\ud83d\udee1 GitHub repository ruleset rule `default`]:\n  - [ ] `check-neutral = @github-actions/all`\n  - [ ] `check-skipped = @github-actions/all`\n  - [ ] `check-success = @github-actions/all`\n- [X] `-draft`\n- [X] `base = main`\n- [X] `label = enqueue`",
+      "text": null
+    }
+  },
+  {
+    "id": 122355245041,
+    "name": "Mergify Merge Queue",
+    "head_sha": "b6308f7a3bccf48105ff2d4f04891a7c299e6bc2",
+    "external_id": "queue:84",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Dequeued \u2014 conflict with base branch",
+      "summary": "### \ud83d\udeab Left the queue\n\n6 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Tue 27 Oct, 11:45 \u00b7 rule `default` \u00b7 triggered by rule `Queue enqueue PRs`\n- \ud83d\udeab **Left the queue** 11:51 \u00b7 `1137b74`\n\n**Reason**\n\nThe pull request conflicts with the base branch\n\n**Hint**\n\nYou should update or rebase your pull request.\n\nIf you want to requeue this pull request, you can post a `@mergifyio queue` comment.\n\nTick the box to put this pull request back in the merge queue (same as `@mergifyio queue`).\n\n- [ ] Requeue this pull request <!-- mergify:queue-control:requeue -->\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/altendky/repos/carl/queues/status?branch=main&pull=84) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null
+    }
+  },
+  {
+    "id": 122355239053,
+    "name": "Summary",
+    "head_sha": "b6308f7a3bccf48105ff2d4f04891a7c299e6bc2",
+    "external_id": "84",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "2 potential rules",
+      "summary": "### Rule: Queue enqueue PRs (queue)\n- [ ] any of: [\ud83d\udd00 queue conditions]\n  - [ ] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [ ] any of: [\ud83d\udee1 GitHub repository ruleset rule `default`]\n      - [ ] `check-neutral = @github-actions/all`\n      - [ ] `check-skipped = @github-actions/all`\n      - [ ] `check-success = @github-actions/all`\n    - [X] `-draft`\n    - [X] `base = main`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `default`]\n    - [X] `label = enqueue`\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft`\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `deployment-success = @mergify/Mergify Merge Protections` [\ud83d\udccc queue requirement]\n- [X] `label = enqueue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n\n### Rule: Automatically approve and enqueue Renovate PRs (label, review)\n- [ ] [`github-review-decision = REVIEW_REQUIRED`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-decision)\n- [X] `author = altendky-renovate[bot]`\n- [X] `base = main`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]
