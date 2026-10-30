@@ -19,7 +19,10 @@ use tl3_controller::{
         self,
         github::APPROVAL_CHECK,
         prismabuild::{Check, CheckRun, Kind},
-        workers::{Supervisor, WorkerOutputSource, writer::FakeWriter},
+        workers::{
+            Supervisor, WorkerOutputSource,
+            writer::{FakeWriter, TextDraft, WriteRequest, Writer, WriterReply},
+        },
         worktrees::Real,
     },
     cli::Input,
@@ -190,6 +193,27 @@ fn recorded_check(name: &str, head: &Value) -> Value {
 struct Api {
     state: Arc<Mutex<State>>,
     fixture: Arc<Fixture>,
+}
+struct PublishingWriter;
+impl Writer for PublishingWriter {
+    fn draft(&mut self, key: &str, input: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+        if input.facts["change"]
+            .as_str()
+            .is_some_and(|change| change.contains("clear incident "))
+        {
+            assert_eq!(input.facts["issue_title"], "Fix the value");
+            assert!(
+                input.facts["request"]
+                    .as_str()
+                    .unwrap()
+                    .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
+            );
+            return Ok(WriterReply::Text(TextDraft {
+                text: "You asked for \"Fix the value\".\n\nThe change merged without the required approval. Please check the change.".into(),
+            }));
+        }
+        FakeWriter.draft(key, input)
+    }
 }
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
@@ -378,7 +402,7 @@ impl Server {
     fn adapter(&self, root: &Path, epoch: i64) -> adapters::github::Adapter {
         adapters::github::Adapter::new(
             self.clients(),
-            FakeWriter,
+            PublishingWriter,
             epoch,
             Policy::default(),
             root,
@@ -875,7 +899,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             state.operations_comments[0]["body"]
                 .as_str()
                 .unwrap()
-                .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
+                .contains("without the required approval")
         );
         assert!(state.comments.iter().any(|c| {
             c["body"]
@@ -888,6 +912,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 && serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
                     d.repository.name == operations().name
                         && d.issue == operations().number
+                        && d.note
+                            .as_deref()
+                            .unwrap()
+                            .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
                         && matches!(
                             d.output,
                             Out::Notice {
