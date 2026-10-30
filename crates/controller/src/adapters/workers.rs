@@ -1,3 +1,4 @@
+use crate::executor::Output as Out;
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
@@ -11,7 +12,7 @@ pub use source::WorkerOutputSource;
 
 use crate::{
     Error, Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
@@ -23,7 +24,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
 };
-use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};
 
 #[derive(Clone, Default)]
@@ -256,6 +257,10 @@ impl Executor for Supervisor {
                 kind: EffectKind::StartRun(role),
                 ..
             } => protocol::role(role),
+            Out::Comment {
+                kind: CommentKind::Classify,
+                ..
+            } => protocol::delivery_role(delivery),
             Out::Effect {
                 kind: EffectKind::StopRun,
                 ..
@@ -331,19 +336,23 @@ impl Executor for Supervisor {
             Out::Effect {
                 kind: EffectKind::StartRun(role),
                 ..
-            } if protocol::role(role).is_some() => {
-                let result = inspect(&self.root(&delivery.key), delivery)?;
-                if !matches!(result, Reconciliation::Pending) {
-                    self.active.remove(delivery);
-                }
-                Ok(result)
-            }
-            Out::Effect {
-                kind: EffectKind::StopRun,
+            } if protocol::role(role).is_some() => self.reconcile_run(delivery),
+            Out::Comment {
+                kind: CommentKind::Classify,
                 ..
-            } => Fake::new(&self.fake_root).reconcile(delivery),
+            } => self.reconcile_run(delivery),
             _ => Fake::new(&self.fake_root).reconcile(delivery),
         }
+    }
+}
+
+impl Supervisor {
+    fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        let result = inspect(&self.root(&delivery.key), delivery)?;
+        if !matches!(result, Reconciliation::Pending) {
+            self.active.remove(delivery);
+        }
+        Ok(result)
     }
 }
 

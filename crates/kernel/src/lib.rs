@@ -189,7 +189,6 @@ pub enum Role {
     Plan,
     Make,
     Review,
-    Classify,
 }
 
 #[cfg_attr(
@@ -649,8 +648,6 @@ pub enum Command {
     Pause,
     Resume,
     ChangeRequest,
-    ClarifyComment,
-    Complaint { revert: bool },
     Answer { question: u64, answer: Answer },
 }
 
@@ -709,8 +706,6 @@ pub enum Notice {
     MeasuresPosted,
     Summary(Outcome),
     FileReplacement,
-    ClarifyComment { question: u64 },
-    FileCorrection { revert: bool },
     Incident { needs_rob: bool },
     Note(NoteKind),
 }
@@ -1493,8 +1488,6 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Command::Pause => "apply_pause",
             Command::Resume => "apply_resume",
             Command::ChangeRequest => "apply_change_request",
-            Command::ClarifyComment => "apply_clarify_comment",
-            Command::Complaint { .. } => "apply_complaint",
             Command::Answer { answer, .. } => match answer {
                 Answer::Continue => "apply_answer_continue",
                 Answer::TryAgain => "apply_answer_try_again",
@@ -2226,22 +2219,7 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outb
         return; // a repeated command
     }
     w.nodes[i].last_cmd = id;
-    if w.nodes[i].phase.is_closed()
-        && !matches!(command, Command::Complaint { .. } | Command::ClarifyComment)
-    {
-        return;
-    }
     match command {
-        Command::ClarifyComment => {
-            let question = w.next_question;
-            w.next_question += 1;
-            notice(out, i, Notice::ClarifyComment { question });
-        }
-        Command::Complaint { revert } => {
-            if w.nodes[i].phase.is_closed() {
-                notice(out, i, Notice::FileCorrection { revert });
-            }
-        }
         Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
         Command::Pause => {

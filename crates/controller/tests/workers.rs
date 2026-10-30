@@ -1,3 +1,4 @@
+use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
 #[path = "../../store/tests/support/mod.rs"]
@@ -22,7 +23,7 @@ use tl3_controller::{
     cli::Input,
     executor::{Delivery, Executor, Observation, Reconciliation},
 };
-use tl3_kernel::{EffectKind, Event, NodeId, Out, Phase, Reply, Role};
+use tl3_kernel::{EffectKind, Event, NodeId, Phase, Reply, Role};
 use tl3_store::Store;
 
 fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {

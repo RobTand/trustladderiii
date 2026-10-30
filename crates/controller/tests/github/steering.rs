@@ -188,6 +188,7 @@ pub(super) fn commands(settings: &tl3_config::Store) {
     d.send(10003, "Please resume");
     d.classified(10003);
     assert_eq!(d.node()["paused"], false);
+    let before_unsure = d.node();
     d.send(10004, "Maybe do that");
     d.classified(10004);
     d.wait(|s| {
@@ -198,7 +199,22 @@ pub(super) fn commands(settings: &tl3_config::Store) {
                 .contains("Would you like me to stop or continue?")
         })
     });
-    assert_eq!(d.node()["phase"], "Auditing");
+    assert_eq!(
+        d.node(),
+        before_unsure,
+        "comment uncertainty never changes the kernel"
+    );
+    let questions = d
+        .store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "comment_questions")
+        .collect::<Vec<_>>();
+    assert_eq!(questions.len(), 1);
+    assert!(questions[0].id.ends_with("/10004"));
+    d.send(10004, "Maybe do that");
     d.send(10005, "Please stop");
     d.classified(10005);
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Stopped"}));
@@ -214,6 +230,39 @@ pub(super) fn commands(settings: &tl3_config::Store) {
         classifies, 5,
         "redelivered and unauthorized comments never launch another classifier"
     );
+    let state = d.api.state.lock().unwrap();
+    assert_eq!(
+        state
+            .comments
+            .iter()
+            .filter(|c| c["body"]
+                .as_str()
+                .unwrap()
+                .contains("Would you like me to stop or continue?"))
+            .count(),
+        1
+    );
+    drop(state);
+    assert!(
+        !d.store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "comment_questions")
+    );
+    let requests = fs::read_dir(&d.runs)
+        .unwrap()
+        .filter_map(|e| fs::read(e.unwrap().path().join("attempt-00000000/request.json")).ok())
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap())
+        .collect::<Vec<_>>();
+    assert!(requests.iter().any(|r| {
+        r["role"] == "classifier"
+            && r["inputs"]["comment"]["body"] == "Please stop"
+            && r["inputs"]["conversation"]["comment_id"]
+                .as_str()
+                .is_some_and(|id| id.ends_with("/10004"))
+    }));
     println!("test steering_commands_remark_authorization_and_dedup ... ok");
 }
 
@@ -221,12 +270,20 @@ pub(super) fn answers(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-answers");
     d.wait(|s| !s.node()["question"].is_null());
     let original = d.node()["question"]["id"].as_u64().unwrap();
-    d.send(11001, "Maybe do that");
+    let before_unsure = d.node();
+    d.send(11000, "Maybe do that");
+    d.classified(11000);
+    assert_eq!(
+        d.node(),
+        before_unsure,
+        "unsure comments are distinct from unclear answers"
+    );
+    d.send(11001, "My answer is unclear");
     d.classified(11001);
     let clarified = d.node()["question"]["id"].as_u64().unwrap();
     assert_ne!(original, clarified);
     assert_eq!(d.node()["question"]["clarified"], true);
-    d.send(11002, "Maybe do that");
+    d.send(11002, "My answer is unclear");
     d.classified(11002);
     assert_eq!(d.node()["question"]["id"], clarified);
     d.settled();
@@ -262,9 +319,7 @@ pub(super) fn answers(settings: &tl3_config::Store) {
     let before = d.node();
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(11003);
-    let mut after = d.node();
-    after["last_cmd"] = before["last_cmd"].clone();
-    assert_eq!(after, before);
+    assert_eq!(d.node(), before, "stale answers never enter the kernel");
     d.settled();
     println!("test steering_question_ids_one_clarification_and_stale_answer ... ok");
 }
@@ -325,6 +380,8 @@ pub(super) fn replacement(settings: &tl3_config::Store) {
 pub(super) fn correction(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-correction");
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
+    d.settled();
+    let closed = d.node();
     d.send(13001, "The result is broken, revert it");
     d.classified(13001);
     d.wait(|s| s.api.state.lock().unwrap().linked.len() == 1);
@@ -355,6 +412,7 @@ pub(super) fn correction(settings: &tl3_config::Store) {
     d.send(13002, "Thanks for the update");
     d.classified(13002);
     assert_eq!(d.api.state.lock().unwrap().linked.len(), 1);
+    assert_eq!(d.node(), closed, "complaints never reach a closed node");
     println!("test steering_closed_complaint_files_one_correction_with_revert ... ok");
 }
 

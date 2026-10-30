@@ -88,6 +88,9 @@ impl Writer for FakeWriter {
                 let fact = input.facts[field]
                     .as_str()
                     .ok_or(Error::Invalid("missing message fact"))?;
+                if input.facts["comment_question"] == true {
+                    return Ok(WriterReply::Text(TextDraft { text: fact.into() }));
+                }
                 let mut text = format!("You asked for \"{title}\".\n\n{fact}");
                 if let Some(goals) = input.facts["unmet_goals"].as_array() {
                     for goal in goals {
@@ -127,6 +130,12 @@ pub fn checked_draft(
         .to_owned();
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
+        if input.facts["comment_question"] == true
+            && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text))
+        {
+            input.violations = vec!["Write one nonempty question on a single line, at most 300 characters, ending in a question mark.".into()];
+            continue;
+        }
         let checked = match &reply {
             WriterReply::Question(question) if input.kind == MessageKind::Question => {
                 let draft = Draft {
@@ -222,4 +231,12 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
             format!("The {field} {problem} '{offending}'.")
         })
         .collect()
+}
+
+fn short_question(text: &str) -> bool {
+    !text.trim().is_empty()
+        && text.chars().count() <= 300
+        && !text.contains(['\r', '\n', '\u{0085}', '\u{2028}', '\u{2029}'])
+        && text.trim_end().ends_with('?')
+        && text.matches('?').count() == 1
 }

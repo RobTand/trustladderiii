@@ -22,7 +22,6 @@ use std::{
     path::PathBuf,
     sync::mpsc::Sender,
 };
-use tl3_kernel::{EffectKind, Out};
 use tl3_store::Store;
 
 struct Run {
@@ -352,13 +351,8 @@ pub(super) fn parse_reply(
     if !bytes.ends_with(b"\n") {
         return Err(Error::Invalid("incomplete worker output"));
     }
-    let role = match delivery.output {
-        Out::Effect {
-            kind: EffectKind::StartRun(role),
-            ..
-        } => protocol::role(role).ok_or(Error::Invalid("unsupported worker role"))?,
-        _ => return Err(Error::Invalid("worker output without start")),
-    };
+    let role = protocol::delivery_role(delivery)
+        .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
         let value: Value = super::json::parse(line)?;

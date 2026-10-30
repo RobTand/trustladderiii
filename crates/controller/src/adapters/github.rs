@@ -1,10 +1,11 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{Ack, EffectKind, Out};
+use tl3_kernel::{Ack, EffectKind};
 
 pub struct Fake(Records);
 impl Fake {
@@ -46,7 +47,7 @@ use tl3_github::{
     CloseReason, GitHub,
     message::{OptionDraft, Policy},
 };
-use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
+use tl3_kernel::{NoteKind, Notice, QKind, come};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
 /// PR effects stay on the tracer fake until ticket 13 replaces them here.
@@ -98,16 +99,15 @@ impl Adapter {
                     notice @ (Notice::Ask { .. }
                     | Notice::MeasuresPosted
                     | Notice::Summary(_)
-                    | Notice::Note(_)
-                    | Notice::ClarifyComment { .. }),
+                    | Notice::Note(_)),
                 ..
             } => Some(notice),
             Out::Notice {
-                notice:
-                    Notice::Incident { .. } | Notice::FileReplacement | Notice::FileCorrection { .. },
+                notice: Notice::Incident { .. } | Notice::FileReplacement,
                 ..
             }
-            | Out::Effect { .. } => None,
+            | Out::Effect { .. }
+            | Out::Comment { .. } => None,
         }
     }
     fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
@@ -178,9 +178,18 @@ impl Executor for Adapter {
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             return self.file_request(delivery);
         }
-        let Some(notice) = Self::request_notice(delivery) else {
+        let notice = Self::request_notice(delivery);
+        if notice.is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify,
+                    ..
+                }
+            )
+        {
             return self.fake.execute(delivery);
-        };
+        }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         if self
@@ -250,7 +259,15 @@ impl Executor for Adapter {
                 },
             );
         }
-        if Self::request_notice(delivery).is_none() {
+        if Self::request_notice(delivery).is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify,
+                    ..
+                }
+            )
+        {
             return self.fake.reconcile(delivery);
         }
         let client = self.client(delivery)?;
@@ -289,7 +306,7 @@ impl Executor for Adapter {
 
 fn writer_input(
     delivery: &Delivery,
-    notice: Notice,
+    notice: Option<Notice>,
     title: &str,
     request: &str,
 ) -> Result<WriteRequest> {
@@ -298,12 +315,14 @@ fn writer_input(
     } else {
         request
     };
-    let (kind, facts) = match notice {
-        Notice::ClarifyComment { question } => (
-            MessageKind::Note,
-            json!({"issue_title": title, "request": request,
-            "change": format!("{} Reply to question {question} on this issue.", delivery.note.as_deref().ok_or(Error::Invalid("comment clarification missing"))?)}),
-        ),
+    if let Some(crate::steering::Task::ClarifyComment { question }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request, "change": question, "comment_question": true}),
+            violations: vec![],
+        });
+    }
+    let (kind, facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
         Notice::Ask { question } => {
             let binding = delivery
                 .question
@@ -423,7 +442,7 @@ fn writer_input(
                 Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
-                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } | Notice::ClarifyComment { .. } | Notice::FileCorrection { .. } => unreachable!(),
+                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
             }}),
         ),
     };

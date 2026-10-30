@@ -1,11 +1,12 @@
 use super::super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
+use tl3_kernel::EffectKind;
 use tl3_kernel::Role;
-use tl3_kernel::{EffectKind, Out};
 use tl3_kernel::{Event, Reply};
 
 pub struct Fake(Records);
@@ -19,14 +20,18 @@ impl Executor for Fake {
         let node = delivery.node();
         let generation = delivery.generation;
         let observations = match delivery.output {
+            Out::Comment {
+                kind: crate::executor::CommentKind::Classify,
+                ..
+            } => vec![Observation::Classified {
+                key: delivery.key.clone(),
+                reply: Some(serde_json::json!({"kind": "remark"})),
+            }],
+
             Out::Effect {
                 kind: EffectKind::StartRun(role),
                 ..
             } => match role {
-                Role::Classify => vec![Observation::Classified {
-                    key: delivery.key.clone(),
-                    reply: Some(serde_json::json!({"kind": "remark"})),
-                }],
                 Role::Ingest => vec![Observation::Kernel(Event::Reply {
                     node,
                     generation,

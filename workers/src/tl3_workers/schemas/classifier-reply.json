@@ -98,7 +98,8 @@
             "continue",
             "stop",
             "retry",
-            "mark_handled"
+            "mark_handled",
+            "unclear"
           ]
         }
       },

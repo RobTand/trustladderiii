@@ -10,7 +10,9 @@ pub mod status;
 pub mod status_web;
 pub mod steering;
 
-use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
+use executor::{
+    Completion, Delivery, Observation, Output as DeliveryOutput, Reconciliation, Registry,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -203,8 +205,37 @@ impl Controller {
     }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
-        if issue.actor != self.bootstrap.rob || issue.label != "tl3" {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("github:{}", issue.delivery),
+            json!({"labelled_issue": issue}),
+            &snapshot,
+        );
+        if let Some(event) = self.prepare_intake(&snapshot, &issue, &mut commit)? {
+            self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
+        } else if issue.actor != self.bootstrap.rob
+            || issue.label != "tl3"
+            || !self.bootstrap.repos.iter().any(|r| {
+                r.owner.eq_ignore_ascii_case(&issue.owner)
+                    && r.name.eq_ignore_ascii_case(&issue.repo)
+                    && r.installation == issue.installation
+            })
+        {
             return Ok(false);
+        }
+        self.store.commit(&commit)?;
+        self.retry_held_effects();
+        Ok(true)
+    }
+
+    fn prepare_intake(
+        &mut self,
+        snapshot: &Snapshot,
+        issue: &LabelledIssue,
+        commit: &mut Commit,
+    ) -> Result<Option<Event>> {
+        if issue.actor != self.bootstrap.rob || issue.label != "tl3" {
+            return Ok(None);
         }
         let Some(repo) = self
             .bootstrap
@@ -217,10 +248,9 @@ impl Controller {
             })
             .cloned()
         else {
-            return Ok(false);
+            return Ok(None);
         };
-        let snapshot = self.store.load()?;
-        let world = snapshot::decode(&snapshot)?;
+        let world = snapshot::decode(snapshot)?;
         let index = snapshot
             .rows
             .iter()
@@ -242,11 +272,6 @@ impl Controller {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .iter()
             .any(|r| r.issue_id == issue_id);
-        let mut commit = Commit::new(
-            format!("github:{}", issue.delivery),
-            json!({"labelled_issue": issue}),
-            &snapshot,
-        );
         if !existing {
             let node = world.nodes.len().to_string();
             commit.rows.push(put(
@@ -259,18 +284,11 @@ impl Controller {
                     issue_id
                 }),
             ));
-            self.apply(
-                &snapshot,
-                world,
-                Event::NewRequest {
-                    repo: tl3_kernel::RepoId(index),
-                },
-                &mut commit,
-            )?;
+            return Ok(Some(Event::NewRequest {
+                repo: tl3_kernel::RepoId(index),
+            }));
         }
-        self.store.commit(&commit)?;
-        self.retry_held_effects();
-        Ok(true)
+        Ok(None)
     }
 
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
@@ -341,13 +359,12 @@ impl Controller {
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
-                || (!delivery.is_classifier()
-                    && match delivery.output {
-                        Out::Effect { node, seq, .. } => world.nodes
-                            [node.index().ok_or(Error::Invalid("node index overflow"))?]
-                        .effect_cancelling(seq),
-                        Out::Notice { .. } => false,
-                    });
+                || match delivery.output {
+                    DeliveryOutput::Effect { node, seq, .. } => world.nodes
+                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
+                    .effect_cancelling(seq),
+                    DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
+                };
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
@@ -443,10 +460,10 @@ impl Controller {
                         .any(|r| r.table == "comment_jobs" && r.id == delivery.key)
                 } else {
                     match delivery.output {
-                        Out::Effect { kind, .. } => {
+                        DeliveryOutput::Effect { kind, .. } => {
                             node.operation_pending(kind, delivery.generation)
                         }
-                        Out::Notice { .. } => false,
+                        DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                     }
                 };
             let mut commit = Commit::new(
@@ -521,9 +538,7 @@ impl Controller {
             from: effect.state,
             to: EffectState::Cancelled,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output
-            && !delivery.is_classifier()
-        {
+        if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -586,9 +601,7 @@ impl Controller {
             from,
             to: state,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output
-            && !delivery.is_classifier()
-        {
+        if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -602,8 +615,7 @@ impl Controller {
         }
         if completion.ack == Ack::Retryable
             && state == EffectState::Intended
-            && !delivery.is_classifier()
-            && matches!(delivery.output, Out::Effect { .. })
+            && matches!(delivery.output, DeliveryOutput::Effect { .. })
         {
             // The kernel assigns a fresh sequence to its retry. Retire the old
             // delivery and its watch together, so absence of the cancelled key
@@ -731,7 +743,7 @@ impl Controller {
             let mut delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
-                output,
+                output: output.into(),
                 generation: n.generation,
                 head_sha,
                 repository: request.repo,
@@ -762,7 +774,7 @@ impl Controller {
             }
             commit.effects.push(NewEffect {
                 key,
-                kind: format!("{:?}", executor::upstream(output)),
+                kind: format!("{:?}", executor::upstream(output.into())),
                 payload: json!(delivery),
             });
         }
@@ -1058,7 +1070,7 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         .and_then(|r| r.value["number"].as_u64());
     if matches!(
         delivery.output,
-        Out::Notice {
+        DeliveryOutput::Notice {
             notice: tl3_kernel::Notice::MeasuresPosted,
             ..
         }

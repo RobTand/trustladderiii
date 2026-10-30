@@ -385,7 +385,7 @@ For each new worker role, update these boundaries together:
 - Extend `lib.rs` `valid_role` and the document names in `translate`.
 - Add process scenarios for accepted replies, invalid output, recovery and stop.
 
-The classifier uses `Role::Classify` and the same supervisor, schema validation,
+The classifier uses the supervisor's `classifier` mapping and the same schema validation,
 model configuration and output source. It has a separate comment job because
 it can run while request work continues or after the request closes. Its reply
 becomes `Observation::Classified`, rather than a reply to the request's current run.
@@ -413,24 +413,30 @@ changes while the worker runs. Completed classifications leave the watch set and
 the pending queue. Their stored comments retain the result for deduplication.
 No timer scans comment history.
 
-Pause, resume, stop, change and named answers enter the kernel as commands.
-The controller assigns their sequence when applying the comment, so webhook
-arrival order does not depend on GitHub's numeric comment IDs. The job and its
-command commit together. Remarks emit no command. An unsure reply to an open
-question becomes `Answer::Unclear`; the kernel allows one clarification. Without
-an open question, `Command::ClarifyComment` emits one short question without
-interrupting work. Both question paths use the GitHub writer and checker.
+Pause, resume, stop, change and named answers enter the kernel as its existing
+commands. The controller assigns their sequence when applying the comment.
+The classification, job retirement and command commit together. Remarks and
+stale answers emit no command. `Output::Comment` carries ingress work directly
+to adapters, without a kernel effect or notice.
 
-The kernel emits `FileReplacement` after closing as Replaced, or `FileCorrection`
-for a complaint on a closed request. The GitHub adapter creates an issue with a
-stable effect marker, the `tl3` label and a link to Rob's authorizing comment.
-A correction also records his request for a revert. Confirming or reconciling
-that issue starts a new kernel request with the original request's authorization.
-The new ingest uses the filed issue's text and inherits the original repository
-snapshot through the durable request link. Links point to earlier requests, so
-replacement chains terminate at the original materials. The original request
-stays closed. These changes use existing store tables and do not add a SQL
-migration.
+An unsure comment gets one short question through the message writer, checker
+and marker reconciliation. `comment_questions` tracks the conversation by the
+original comment key. The next comment is classified with that conversation as
+context. Completed conversations leave the pending set. An explicit unclear
+answer to a kernel question becomes its existing `Answer::Unclear`; the kernel
+allows one clarification. Comment uncertainty never changes a kernel question.
+
+The existing `FileReplacement` notice files a replacement after closing as
+Replaced. A complaint on a closed request files a correction directly from the
+comment pipeline, keyed by comment ID. The closed node receives no event.
+The GitHub adapter creates an issue with a stable marker, the `tl3` label and a
+link to Rob's authorizing comment. A correction records his request for a revert.
+Marker reconciliation recovers an issue created before an acknowledgement.
+Both paths use the same authorized intake as a labelled request. The new ingest
+reads the filed issue's text and inherits the original repository snapshot
+through the durable request link. Links point to earlier requests, so chains
+terminate at the original materials. No SQL migration is needed. Store versions
+1 through 4 and `crates/kernel` are unchanged from main.
 
 The GitHub integration target drives `tl3d`, signed recorded webhook fixtures,
 the Python worker with a fake model, and a local REST server. It covers command
@@ -446,8 +452,8 @@ python3 crates/controller/tools/steering_review_manifest.py hosts > /tmp/tl3-ste
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-steering-hosts.json
 ```
 
-The `workspace` and `proofs` selections generate the portable full check and the
-three affected command proofs. Inspect each terminal result, logs and CAS receipt.
+The `workspace` selection generates the portable full check. Inspect each
+terminal result, logs and CAS receipt. No kernel rule or proof changes.
 
 ## Planning evidence
 

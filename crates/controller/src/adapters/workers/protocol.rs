@@ -8,7 +8,21 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
         Role::Ingest => Some("ingest"),
         Role::Audit => Some("audit"),
         Role::Plan => Some("planner"),
-        Role::Classify => Some("classifier"),
+        _ => None,
+    }
+}
+
+pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
+    use crate::executor::{CommentKind, Output};
+    match delivery.output {
+        Output::Comment {
+            kind: CommentKind::Classify,
+            ..
+        } => Some("classifier"),
+        Output::Effect {
+            kind: tl3_kernel::EffectKind::StartRun(r),
+            ..
+        } => role(r),
         _ => None,
     }
 }
@@ -227,9 +241,10 @@ pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<(
         let question = &inputs["state"]["open_question"];
         if question.is_null()
             || reply["question_id"] != question["id"]
-            || !question["answers"]
-                .as_array()
-                .is_some_and(|a| a.contains(&reply["answer"]))
+            || (reply["answer"] != "unclear"
+                && !question["answers"]
+                    .as_array()
+                    .is_some_and(|a| a.contains(&reply["answer"])))
             || (reply["answer"] == "add_credit" && reply["amount"].as_u64().is_none())
         {
             return Err(Error::Invalid(

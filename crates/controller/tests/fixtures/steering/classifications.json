@@ -38,5 +38,10 @@
     "kind": "answer",
     "question_id": "current",
     "answer": "continue"
+  },
+  "My answer is unclear": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "unclear"
   }
 }

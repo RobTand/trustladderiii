@@ -3,8 +3,9 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use tl3_controller::executor::Output as Out;
 use tl3_controller::{Repository, adapters::worktrees::Real, executor::Delivery};
-use tl3_kernel::{EffectKind, NodeId, Out};
+use tl3_kernel::{EffectKind, NodeId};
 
 pub fn git(path: &Path, args: &[&str]) -> String {
     let output = Command::new("git")

@@ -1,8 +1,8 @@
-use crate::executor::Delivery;
+use crate::executor::{CommentKind, Delivery, Output};
 use crate::{Controller, Error, Repository, Request, Result, put, request, snapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tl3_kernel::{Answer, Command, EffectKind, Event, NodeId, Notice, Out, QKind, Role, World};
+use tl3_kernel::{Answer, Command, Event, NodeId, Notice, QKind, World};
 use tl3_store::{Commit, NewEffect, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -10,6 +10,9 @@ pub enum Task {
     Classify {
         comment_key: String,
         inputs: Value,
+    },
+    ClarifyComment {
+        question: String,
     },
     FileRequest {
         text: String,
@@ -21,7 +24,13 @@ pub enum Task {
 
 impl Delivery {
     pub fn is_classifier(&self) -> bool {
-        matches!(self.steering, Some(Task::Classify { .. }))
+        matches!(
+            self.output,
+            Output::Comment {
+                kind: CommentKind::Classify,
+                ..
+            }
+        )
     }
 }
 
@@ -85,18 +94,23 @@ impl Controller {
                 let (kind, answers) = question(q.kind);
                 json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
             });
-        let inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
+        let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
                 "state": {"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question}});
+        if let Some(pending) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "comment_questions" && r.value["node"] == json!(node))
+        {
+            inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
+        }
         let binding: Request = serde_json::from_value(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
         let delivery = Delivery {
             key: key.clone(),
             epoch: snapshot.epoch.get(),
-            output: Out::Effect {
+            output: Output::Comment {
                 node,
-                seq: 0,
-                kind: EffectKind::StartRun(Role::Classify),
-                head: None,
+                kind: CommentKind::Classify,
             },
             generation: n.generation,
             head_sha: None,
@@ -206,24 +220,54 @@ impl Controller {
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
         let kind = reply["kind"].as_str().unwrap();
+        if let Some(previous) = inputs["conversation"]["comment_id"].as_str() {
+            commit.rows.push(RowChange::Delete {
+                table: "comment_questions".into(),
+                id: previous.into(),
+            });
+        }
+        if kind == "unsure" {
+            let question = reply["question"].as_str().unwrap().to_owned();
+            commit.rows.push(put(
+                "comment_questions",
+                comment_key.clone(),
+                json!({"node": node, "comment": inputs["comment"]["body"], "question": question}),
+            ));
+            let mut clarification = delivery.clone();
+            clarification.key = format!("clarify:{comment_key}");
+            clarification.output = Output::Comment {
+                node,
+                kind: CommentKind::Clarify,
+            };
+            clarification.steering = Some(Task::ClarifyComment { question });
+            queue_comment(commit, clarification);
+            return Ok(None);
+        }
+        if kind == "complaint" && n.phase.is_closed() {
+            let mut correction = delivery.clone();
+            correction.key = format!("correction:{comment_key}");
+            correction.output = Output::Comment {
+                node,
+                kind: CommentKind::FileCorrection,
+            };
+            correction.steering = Some(Task::FileRequest {
+                text: reply["summary"].as_str().unwrap().into(),
+                comment: comment.value["comment"]["id"].as_u64().unwrap(),
+                correction: true,
+                revert: reply["revert"].as_bool().unwrap(),
+            });
+            queue_comment(commit, correction);
+            return Ok(None);
+        }
+        if n.phase.is_closed() {
+            return Ok(None);
+        }
         let command = match kind {
             "pause" => Command::Pause,
             "resume" => Command::Resume,
             "stop" => Command::Stop,
             "change_request" => Command::ChangeRequest,
             "remark" => return Ok(None),
-            "complaint" => Command::Complaint {
-                revert: reply["revert"].as_bool().unwrap(),
-            },
-            "unsure" => match inputs["state"]["open_question"]["id"].as_str() {
-                Some(id) => Command::Answer {
-                    question: id
-                        .parse()
-                        .map_err(|_| Error::Invalid("invalid question id"))?,
-                    answer: Answer::Unclear,
-                },
-                None => Command::ClarifyComment,
-            },
             "answer" => Command::Answer {
                 question: reply["question_id"]
                     .as_str()
@@ -232,6 +276,7 @@ impl Controller {
                     .map_err(|_| Error::Invalid("invalid question id"))?,
                 answer: match reply["answer"].as_str().unwrap() {
                     "continue" => Answer::Continue,
+                    "unclear" => Answer::Unclear,
                     "change_request" => Answer::ChangeRequest,
                     "stop" => Answer::Stop,
                     "try_again" => Answer::TryAgain,
@@ -247,7 +292,10 @@ impl Controller {
             Command::Answer { question, .. } => n.question.is_some_and(|q| q.id == question),
             _ => true,
         };
-        if current_answer {
+        if !current_answer {
+            return Ok(None);
+        }
+        {
             if let Some(text) = reply["new_text"].as_str()
                 && !n.phase.is_closed()
                 && !matches!(n.phase, tl3_kernel::Phase::Stopping(_))
@@ -261,25 +309,6 @@ impl Controller {
                         correction: false,
                         revert: false,
                     }),
-                ));
-            }
-            if kind == "complaint" && n.phase.is_closed() {
-                commit.rows.push(put(
-                    "correction",
-                    node.0.to_string(),
-                    json!(Task::FileRequest {
-                        text: reply["summary"].as_str().unwrap().into(),
-                        comment: comment.value["comment"]["id"].as_u64().unwrap(),
-                        correction: true,
-                        revert: reply["revert"].as_bool().unwrap(),
-                    }),
-                ));
-            }
-            if kind == "unsure" {
-                commit.rows.push(put(
-                    "comment_question",
-                    node.0.to_string(),
-                    reply["question"].clone(),
                 ));
             }
             if reply["answer"] == "try_again" {
@@ -310,18 +339,10 @@ impl Controller {
         delivery: &mut Delivery,
     ) -> Result<()> {
         let table = match delivery.output {
-            Out::Notice {
+            Output::Notice {
                 notice: Notice::FileReplacement,
                 ..
             } => "replacement",
-            Out::Notice {
-                notice: Notice::FileCorrection { .. },
-                ..
-            } => "correction",
-            Out::Notice {
-                notice: Notice::ClarifyComment { .. },
-                ..
-            } => "comment_question",
             _ => return Ok(()),
         };
         let id = delivery.node().0.to_string();
@@ -345,16 +366,7 @@ impl Controller {
                     .map(|r| &r.value)
             })
             .ok_or(Error::Invalid("steering notice context missing"))?;
-        if table == "comment_question" {
-            delivery.note = Some(
-                value
-                    .as_str()
-                    .ok_or(Error::Invalid("comment question missing"))?
-                    .into(),
-            );
-        } else {
-            delivery.steering = Some(serde_json::from_value(value.clone())?);
-        }
+        delivery.steering = Some(serde_json::from_value(value.clone())?);
         Ok(())
     }
 
@@ -366,40 +378,51 @@ impl Controller {
         original: NodeId,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
-        let world = snapshot::decode(snapshot)?;
         let old = request(snapshot, original)?;
         if old.repo != repository {
             return Err(Error::Invalid("linked request repository mismatch"));
         }
-        let repo = self
-            .store
-            .intern_repo(&repository.owner, &repository.name)?;
-        let issue_id = self.store.intern_issue(repo, issue.number)?.get();
-        if snapshot
-            .rows
-            .iter()
-            .any(|r| r.table == "requests" && r.value["issue_id"] == issue_id)
-        {
-            return Ok(None);
-        }
-        let node = NodeId(world.nodes.len() as u64);
-        commit.rows.push(put(
-            "requests",
-            node.0.to_string(),
-            json!(Request {
-                repo: repository,
-                issue: issue.number,
-                title: issue.title.clone(),
-                issue_id
-            }),
-        ));
+        let labelled = crate::LabelledIssue {
+            delivery: commit.event_key.clone(),
+            owner: repository.owner.clone(),
+            repo: repository.name.clone(),
+            installation: repository.installation,
+            number: issue.number,
+            title: issue.title.clone(),
+            actor: self.bootstrap.rob,
+            label: "tl3".into(),
+        };
+        let event = self.prepare_intake(snapshot, &labelled, commit)?;
+        let node = match event {
+            Some(_) => NodeId(snapshot::decode(snapshot)?.nodes.len() as u64),
+            None => {
+                let Some(row) = snapshot.rows.iter().find(|r| {
+                    r.table == "requests"
+                        && r.value["repo"] == json!(repository)
+                        && r.value["issue"] == issue.number
+                }) else {
+                    return Ok(None);
+                };
+                NodeId(
+                    row.id
+                        .parse()
+                        .map_err(|_| Error::Invalid("invalid request node"))?,
+                )
+            }
+        };
         commit.rows.push(put(
             "request_links",
             node.0.to_string(),
             json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue}),
         ));
-        Ok(Some(Event::NewRequest {
-            repo: world.nodes[original.0 as usize].repo,
-        }))
+        Ok(event)
     }
+}
+
+fn queue_comment(commit: &mut Commit, delivery: Delivery) {
+    commit.effects.push(NewEffect {
+        key: delivery.key.clone(),
+        kind: "GitHub".into(),
+        payload: json!(delivery),
+    });
 }
