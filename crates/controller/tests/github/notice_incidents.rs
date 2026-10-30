@@ -258,7 +258,7 @@ fn scenario(settings: &tl3_config::Store, name: &str) {
         comments.iter().any(|v| v["body"]
             .as_str()
             .unwrap()
-            .contains(&format!("<!-- tl3:{} -->", failed.key))),
+            .contains(&GitHub::marker(&failed.key))),
         "retry must preserve the notice marker"
     );
     assert_eq!(
