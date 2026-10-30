@@ -728,7 +728,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
             .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
             .unwrap()
             .get::<_, i64>(0),
-        1
+        2
     );
 }
 
@@ -745,28 +745,54 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .get::<_, bool>(0)
     );
     Store::open(settings).unwrap();
-    for version in [0, 2] {
+    let migrations = client
+        .query(
+            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+            &[],
+        )
+        .unwrap();
+    for version in [0, 3] {
         client
-            .execute("UPDATE tl3_schema_migrations SET version = $1", &[&version])
+            .execute("DELETE FROM tl3_schema_migrations", &[])
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, 'incompatible')",
+                &[&version],
+            )
             .unwrap();
         assert_eq!(
             Reader::open(settings).err().unwrap().to_string(),
-            format!("schema version {version}, expected 1")
+            format!("schema version {version}, expected 2")
         );
     }
     client
-        .execute("UPDATE tl3_schema_migrations SET version = 1", &[])
+        .execute("DELETE FROM tl3_schema_migrations", &[])
         .unwrap();
+    for row in migrations {
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&row.get::<_, i32>(0), &row.get::<_, String>(1)],
+            )
+            .unwrap();
+    }
     let mut reader = Reader::open(settings).unwrap();
     client
-        .execute("UPDATE tl3_schema_migrations SET version = 2", &[])
+        .execute(
+            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 2",
+            &[],
+        )
         .unwrap();
     assert_eq!(
         reader.load().unwrap_err().to_string(),
-        "schema version 2, expected 1"
+        "schema version 3, expected 2"
     );
     client
-        .execute("UPDATE tl3_schema_migrations SET version = 1", &[])
+        .execute(
+            "UPDATE tl3_schema_migrations SET version = 2 WHERE version = 3",
+            &[],
+        )
         .unwrap();
     client.batch_execute("DROP TABLE tl3_world").unwrap();
     assert_eq!(
