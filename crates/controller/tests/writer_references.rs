@@ -28,7 +28,7 @@ fn input(kind: MessageKind) -> WriteRequest {
             "recommended_option": 0, "recommendation_reason": "This avoids a delay.",
             "how_to_answer": "Reply with option one or two.",
             "comment_excerpt": "Maybe do that", "question": "Should I continue?",
-            "change": "Work is paused.", "outcome": "The button is blue."
+            "change": "Work is paused.", "outcome": "The button is blue.", "unmet_goals": []
         }),
         violations: vec![],
     }
@@ -221,7 +221,7 @@ fn checker_feedback_reaches_real_writer_protocol_and_fake_model() {
                 "protocol": 1, "operation": {"node": 1, "generation": 0, "kind": "write_message"},
                 "role": "writer", "inputs": input,
                 "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model", "effort": "high", "budget_tokens": 32000},
-                "key_file": self.key_file,
+                "key_file": self.key_file, "worktree": self.key_file.parent().unwrap(),
             });
             let mut child = Command::new(&self.python)
                 .arg(concat!(
@@ -272,7 +272,29 @@ fn checker_feedback_reaches_real_writer_protocol_and_fake_model() {
             key_file: key_file.clone(),
             calls: 0,
         };
-        let draft = checked_draft(&mut writer, "protocol", input(kind), &policy()).unwrap();
+        let mut request = input(kind);
+        let keys: &[&str] = match kind {
+            MessageKind::Question => &[
+                "issue_title",
+                "request",
+                "obstacle",
+                "options",
+                "recommended_option",
+                "recommendation_reason",
+                "how_to_answer",
+            ],
+            MessageKind::Clarification => {
+                &["issue_title", "request", "question", "comment_excerpt"]
+            }
+            MessageKind::Note => &["issue_title", "request", "change"],
+            MessageKind::Summary => &["issue_title", "request", "outcome", "unmet_goals"],
+        };
+        request
+            .facts
+            .as_object_mut()
+            .unwrap()
+            .retain(|key, _| keys.contains(&key.as_str()));
+        let draft = checked_draft(&mut writer, "protocol", request, &policy()).unwrap();
         assert_eq!(writer.calls, 2, "{kind:?}");
         assert!(draft.contains("artwork needs permission"));
         assert!(!draft.contains('@') && !draft.contains('#'));
