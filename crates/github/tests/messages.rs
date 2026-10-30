@@ -104,14 +104,11 @@ fn blocks_vocabulary_inflections_case_and_hidden_unicode() {
         "replan",
         "re-plan",
         "measures",
-        "node",
-        "generation",
-        "effect",
-        "TL3",
-        "AwaitingRob",
-        "outbox",
-        "ＥＦＦＥＣＴ",
-        "ef\u{200b}fect",
+        "lineages",
+        "re-plans",
+        "measurement",
+        "ＬＥＡＦ",
+        "lea\u{200b}f",
     ] {
         rejects(
             |d| d.obstacle = format!("The {term} needs attention."),
@@ -127,8 +124,6 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         "b5862850-8ed7-47f7-8fdf-887a96ba872c",
         "id: 12",
         "request_id",
-        "effectKey",
-        "RepoSlot",
         "#123",
         "<!-- hidden -->",
     ] {
@@ -208,4 +203,55 @@ fn invisible_characters_cannot_fill_required_sections() {
         |d| d.how_to_answer = "\u{200b}".into(),
         Violation::MissingAnswerInstructions,
     );
+}
+
+#[test]
+fn quotes_robs_title_verbatim_without_scanning_it() {
+    for title in [
+        "Fix the kernel node pool",
+        "Deploy to GitHub",
+        "Re-plan the leaf lineage measure in src/main.rs for request_id #123",
+        "ERROR: \"RepoSlot\" needs attention\n<!-- original text -->",
+    ] {
+        let mut d = draft();
+        d.issue_title = title.into();
+        d.request_quote = title.into();
+        let policy = Policy { internal_terms: vec!["RepoSlot".into()] };
+        let checked = check(&d, &policy).unwrap();
+        assert!(checked.as_str().starts_with(&format!("You asked for \"{title}\".")));
+        d.obstacle = "The leaf needs attention.".into();
+        assert!(check(&d, &policy).unwrap_err().contains(&Violation::InternalVocabulary));
+    }
+}
+
+#[test]
+fn plain_english_and_product_names_pass_in_all_written_fields() {
+    for sentence in [
+        "Reply yes/no when you are ready.",
+        "Choose an image and/or a color.",
+        "The service runs 24/7.",
+        "Deploy to GitHub using PostgreSQL and YouTube.",
+        "Fix the kernel node pool.",
+        "The next generation has a useful effect.",
+        "We can settle this after the test.",
+        "The outbox is full while we are auditing footprints from earlier epochs.",
+    ] {
+        let mut d = draft();
+        d.obstacle = sentence.into();
+        d.options[0].action = sentence.into();
+        d.options[0].outcome = sentence.into();
+        d.recommendation_reason = sentence.into();
+        d.how_to_answer = sentence.into();
+        assert!(check(&d, &Policy::default()).is_ok(), "{sentence}");
+    }
+}
+
+#[test]
+fn actual_internal_names_are_supplied_by_policy() {
+    for name in ["effectKey", "RepoSlot", "AwaitingRob", "TL3"] {
+        let mut d = draft();
+        d.obstacle = format!("The {name} needs attention.");
+        assert!(check(&d, &Policy { internal_terms: vec![name.into()] })
+            .unwrap_err().contains(&Violation::InternalNameOrId));
+    }
 }
