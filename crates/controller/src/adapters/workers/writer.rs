@@ -133,6 +133,9 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let change_quote = (input.kind == MessageKind::Note)
+        .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
+        .flatten();
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
         if input.kind == MessageKind::Clarification
@@ -171,7 +174,27 @@ pub fn checked_draft(
             _ => Err(vec![Violation::MissingRequest]),
         };
         match checked {
-            Ok(text) => return Ok(text),
+            Ok(mut text) => {
+                if let Some(quote) = &change_quote {
+                    // Indentation keeps Markdown inert; embedded markers must also be neutralised.
+                    let quote = quote
+                        .replace("\r\n", "\n")
+                        .replace('\r', "\n")
+                        .replace("<!-- tl3:", "< !-- tl3:");
+                    let mut chars = quote.chars();
+                    let quote: String = chars.by_ref().take(2_000).collect();
+                    let shortened = chars.next().is_some();
+                    text = format!("{}\n\nYour change:\n", text.trim_end());
+                    for line in quote.split('\n') {
+                        text.push_str("\n    ");
+                        text.push_str(line);
+                    }
+                    if shortened {
+                        text.push_str("\n\n[Change shortened to 2,000 characters.]");
+                    }
+                }
+                return Ok(text);
+            }
             Err(violations) => input.violations = feedback(&reply, &violations, policy),
         }
     }

@@ -806,6 +806,7 @@ impl Controller {
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
+        self.close_replacement(snapshot, &previous, &world, commit)?;
         commit.result = json!({"kernel_event": event});
         let dictionary = self.store.load()?.interned;
         for (index, output) in outputs.into_iter().enumerate() {
