@@ -94,6 +94,9 @@ elif "--withdraw" in args:
     print(json.dumps({"schema": "prismabuild.withdrawal.v1", "action_key": key,
                       "withdrawn": True, "state_before": "ready"}))
 elif "--endings" in args:
+    if (root / "garbled_ending").exists():
+        print("temporary tool failure")
+        raise SystemExit(1)
     key = args[-1]
     path = root / f"{key}.ending"
     if path.exists():

@@ -1,6 +1,11 @@
-use super::{Job, Settings, encoded, results, write};
+use super::{Job, Settings, encoded, jobs, read_job, results, write};
 use crate::{Result, cli::Input};
-use std::{collections::BTreeMap, fs, sync::mpsc::Sender, thread, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::mpsc::Sender,
+    thread,
+    time::Duration,
+};
 use tl3_prismabuild::{ActionKey, ActionState, PrismaBuild, Watcher};
 use tokio::sync::{broadcast, oneshot};
 
@@ -9,11 +14,22 @@ pub struct Source {
     watcher: Watcher,
     keys: broadcast::Receiver<String>,
     active: Option<BTreeMap<ActionKey, Job>>,
+    tool_errors: BTreeSet<ActionKey>,
 }
 
 pub struct RunningSource {
     stop: Option<oneshot::Sender<()>>,
-    thread: Option<thread::JoinHandle<()>>,
+    thread: Option<thread::JoinHandle<Result<()>>>,
+}
+impl RunningSource {
+    /// Propagate source errors and panics to the daemon's source supervisor.
+    pub fn join(mut self) -> Result<()> {
+        self.thread
+            .take()
+            .expect("running source thread")
+            .join()
+            .map_err(|_| crate::Error::Invalid("PrismaBuild source panicked"))?
+    }
 }
 impl Drop for RunningSource {
     fn drop(&mut self) {
@@ -37,6 +53,7 @@ impl Source {
             settings,
             keys,
             active: None,
+            tool_errors: BTreeSet::new(),
         }
     }
 
@@ -47,29 +64,27 @@ impl Source {
         let thread = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()
-                .expect("source runtime");
+                .build()?;
             let mut source = self;
             let rebuilt = source.rebuild();
             let _ = ready.send(());
-            if let Err(error) = rebuilt {
-                eprintln!("PrismaBuild ingress stopped: {error}");
-                return;
-            }
-            runtime.block_on(async {
-                tokio::pin!(stopping);
-                loop {
-                    tokio::select! {
-                        _ = &mut stopping => break,
-                        result = source.poll(&sender, Duration::from_secs(300)) => {
-                            if let Err(error) = result {
-                                eprintln!("PrismaBuild ingress stopped: {error}");
-                                break;
+            let result = rebuilt.and_then(|()| {
+                runtime.block_on(async {
+                    tokio::pin!(stopping);
+                    loop {
+                        tokio::select! {
+                            _ = &mut stopping => return Ok(()),
+                            result = source.poll(&sender, Duration::from_secs(300)) => {
+                                result?;
                             }
                         }
                     }
-                }
+                })
             });
+            if let Err(error) = &result {
+                eprintln!("PrismaBuild ingress stopped: {error}");
+            }
+            result
         });
         let _ = initialized.recv();
         RunningSource {
@@ -80,15 +95,10 @@ impl Source {
 
     fn rebuild(&mut self) -> Result<()> {
         let mut active = BTreeMap::new();
-        for entry in fs::read_dir(&self.settings.records)? {
-            let path = entry?.path();
-            if path.extension().is_some_and(|ext| ext == "job")
-                && !path.with_extension("done").exists()
-            {
-                let job: Job = serde_json::from_slice(&fs::read(path)?)?;
-                active.insert(job.action.clone(), job);
-            }
+        for (_, job) in jobs(&self.settings.records, false)? {
+            active.insert(job.action.clone(), job);
         }
+        self.tool_errors.retain(|key| active.contains_key(key));
         self.active = Some(active);
         Ok(())
     }
@@ -104,7 +114,9 @@ impl Source {
         if path.with_extension("done").exists() {
             return Ok(());
         }
-        let job: Job = serde_json::from_slice(&fs::read(path)?)?;
+        let Some(job) = read_job(&path) else {
+            return Ok(());
+        };
         if !self.done(&job).exists() {
             self.active
                 .as_mut()
@@ -142,13 +154,18 @@ impl Source {
                 Ok(Some(record))
                     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) =>
                 {
+                    // Bell transport backoff is not news about a failed result tool.
+                    if self.tool_errors.contains(&key) && !changes.bell_available {
+                        continue;
+                    }
                     let completion =
                         match results::ending(&self.settings.result_tool, job, false).await {
                             Ok(Some(completion)) => completion,
                             Ok(None) => continue,
                             Err(error) => {
                                 eprintln!("PrismaBuild result {key}: {error}");
-                                results::unknown(job)?
+                                self.tool_errors.insert(key.clone());
+                                continue;
                             }
                         };
                     for observation in &completion.observations {
@@ -164,6 +181,7 @@ impl Source {
                     // Retain the completion for controller watches if it crashes before consuming Input.
                     write(&self.done(job), &completion)?;
                     self.active.as_mut().unwrap().remove(&key);
+                    self.tool_errors.remove(&key);
                     count += 1;
                 }
                 Err(error) => eprintln!("PrismaBuild record {key}: {error}"),

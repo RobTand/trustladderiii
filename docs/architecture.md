@@ -222,16 +222,19 @@ identifies the job to withdraw after the node changes generation.
 The adapter freezes a clean head checkout, bundles both commits and snapshots
 that bundle with a trusted harness copy. It seals without publication, fsyncs
 the effect's action key in its private durable directory, deletes the sealed
-`.input` bundle, then publishes that exact CAS request. Startup removes inputs
-left behind after a durable `.job` binding. The records directory is scoped to
+`.input` bundle, then publishes that exact CAS request. Startup removes all leftover inputs,
+including those without a `.job` after failed staging. Reconciliation also
+removes cancelled inputs when no further execution will occur. The records directory is scoped to
 one store and its single controller owner. A durable epoch fence rejects old writes. Results still
 reconcile by their original key and epoch. Existing PB records prevent repeated
 publication, including failed and withdrawn actions. PB owns stalls; the
 adapter sets a tests progress contract and max attempts 1, with no duration
 limit. Only `execute` seals or publishes. `reconcile` returns `Absent` without
 a `.job`, because no attempt can have been published without that binding.
-A saved seal with no PB record remains `Pending`; reconciliation never publishes
-it, including when the effect is Cancelling.
+A saved seal with no `.done` and no PB record also returns `Absent`. A later
+input, look or restart lets the controller retry `execute`, which publishes the
+same saved key idempotently. A Cancelling effect instead uses `cancel_absent`.
+Reconciliation never publishes.
 
 `prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter
 sends new effect keys through a bounded 64-entry broadcast channel.
@@ -245,11 +248,26 @@ The source verifies cleaned endings and report-log digests before sending checks
 evidence. After delivery it fsyncs a `.done` marker containing the completion,
 then removes the job from memory. Restarts and recovery scans skip those records
 before parsing them. The channel and active set do not retain historical jobs;
-small `.job` and `.done` records remain for idempotence and recovery. A terminal
-ending that cannot be read or verified produces one `report: false, pass: false`
-observation and the same durable marker. It is never retried by the source.
+a completed `.job` and `.done` pair remains for idempotence and recovery until
+a later `SubmitChecks` for that node in a newer generation. The kernel allows
+one in-flight effect per node. That later submission proves the old effect is
+settled and its watch cannot reconcile again. Only completed, superseded pairs
+are retired. Undelivered jobs and other nodes remain. Retirement deletes and
+fsyncs `.job` first, then `.done`, so a crash cannot expose a delivered job
+without its marker. Startup removes orphan markers from interrupted retirement.
+Withdrawal skips `.done` jobs before parsing. Teardown #13 should also retire
+the final per-node records after every effect and watch has settled.
+
+Invalid evidence, such as a digest mismatch, unverified receipt or oversized
+log, produces one `report: false, pass: false` observation and a durable marker.
+A failed result-tool spawn, unparseable tool output or log I/O error stays
+pending until bell news or restart. Bell transport backoff does not retry it.
 A waiting cleanup stays active until another bell event. Queue read errors stay
-unknown and are reconsidered on later hints, resets or restart.
+unknown and are reconsidered on later hints, resets or restart. Bad `.job`
+records are logged and skipped during rebuild or registration. Directory
+failures, failed marker writes and a closed ingress receiver stop the source.
+`RunningSource::join()` returns the error or a panic to the daemon supervisor,
+which must stop the loop so systemd can restart it.
 
 Delivery uses a stable `pb:<action key>` inbox key. A crash between sending and
 the marker fsync can redeliver that key. If the controller crashes before it

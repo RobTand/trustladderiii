@@ -129,6 +129,10 @@ fn fixture(root: &Path, mode: &str) -> Adapter {
     fixture_with_bell(root, mode, "http://127.0.0.1:9/")
 }
 fn fixture_with_bell(root: &Path, mode: &str, bell_url: &str) -> Adapter {
+    let (client, settings) = fixture_settings(root, mode, bell_url);
+    Adapter::new(client, settings).unwrap()
+}
+fn fixture_settings(root: &Path, mode: &str, bell_url: &str) -> (PrismaBuild, Settings) {
     let queue = root.join("queue");
     fs::create_dir_all(&queue).unwrap();
     for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
@@ -153,7 +157,7 @@ fn fixture_with_bell(root: &Path, mode: &str, bell_url: &str) -> Adapter {
         bell_url: bell_url.into(),
     })
     .unwrap();
-    Adapter::new(
+    (
         client,
         Settings {
             records: root.join("records"),
@@ -170,7 +174,6 @@ fn fixture_with_bell(root: &Path, mode: &str, bell_url: &str) -> Adapter {
             result_tool: tool,
         },
     )
-    .unwrap()
 }
 fn observed(completion: Completion) -> (bool, bool, Vec<String>) {
     assert_eq!(completion.observations.len(), 1);
@@ -532,59 +535,74 @@ fn finish(root: &Path, key: &str, mode: &str) {
         String::from_utf8_lossy(&finish.stderr)
     );
 }
-fn unreadable_ending_is_reported_once() {
-    let root = tempfile::tempdir().unwrap();
-    let first = run(root.path(), false);
-    let mut second = first.clone();
-    second.key = "effect:0:7".into();
-    let mut adapter = fixture(root.path(), "done");
-    adapter.execute(&first).unwrap();
-    adapter.execute(&second).unwrap();
-    let key = adapter.action_key(&first.key).unwrap().unwrap();
-    fs::write(
-        root.path().join(format!("queue/{key}.stdout")),
-        "changed after PB verified it",
-    )
-    .unwrap();
-    assert!(adapter.reconcile(&first).is_err());
-    let (sender, receiver) = mpsc::channel();
-    let running = adapter.source().spawn(sender.clone());
-    let observations: Vec<_> = (0..2)
-        .map(|_| receiver.recv_timeout(Duration::from_secs(10)).unwrap())
-        .collect();
-    drop(running);
-    assert_eq!(
-        observations
-            .iter()
-            .filter(|input| matches!(
-                input,
-                tl3_controller::cli::Input::Observation {
-                    observation: Observation::Checks {
-                        report: false,
-                        pass: false,
+fn invalid_evidence_is_reported_once() {
+    for damage in ["digest", "receipt", "oversized"] {
+        let root = tempfile::tempdir().unwrap();
+        let first = run(root.path(), false);
+        let mut second = first.clone();
+        second.key = "effect:0:7".into();
+        let mut adapter = fixture(root.path(), "done");
+        adapter.execute(&first).unwrap();
+        adapter.execute(&second).unwrap();
+        let key = adapter.action_key(&first.key).unwrap().unwrap();
+        if damage == "digest" {
+            fs::write(
+                root.path().join(format!("queue/{key}.stdout")),
+                "changed after PB verified it",
+            )
+            .unwrap();
+        } else {
+            let path = root.path().join(format!("queue/{key}.ending"));
+            let mut ending: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            let evidence = &mut ending["endings"][0]["result"];
+            if damage == "receipt" {
+                evidence["verified"] = false.into();
+            } else {
+                evidence["stdout"]["bytes"] = (8 * 1024 * 1024 + 1).into();
+            }
+            fs::write(path, serde_json::to_vec(&ending).unwrap()).unwrap();
+        }
+        assert!(!observed(completion(&mut adapter, &first)).0);
+        let (sender, receiver) = mpsc::channel();
+        let running = adapter.source().spawn(sender.clone());
+        let observations: Vec<_> = (0..2)
+            .map(|_| receiver.recv_timeout(Duration::from_secs(10)).unwrap())
+            .collect();
+        drop(running);
+        assert_eq!(
+            observations
+                .iter()
+                .filter(|input| matches!(
+                    input,
+                    tl3_controller::cli::Input::Observation {
+                        observation: Observation::Checks {
+                            report: false,
+                            pass: false,
+                            ..
+                        },
                         ..
-                    },
-                    ..
-                }
-            ))
-            .count(),
-        1
-    );
-    assert!(!observed(completion(&mut adapter, &first)).0);
-    let running = adapter.source().spawn(sender);
-    assert!(matches!(
-        receiver.recv_timeout(Duration::from_millis(1250)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    ));
-    drop(running);
-    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-    assert_eq!(
-        calls
-            .lines()
-            .filter(|line| line.contains("--endings"))
-            .count(),
-        3
-    );
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(!observed(completion(&mut adapter, &first)).0);
+        let running = adapter.source().spawn(sender);
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(1250)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(running);
+        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains("--endings"))
+                .count(),
+            3
+        );
+    }
 }
 fn reconcile_never_submits() {
     let root = tempfile::tempdir().unwrap();
@@ -600,7 +618,7 @@ fn reconcile_never_submits() {
     fs::remove_file(root.path().join(format!("queue/ready/{key}.json"))).unwrap();
     assert!(matches!(
         adapter.reconcile(&delivery).unwrap(),
-        Reconciliation::Pending
+        Reconciliation::Absent
     ));
     assert_eq!(
         fs::read_to_string(root.path().join("queue/publications"))
@@ -664,6 +682,262 @@ fn footprint_paths_and_merge_base() {
             "{case}"
         );
     }
+}
+
+fn record_path(root: &Path, key: &str, extension: &str) -> PathBuf {
+    let encoded: String = key.bytes().map(|b| format!("{b:02x}")).collect();
+    root.join("records").join(format!("{encoded}.{extension}"))
+}
+
+fn tool_errors_wait_for_news() {
+    for spawn_failure in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let bell = Bell::new();
+        let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
+        let program = root.path().join("result-python");
+        if spawn_failure {
+            settings.result_tool.program = program.clone().into();
+        } else {
+            fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+        }
+        let mut adapter = Adapter::new(client, settings).unwrap();
+        adapter.execute(&delivery).unwrap();
+        let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let running = adapter.source().spawn(sender.clone());
+        bell.request().reply(0, serde_json::json!([]));
+        let waiting = bell.request();
+        assert!(waiting.line.contains("/v1/wait"));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(1250)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(!record_path(root.path(), &delivery.key, "done").exists());
+        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+        assert_eq!(
+            calls.lines().filter(|l| l.contains("--endings")).count(),
+            usize::from(!spawn_failure),
+            "no tool retry without news"
+        );
+        if spawn_failure {
+            drop(running);
+            drop(waiting);
+            std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
+            let running = adapter.source().spawn(sender);
+            bell.request().reply(0, serde_json::json!([]));
+            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            drop(running);
+        } else {
+            fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+            waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
+            assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+            drop(running);
+        }
+        assert!(record_path(root.path(), &delivery.key, "done").exists());
+    }
+}
+
+fn assert_passing_input(input: tl3_controller::cli::Input) {
+    assert!(matches!(
+        input,
+        tl3_controller::cli::Input::Observation {
+            observation: Observation::Checks {
+                report: true,
+                pass: true,
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+fn source_skips_bad_jobs_and_surfaces_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut bad = delivery.clone();
+    bad.key = "effect:0:7".into();
+    let mut adapter = fixture(root.path(), "done");
+    let source = adapter.source();
+    adapter.execute(&bad).unwrap();
+    fs::write(record_path(root.path(), &bad.key, "job"), "broken record").unwrap();
+    adapter.execute(&delivery).unwrap();
+    let (sender, receiver) = mpsc::channel();
+    // Both rebuild and queued key registration encounter the bad record.
+    let running = source.spawn(sender);
+    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    drop(running);
+    assert!(!record_path(root.path(), &bad.key, "done").exists());
+
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    // Introduce the write failure only after rebuild, so this job is already active.
+    fs::create_dir(record_path(root.path(), &delivery.key, "done")).unwrap();
+    finish(root.path(), key.as_str(), "done");
+    waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
+    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert!(
+        running.join().is_err(),
+        "the source supervisor must see a failed marker write"
+    );
+    let source = adapter.source();
+    fs::rename(
+        root.path().join("records"),
+        root.path().join("moved-records"),
+    )
+    .unwrap();
+    let (sender, _) = mpsc::channel();
+    assert!(
+        source.spawn(sender).join().is_err(),
+        "a failed rebuild must reach the supervisor"
+    );
+}
+
+fn bell_outage_does_not_retry_result_tools() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&delivery).unwrap();
+    fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for _ in 0..3 {
+        assert_eq!(
+            runtime
+                .block_on(source.poll(&sender, Duration::from_secs(1)))
+                .unwrap(),
+            0
+        );
+    }
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.contains("--endings"))
+            .count(),
+        1,
+        "bell transport backoff must not become a result-tool timer"
+    );
+}
+
+fn completed_records_retire_only_when_superseded() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "done");
+    let (sender, receiver) = mpsc::channel();
+    let mut previous: Option<Delivery> = None;
+    for generation in 4..8 {
+        delivery.key = format!("effect:0:{generation}");
+        delivery.generation = generation;
+        adapter.execute(&delivery).unwrap();
+        if let Some(previous) = previous {
+            for ext in ["job", "done"] {
+                assert!(!record_path(root.path(), &previous.key, ext).exists());
+            }
+        }
+        assert!(matches!(
+            adapter.reconcile(&delivery).unwrap(),
+            Reconciliation::Found(_)
+        ));
+        let running = adapter.source().spawn(sender.clone());
+        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        drop(running);
+        assert!(record_path(root.path(), &delivery.key, "job").exists());
+        assert!(record_path(root.path(), &delivery.key, "done").exists());
+        previous = Some(delivery.clone());
+    }
+    // Delivered records are skipped before parsing when finding withdrawal targets.
+    fs::write(
+        record_path(root.path(), &delivery.key, "job"),
+        "do not parse",
+    )
+    .unwrap();
+    let mut withdraw = delivery.clone();
+    withdraw.output = Out::Effect {
+        node: NodeId(0),
+        seq: 20,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    withdraw.job_generation = Some(delivery.generation);
+    adapter.execute(&withdraw).unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let first = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&first).unwrap();
+    let mut later = first.clone();
+    later.key = "effect:0:8".into();
+    later.generation += 1;
+    adapter.execute(&later).unwrap();
+    assert!(
+        record_path(root.path(), &first.key, "job").exists(),
+        "retain undelivered work"
+    );
+    let mut other = later.clone();
+    other.output = Out::Effect {
+        node: NodeId(1),
+        seq: 8,
+        kind: EffectKind::SubmitChecks,
+        head: None,
+    };
+    other.key = "effect:1:8".into();
+    fs::write(record_path(root.path(), &first.key, "done"), b"{}").unwrap();
+    adapter.execute(&other).unwrap();
+    assert!(
+        record_path(root.path(), &first.key, "job").exists(),
+        "retain another node's completion"
+    );
+}
+
+fn abandoned_inputs_are_removed() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    delivery.checks.as_mut().unwrap().base_sha = "a".repeat(40);
+    assert!(adapter.execute(&delivery).is_err());
+    let input = record_path(root.path(), &delivery.key, "input");
+    assert!(input.exists(), "failed staging fixture left its input");
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Absent
+    ));
+    assert!(!input.exists(), "cancelled effects may never execute again");
+    fs::create_dir_all(&input).unwrap();
+    let orphan = root.path().join("records/retired.done");
+    fs::write(&orphan, "retirement interrupted").unwrap();
+    drop(adapter);
+    let mut adapter = fixture(root.path(), "pending");
+    assert!(!input.exists(), "startup removes an unbound input");
+    assert!(!orphan.exists(), "startup finishes interrupted retirement");
+    delivery.checks.as_mut().unwrap().base_sha = git(
+        &delivery.checks.as_ref().unwrap().repository,
+        &["rev-parse", "HEAD^"],
+    );
+    adapter.execute(&delivery).unwrap();
+    fs::create_dir_all(&input).unwrap();
+    drop(adapter);
+    let _adapter = fixture(root.path(), "pending");
+    assert!(
+        !input.exists(),
+        "startup also removes an already sealed input"
+    );
 }
 
 struct Workers {
@@ -733,7 +1007,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         }
     }
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Checking);
-    if cancel {
+    if cancel && !recover {
         let pending = controller.snapshot().unwrap().pending_effects;
         let effect = pending
             .iter()
@@ -838,6 +1112,44 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
                 })
         );
         fs::remove_file(root.path().join("queue/fail_publish")).unwrap();
+        if cancel {
+            let effect = controller
+                .snapshot()
+                .unwrap()
+                .pending_effects
+                .into_iter()
+                .find(|e| e.kind == "PrismaBuild")
+                .unwrap();
+            controller
+                .observe(
+                    "cancel-sealed",
+                    Observation::Kernel(Event::Command {
+                        node: NodeId(0),
+                        id: 1,
+                        command: Control::Stop,
+                    }),
+                )
+                .unwrap();
+            for _ in 0..100 {
+                if !controller.drive_once().unwrap() {
+                    break;
+                }
+            }
+            assert_eq!(
+                tl3_store::Store::open(settings)
+                    .unwrap()
+                    .effect(&effect.key)
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                tl3_store::EffectState::Cancelled
+            );
+            assert!(
+                !root.path().join("queue/publications").exists(),
+                "cancelling a never-published seal must not publish it"
+            );
+            return;
+        }
         controller.retry_held_effects();
         controller
             .observe(
@@ -932,7 +1244,21 @@ fn main() {
             "source_thread_and_restart",
             source_thread_delivers_once_and_restarts_idle,
         ),
-        ("unreadable_ending_once", unreadable_ending_is_reported_once),
+        ("invalid_evidence_once", invalid_evidence_is_reported_once),
+        ("tool_errors_wait_for_news", tool_errors_wait_for_news),
+        (
+            "bell_outage_does_not_retry_result_tools",
+            bell_outage_does_not_retry_result_tools,
+        ),
+        (
+            "source_skips_bad_jobs_and_surfaces_failure",
+            source_skips_bad_jobs_and_surfaces_failure,
+        ),
+        (
+            "completed_records_retire_only_when_superseded",
+            completed_records_retire_only_when_superseded,
+        ),
+        ("abandoned_inputs_are_removed", abandoned_inputs_are_removed),
         ("reconcile_never_submits", reconcile_never_submits),
         (
             "footprint_paths_and_merge_base",
@@ -951,6 +1277,8 @@ fn main() {
     println!("test cancelling_unbound_checks_starts_no_work ... ok");
     through_controller(&database.create("pb_recover"), false, false, true);
     println!("test controller_recovers_failed_publication ... ok");
+    through_controller(&database.create("pb_cancel_sealed"), false, true, true);
+    println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("11 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("18 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }

@@ -106,7 +106,9 @@ record, log, and CAS receipt before reporting a pass.
 
 The real checks adapter lives in `adapters::prismabuild::Adapter`. Register it at
 `Upstream::PrismaBuild`. Its `source().spawn(sender)` starts the ingress thread;
-keep the returned handle alive. The source sends existing `cli::Input` values.
+keep the returned handle alive. Its `join()` returns source errors or panics to
+the daemon supervisor, which must stop the ingress loop and exit on failure.
+The source sends existing `cli::Input` values.
 The daemon's shared ingress loop and production registry remain with #10 and
 #20. The default simulation registry still uses the fake.
 
@@ -137,9 +139,12 @@ head. The bundle, trusted harness copy, check plan and entry point form a clean
 Git input that PB snapshots. Inputs remain unchanged while PB seals them.
 `--seal-only` publishes no work. The adapter fsyncs the effect-to-action binding
 before `--publish-sealed` can start work, then deletes the `.input` bundle.
-Startup removes bundles left after a binding became durable. Only `execute`
-seals or publishes. With no `.job`, reconciliation returns `Absent`. A saved
-seal without a PB record stays `Pending`, including during cancellation.
+Startup removes every leftover `.input`, including failed staging without a
+binding. Reconciliation removes inputs for cancelled effects that never execute
+again. Only `execute` seals or publishes. With no `.job`, reconciliation returns
+`Absent`. A saved seal with no `.done` and no PB record also returns `Absent`.
+The controller can then retry `execute` with the saved key after an input, look
+or restart. A Cancelling effect instead settles through `cancel_absent`.
 Re-execution uses that saved CAS key,
 even after the source checkout disappears or PB publishes a new runtime.
 Existing queue records prevent another publication. Retries belong to the
@@ -149,9 +154,11 @@ Queue and bell records decide when to read an ending. A queued or claimed job
 stays pending. The adapter uses `pbwait.py --endings --until cleaned --wait-s 0`
 to retrieve terminal evidence without waiting for execution. That observation
 allowance never ends a job. A withdrawal decision alone cannot confirm cleanup.
-Malformed queue records remain unknown. When the source cannot read or verify
-a terminal ending, it reports `report: false, pass: false` once and saves that
-completion instead of retrying the unreadable ending forever.
+Malformed queue records remain unknown. A digest mismatch, an unverified
+receipt or an oversized result log reports `report: false, pass: false` once
+and saves that completion. Result-tool spawn failures, unparseable output and
+log I/O errors stay pending. Bell news or a restart retries them. Bell transport
+backoff never retries a failed result tool.
 Successful actions require a CAS receipt. Failed actions use PB's verified
 immutable attempt logs and can have no success receipt.
 A valid ending whose verified log has no valid harness report reports
@@ -175,7 +182,20 @@ controller. Thread tests start the registered source, introduce new keys over
 the adapter channel, deliver bell events, restart after delivery, and check
 that idle sources make no bell requests or repeated ending reads. The channel
 holds at most 64 keys; lag rebuilds the active set from durable records. Finished
-jobs leave memory and get `.done` markers, which restarts skip. The source has
+jobs leave memory and get `.done` markers, which restarts skip. Withdrawal
+skips jobs with `.done` before parsing. A later `SubmitChecks` for the same node
+in a newer generation retires completed `.job` and `.done` pairs. The kernel
+permits one in-flight effect per node, so the later submission proves the prior
+effect has settled and its watch no longer reconciles. Undelivered jobs and
+other nodes remain intact. Retirement fsyncs deletion of `.job` before deleting
+`.done`; startup removes orphan markers after an interrupted retirement.
+The last completed pair stays until that node submits again. Teardown #13
+should retire the final per-node records after all of that node's effects and
+watches have settled. Neither age nor a timer permits deletion.
+
+The source logs and skips bad `.job` records at startup or registration. A
+directory failure, failed `.done` write or closed ingress receiver reaches
+`RunningSource::join()` as an error. The source has
 no timed wake-up and never scans the directory during ordinary bell waits.
 It submits no fleet work from inside tests.
 

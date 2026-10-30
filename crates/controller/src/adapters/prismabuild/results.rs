@@ -120,6 +120,18 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
     }
+    let (report, pass) = match evidence(ending, job) {
+        Ok(verdict) => verdict,
+        Err(error @ Error::Io(_)) => return Err(error),
+        Err(error) => {
+            eprintln!("PrismaBuild result {}: {error}", job.action);
+            (false, false)
+        }
+    };
+    Ok(Some(completion(job, report, pass)?))
+}
+
+fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool)> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
         && ending.exit_code == Some(0);
@@ -167,11 +179,7 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok(Some(completion(job, report, pass)?))
-}
-
-pub(super) fn unknown(job: &Job) -> Result<Completion> {
-    completion(job, false, false)
+    Ok((report, pass))
 }
 
 fn completion(job: &Job, report: bool, pass: bool) -> Result<Completion> {

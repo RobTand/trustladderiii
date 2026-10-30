@@ -110,12 +110,27 @@ fn write(path: &Path, value: &impl Serialize) -> Result<()> {
     .sync_all()?;
     Ok(())
 }
-fn jobs(root: &Path) -> Result<Vec<Job>> {
+fn read_job(path: &Path) -> Option<Job> {
+    let result = fs::read(path)
+        .map_err(crate::Error::from)
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(Into::into));
+    match result {
+        Ok(job) => Some(job),
+        Err(error) => {
+            eprintln!("PrismaBuild job {} skipped: {error}", path.display());
+            None
+        }
+    }
+}
+fn jobs(root: &Path, completed: bool) -> Result<Vec<(PathBuf, Job)>> {
     let mut found = vec![];
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|v| v == "job") {
-            found.push(serde_json::from_slice(&fs::read(path)?)?);
+        if path.extension().is_some_and(|v| v == "job")
+            && path.with_extension("done").exists() == completed
+            && let Some(job) = read_job(&path)
+        {
+            found.push((path, job));
         }
     }
     Ok(found)
@@ -134,13 +149,17 @@ impl Adapter {
             ));
         }
         fs::create_dir_all(&settings.records)?;
-        // A crash after the binding fsync may have interrupted input removal.
+        // No staging process survives the controller's exclusive store claim.
         for entry in fs::read_dir(&settings.records)? {
             let path = entry?.path();
-            if path.extension().is_some_and(|ext| ext == "input")
-                && path.with_extension("job").exists()
-            {
+            if path.extension().is_some_and(|ext| ext == "input") {
                 fs::remove_dir_all(path)?;
+                File::open(&settings.records)?.sync_all()?;
+            } else if path.extension().is_some_and(|ext| ext == "done")
+                && !path.with_extension("job").exists()
+            {
+                // Retirement may have crashed after durably deleting the binding.
+                fs::remove_file(path)?;
                 File::open(&settings.records)?.sync_all()?;
             }
         }
@@ -190,6 +209,7 @@ impl Adapter {
     }
 
     fn submit(&self, delivery: &Delivery) -> Result<Job> {
+        self.retire_superseded(delivery)?;
         if let Some(job) = self.job(&delivery.key)? {
             self.remove_input(&delivery.key)?;
             return Ok(job);
@@ -260,13 +280,30 @@ impl Adapter {
     }
 
     fn targets(&self, delivery: &Delivery) -> Result<Vec<Job>> {
-        Ok(jobs(&self.settings.records)?
+        Ok(jobs(&self.settings.records, false)?
             .into_iter()
+            .map(|(_, job)| job)
             .filter(|job| {
                 job.delivery.node() == delivery.node()
                     && Some(job.delivery.generation) == delivery.job_generation
             })
             .collect())
+    }
+
+    fn retire_superseded(&self, delivery: &Delivery) -> Result<()> {
+        for (path, job) in jobs(&self.settings.records, true)? {
+            if job.delivery.node() == delivery.node()
+                && job.delivery.generation < delivery.generation
+            {
+                // A later kernel submission proves the prior effect and watch have settled.
+                // Delete the binding first so a crash cannot leave a job without its done marker.
+                fs::remove_file(&path)?;
+                File::open(&self.settings.records)?.sync_all()?;
+                fs::remove_file(path.with_extension("done"))?;
+                File::open(&self.settings.records)?.sync_all()?;
+            }
+        }
+        Ok(())
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {
@@ -283,7 +320,10 @@ impl Adapter {
             .runtime
             .block_on(self.client.read(&job.action))
             .map_err(adapter_error)?;
-        if record.is_some_and(|r| matches!(r.state, ActionState::Queued | ActionState::Claimed)) {
+        let Some(record) = record else {
+            return Ok(Reconciliation::Absent);
+        };
+        if matches!(record.state, ActionState::Queued | ActionState::Claimed) {
             return Ok(Reconciliation::Pending);
         }
         Ok(
@@ -324,8 +364,10 @@ impl Executor for Adapter {
                 kind: EffectKind::WithdrawJob,
                 ..
             } => {
+                self.remove_input(&delivery.key)?;
                 let targets = self.targets(delivery)?;
                 for job in &targets {
+                    self.remove_input(&job.delivery.key)?;
                     self.runtime
                         .block_on(self.client.withdraw(&job.action, "controller withdrawal"))
                         .map_err(adapter_error)?;
@@ -347,6 +389,8 @@ impl Executor for Adapter {
                 kind: EffectKind::SubmitChecks,
                 ..
             } => {
+                // Reconciliation also settles cancelled effects that will never execute again.
+                self.remove_input(&delivery.key)?;
                 let Some(job) = self.job(&delivery.key)? else {
                     // Publication requires this durable binding, so no attempt can exist without it.
                     return Ok(Reconciliation::Absent);
@@ -358,6 +402,7 @@ impl Executor for Adapter {
                 ..
             } => {
                 for job in self.targets(delivery)? {
+                    self.remove_input(&job.delivery.key)?;
                     let Some(record) = self
                         .runtime
                         .block_on(self.client.read(&job.action))
