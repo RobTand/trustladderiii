@@ -191,7 +191,7 @@ def main():
             if server.failed:
                 raise SetupError("Setup failed; no secrets were printed. Check GitHub Settings > Developer settings > GitHub Apps before retrying. If the app exists, regenerate its credentials there rather than creating another app.")
             print("Credentials saved under the config directory with owner-only permissions.")
-            print("Install on Only select repositories, tl3-sandbox only:")
+            print("Step 2/2: Install on Only select repositories, tl3-sandbox only:")
             print(server.install_url)
     finally:
         os.close(directory_fd)
