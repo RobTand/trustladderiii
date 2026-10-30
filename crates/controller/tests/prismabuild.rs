@@ -1692,7 +1692,10 @@ fn live_waits_do_not_look_on_bell_reset() {
     assert!(
         matches!(rx.try_recv().unwrap(), tl3_controller::cli::Input::Look { key } if key == delivery.key)
     );
-    finish(root.path(), &key, "done");
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        serde_json::json!({"schema":"prismaquant.prismabuild.pool_outcome.v1", "action_key":key, "published_unix":100, "status":"executed", "detail":{"returncode":0}}).to_string(),
+    ).unwrap();
     assert_eq!(
         poll(reset.clone()),
         1,
