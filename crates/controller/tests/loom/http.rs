@@ -29,8 +29,18 @@ fn loom_http_stop_publishes_before_accept_wake() {
             Some(Err(io::ErrorKind::ConnectionAborted.into()))
         });
         let (send, _receive) = mpsc::sync_channel(1);
-        accept_connections(incoming, send, Arc::new(AtomicUsize::new(0)), &control.stopped).unwrap();
-        assert_eq!(published.load(Ordering::Relaxed), 42, "stop did not acquire prior publication");
+        accept_connections(
+            incoming,
+            send,
+            Arc::new(AtomicUsize::new(0)),
+            &control.stopped,
+        )
+        .unwrap();
+        assert_eq!(
+            published.load(Ordering::Relaxed),
+            42,
+            "stop did not acquire prior publication"
+        );
         producer.join().unwrap();
     });
 }

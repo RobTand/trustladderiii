@@ -78,9 +78,12 @@ pub(crate) fn model(
 ) {
     let mut database = support::Database::start();
     let settings = database.create("loom_model");
-    let preemptions = if preemptions == 0
-        && std::env::var("TL3_LOOM_NIGHTLY").is_ok_and(|value| value == "1")
-    { 1 } else { preemptions };
+    let preemptions =
+        if preemptions == 0 && std::env::var("TL3_LOOM_NIGHTLY").is_ok_and(|value| value == "1") {
+            1
+        } else {
+            preemptions
+        };
     bounded(preemptions, move || {
         let mut db = postgres::Config::new()
             .host(&settings.host)

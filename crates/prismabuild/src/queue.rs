@@ -203,7 +203,10 @@ impl PrismaBuild {
         // Claims can return to ready. Revisit live slots after the terminal scan
         // so a link-ready/unlink-claimed handoff cannot look like an ending.
         for state in STATES.iter().chain(["ready", "claimed"].iter()) {
-            let rank = STATES.iter().position(|candidate| candidate == state).unwrap();
+            let rank = STATES
+                .iter()
+                .position(|candidate| candidate == state)
+                .unwrap();
             let directory = root.join(state);
             let metadata = tokio::fs::metadata(&directory)
                 .await
@@ -240,19 +243,28 @@ impl PrismaBuild {
         }
         // PrismaBuild entombs claims before publishing retries or endings.
         // Its own RecordStore.standing treats these sidecars as moving.
-        let claimed = root.join("claimed");
-        let mut entries = tokio::fs::read_dir(&claimed).await.map_err(|source| Error::Io {
-            path: claimed.clone(), source,
-        })?;
-        while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
-            path: claimed.clone(), source,
-        })? {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with(&format!("{key}."))
-                && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
-            {
-                return Err(invalid(&entry.path(), "queue record is moving; reconcile again"));
+        if chosen.as_ref().is_none_or(|(rank, _, _)| *rank >= 2) {
+            let claimed = root.join("claimed");
+            let mut entries = tokio::fs::read_dir(&claimed)
+                .await
+                .map_err(|source| Error::Io {
+                    path: claimed.clone(),
+                    source,
+                })?;
+            while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
+                path: claimed.clone(),
+                source,
+            })? {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with(&format!("{key}."))
+                    && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
+                {
+                    return Err(invalid(
+                        &entry.path(),
+                        "queue record is moving; reconcile again",
+                    ));
+                }
             }
         }
         let Some((rank, path, record)) = chosen else {
@@ -394,13 +406,21 @@ mod tests {
         let key: ActionKey = "a".repeat(64).parse().unwrap();
         let client = PrismaBuild::new(Options {
             queue_root: root.path().into(),
-            tool: Tool { program: "/never-submit".into(), args: vec![] },
+            tool: Tool {
+                program: "/never-submit".into(),
+                args: vec![],
+            },
             bell_url: "http://127.0.0.1:9/".into(),
-        }).unwrap();
-        std::fs::write(root.path().join(format!("claimed/{key}.json")),
+        })
+        .unwrap();
+        std::fs::write(
+            root.path().join(format!("claimed/{key}.json")),
             serde_json::to_vec(&serde_json::json!({
                 "schema": ITEM_SCHEMA, "action_key": key, "published_unix": 100
-            })).unwrap()).unwrap();
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         (root, client, key)
     }
 
@@ -408,24 +428,40 @@ mod tests {
     async fn lookup_keeps_unstarted_claim_live_during_requeue() {
         let (root, client, key) = fixture();
         let mut moved = false;
-        let record = client.read_with(&key, |state| {
-            if state == "ready" && !moved {
-                // PrismaBuild _ClaimReservation.abandon links ready before unlinking claimed.
-                let claimed = root.path().join(format!("claimed/{key}.json"));
-                std::fs::hard_link(&claimed, root.path().join(format!("ready/{key}.json"))).unwrap();
-                std::fs::remove_file(claimed).unwrap();
-                moved = true;
-            }
-        }).await.unwrap();
-        assert!(record.is_some_and(|record| matches!(record.state, ActionState::Queued | ActionState::Claimed)),
-            "live requeue read as absent");
+        let record = client
+            .read_with(&key, |state| {
+                if state == "ready" && !moved {
+                    // PrismaBuild _ClaimReservation.abandon links ready before unlinking claimed.
+                    let claimed = root.path().join(format!("claimed/{key}.json"));
+                    std::fs::hard_link(&claimed, root.path().join(format!("ready/{key}.json")))
+                        .unwrap();
+                    std::fs::remove_file(claimed).unwrap();
+                    moved = true;
+                }
+            })
+            .await
+            .unwrap();
+        assert!(
+            record.is_some_and(|record| matches!(
+                record.state,
+                ActionState::Queued | ActionState::Claimed
+            )),
+            "live requeue read as absent"
+        );
     }
 
     #[tokio::test]
     async fn lookup_does_not_declare_absence_during_finish_handoff() {
         let (root, client, key) = fixture();
-        std::fs::rename(root.path().join(format!("claimed/{key}.json")),
-            root.path().join(format!("claimed/{key}.100.host.1.abc.tombstone"))).unwrap();
-        assert!(client.read(&key).await.is_err(), "in-flight handoff read as absent");
+        std::fs::rename(
+            root.path().join(format!("claimed/{key}.json")),
+            root.path()
+                .join(format!("claimed/{key}.100.host.1.abc.tombstone")),
+        )
+        .unwrap();
+        assert!(
+            client.read(&key).await.is_err(),
+            "in-flight handoff read as absent"
+        );
     }
 }
