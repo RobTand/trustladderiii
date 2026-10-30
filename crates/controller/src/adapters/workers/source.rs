@@ -202,10 +202,12 @@ impl WorkerOutputSource {
             };
             let keep = match self.refresh(&mut run, store, sender) {
                 Ok(keep) => keep,
-                Err(error) => {
+                Err(error @ (Error::Json(_) | Error::Io(_)))
+                | Err(error @ Error::Invalid("worker record belongs to another machine")) => {
                     eprintln!("worker source skipped {}: {error}", root.display());
                     false
                 }
+                Err(error) => return Err(error),
             };
             if keep {
                 self.runs.insert(root, run);
