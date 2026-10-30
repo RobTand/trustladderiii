@@ -87,6 +87,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (3, include_str!("../migrations/0003_workers.sql")),
     (4, include_str!("../migrations/0004_ingress.sql")),
     (5, include_str!("../migrations/0005_worker_retirement.sql")),
+    (6, include_str!("../migrations/0006_worker_wait.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -536,7 +537,7 @@ impl Store {
 
     /// Claim time exists even if the worker never emits progress.
     pub fn claim_worker(&mut self, key: &str, node: &str, epoch: i64, attempt: i64) -> Result<()> {
-        self.client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms) SELECT $1, $2, $3, $4, 0, '', (extract(epoch FROM clock_timestamp()) * 1000)::bigint FROM tl3_meta WHERE epoch = $3 ON CONFLICT (run_key) DO UPDATE SET attempt = EXCLUDED.attempt, output_offset = 0, unit = '', started_ms = EXCLUDED.started_ms, last_progress_ms = NULL WHERE tl3_worker_progress.epoch = EXCLUDED.epoch AND tl3_worker_progress.attempt < EXCLUDED.attempt", &[&key, &node, &epoch, &attempt])?;
+        self.client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms) SELECT $1, $2, $3, $4, 0, '', (extract(epoch FROM clock_timestamp()) * 1000)::bigint FROM tl3_meta WHERE epoch = $3 ON CONFLICT (run_key) DO UPDATE SET attempt = EXCLUDED.attempt, output_offset = 0, unit = '', started_ms = EXCLUDED.started_ms, last_progress_ms = NULL, external_wait = NULL WHERE tl3_worker_progress.epoch = EXCLUDED.epoch AND tl3_worker_progress.attempt < EXCLUDED.attempt", &[&key, &node, &epoch, &attempt])?;
         Ok(())
     }
 
@@ -547,15 +548,21 @@ impl Store {
         attempt: i64,
         offset: i64,
         unit: &str,
+        external_wait: Option<&ExternalWait>,
     ) -> Result<()> {
-        self.client.execute("UPDATE tl3_worker_progress SET output_offset = $3, unit = $4, last_progress_ms = (extract(epoch FROM clock_timestamp()) * 1000)::bigint WHERE run_key = $1 AND attempt = $2 AND output_offset < $3 AND epoch = (SELECT epoch FROM tl3_meta)", &[&key, &attempt, &offset, &unit])?;
+        let wait = external_wait
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|_| Error::Invalid("invalid external wait"))?;
+        self.client.execute("UPDATE tl3_worker_progress SET output_offset = $3, unit = CASE WHEN $5::jsonb IS NULL THEN $4 ELSE unit END, external_wait = $5, last_progress_ms = CASE WHEN $5::jsonb IS NULL THEN (extract(epoch FROM clock_timestamp()) * 1000)::bigint ELSE last_progress_ms END WHERE run_key = $1 AND attempt = $2 AND output_offset < $3 AND epoch = (SELECT epoch FROM tl3_meta)", &[&key, &attempt, &offset, &unit, &wait])?;
         Ok(())
     }
 
     pub fn worker_progress(&mut self, node: Option<&str>) -> Result<Vec<WorkerProgress>> {
-        Ok(self.client.query("SELECT run_key, node_id, epoch, attempt, output_offset, unit, started_ms, last_progress_ms FROM tl3_worker_progress WHERE ($1::text IS NULL OR node_id = $1) ORDER BY started_ms DESC, run_key", &[&node])?.into_iter().map(|r| WorkerProgress {
+        self.client.query("SELECT run_key, node_id, epoch, attempt, output_offset, unit, started_ms, last_progress_ms, external_wait FROM tl3_worker_progress WHERE ($1::text IS NULL OR node_id = $1) ORDER BY started_ms DESC, run_key", &[&node])?.into_iter().map(|r| Ok(WorkerProgress {
             key: r.get(0), node: r.get(1), epoch: r.get(2), attempt: r.get(3), output_offset: r.get(4), unit: r.get(5), started_ms: r.get(6), last_progress_ms: r.get(7),
-        }).collect())
+            external_wait: r.get::<_, Option<serde_json::Value>>(8).map(serde_json::from_value).transpose().map_err(|_| Error::Invalid("invalid stored external wait"))?,
+        })).collect()
     }
 
     /// Only watched worker deliveries, without loading historical world rows.

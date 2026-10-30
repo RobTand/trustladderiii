@@ -8,17 +8,19 @@ mod process;
 pub(crate) mod protocol;
 pub(crate) mod review;
 mod source;
+#[cfg(test)]
+mod startup_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
 use crate::{
     Error, Result,
-    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -28,10 +30,37 @@ use std::{
 use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};
 
+pub(super) fn isolate_credentials(
+    attempt: &Path,
+    request: &mut Value,
+    command: &mut Command,
+) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let source = Path::new(
+        request["key_file"]
+            .as_str()
+            .ok_or(Error::Invalid("worker needs key_file"))?,
+    );
+    let directory = attempt.join("credentials");
+    fs::DirBuilder::new().mode(0o700).create(&directory)?;
+    let key = directory.join("model-key");
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key)?;
+    std::io::copy(&mut File::open(source)?, &mut output)?;
+    output.sync_all()?;
+    File::open(&directory)?.sync_all()?;
+    request["key_file"] = json!(key);
+    command.env("CREDENTIALS_DIRECTORY", &directory);
+    Ok(())
+}
+
 #[derive(Clone, Default)]
-pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>);
+pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeMap<String, i64>>>>);
 impl ActiveRuns {
-    fn add(&self, delivery: &Delivery) {
+    fn add(&self, delivery: &Delivery, attempt: i64) {
         self.0
             .lock()
             .unwrap()
@@ -41,9 +70,11 @@ impl ActiveRuns {
                 delivery.node().0.to_string()
             })
             .or_default()
-            .insert(delivery.key.clone());
+            .entry(delivery.key.clone())
+            .and_modify(|current| *current = (*current).max(attempt))
+            .or_insert(attempt);
     }
-    fn remove(&self, delivery: &Delivery) {
+    fn remove(&self, delivery: &Delivery, attempt: i64) {
         let mut nodes = self.0.lock().unwrap();
         let node = if delivery.is_classifier() {
             format!("comment:{}", delivery.node().0)
@@ -51,7 +82,9 @@ impl ActiveRuns {
             delivery.node().0.to_string()
         };
         if let Some(keys) = nodes.get_mut(&node) {
-            keys.remove(&delivery.key);
+            if keys.get(&delivery.key) == Some(&attempt) {
+                keys.remove(&delivery.key);
+            }
             if keys.is_empty() {
                 nodes.remove(&node);
             }
@@ -68,7 +101,7 @@ impl ActiveRuns {
             .lock()
             .unwrap()
             .get(node)
-            .map(|keys| keys.iter().cloned().collect())
+            .map(|keys| keys.keys().cloned().collect())
             .unwrap_or_default()
     }
 }
@@ -80,7 +113,8 @@ pub struct Supervisor {
     planning: tl3_config::Planning,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
-    fake_root: PathBuf,
+    records_root: PathBuf,
+    materials_provider: Option<crate::production::Materials>,
     active: ActiveRuns,
     worktrees: PathBuf,
     tests: tl3_config::PrismaBuild,
@@ -88,9 +122,9 @@ pub struct Supervisor {
 }
 
 impl Supervisor {
-    pub fn new(config: &tl3_config::Config, fake_root: &Path) -> Result<Self> {
+    pub fn new(config: &tl3_config::Config, records_root: &Path) -> Result<Self> {
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
-        fs::create_dir_all(fake_root)?;
+        fs::create_dir_all(records_root)?;
         let active = ActiveRuns::default();
         let mut store = Store::open(&config.store)?;
         for delivery in watched_deliveries(&mut store)? {
@@ -99,7 +133,9 @@ impl Supervisor {
                 Some((_, path)) => inspect(&path, &delivery),
                 None => Ok(Reconciliation::Absent),
             }) {
-                Ok(Reconciliation::Pending) => active.add(&delivery),
+                Ok(Reconciliation::Pending) => {
+                    active.add(&delivery, latest(&root)?.expect("pending attempt").0)
+                }
                 Ok(_) => {}
                 Err(error) => eprintln!("worker startup skipped {}: {error}", delivery.key),
             }
@@ -111,11 +147,17 @@ impl Supervisor {
             planning: config.planning.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
-            fake_root: fake_root.to_owned(),
+            records_root: records_root.to_owned(),
+            materials_provider: None,
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),
             hindsight: config.hindsight.clone(),
         })
+    }
+
+    pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
+        self.materials_provider = Some(provider);
+        self
     }
 
     pub fn source(&self) -> WorkerOutputSource {
@@ -147,12 +189,55 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let materials =
+        let mut materials =
             if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
                 inputs.clone()
             } else {
                 self.materials(delivery, store, snapshot)?
             };
+        if role == "maker" && self.materials_provider.is_some() {
+            let brief = store
+                .worker_document(&node, "briefs")?
+                .ok_or(Error::Invalid("production maker needs the accepted brief"))?;
+            let plan = store
+                .worker_document(&node, "plans")?
+                .ok_or(Error::Invalid("production maker needs the accepted plan"))?;
+            materials["maker"] = crate::production::maker_inputs(&brief, &plan)?;
+            let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
+            let base = match delivery
+                .checks
+                .as_ref()
+                .map(|c| c.base_sha.clone())
+                .or_else(|| {
+                    materials["check_run"]["base_sha"]
+                        .as_str()
+                        .map(str::to_owned)
+                }) {
+                Some(base) => base,
+                None => {
+                    let output = Command::new("git")
+                        .arg("-C")
+                        .arg(&checkout)
+                        .args(["rev-parse", "HEAD"])
+                        .output()?;
+                    if !output.status.success() {
+                        return Err(Error::Invalid("maker checkout has no base"));
+                    }
+                    String::from_utf8(output.stdout)
+                        .map_err(|_| Error::Invalid("invalid maker base"))?
+                        .trim()
+                        .to_owned()
+                }
+            };
+            let checks = materials["maker"]["plan"]["checks"]
+                .as_array()
+                .ok_or(Error::Invalid("maker plan needs checks"))?
+                .iter()
+                .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
+                .collect::<Vec<_>>();
+            materials["check_run"] = json!({"repository":checkout,"base_sha":base,"plan":checks});
+            store.put_worker_materials(&node, &materials)?;
+        }
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
         if matches!(role, "ingest" | "audit")
             && let Some(issue) = materials.get("issue")
@@ -310,6 +395,17 @@ impl Supervisor {
                 }
                 return Ok(materials);
             }
+            if ancestor == delivery.node()
+                && let Some(provider) = &self.materials_provider
+                && !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "request_links" && r.id == ancestor.0.to_string())
+            {
+                let materials = provider.load(delivery)?;
+                store.put_worker_materials(&ancestor.0.to_string(), &materials)?;
+                return Ok(materials);
+            }
             let link = snapshot
                 .rows
                 .iter()
@@ -428,8 +524,8 @@ fn stop_attempt(root: &Path) -> Result<()> {
     Ok(())
 }
 
-impl Executor for Supervisor {
-    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+impl Supervisor {
+    fn launch(&mut self, delivery: &Delivery, resume_quota: bool) -> Result<Completion> {
         let (mut store, snapshot) = self.fence(delivery)?;
         let role = match delivery.output {
             Out::Effect {
@@ -445,12 +541,13 @@ impl Executor for Supervisor {
                 ..
             } => {
                 self.stop_node(delivery)?;
-                return Fake::new(&self.fake_root).execute(delivery);
+                return super::record::Records::new(&self.records_root)
+                    .deliver(delivery, Completion::confirmed(vec![]));
             }
             _ => return Err(Error::Invalid("unsupported worker effect")),
         };
         let Some(role) = role else {
-            return Fake::new(&self.fake_root).execute(delivery);
+            return Err(Error::Invalid("unsupported worker role"));
         };
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
@@ -460,16 +557,27 @@ impl Executor for Supervisor {
         };
         match result {
             Reconciliation::Found(completion) => {
-                self.active.remove(delivery);
-                return Ok(completion);
+                if !resume_quota
+                    || !matches!(
+                        completion.observations.as_slice(),
+                        [Observation::Quota { .. }]
+                    )
+                {
+                    if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+                        self.active.remove(delivery, number);
+                    }
+                    return Ok(completion);
+                }
             }
             Reconciliation::Pending => {
-                self.active.add(delivery);
+                if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+                    self.active.add(delivery, number);
+                }
                 return Ok(Completion::confirmed(vec![]));
             }
             Reconciliation::Absent => {}
         }
-        let request = self.request(delivery, role, &mut store, &snapshot)?;
+        let mut request = self.request(delivery, role, &mut store, &snapshot)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         store.claim_worker(
             &delivery.key,
@@ -489,6 +597,8 @@ impl Executor for Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
+        let mut command = Command::new(&self.settings.python);
+        isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
         let mut script = File::create(attempt.join("supervisor.py"))?;
@@ -497,7 +607,7 @@ impl Executor for Supervisor {
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
-        let mut child = Command::new(&self.settings.python)
+        let mut child = command
             .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
             .stdin(Stdio::null())
@@ -512,7 +622,7 @@ impl Executor for Supervisor {
                 "worker launcher did not claim the attempt; inspect launcher.log",
             ));
         }
-        self.active.add(delivery);
+        self.active.add(delivery, attempt_number);
         reap(child);
         let name = root.file_name().unwrap().to_string_lossy();
         let ready = self
@@ -524,6 +634,84 @@ impl Executor for Supervisor {
         fs::rename(root.join("ready.json"), ready)?;
         File::open(self.settings.runs.join(".ready"))?.sync_all()?;
         Ok(Completion::confirmed(vec![]))
+    }
+}
+
+impl Executor for Supervisor {
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.launch(delivery, false)
+    }
+
+    fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
+        // A recorded failed run is not a health check. Verify the supervisor can
+        // still launch its configured worker runtime without making a model call.
+        Ok(Command::new(&self.settings.python)
+            .args(["-c", "import tl3_workers"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?
+            .success())
+    }
+
+    fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
+        self.launch(delivery, true).map(Some)
+    }
+
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        if !matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
+        {
+            return Ok(match self.reconcile(delivery)? {
+                Reconciliation::Found(c) => Look::Found(c),
+                Reconciliation::Absent => Look::Absent,
+                Reconciliation::Pending => Look::Pending,
+            });
+        }
+        match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => Ok(Look::Found(c)),
+            Reconciliation::Absent => Ok(Look::Absent),
+            Reconciliation::Pending => {
+                let row = Store::open(&self.store)?
+                    .worker_progress(Some(&delivery.node().0.to_string()))?
+                    .into_iter()
+                    .find(|r| r.key == delivery.key);
+                Ok(match row {
+                    Some(row) => match row.external_wait {
+                        Some(wait) => Look::Waiting {
+                            wait,
+                            checkout: if protocol::delivery_role(delivery) == Some("maker") {
+                                super::worktrees::checkout_path(&self.worktrees, delivery)
+                            } else {
+                                self.root(&delivery.key).join("worktree")
+                            },
+                        },
+                        None => Look::Alive {
+                            progress: format!("{}:{}", row.attempt, row.output_offset),
+                        },
+                    },
+                    None => Look::Pending,
+                })
+            }
+        }
+    }
+
+    fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
+        if let Reconciliation::Found(c) = self.reconcile(delivery)? {
+            return Ok(c);
+        }
+        self.stop_run(&delivery.key, delivery.epoch)?;
+        if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+            self.active.remove(delivery, number);
+        }
+        let result = match latest(&self.root(&delivery.key))? {
+            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            None => Reconciliation::Absent,
+        };
+        Ok(match result {
+            Reconciliation::Found(c) => c,
+            Reconciliation::Absent => failed(delivery),
+            Reconciliation::Pending => return Err(Error::Invalid("stalled worker has not ended")),
+        })
     }
 
     fn retire(&mut self, store: &mut Store) -> Result<()> {
@@ -552,7 +740,11 @@ impl Executor for Supervisor {
                 kind: CommentKind::Classify,
                 ..
             } => self.reconcile_run(delivery),
-            _ => Fake::new(&self.fake_root).reconcile(delivery),
+            Out::Effect {
+                kind: EffectKind::StopRun,
+                ..
+            } => super::record::Records::new(&self.records_root).reconcile(delivery),
+            _ => Err(Error::Invalid("unsupported worker effect")),
         }
     }
 }
@@ -563,8 +755,10 @@ impl Supervisor {
             Some((_, attempt)) => inspect(&attempt, delivery)?,
             None => Reconciliation::Absent,
         };
-        if !matches!(result, Reconciliation::Pending) {
-            self.active.remove(delivery);
+        if !matches!(result, Reconciliation::Pending)
+            && let Some((number, _)) = latest(&self.root(&delivery.key))?
+        {
+            self.active.remove(delivery, number);
         }
         Ok(result)
     }
@@ -711,3 +905,7 @@ fn materialize(root: &Path, repo: &Value) -> Result<()> {
 #[cfg(test)]
 #[path = "workers/materialize_tests.rs"]
 mod materialize_tests;
+
+#[cfg(test)]
+#[path = "workers/active_tests.rs"]
+mod active_tests;

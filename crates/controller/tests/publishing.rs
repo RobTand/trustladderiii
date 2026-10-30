@@ -41,6 +41,7 @@ fn bootstrap() -> Bootstrap {
         rob: 1,
         slots: 1,
         pool: 1,
+        operations: None,
     }
 }
 fn check_plan(f: &Fixture, base: String) -> CheckRun {
@@ -353,8 +354,20 @@ impl Server {
         )])
     }
     fn adapter(&self, root: &Path, epoch: i64) -> adapters::github::Adapter {
-        adapters::github::Adapter::new(self.clients(), FakeWriter, epoch, Policy::default(), root)
-            .unwrap()
+        adapters::github::Adapter::new(
+            self.clients(),
+            FakeWriter,
+            epoch,
+            Policy::default(),
+            root,
+            Some(tl3_config::OperationsIssue {
+                owner: repo().owner,
+                name: "operations".into(),
+                installation_id: repo().installation,
+                number: 81,
+            }),
+        )
+        .unwrap()
     }
 }
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {

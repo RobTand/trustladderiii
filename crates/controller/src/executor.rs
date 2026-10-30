@@ -27,6 +27,7 @@ pub enum CommentKind {
     Classify,
     Clarify,
     FileCorrection,
+    ReplacementDropped,
 }
 
 impl From<tl3_kernel::Out> for Output {
@@ -93,6 +94,14 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Progress {
+        key: String,
+        checkpoint: String,
+    },
+    Quota {
+        key: String,
+        reset_ms: u64,
+    },
     Classified {
         key: String,
         reply: Option<serde_json::Value>,
@@ -200,6 +209,23 @@ pub struct Completion {
 }
 
 impl Completion {
+    pub(crate) fn releases_holds(&self) -> bool {
+        if self.progress.is_some() && self.observations.is_empty() {
+            return false;
+        }
+        !self.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                Observation::Progress { .. }
+                    | Observation::Quota { .. }
+                    | Observation::Kernel(Event::Fact {
+                        fact: tl3_kernel::Fact::UpstreamStalled,
+                        ..
+                    })
+            )
+        })
+    }
+
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
             ack: Ack::Confirmed,
@@ -207,6 +233,30 @@ impl Completion {
             observations,
         }
     }
+}
+
+pub enum Look {
+    Found(Completion),
+    Absent,
+    Pending,
+    /// An authoritative live record. Progress is an upstream-owned checkpoint.
+    Alive {
+        progress: String,
+    },
+    Waiting {
+        wait: tl3_store::ExternalWait,
+        checkout: std::path::PathBuf,
+    },
+    Healthy,
+    Quota {
+        reset_ms: u64,
+    },
+}
+
+/// Only the outside owner can establish that a declared wait has ended.
+pub enum WaitRecord {
+    Alive,
+    Ended,
 }
 
 pub enum Reconciliation {
@@ -219,10 +269,46 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn implementation(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+    fn watch_wait(
+        &mut self,
+        _delivery: &Delivery,
+        _wait: Option<&tl3_store::ExternalWait>,
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn wait_record(&mut self, _key: &str, _checkout: &std::path::Path) -> Result<WaitRecord> {
+        Ok(WaitRecord::Ended)
+    }
     /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
+    /// A separate health probe, when an incident's failed operation has ended.
+    fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
+        Ok(false)
+    }
+    /// Resume an owner-confirmed quota ending under the same operation key.
+    fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
+        Ok(None)
+    }
+    /// Success proves that the exact stalled attempt has ended.
+    fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
+        Err(crate::Error::Invalid("adapter cannot stop a stalled run"))
+    }
+    /// Recover missed authenticated webhooks, returning a durable delivery watermark.
+    fn recover_deliveries(&mut self, _after: u64, _since_ms: u64) -> Result<Option<u64>> {
+        Ok(None)
+    }
     /// Idempotent cleanup after dispatch and watch retirement are durable.
     fn retire_delivery(&mut self, _delivery: &Delivery) -> Result<()> {
         Ok(())
@@ -233,7 +319,7 @@ pub trait Executor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Upstream {
     GitHub,
     Mergify,
@@ -264,6 +350,12 @@ pub fn upstream(output: Output) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
+    pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
+        self.0
+            .iter()
+            .map(|(upstream, adapter)| (*upstream, adapter.implementation()))
+            .collect()
+    }
     pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) {
         for (upstream, adapter) in &mut self.0 {
             if let Err(error) = adapter.retire(store) {
@@ -273,6 +365,13 @@ impl Registry {
     }
     pub fn register(&mut self, upstream: Upstream, executor: impl Executor + 'static) {
         self.0.insert(upstream, Box::new(executor));
+    }
+
+    pub(crate) fn get(&mut self, upstream: Upstream) -> Result<&mut (dyn Executor + '_)> {
+        match self.0.get_mut(&upstream) {
+            Some(adapter) => Ok(adapter.as_mut()),
+            None => Err(crate::Error::Invalid("missing upstream adapter")),
+        }
     }
 
     pub(crate) fn adapter(&mut self, delivery: &Delivery) -> Result<&mut (dyn Executor + '_)> {

@@ -197,6 +197,20 @@ impl GitHub {
         token: &str,
         retry_safe: bool,
     ) -> Result<Value, Error> {
+        self.send_with_headers(method, path, query, body, token, retry_safe)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    async fn send_with_headers(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(String, String)],
+        body: Option<Value>,
+        token: &str,
+        retry_safe: bool,
+    ) -> Result<(Value, reqwest::header::HeaderMap), Error> {
         let mut url = self.0.options.api_url.clone();
         // Segments are already encoded by endpoint builders. Never follow an upstream URL.
         url.set_path(&format!("{}{}", url.path(), path));
@@ -275,7 +289,7 @@ impl GitHub {
                 if !bytes.is_empty() && value.is_null() {
                     return Err(Error::Response);
                 }
-                return Ok(value);
+                return Ok((value, headers));
             }
             if retry_safe
                 && matches!(status.as_u16(), 500 | 502 | 503 | 504)
@@ -337,6 +351,57 @@ impl GitHub {
             }
         }
         unreachable!()
+    }
+
+    /// App-owned delivery history uses JWT authentication, not installation tokens.
+    pub async fn hook_deliveries(&self, cursor: Option<&str>) -> Result<HookDeliveryPage, Error> {
+        let mut query = vec![("per_page".into(), "100".into())];
+        if let Some(cursor) = cursor {
+            query.push(("cursor".into(), cursor.into()));
+        }
+        let jwt = self.app_jwt(Utc::now())?;
+        let (value, headers) = self
+            .send_with_headers(Method::GET, "app/hook/deliveries", &query, None, &jwt, true)
+            .await?;
+        let deliveries = serde_json::from_value(value).map_err(|_| Error::Response)?;
+        let mut next_cursor = None;
+        if let Some(link) = headers.get("link") {
+            for part in link.to_str().map_err(|_| Error::Response)?.split(',') {
+                if part.contains("rel=\"next\"") {
+                    let url = part
+                        .trim()
+                        .split('>')
+                        .next()
+                        .and_then(|p| p.strip_prefix('<'))
+                        .ok_or(Error::Response)?;
+                    let url = Url::parse(url).map_err(|_| Error::Response)?;
+                    next_cursor = Some(
+                        url.query_pairs()
+                            .find(|(key, _)| key == "cursor")
+                            .map(|(_, value)| value.into_owned())
+                            .ok_or(Error::Response)?,
+                    );
+                }
+            }
+        }
+        Ok(HookDeliveryPage {
+            deliveries,
+            next_cursor,
+        })
+    }
+
+    pub async fn redeliver_hook(&self, id: u64) -> Result<(), Error> {
+        let jwt = self.app_jwt(Utc::now())?;
+        self.send(
+            Method::POST,
+            &format!("app/hook/deliveries/{id}/attempts"),
+            &[],
+            None,
+            &jwt,
+            false,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn issue(&self, repo: &str, number: u64) -> Result<Issue, Error> {
