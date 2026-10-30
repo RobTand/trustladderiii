@@ -207,6 +207,39 @@ fn check_apply(event: Event) {
     kani::cover!(after != before, "the event changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
+    if let Event::NoticeFailed { question, .. } = event
+        && before.nodes[0].phase == Phase::AwaitingRob
+        && let Some(q) = before.nodes[0].question
+        && q.id == question
+    {
+        let mut expected = before.clone();
+        expected.nodes[0].question.as_mut().unwrap().post_failed = true;
+        assert!(after == expected);
+        assert!(out.is_empty());
+    }
+    if let Event::Command {
+        id,
+        command:
+            Command::Answer {
+                question,
+                answer: Answer::Continue | Answer::Retry,
+            },
+        ..
+    } = event
+        && id > before.nodes[0].last_cmd
+        && let Some(q) = before.nodes[0].question
+        && q.id == question
+        && q.post_failed
+    {
+        let next = after.nodes[0].question.unwrap();
+        assert!(!next.post_failed && next.id != q.id);
+        assert!(next.kind == q.kind && next.cont == q.cont && next.cost == q.cost);
+        assert!(after.nodes[0].credit == before.nodes[0].credit);
+        assert!(after.nodes[0].phase == before.nodes[0].phase);
+        assert!(
+            matches!(out.get(0), Some(Out::Notice { notice: Notice::Ask { question: id }, .. }) if id == next.id)
+        );
+    }
     let exempt = match event {
         Event::Ack { node, .. } => node.index(),
         Event::Command {

@@ -136,7 +136,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
                         Phase::Stopping(_) => "cleanup to finish",
                         Phase::Closed(_) => "none",
                     },
-                };
+                }
             };
             requests.push(RequestStatus {
                 issue: format!(

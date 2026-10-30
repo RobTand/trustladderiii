@@ -1237,6 +1237,9 @@ impl World {
         // Questions to Rob.
         match n.question {
             Some(q) => {
+                if q.post_failed && n.phase != Phase::AwaitingRob {
+                    return Err(Broken::Question);
+                }
                 let price = match q.kind {
                     QKind::CantMeet | QKind::OutOfCredit => 1,
                     _ => 0,
@@ -1603,6 +1606,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
         }
         Event::NoticeFailed { node, question } => {
             if let Some(i) = w.index(node)
+                && w.nodes[i].phase == Phase::AwaitingRob
                 && let Some(q) = w.nodes[i].question.as_mut()
                 && q.id == question
             {

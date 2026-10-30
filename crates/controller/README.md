@@ -990,3 +990,26 @@ workspace checks, worker protocol tests, kernel tests and stall proof with `pyth
 manifest with the published `pbcampaign.py`. Process and timing tests run once
 on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
 receipt before reporting a pass.
+
+## Failed notice posts
+
+A permanent writer rejection or GitHub refusal finishes the delivery as Failed.
+The same transaction retains its payload in `notice_failures`, raises an incident
+on the operations issue, and marks an active kernel question's post as failed.
+Status and the comment classifier show that failure instead of asking for an
+answer to an unseen question. A failed incident post updates status and emits
+no further post.
+
+Rob can reply `clear incident <id>` on the operations issue after fixing the cause.
+Retry creates a new delivery and writer attempt while keeping `Delivery.marker_key`
+for GitHub reconciliation. Retrying a question reissues the original question
+before its continuation can run. A closed request stays closed while its summary,
+note or correction filing retries. The payload retains a dropped change's text
+through failure and recovery.
+
+Generate ticket 87's host actions with
+`python3 crates/controller/tools/notice_review_manifest.py hosts`.
+The GitHub target includes the notice scenarios, steering and notice retry crashes
+at every store and adapter save point. The host actions also run looks, simulation
+and crash safety. The `workspace` selection runs `tools/verify.sh` through PrismaBuild.
+A kernel change also requires the full campaign from `crates/kernel/run.py manifest`.
