@@ -1,0 +1,27 @@
+{
+  "name": "TL3 RobTand",
+  "url": "https://github.com/RobTand/trustladderiii",
+  "description": "TrustLadder III software factory for RobTand.",
+  "public": false,
+  "redirect_url": "http://127.0.0.1:8765/callback",
+  "hook_attributes": {
+    "url": "https://tl3-webhook.invalid/github/events",
+    "active": false
+  },
+  "default_permissions": {
+    "issues": "write",
+    "pull_requests": "write",
+    "checks": "write",
+    "contents": "write",
+    "metadata": "read",
+    "merge_queues": "read"
+  },
+  "default_events": [
+    "issues",
+    "issue_comment",
+    "pull_request",
+    "check_run",
+    "check_suite",
+    "merge_group"
+  ]
+}
