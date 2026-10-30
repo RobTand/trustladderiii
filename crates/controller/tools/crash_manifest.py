@@ -7,7 +7,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[3]
 env = {
-    "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+    "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "RUSTUP_HOME": "/home/rob/.rustup",
     "CARGO_HOME": "/home/rob/.cargo",
     "KANI_HOME": "/home/rob/.kani",

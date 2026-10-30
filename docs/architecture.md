@@ -139,17 +139,36 @@ belongs in `Err`, and a reconciliation transport problem can also stay Pending.
 Adapters report evidence and never choose request phases, credit charges or
 retry policy.
 
-The worker fake returns typed observations at the supervisor boundary. A real
-worker adapter must use protocol v1 from `workers/README.md`, validate its role
-schemas, and accept a reply only after a successful process exit. Worker
-progress is liveness data, not a kernel verdict.
+The worker supervisor runs real ingest and audit processes through protocol v1
+from `workers/README.md`. It validates role schemas and accepts replies only
+after a recorded exit zero. Other roles use the worker fake. Python comes from
+a configured, pre-synced venv. A durable Python supervisor owns waitpid and
+publishes exit records even while the controller is dead.
+
+Each effect key has immutable attempt directories. Atomic hard-link claims
+fence delayed launchers without file locks. Machine ID, boot ID, PID, process
+start time and a pidfd recheck identify processes. Stop waits on pidfd readiness.
+An active-node index bounds teardown work. The source rebuilds active runs from
+the store and directories once, then uses inotify and pidfd events, with no
+wake-up polling. It retires finished watches and reports only Found evidence.
+Confirmed absence is handled by the controller's retained watch.
+
+Worker progress is liveness data, not a kernel verdict. Migration 3 creates
+`tl3_worker_progress`, including a start time before progress and a nullable
+last-progress time. Ticket #15 uses these times. Ticket #18's status hook gets
+a `Transaction` and queries the table directly. Deployment #19 syncs the venv
+once and keeps workers outside the controller's kill scope, through systemd
+`KillMode=process` or separate scopes. If the supervisor dies, a valid reply
+without a recorded exit is discarded after the worker ends and the run is redone.
 
 Each adapter's ticket extends `Delivery` with the fields it needs, such as
 issue text in #10 and branch and PR text in #13. Those fields are not added
 speculatively here.
 
-`adapters::simulation` is currently the only registry builder, and `tl3d`
-requires `--simulate`. A test can replace one entry while keeping the other fakes:
+`adapters::simulation` builds the fake registry. `simulation_with_workers`
+replaces ingest and audit with supervised Python and returns its output source.
+`tl3d` requires `--simulate` until #10 registers sources in the shared ingress
+loop. A test can replace one entry while keeping the other fakes:
 
 ```rust
 let mut registry = adapters::simulation(fake_records)?;
@@ -167,8 +186,8 @@ older writes after an adapter restart. Reconciliation can read earlier epochs.
 They survive controller process death. They represent upstream records, not a
 replacement for Postgres. They cover every effect kind, including rebase and
 teardown. A fake queue receipt supplies a merge fact independently of its enqueue
-acknowledgement. Production GitHub ingress, process supervision and live clients
-remain the following tickets.
+acknowledgement. Production GitHub ingress and the remaining live clients stay
+with their tickets.
 
 ## Clock and systematic crash tests
 
