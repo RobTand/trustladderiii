@@ -55,6 +55,46 @@ MUTANTS = {
     ),
 }
 
+MUTANTS.update({
+    "wake-before-durable": (
+        "crates/controller/src/ingress.rs",
+        "    let status = receive_delivery(store, secret, request);\n    if status == 202 {\n        let _ = sender.send(Input::Wake);\n    }",
+        "    let _ = sender.send(Input::Wake);\n    let status = receive_delivery(store, secret, request);",
+        "loom_durable_ingress_", "deadlock",
+    ),
+    "consume-before-apply": (
+        "crates/controller/src/ingress.rs",
+        "        for stored in deliveries {\n            if let Some(delivery) = replay(&stored) {",
+        "        for stored in deliveries {\n            controller.store.consume_ingress(stored.sequence)?;\n            if let Some(delivery) = replay(&stored) {",
+        "loom_durable_ingress_", "delivery consumed before apply",
+    ),
+    "no-owner-drain": (
+        "crates/controller/src/ingress.rs",
+        "            drain(controller)?;\n            apply(controller, input)?;",
+        "            apply(controller, input)?;",
+        "loom_durable_ingress_", "deadlock",
+    ),
+    "stop-dropped": (
+        "crates/controller/src/http.rs",
+        "        self.stopped.store(true, Ordering::Release);",
+        "        // Mutant: stop is never published.",
+        "loom_http_stop_", "accept slept again after stop wake",
+    ),
+    "stop-after-wake": (
+        "crates/controller/src/http.rs",
+        "        self.stopped.store(true, Ordering::Release);\n        wake();",
+        "        wake();\n        self.stopped.store(true, Ordering::Release);",
+        "loom_http_stop_", "accept slept again after stop wake",
+    ),
+    "stop-relaxed": (
+        "crates/controller/src/http.rs",
+        "        self.stopped.store(true, Ordering::Release);",
+        "        self.stopped.store(true, Ordering::Relaxed);",
+        "loom_http_stop_", "stop did not acquire prior publication",
+    ),
+})
+
+
 
 def main():
     parser = argparse.ArgumentParser(__doc__)
@@ -67,6 +107,8 @@ def main():
     if source.count(old) != 1:
         raise SystemExit(f"{name}: expected exactly one mutation site")
     mutated = source.replace(old, new)
+    if args.mutant == "stop-relaxed":
+        mutated = mutated.replace("stopped.load(Ordering::Acquire)", "stopped.load(Ordering::Relaxed)")
     print("".join(difflib.unified_diff(source.splitlines(True), mutated.splitlines(True), fromfile=f"a/{name}", tofile=f"b/{name}")), flush=True)
     if args.diff:
         return
@@ -79,7 +121,7 @@ def main():
             cwd=ROOT, env={**os.environ, "TL3_LOOM": "1"}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         print(result.stdout, flush=True)
-        assert result.returncode != 0 and expected in result.stdout, f"mutant {args.mutant} did not fail at {expected!r}, exit {result.returncode}"
+        assert result.returncode != 0 and "could not compile" not in result.stdout and expected in result.stdout, f"mutant {args.mutant} did not fail at {expected!r}, exit {result.returncode}"
         print(f"RED VERIFIED mutant={args.mutant} test={test} exit={result.returncode} assertion={expected}", flush=True)
     finally:
         path.write_text(source)
