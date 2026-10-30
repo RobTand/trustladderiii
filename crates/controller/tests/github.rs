@@ -95,6 +95,8 @@ fn client(uri: &str) -> GitHub {
 #[derive(Default)]
 struct ApiState {
     comments: Vec<Value>,
+    checks: Vec<Value>,
+    pull: Option<Value>,
     posts: usize,
     deletes: usize,
     closed: bool,
@@ -189,21 +191,53 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(events)
             }
             ("GET", "/repos/owner/sandbox/pulls") => {
-                let pulls = if state.catch_up_evidence {
+                let mut pulls: Vec<_> = state.pull.iter().cloned().collect();
+                if state.catch_up_evidence {
                     let mut pull = event_fixture("pull_request")["pull_request"].clone();
                     pull["updated_at"] = json!(Utc::now());
-                    json!([pull])
-                } else {
-                    json!([])
-                };
+                    pulls.push(pull);
+                }
                 ResponseTemplate::new(200).set_body_json(pulls)
             }
-            ("GET", path) if path.ends_with("/check-runs") => ResponseTemplate::new(200)
-                .set_body_json(if state.catch_up_evidence {
-                    json!({"check_runs": [event_fixture("check_run")["check_run"]]})
-                } else {
-                    json!({"check_runs": []})
-                }),
+            ("POST", "/repos/owner/sandbox/pulls") => {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut pull = event_fixture("pull_request")["pull_request"].clone();
+                pull["number"] = json!(100);
+                pull["state"] = json!("open");
+                pull["merged_at"] = Value::Null;
+                pull["head"]["ref"] = body["head"].clone();
+                pull["head"]["sha"] = state.checks.last().unwrap()["head_sha"].clone();
+                pull["head"]["repo"] = fixture(false)["repository"].clone();
+                pull["base"]["ref"] = body["base"].clone();
+                state.pull = Some(pull.clone());
+                ResponseTemplate::new(201).set_body_json(pull)
+            }
+            ("PATCH", "/repos/owner/sandbox/pulls/100") => {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let pull = state.pull.as_mut().unwrap();
+                pull["state"] = body["state"].clone();
+                ResponseTemplate::new(200).set_body_json(pull)
+            }
+            ("GET", path) if path.ends_with("/check-runs") => {
+                let sha = path.split('/').nth(5).unwrap();
+                let mut checks: Vec<_> = state
+                    .checks
+                    .iter()
+                    .filter(|check| check["head_sha"] == sha)
+                    .cloned()
+                    .collect();
+                if state.catch_up_evidence {
+                    checks.push(event_fixture("check_run")["check_run"].clone());
+                }
+                ResponseTemplate::new(200).set_body_json(json!({"check_runs": checks}))
+            }
+            ("POST", "/repos/owner/sandbox/check-runs") => {
+                let mut check: Value = serde_json::from_slice(&request.body).unwrap();
+                check["id"] = json!(state.checks.len() + 1);
+                check["app"] = json!({"id": 123, "slug": "factory"});
+                state.checks.push(check.clone());
+                ResponseTemplate::new(201).set_body_json(check)
+            }
             ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200)
                 .set_body_json(if state.catch_up_evidence {
                     json!({"check_suites": [event_fixture("check_suite")["check_suite"]]})
