@@ -466,6 +466,14 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
     body["installation"] = json!({"id":1});
     body["sender"] = json!({"id":1,"login":"rob"});
     body["pull_request"] = server.api.state.lock().unwrap().pull.clone().unwrap();
+    if action == "synchronize" {
+        body["before"] = body["pull_request"]["head"]["sha"].clone();
+        let branch = body["pull_request"]["head"]["ref"].as_str().unwrap();
+        let after = git(&server.api.fixture.remote, &["rev-parse", branch]);
+        body["after"] = json!(after);
+        body["pull_request"]["head"]["sha"] = json!(after);
+        server.api.state.lock().unwrap().pull = Some(body["pull_request"].clone());
+    }
     body["pull_request"]["merged"] = json!(action == "closed");
     let event = tl3_github::webhook::parse(
         "publishing",
