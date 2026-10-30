@@ -379,17 +379,13 @@ impl Supervisor {
                 return Ok(materials);
             }
             if ancestor == delivery.node()
-                && self.materials_provider.is_some()
+                && let Some(provider) = &self.materials_provider
                 && !snapshot
                     .rows
                     .iter()
                     .any(|r| r.table == "request_links" && r.id == ancestor.0.to_string())
             {
-                let materials = self
-                    .materials_provider
-                    .as_ref()
-                    .expect("production provider")
-                    .load(delivery)?;
+                let materials = provider.load(delivery)?;
                 store.put_worker_materials(&ancestor.0.to_string(), &materials)?;
                 return Ok(materials);
             }
