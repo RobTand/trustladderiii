@@ -155,7 +155,7 @@ fn incident(c: &mut Controller) -> String {
         .rows
         .into_iter()
         .filter(|r| r.table == "incidents" && r.value["open"] == true)
-        .last()
+        .next_back()
         .unwrap()
         .id
 }

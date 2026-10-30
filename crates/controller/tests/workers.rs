@@ -711,14 +711,21 @@ fn never_started(settings: &tl3_config::Store) {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
+    let messages: Vec<_> = rx.try_iter().collect();
     assert!(matches!(
-        rx.try_recv().unwrap(),
+        messages.last().unwrap(),
         Input::Observation {
             observation: Observation::WorkerReply { .. },
             ..
         }
     ));
-    assert!(rx.try_recv().is_err());
+    assert!(messages[..messages.len() - 1].iter().all(|input| matches!(
+        input,
+        Input::Observation {
+            observation: Observation::Progress { .. },
+            ..
+        }
+    )));
     assert_eq!(attempts(&run_root), 2);
     fs::write(
         run_root.join("attempt-00000001/stdout.jsonl"),
@@ -915,7 +922,13 @@ fn partial_crash(settings: &tl3_config::Store) {
         store.worker_progress(None).unwrap()[0].output_offset,
         complete as i64
     );
-    assert!(rx.try_recv().is_err());
+    assert!(matches!(rx.try_recv().unwrap(), Input::Observation {
+        observation: Observation::Progress { checkpoint, .. }, ..
+    } if checkpoint == format!("0:{complete}")));
+    assert!(
+        rx.try_recv().is_err(),
+        "a partial reply cannot finish the run"
+    );
     kill_record(&attempt.join("process.json"));
     assert!(failed(&terminal(&mut supervisor, &run)));
     wait(|| {

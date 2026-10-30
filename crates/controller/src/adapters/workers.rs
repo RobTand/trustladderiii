@@ -85,10 +85,10 @@ impl Supervisor {
             let root = entry.path();
             if let Some(value) = read(&root.join("delivery.json"))? {
                 let delivery: Delivery = serde_json::from_value(value)?;
-                if matches!(inspect(&root, &delivery)?, Reconciliation::Pending) {
-                    if let Some((number, _)) = latest(&root)? {
-                        active.add(&delivery, number);
-                    }
+                if matches!(inspect(&root, &delivery)?, Reconciliation::Pending)
+                    && let Some((number, _)) = latest(&root)?
+                {
+                    active.add(&delivery, number);
                 }
             }
         }
@@ -367,10 +367,10 @@ impl Executor for Supervisor {
                 ..
             } if protocol::role(role).is_some() => {
                 let result = inspect(&self.root(&delivery.key), delivery)?;
-                if !matches!(result, Reconciliation::Pending) {
-                    if let Some((number, _)) = latest(&self.root(&delivery.key))? {
-                        self.active.remove(delivery, number);
-                    }
+                if !matches!(result, Reconciliation::Pending)
+                    && let Some((number, _)) = latest(&self.root(&delivery.key))?
+                {
+                    self.active.remove(delivery, number);
                 }
                 Ok(result)
             }
