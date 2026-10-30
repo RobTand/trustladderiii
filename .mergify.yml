@@ -12,9 +12,6 @@ queue_rules:
       - base = main
       - check-success = Rust
       - check-success = Python
-    merge_conditions:
-      - check-success = Rust
-      - check-success = Python
     merge_method: merge
     update_method: merge
     batch_size: 1
