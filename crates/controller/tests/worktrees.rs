@@ -459,6 +459,123 @@ fn same_reconciliation(a: &Reconciliation, b: &Reconciliation) {
     }
 }
 
+fn repeated_prepare_preserves_maker_work() {
+    for committed in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        if committed {
+            commit(&checkout, "leaf.txt", "maker commit\n");
+        }
+        fs::write(checkout.join("shared.txt"), "maker wip\n").unwrap();
+        fs::write(checkout.join("scratch.txt"), "untracked maker notes\n").unwrap();
+        let head = f.head(&prepare);
+        let status = git(&checkout, &["status", "--porcelain", "--untracked-files=all"]);
+        let next = f.delivery(EffectKind::PrepareWorktree, 3);
+        // An interrupted fresh intent must retain the same ownership facts on restart.
+        kill(&f, &next, "before");
+        let completion = found(f.adapter().reconcile(&next).unwrap());
+        assert!(matches!(completion.ack, Ack::Confirmed));
+        same(&completion, &f.adapter().execute(&next).unwrap());
+        assert_eq!(f.head(&next), head);
+        assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "maker wip\n");
+        assert_eq!(fs::read_to_string(checkout.join("scratch.txt")).unwrap(), "untracked maker notes\n");
+        assert_eq!(git(&checkout, &["status", "--porcelain", "--untracked-files=all"]), status);
+        println!("repeated Prepare preserves maker work, committed={committed}");
+    }
+}
+
+fn half_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
+    let branch = Real::branch(prepare).unwrap();
+    let base = git(&f.remote, &["rev-parse", "main"]);
+    let checkout = f.adapter().checkout(prepare);
+    fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+    git(&f.repo, &["branch", branch.as_str(), &base]);
+    git(&f.repo, &["update-ref", &format!("refs/tl3/bases/{}", branch.as_str()), &base]);
+    git(&f.repo, &["worktree", "add", "--no-checkout", checkout.to_str().unwrap(), branch.as_str()]);
+    checkout
+}
+
+fn preexisting_half_add_is_verified_without_repair() {
+    for main_moves in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        let checkout = half_add(&f, &prepare);
+        let head = f.head(&prepare);
+        let status = git(&checkout, &["status", "--porcelain"]);
+        if main_moves {
+            f.advance_main(false);
+        }
+        let mut next = f.delivery(EffectKind::PrepareWorktree, 2);
+        next.epoch = 2;
+        let completion = f.adapter_at(2).execute(&next).unwrap();
+        assert!(matches!(completion.ack, Ack::Confirmed));
+        assert!(!checkout.join("shared.txt").exists());
+        assert_eq!(git(&checkout, &["status", "--porcelain"]), status);
+        assert_eq!(f.head(&next), head);
+        println!("preexisting half-add preserved, main_moves={main_moves}");
+    }
+}
+
+fn prepare_repairs_at_durable_base_after_main_moves() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    let old = f.delivery(EffectKind::PrepareWorktree, 1);
+    let checkout = half_add(&f, &old);
+    // The branch and its durable base survive, but the checkout needs creating.
+    git(&f.repo, &["worktree", "remove", "--force", checkout.to_str().unwrap()]);
+    let base = f.head(&old);
+    f.advance_main(false);
+    let next = f.delivery(EffectKind::PrepareWorktree, 2);
+    kill(&f, &next, "before");
+    git(&f.repo, &["worktree", "add", "--no-checkout", checkout.to_str().unwrap(), Real::branch(&next).unwrap().as_str()]);
+    found(f.adapter().reconcile(&next).unwrap());
+    assert_eq!(f.head(&next), base);
+    assert_eq!(fs::read_to_string(checkout.join("shared.txt")).unwrap(), "base\n");
+    assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+}
+
+fn removal_of_unpopulated_prepare() {
+    for dirt in ["none", "modified", "untracked", "committed", "unowned"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        if dirt != "unowned" {
+            kill(&f, &prepare, "before");
+        }
+        let checkout = half_add(&f, &prepare);
+        match dirt {
+            "modified" => { fs::write(checkout.join("shared.txt"), "keep edit\n").unwrap(); }
+            "untracked" => { fs::write(checkout.join("notes.txt"), "keep notes\n").unwrap(); }
+            "committed" => {
+                git(&checkout, &["reset", "--hard", "HEAD"]);
+                commit(&checkout, "maker.txt", "maker commit\n");
+                fs::remove_file(checkout.join("shared.txt")).unwrap();
+                fs::remove_file(checkout.join("maker.txt")).unwrap();
+            }
+            _ => {}
+        }
+        // Cancellation fences the unfinished creator instead of completing Prepare.
+        let mut current = f.adapter_at(2);
+        let mut remove = f.delivery(EffectKind::RemoveWorktree, 2);
+        remove.epoch = 2;
+        if dirt == "none" {
+            let completion = current.execute(&remove).unwrap();
+            assert!(matches!(completion.ack, Ack::Confirmed));
+            assert_removed(&f, &remove);
+            same(&completion, &found(current.reconcile(&remove).unwrap()));
+            assert!(matches!(current.reconcile(&prepare).unwrap(), Reconciliation::Absent));
+        } else {
+            let status = git(&checkout, &["status", "--porcelain", "--untracked-files=all"]);
+            assert!(current.execute(&remove).is_err(), "must preserve {dirt}");
+            assert!(checkout.exists());
+            assert_eq!(git(&checkout, &["status", "--porcelain", "--untracked-files=all"]), status);
+        }
+    }
+}
+
 fn incomplete_prepare() {
     for changed_head in [false, true] {
         let scratch = tempfile::tempdir().unwrap();
@@ -736,6 +853,10 @@ fn main() {
     leases_and_exact_heads();
     old_epoch_partial_attempts();
     fenced_rebase_before_checkout_restoration();
+    repeated_prepare_preserves_maker_work();
+    preexisting_half_add_is_verified_without_repair();
+    prepare_repairs_at_durable_base_after_main_moves();
+    removal_of_unpopulated_prepare();
     incomplete_prepare();
     populated_prepare_with_initialization_lock();
     incomplete_remove();
