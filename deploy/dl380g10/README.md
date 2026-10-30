@@ -24,6 +24,12 @@ python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE --r
 python3 deploy/dl380g10/deploy.py start
 ```
 
+For the same sequence with an issue-identity assertion and service restart
+checks, submit `bash deploy/dl380g10/prepare.sh --binaries ARTIFACTS --image IMAGE`
+through PrismaBuild with `--tag dl380g10`, 2 CPUs, 3 GiB, and
+`XDG_RUNTIME_DIR=/run/user/1000`. It installs twice to prove reruns preserve
+credentials and resources. The final check lists the steps still missing.
+
 `operations` is the only account write in preparation. It uses the existing App
 installation, searches all issue pages including closed issues, and matches the
 exact title `TL3 operations` and marker `<!-- tl3:operations:v1 -->`.
