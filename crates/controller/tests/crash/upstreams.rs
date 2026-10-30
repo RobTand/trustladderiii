@@ -17,6 +17,8 @@ pub struct State {
     pub records: BTreeMap<String, Record>,
     pub resources: BTreeMap<String, Value>,
     pub removed_duplicates: usize,
+    #[serde(default)]
+    pub redeliveries: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -121,6 +123,7 @@ impl Executor for Fake {
         state.epoch = delivery.epoch;
         if let Some(record) = state.records.get(&delivery.key) {
             let result = record.completion.clone();
+            state.redeliveries += 1;
             save(&self.path, &state);
             return Ok(result);
         }

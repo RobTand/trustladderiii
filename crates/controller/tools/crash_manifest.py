@@ -19,21 +19,25 @@ env = {
     "RAYON_NUM_THREADS": "1",
 }
 rows = []
-for host, seed, full in [
-    ("dl380g10", 1450022, False),
-    ("sparky", 1450022, False),
-    ("sparklina", 1450022, False),
-    (None, 1450022, True),
-    (None, 1450023, False),
+for host, seed, mode in [
+    ("dl380g10", 1450022, "smoke"),
+    ("sparky", 1450022, "smoke"),
+    ("sparklina", 1450022, "smoke"),
+    (None, 1450022, "full"),
+    (None, 1450023, "verify"),
 ]:
     row = {
         "cwd": str(root),
-        "argv": ["bash", "crates/controller/tools/verify.sh"] if full else [
+        "argv": ["bash", "crates/controller/tools/verify.sh"] if mode == "verify" else [
             "cargo", "test", "-p", "tl3-controller", "--all-targets", "--locked"
         ],
         "cpus": 2,
         "demand": {"mem_gb": 6},
-        "env": {**env, "TL3_SIM_SEED": str(seed)},
+        "env": {
+            **env,
+            "TL3_SIM_SEED": str(seed),
+            "TL3_SIM_FULL": "1" if mode == "full" else "0",
+        },
         "priority": -10,
         "timeout_s": 3600,
     }

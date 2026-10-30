@@ -174,8 +174,9 @@ remain the following tickets.
 
 `clock::Clock` supplies wall-clock timestamps. `Controller::open` selects the
 system clock, and `open_with_clock` accepts a fake. `Controller::now` exposes
-that clock for liveness and allowance probes. Time never proves failure or
-absence. Ticket #15 can use this seam without adding time to the kernel.
+that clock. Only tests read it today; ticket #15 will be the first controller
+loop user, for liveness and allowance probes. Time never proves failure or
+absence, and the kernel has no clock.
 
 `Store::set_boundary_hook` exposes the writes inside a controller transaction
 and either side of its commit. `drive_once_with` also exposes reconciliation,
@@ -184,7 +185,9 @@ recovery rules. Dictionary inserts now use an explicit transaction so their
 connection can die before commit too.
 
 [The crash simulation](crash-simulation.md) documents all thirteen cuts, the
-upstream contracts, replay controls, and the ingress model for loom. Every
+upstream contracts, replay controls, and the placeholder ingress model for loom.
+That model runs no controller code. Ticket #71 covers the real ingress and
+worker source after #64 and #60 merge. Every
 cut kills a real controller process while Postgres and upstream records remain
 alive. The test audits the outbox against kernel outputs and compares the
 recovered world with an uninterrupted run.

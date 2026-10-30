@@ -554,6 +554,10 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     let mut deduplicated = 0;
     for upstream in upstreams::UPSTREAMS {
         let state = upstreams::load(&upstreams::path(&root.join("upstreams"), upstream));
+        assert_eq!(
+            state.redeliveries, 0,
+            "re-executed recorded key at {upstream:?}"
+        );
         resources.insert(format!("{upstream:?}"), json!(state.resources));
         deduplicated += state.removed_duplicates;
         for (key, record) in state.records {
@@ -593,6 +597,19 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
         ]));
     }
     outputs.sort_by_key(Value::to_string);
+    for (index, node) in world.nodes.iter().enumerate() {
+        let ledger_balance: i64 = snapshot
+            .credit
+            .iter()
+            .filter(|record| record.entry.node == index.to_string())
+            .map(|record| record.entry.amount)
+            .sum();
+        assert_eq!(
+            ledger_balance,
+            node.credit.balance(),
+            "node {index}: credit ledger differs from kernel balance"
+        );
+    }
     let mut credit: Vec<_> = snapshot
         .credit
         .iter()
@@ -642,9 +659,15 @@ fn main() {
     let mut total = 0;
     let mut restart_check = None;
     let mut kinds = BTreeSet::new();
+    let full = env::var("TL3_SIM_FULL").is_ok_and(|value| value == "1");
     let filter = env::var("TL3_SIM_SCENARIO").ok();
+    let scenarios = if full || filter.is_some() {
+        SCENARIOS
+    } else {
+        &SCENARIOS[..1]
+    };
     let point_filter = env::var("TL3_SIM_POINT").ok();
-    for scenario in SCENARIOS
+    for scenario in scenarios
         .iter()
         .copied()
         .filter(|s| filter.as_deref().is_none_or(|f| f == *s))
@@ -691,7 +714,7 @@ fn main() {
         }
     }
     assert!(total > 0, "filter selected no crash points");
-    if filter.is_none() {
+    if full && filter.is_none() {
         for (kind, phase) in [
             ("StartRun(Ingest)", "Ingesting"),
             ("StartRun(Audit)", "Auditing"),

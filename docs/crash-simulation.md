@@ -11,9 +11,13 @@ Postgres and the upstream records survive every cut.
 
 ## Crash model
 
-`cargo test -p tl3-controller --test crash_safety --locked` runs separate passes
-for each save point. In a pass, the parent kills the child once per distinct
-operation key, then restarts it from the database. Repeated visits to that key
+`cargo test -p tl3-controller --test crash_safety --locked` defaults to the
+`merge` smoke scenario, with separate passes for all thirteen save points.
+Set `TL3_SIM_FULL=1` to run all eleven scenarios and require all sixteen
+effect-kind and emitting-phase pairs. The smoke run skips that matrix-wide
+coverage assertion. Explicit scenario and save-point filters still restrict a replay.
+
+In a pass, the parent kills the child once per distinct operation key, then restarts it from the database. Repeated visits to that key
 continue normally. Delivery transitions use the effect key and source and target
 states, because recovery can revisit a transition at a new audit revision.
 Each pass ends at the same world as an uninterrupted run.
@@ -78,33 +82,44 @@ The existing fake adapters supply typed results. The simulation adds upstream
 records that enforce once-per-key starts, once-per-head approvals, converging
 resource writes, and marked messages. Messages simulate a lost response and two copies.
 Reconciliation deletes the extra copy. Each non-cancelled delivery must have
-an upstream record, and each successful logical application must occur once.
+an upstream record. A fake counts every execute of an already recorded key,
+even when it returns the cached completion. The recovered run requires zero
+such redeliveries because the controller reconciles existing records first.
+Each node's ledger sum must also equal its kernel credit balance, independently
+of the uninterrupted baseline.
 Acknowledged asynchronous starts return their results through watches. Some
 initial reads report Pending before their authoritative terminal result.
 
 ## Clock and ingress
 
-`clock::Clock::now() -> SystemTime` is the wall-clock seam for liveness timestamps
-and ticket #15's allowance probes. `Controller::open` uses `SystemClock`.
+`clock::Clock::now() -> SystemTime` is the wall-clock seam for ticket #15's
+liveness timestamps and allowance probes. `Controller::open` uses `SystemClock`.
 `Controller::open_with_clock` accepts a fake. `Controller::now` reads the selected
-clock. Advancing it never proves failure or absence. The simulation advances it
-by days while awaiting upstream evidence.
+clock. Only tests call `Controller::now` today. The controller loop does not
+read the clock yet; #15 will be its first user. Advancing it never proves failure
+or absence. The simulation advances it by days while awaiting upstream evidence.
 
-Tickets #9 and #10 are absent from this branch. `ingress_loom.rs` models the
-wave brief's two source threads and one controller owner over a channel. It
-checks publication of durable webhook evidence, successful worker exit before
-its reply, source order, and one-time consumption. A standard-channel test
-checks send errors after the owner has gone, because loom 0.7 does not model
-disconnection. Integration must replace these model sources with the real
-ingress and worker-output source when those branches land.
+Epoch refusal is checked fake-against-fake: the contract check writes a newer
+epoch, reopens the fake, and attempts an older write. The controller loop never
+reaches that older-epoch dispatch. The store re-epochs Intended effects during
+an upgrade and refuses upgrades with Sent, Uncertain, or Cancelling deliveries.
+
+`ingress_loom.rs` is a placeholder. Its two model sources exchange `cli::Input`
+values over a loom channel, but it runs no controller, ingress, or worker source
+code. The checks describe the intended publication and source-order rules only.
+A standard-channel test checks disconnection because loom 0.7 does not model it.
+Ticket #71 will model the real ingress and worker source after #64 and #60 merge.
+The current loom model does not cover the controller's concurrent code.
 
 ## Fleet verification
 
 `crates/controller/tools/crash_manifest.py` generates five PrismaBuild actions.
-Three require the host tags `dl380g10`, `sparky`, and `sparklina`. Two allow any
-worker, with separate seeds so they cannot reuse one action's receipt. All five
-run the controller scenarios and ingress tests. One also runs workspace
-formatting, Clippy, all Rust tests, and the kernel build without default features.
+Three run the default smoke scenario with the host tags `dl380g10`, `sparky`,
+and `sparklina`. One portable action sets `TL3_SIM_FULL=1` for the full matrix.
+The other runs `verify.sh` with a separate seed and the smoke default, including
+workspace formatting, Clippy, all Rust tests, and the kernel build without
+default features. All five include the existing controller scenarios and the
+placeholder ingress tests.
 The simulation prints its own elapsed time and number of real process kills.
 
 The crash matrix uses a small seeded footprint. The tracer's existing 80-file

@@ -1,5 +1,5 @@
-// #9 and #10 have not landed. This models their agreed Sender<Input> shape,
-// not production source code. Replace the model with those sources on integration.
+// Placeholder only: this runs no controller or production source code.
+// Ticket #71 covers the real ingress and worker source after #64 and #60 merge.
 use loom::{
     sync::{
         Arc,
