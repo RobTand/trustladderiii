@@ -59,12 +59,7 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    let mut file = match File::open(format!("/proc/{}/stat", identity.pid)) {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e.into()),
-    };
-    let Some(stat) = read_stat(&mut file)? else {
+    let Some(stat) = read_stat(File::open(format!("/proc/{}/stat", identity.pid)))? else {
         return Ok(false);
     };
     let fields: Vec<_> = stat
@@ -142,7 +137,17 @@ fn temporary(path: &Path) -> PathBuf {
     ))
 }
 
-fn read_stat(file: &mut File) -> Result<Option<String>> {
+fn read_stat(opened: std::io::Result<File>) -> Result<Option<String>> {
+    let mut file = match opened {
+        Ok(file) => file,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    };
     let mut stat = String::new();
     match file.read_to_string(&mut stat) {
         Ok(_) => Ok(Some(stat)),
@@ -166,9 +171,42 @@ mod tests {
             .stdin(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
+        let stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
         drop(child.stdin.take());
         child.wait().unwrap();
-        assert_eq!(read_stat(&mut stat).unwrap(), None);
+        assert_eq!(read_stat(Ok(stat)).unwrap(), None);
+    }
+
+    #[test]
+    fn process_exit_during_stat_open_is_absence() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let directory = File::open(format!("/proc/{}", child.id())).unwrap();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        // Hold the directory resolved by path lookup, then finish the open after exit.
+        let opened = rustix::fs::openat(
+            &directory,
+            "stat",
+            rustix::fs::OFlags::RDONLY,
+            rustix::fs::Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(std::io::Error::from);
+        assert_eq!(
+            opened.as_ref().unwrap_err().raw_os_error(),
+            Some(rustix::io::Errno::SRCH.raw_os_error())
+        );
+        assert_eq!(read_stat(opened).unwrap(), None);
+    }
+
+    #[test]
+    fn stat_open_permission_error_is_not_absence() {
+        let denied = std::io::Error::from_raw_os_error(rustix::io::Errno::ACCESS.raw_os_error());
+        assert!(matches!(read_stat(Err(denied)), Err(Error::Io(error))
+            if error.kind() == std::io::ErrorKind::PermissionDenied));
     }
 }

@@ -99,6 +99,117 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
+`adapters::simulation_with_workers` replaces ingest, audit, planning and maker with Python
+worker processes and returns a `WorkerOutputSource`. Review remains on
+the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+before dispatch. Audit reads the stored ingest reply. An ingest revision reads
+the audit's objections. Missing materials block dispatch.
+
+Maker materials use a `maker` object in that same per-node record. It contains
+the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
+accumulated `feedback`. A fix round requires feedback. The controller records
+failed checks, review requests and can't-meet reports in `maker_findings` in the
+same transaction as the kernel reply. The supervisor adds these to supplied
+findings on every subsequent attempt. Ingress supplies the brief slice and
+detailed findings; the supervisor supplies authoritative `plan.files`,
+`attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
+endpoint and bank from the delivery and config. Other roles can also use named objects
+in the materials record; the flat ingest/audit format still works.
+
+The maker uses `worktrees_root/HEX_OWNER/HEX_REPO/issue-ISSUE-node-NODE`, matching
+#61's worktree adapter. Owner and repository are lowercase UTF-8 encoded as hex.
+It never uses an empty per-run directory as a checkout.
+The acceptance fixture uses the merged real worktrees adapter.
+Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
+advances attempts. Each attempt has a conversation outside the worktree under
+`workers.runs/sessions/NODE/plan-REPLANNED/attempt-N.json`. Round 1 resumes
+it. A fitting `needs_files` resumes at round 0 within the same attempt and plan.
+The resume decision checks the stored reply against the delivery attempt and
+re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
+A checkpoint records the starting commit for each
+Making visit, including rebase-needs-changes revisits in the same attempt and round.
+The controller records the generation of the last accepted maker reply. Until it
+accepts a reply, retries retain the checkpoint across new generations and count
+commits left by a crash or a failed session save. An accepted reply ends the visit.
+Each attempt stores one checkpoint with its generation and head; visits replace it
+so retries cannot accumulate checkpoint files.
+An accepted `maker_session` without a numeric generation is rejected before a
+worker starts, with `maker session has no accepted generation`. Slice one is
+unreleased; legacy sessions need explicit repair rather than guessing whether
+an old checkpoint belongs to the current visit. An absent session still starts
+normally and can recover unaccepted commits.
+Only clean, resumable completions save conversation history. Out-of-room runs
+preserve any previous conversation without saving the exhausted one.
+
+After durable work drains, the supervisor deletes a closed node's session
+directory only when no inbox entry, pending effect, retained watch or unretired worker can
+reconcile that node. It queries only remaining session directories after retiring
+runs, without loading historical world rows. Deletion errors are logged and retained
+for a later pass; they do not fail the controller's idle drain.
+Open requests keep their sessions. The directory itself survives a crash as
+the cleanup queue, and the next drain repeats deletion. No clock triggers cleanup.
+Worker code commits a completed change and computes a conservative fit bound
+for additional files. The controller interns returned heads and requested paths
+before delivering kernel replies. It stores the latest reply as `maker_replies`.
+
+Maker acceptance runs the actual Python entry point and maker graph with a
+scripted model, fake read-only Hindsight, and recorded self-check results.
+The combined acceptance also uses #61's real worktrees adapter for checkout,
+publication and cleanup. Focused worker cases keep their local Git fixtures.
+The checks use the merged real PrismaBuild adapter, its result source, and recorded
+PrismaBuild queue and ending records. No nested submission runs in acceptance.
+Scenarios cover success, failed checks through both rounds of all three attempts
+and one re-plan, an actual commit outside the footprint, requested files,
+context exhaustion, unmet goals, invalid output, recovery, and stop.
+Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
+`failed_tests` with `test` and `message`, `outside_paths`, and `ci_checks` with
+`name`, `summary` and optional `url`. The report describes the failure in plain
+language. `Observation::CiFailed` persists named CI evidence in the same
+transaction as its kernel fact. A bare non-infrastructure CI fact still records
+feedback, explicitly stating when the upstream supplied no check details.
+Infrastructure failures and stale replies do not add maker findings.
+
+Production integration still requires:
+
+1. The controller's production material assembler must write the `maker` object
+   with `Store::put_worker_materials` before dispatch. There is no production
+   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
+   and planner check plan to this store API. The supervisor supplies kernel fields
+   and deployment settings; it does not invent a brief or checks.
+2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
+   feedback with the failed check's name and link or summary remains pending.
+   Its current bare fact is supported but lacks details.
+
+The merged PrismaBuild checks observation supplies changed paths and up to 20
+failing test IDs with messages capped at 1,000 characters each. The trusted
+harness retains pytest assertion messages; older reports without messages still
+parse and receive an explicit fallback. The controller records paths outside the
+node's footprint and failed tests in `maker_findings`. Missing goal materials
+retain unbound findings with an empty goal list and a log entry. Invalid goal IDs
+return an error. CI feedback keeps up to 20 checks, with 1,000-character summaries,
+4,096-character links and a 16,000-character finding report.
+
+`tests/maker/records` retains the actual maker-to-harness trial's terminal record,
+CAS receipt and payload. Acceptance verifies the hash and compares its code, tests
+and harness configuration with a new maker change. It then runs the real checks
+adapter against recorded queue evidence. The separate trial checks the committed
+result independently through PrismaBuild's managed container.
+
+Generate all-host verification with
+`python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
+the manifest with `pbcampaign.py --detach`. The three pinned actions run maker,
+worker, supervisor, PrismaBuild adapter, GitHub ingress and worktrees scenarios.
+They also cover process exit during both opening and reading `/proc/<pid>/stat`.
+The open case extends main's ESRCH fix; permission errors still propagate.
+The daemon fixture makes and commits a real change through the shared ingress loop.
+A separate portable action runs the Python worker and harness suites and
+`tools/verify.sh`. These tests use fixtures and never submit nested jobs.
+Add `--trial-image <immutable-image>` to the manifest command to include a new
+real maker-to-harness trial in its own admitted action. The image must already
+exist on an eligible worker. `tools/maker_trial.py` requires admission and
+never submits work. The submitting session runs `pbcampaign.py` outside every
+admitted action.
+
 ## GitHub ingress in simulation
 
 `ingress::Source` runs on its own thread and sends `cli::Input` values to one
@@ -211,14 +322,9 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
-`adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
-processes and returns a `WorkerOutputSource`. Making and review remain on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
-before dispatch. Audit reads the stored ingest reply. An ingest revision reads
-the audit's objections. Missing materials block dispatch.
-
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
-ingest, audit and planning, with the remaining roles and upstreams simulated. Add
+ingest, audit, planning and maker, with the remaining roles and upstreams simulated. Add
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
 sources against a local GitHub mock. Without `--workers`, workers stay simulated.
 Worker replies enter the same controller channel as webhook notifications. A

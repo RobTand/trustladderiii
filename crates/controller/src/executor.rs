@@ -63,6 +63,8 @@ pub struct Delivery {
     pub attempt: u8,
     pub round: u8,
     #[serde(default)]
+    pub replanned: bool,
+    #[serde(default)]
     pub checks: Option<crate::adapters::prismabuild::CheckRun>,
     #[serde(default)]
     pub job_generation: Option<u64>,
@@ -113,6 +115,11 @@ pub enum Observation {
         reply: serde_json::Value,
     },
     Kernel(Event),
+    CiFailed {
+        node: NodeId,
+        infra: bool,
+        checks: Vec<crate::findings::CiFailure>,
+    },
     CheckPlan {
         node: NodeId,
         sha: String,
@@ -125,6 +132,8 @@ pub enum Observation {
         base_sha: String,
         sha: String,
         changed_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        failed_tests: Vec<crate::findings::FailedTest>,
         report: bool,
         pass: bool,
     },

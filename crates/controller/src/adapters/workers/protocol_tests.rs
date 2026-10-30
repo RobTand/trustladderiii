@@ -27,7 +27,10 @@ fn sizing_ceil_floor_and_kernel_range() {
     ] {
         let mapped = map_reply("ingest", &ingest(tokens));
         if let Some(size) = size {
-            assert_eq!(mapped.unwrap(), Reply::IngestDone { size }, "{tokens}");
+            assert!(
+                matches!(mapped.unwrap(), MappedReply::Kernel(Reply::IngestDone { size: actual }) if actual == size),
+                "{tokens}"
+            );
         } else {
             assert!(mapped.is_err(), "{tokens} must fail instead of wrapping");
         }
@@ -86,7 +89,10 @@ fn split_forecast_keys_are_the_union_of_piece_files() {
     ], "forecast": ingest(1)["forecast"], "violations": []});
     assert!(map_reply("planner", &reply).is_err());
     reply["forecast"]["file_tokens"]["new.py"] = json!(0);
-    assert_eq!(map_reply("planner", &reply).unwrap(), Reply::PlanSplit);
+    assert!(matches!(
+        map_reply("planner", &reply).unwrap(),
+        MappedReply::Kernel(Reply::PlanSplit)
+    ));
     reply["forecast"]["file_tokens"]["extra.py"] = json!(0);
     assert!(map_reply("planner", &reply).is_err());
 }

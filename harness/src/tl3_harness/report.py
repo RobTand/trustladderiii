@@ -8,7 +8,8 @@ class InvalidReport(ValueError):
 
 
 def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_code: int,
-          added_names: frozenset[tuple[str, str]] = frozenset()) -> dict[str, Outcome]:
+          added_names: frozenset[tuple[str, str]] = frozenset(), *,
+          messages: dict[str, str] | None = None) -> dict[str, Outcome]:
     if not records:
         return dict.fromkeys(tests, Outcome.NO_REPORT)
     if records[0] != {"event": "start", "schema": 1}:
@@ -18,7 +19,12 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
     phases = {}
     selected = None
     collection_error = False
+    collection_message = ""
     for record in records[1:-1]:
+        message = record.get("message", "")
+        if not isinstance(message, str) or len(message) > 1000:
+            raise InvalidReport("invalid failure message")
+        record = {key: value for key, value in record.items() if key != "message"}
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
                 if (selected is not None or not all(isinstance(name, str) for name in names)
@@ -27,6 +33,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 selected = set(names)
             case {"event": "collection-error"} if len(record) == 1:
                 collection_error = True
+                collection_message = (collection_message + "\n" + message).strip()[:1000]
             case {"event": "phase", "test": str(test), "when": str(when),
                   "outcome": str(outcome), "assertion": bool(assertion), "missing": name} if len(record) == 6:
                 if (selected is None or test not in selected or when not in ("setup", "call", "teardown")
@@ -41,6 +48,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                         or when == "teardown" and previous not in (["setup"], ["setup", "call"])):
                     raise InvalidReport("test phases are out of order")
                 phases[test, when] = (outcome, assertion, tuple(name) if name else None)
+                if messages is not None and outcome == "failed" and message:
+                    messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
             case _:
                 raise InvalidReport("unknown report event")
     outcomes = {}
@@ -49,6 +58,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
             outcomes[test] = Outcome.MISSING
         elif collection_error:
             outcomes[test] = Outcome.ERROR
+            if messages is not None and collection_message:
+                messages[test] = collection_message
         elif selected is None:
             raise InvalidReport("missing collection report")
         elif test not in selected:
