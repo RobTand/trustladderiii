@@ -171,6 +171,18 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--maker-rebase") {
+        prepare_workers();
+        let mut database = Database::start();
+        for new_edits in [false, true] {
+            maker::rebase_trial(
+                &database.create(&format!("maker_rebase_{new_edits}")),
+                new_edits,
+            );
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--source-io-child") {
         let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
         retirement_review::io_child(&settings, Path::new(&args[3]));

@@ -15,10 +15,10 @@ pub(super) struct Flow {
 
 impl Flow {
     pub(super) fn start(settings: &tl3_config::Store, root: &Path) -> Self {
-        Self::start_mode(settings, root, "normal")
+        Self::start_mode(settings, root, "normal", false)
     }
 
-    fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str) -> Self {
+    fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str, hold_queue: bool) -> Self {
         let (config, source, worktree, base) = repository_fixture(settings, root, mode);
         let remote = root.join("remote.git");
         let repository = root.join("served.git");
@@ -53,6 +53,9 @@ impl Flow {
         .unwrap();
         let (mut registry, source, checks_source) = registry(&config, &root.join("fakes"), false);
         registry.register(Upstream::Worktrees, real);
+        if hold_queue {
+            registry.register(Upstream::Mergify, HeldQueue);
+        }
         let controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -85,6 +88,13 @@ impl Flow {
             {
                 return;
             }
+            assert!(
+                !world
+                    .nodes
+                    .first()
+                    .is_some_and(|node| node.phase.is_closed()),
+                "fixture closed before reaching its target phase"
+            );
             if !self.controller.drive_once().unwrap() {
                 assert!(
                     self.controller
@@ -223,6 +233,7 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         settings,
         root.path(),
         if new_edits { "rebase-edits" } else { "normal" },
+        true,
     );
     flow.until(|phase| phase == Phase::Queued);
     let first = flow.controller.world().unwrap().nodes[0];
@@ -306,4 +317,14 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         .unwrap();
     flow.until(|phase| phase.is_closed());
     while flow.controller.drive_once().unwrap() {}
+}
+
+struct HeldQueue;
+impl Executor for HeldQueue {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+    }
 }

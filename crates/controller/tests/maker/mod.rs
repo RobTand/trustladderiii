@@ -2,6 +2,10 @@ use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
 mod real;
 
+pub(super) fn rebase_trial(settings: &tl3_config::Store, new_edits: bool) {
+    real::rebase_revisit(settings, new_edits);
+}
+
 pub(super) fn trial(settings: &tl3_config::Store, root: &Path) {
     real::Flow::start(settings, root).write_trial(root);
 }
