@@ -72,7 +72,9 @@ class Worktree:
 
     @contextmanager
     def _directory(self, parts, *, create=False):
-        fd = os.dup(self._root)
+        # A dup shares its directory position with every other dup, so parallel
+        # tool calls would steal each other's entries. Open the root afresh.
+        fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self._root)
         try:
             for part in parts:
                 if create:
