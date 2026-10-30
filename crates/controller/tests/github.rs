@@ -362,6 +362,7 @@ fn main() {
     let mut database = support::Database::start();
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
         match scenario {
+            "quote" => steering::dropped_change_quote(),
             "second" => steering::second_replacement(&database.create("second_replacement")),
             "merge" => steering::merge_pending(&database.create("merge_pending"), "none"),
             _ => panic!("unknown followup scenario"),
@@ -411,6 +412,7 @@ fn main() {
         );
     }
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    steering::dropped_change_quote();
     steering::second_replacement(&database.create("second_replacement"));
     for point in [
         "none",
@@ -431,7 +433,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    println!("44 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();

@@ -1422,3 +1422,59 @@ pub(super) fn merge_pending_child(args: &[String]) {
 fn selected_reconcile(point: &str) -> bool {
     point == "BeforeReconcile" || point == "AfterReconcile"
 }
+
+pub(super) fn dropped_change_quote() {
+    struct Draft(&'static str);
+    impl Writer for Draft {
+        fn draft(&mut self, _: &str, _: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+            Ok(WriterReply::Text(adapters::workers::writer::TextDraft {
+                text: self.0.into(),
+            }))
+        }
+    }
+    let input = WriteRequest {
+        kind: MessageKind::Note,
+        facts: json!({"issue_title": "Add a blue button", "request": "Add a blue button",
+            "change": "The old version merged before your change could start. Please file it again.",
+            "change_quote": "Fix the leaf in workers/src/agent_job.rs."}),
+        violations: vec![],
+    };
+    assert!(
+        matches!(
+            checked_draft(
+                &mut Draft(
+                    "The old version merged before your change could start. Please file it again."
+                ),
+                "dropped",
+                input.clone(),
+                &Policy::default()
+            ),
+            Err(tl3_controller::Error::MessageRejected)
+        ),
+        "the checker must reject a note that drops Rob's change"
+    );
+    let text = "The old version merged before your change could start. Please file it again.\n\n\"Fix the leaf in workers/src/agent_job.rs.\"";
+    assert_eq!(
+        checked_draft(
+            &mut Draft(text),
+            "dropped",
+            input.clone(),
+            &Policy::default()
+        )
+        .unwrap(),
+        text
+    );
+    assert!(
+        matches!(
+            checked_draft(
+                &mut Draft("The leaf failed. \"Fix the leaf in workers/src/agent_job.rs.\""),
+                "dropped",
+                input,
+                &Policy::default()
+            ),
+            Err(tl3_controller::Error::MessageRejected)
+        ),
+        "only Rob's exact quote is exempt from prose checks"
+    );
+    println!("test steering_dropped_change_quote ... ok");
+}
