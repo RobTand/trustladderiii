@@ -76,6 +76,8 @@ pub struct PullHead {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckRun {
     pub id: u64,
+    #[serde(default)]
+    pub pull_requests: Vec<CheckPullRequest>,
     pub name: String,
     pub head_sha: String,
     pub external_id: Option<String>,
@@ -101,6 +103,8 @@ pub struct CheckApp {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckSuite {
     pub id: u64,
+    #[serde(default)]
+    pub pull_requests: Vec<CheckPullRequest>,
     pub head_sha: String,
     pub status: String,
     pub conclusion: Option<String>,
@@ -208,4 +212,9 @@ pub struct MergeGroup {
     pub head_sha: String,
     pub head_ref: String,
     pub base_ref: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CheckPullRequest {
+    pub number: u64,
 }

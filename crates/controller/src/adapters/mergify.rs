@@ -192,7 +192,7 @@ impl Adapter {
         let issue = self
             .runtime
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
-        if current_head && terminal {
+        if current_head && terminal && baseline.is_none() {
             // An unchanged terminal check belongs to the previous enqueue, not this key.
             return Ok(Reconciliation::Absent);
         }
@@ -517,18 +517,26 @@ impl Translator {
                 }));
             }
             Event::CheckRunCompleted { check_run, .. } => {
-                for item in tracked
-                    .iter()
-                    .filter(|item| item.head == check_run.head_sha)
-                {
+                for item in tracked.iter().filter(|item| {
+                    item.head == check_run.head_sha
+                        && (check_run.pull_requests.is_empty()
+                            || check_run
+                                .pull_requests
+                                .iter()
+                                .any(|pull| pull.number == item.number))
+                }) {
                     facts.extend(self.look(github, repo, item)?);
                 }
             }
             Event::CheckSuiteCompleted { check_suite, .. } => {
-                for item in tracked
-                    .iter()
-                    .filter(|item| item.head == check_suite.head_sha)
-                {
+                for item in tracked.iter().filter(|item| {
+                    item.head == check_suite.head_sha
+                        && (check_suite.pull_requests.is_empty()
+                            || check_suite
+                                .pull_requests
+                                .iter()
+                                .any(|pull| pull.number == item.number))
+                }) {
                     facts.extend(self.look(github, repo, item)?);
                 }
             }

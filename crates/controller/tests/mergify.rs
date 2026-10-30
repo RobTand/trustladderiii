@@ -74,6 +74,7 @@ struct State {
     posts: usize,
     fail_reads: bool,
     lag: bool,
+    fail_post: bool,
     events: Vec<Value>,
     merge_checks: Value,
 }
@@ -92,6 +93,7 @@ impl State {
             posts: 0,
             fail_reads: false,
             lag: false,
+            fail_post: false,
             events: vec![],
             merge_checks: json!([{ "id": 900, "name": "CI", "head_sha": "merge-tree",
                 "status": "completed", "conclusion": "success", "app": {"id": 2, "slug": "ci"} }]),
@@ -140,6 +142,7 @@ impl Respond for Api {
                 state.posts += 1;
                 state.label = true;
                 if !state.lag { state.checks = fixture("running", "checks"); }
+                if state.fail_post { return ResponseTemplate::new(503); }
                 ResponseTemplate::new(200).set_body_json(json!([{"name":"tl3-queue"}]))
             }
             ("GET", "/repos/owner/sandbox/pulls") => ResponseTemplate::new(200).set_body_json(json!([state.pull])),
@@ -391,6 +394,7 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     assert!(controller.drive_once().unwrap());
     let facts = queue_facts(&mut controller);
     assert_eq!(facts.len(), 1);
+    assert_kernel_facts(settings, 1);
     if !conflict {
         assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], infra);
     }
@@ -443,6 +447,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
     ingress::drain(&mut controller).unwrap();
     controller.drive_once().unwrap();
     assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert_kernel_facts(settings, 1);
     if action == "unlabeled" {
         assert!(controller.world().unwrap().nodes[0].paused);
     }
@@ -482,6 +487,18 @@ fn ignored_events(settings: &tl3_config::Store) {
             .is_empty()
     );
     body["check_suite"]["head_sha"] = api.state.lock().unwrap().pull["head"]["sha"].clone();
+    body["check_suite"]["pull_requests"] = json!([{"number":999}]);
+    assert!(
+        translator
+            .webhook(
+                &parsed("check_suite", body.clone()),
+                &controller.snapshot().unwrap(),
+                &bootstrap()
+            )
+            .unwrap()
+            .is_empty()
+    );
+    body["check_suite"]["pull_requests"] = json!([]);
     body["installation"]["id"] = json!(4);
     assert!(
         translator
@@ -508,6 +525,16 @@ fn ignored_events(settings: &tl3_config::Store) {
     );
     assert!(queue_facts(&mut controller).is_empty());
 }
+fn assert_kernel_facts(settings: &tl3_config::Store, expected: usize) {
+    let count = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 2000)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.receipt.result["kernel_event"].get("Fact").is_some())
+        .count();
+    assert_eq!(count, expected, "each queue fact must step the kernel once");
+}
 fn parsed(name: &str, value: Value) -> tl3_github::webhook::Event {
     let bytes = serde_json::to_vec(&value).unwrap();
     let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
@@ -531,6 +558,7 @@ fn delivery() -> Delivery {
             node: NodeId(0),
             seq: 1,
             kind: EffectKind::Enqueue,
+            head: None,
         },
         generation: 1,
         head_sha: Some("abc1234".into()),
@@ -587,12 +615,31 @@ fn executor_recovery() {
     api.state.lock().unwrap().checks = fixture("failed", "checks");
     api.state.lock().unwrap().label = true;
     let posts = api.state.lock().unwrap().posts;
+    api.state.lock().unwrap().lag = true;
+    assert!(adapter.execute(&delivery).is_err());
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Pending
+    ));
+    api.state.lock().unwrap().checks = fixture("running", "checks");
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
     assert_eq!(
         api.state.lock().unwrap().posts,
         posts + 1,
         "new key must enqueue after the old failure"
     );
+    delivery.key = "lost-label-response".into();
+    api.state.lock().unwrap().checks = fixture("waiting", "checks");
+    api.state.lock().unwrap().label = false;
+    api.state.lock().unwrap().lag = false;
+    api.state.lock().unwrap().fail_post = true;
+    let posts = api.state.lock().unwrap().posts;
+    assert!(adapter.execute(&delivery).is_err());
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert_eq!(api.state.lock().unwrap().posts, posts + 1);
     delivery.epoch = 1;
     drop(adapter);
     let mut old = api.adapter(root.path(), 1);
