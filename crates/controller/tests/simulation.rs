@@ -3,9 +3,11 @@ mod support;
 use std::{
     collections::BTreeSet,
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    time::Duration,
 };
 use support::Database;
 use tl3_controller::{
@@ -14,7 +16,7 @@ use tl3_controller::{
     status,
 };
 use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase};
-use tl3_store::{Commit, EffectState, EffectTransition, Epoch, RowChange, Snapshot, Store};
+use tl3_store::{Commit, EffectState, EffectTransition, Epoch, Reader, RowChange, Snapshot, Store};
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
@@ -35,6 +37,7 @@ fn labelled() -> LabelledIssue {
         repo: "tl3-sandbox".into(),
         installation: 1,
         number: 42,
+        title: "Fix the sandbox build".into(),
         actor: 24923402,
         label: "tl3".into(),
     }
@@ -89,8 +92,11 @@ fn main() {
         test(&database.create(name));
         println!("test {name} ... ok");
     }
+    status_requires_initialized_database(&database.create("status_fresh"));
+    status_page_and_command(&database.create("status"), &mut database);
+    println!("test status_page_and_command ... ok");
     database.stop();
-    println!("{} controller scenarios passed; no skips", cases.len());
+    println!("{} controller scenarios passed; no skips", cases.len() + 2);
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {
@@ -174,7 +180,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     );
     let initial = cli_status(&config);
     assert!(
-        initial.contains("Ingesting\tStartRun(Ingest)\t0"),
+        initial.contains("Understanding the request\trequest reader to start\t0"),
         "{initial}"
     );
     let mut seen = BTreeSet::new();
@@ -182,9 +188,12 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
         let world = controller.world().unwrap();
         assert!(world.valid() && world.is_settled());
         seen.insert(world.nodes[0].phase.name());
-        let mut reader = Store::open_read_only(settings).unwrap();
-        let rendered = status::render(&mut reader).unwrap();
-        assert!(rendered.contains(&format!("\t{}\n", world.nodes[0].credit.balance())));
+        let mut reader = Reader::open(settings).unwrap();
+        let rendered = status::render_text(&status::load(&mut reader).unwrap());
+        assert!(rendered.contains(&format!(
+            "\t{}\tnone recorded\tnone recorded\n",
+            world.nodes[0].credit.balance()
+        )));
         if !controller.drive_once().unwrap() {
             break;
         }
@@ -207,7 +216,8 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     assert_finished(&mut controller, &records, settings);
     let final_status = cli_status(&config);
     assert!(
-        final_status.contains("RobTand/tl3-sandbox#42\tClosed(Merged)\tnone\t5"),
+        final_status
+            .contains("RobTand/tl3-sandbox#42: Fix the sandbox build\tClosed: merged\tnone\t5"),
         "{final_status}"
     );
     let snapshot = controller.snapshot().unwrap();
@@ -255,7 +265,7 @@ fn assert_finished(controller: &mut Controller, root: &Path, settings: &tl3_conf
         5
     );
     let counts = adapters::delivery_counts(root).unwrap();
-    let effects = Store::open_read_only(settings).unwrap().effects().unwrap();
+    let effects = Reader::open(settings).unwrap().effects().unwrap();
     let expected: BTreeSet<_> = effects
         .iter()
         .filter(|e| e.state != EffectState::Cancelled)
@@ -353,7 +363,7 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_finished(&mut open(settings, &records), &records, settings);
-    assert!(cli_status(&config).contains("Closed(Merged)\tnone\t5"));
+    assert!(cli_status(&config).contains("Closed: merged\tnone\t5"));
 }
 
 fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
@@ -371,7 +381,7 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
         .unwrap();
     assert_eq!(ready.trim(), "READY");
     let settings = tl3_config::Config::load(config).unwrap().store;
-    let mut reader = Store::open_read_only(&settings).unwrap();
+    let mut reader = Reader::open(&settings).unwrap();
     let before = reader.load().unwrap();
     let before_effects = reader.effects().unwrap();
     let before_events = reader
@@ -411,7 +421,7 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
         assert_eq!(status.signal(), Some(9));
     }
     controller_lock_barrier(&settings);
-    let after = Store::open_read_only(&settings).unwrap().load().unwrap();
+    let after = Reader::open(&settings).unwrap().load().unwrap();
     assert_eq!(after, before, "SIGKILL must preserve every stored row");
     assert_eq!(
         reader.effects().unwrap(),
@@ -712,6 +722,328 @@ fn controller_lock_barrier(settings: &tl3_config::Store) {
     client
         .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
         .unwrap();
+}
+
+struct StatusServer(Child);
+impl Drop for StatusServer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn http(address: std::net::SocketAddr, method: &str, path: &str) -> (String, String) {
+    try_http(address, method, path).unwrap()
+}
+
+fn try_http(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+) -> std::io::Result<(String, String)> {
+    let mut connection = TcpStream::connect(address)?;
+    connection.set_read_timeout(Some(Duration::from_secs(10)))?;
+    write!(
+        connection,
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    connection.read_to_string(&mut response)?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| std::io::Error::other("incomplete HTTP response"))?;
+    Ok((headers.to_ascii_lowercase(), body.into()))
+}
+
+fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database) {
+    let root = tempfile::tempdir().unwrap();
+    let records = root.path().join("upstreams");
+    let mut controller = open(settings, &records);
+    assert!(
+        status::load(&mut Reader::open(settings).unwrap())
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+    let mut issue = labelled();
+    issue.title = "Fix <script>alert('oops')</script> & spacing\t\n".into();
+    controller.intake(issue).unwrap();
+    for iteration in 0..100 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Making {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+        assert!(iteration < 99);
+    }
+    let before = controller.snapshot().unwrap();
+    let mut reader = Reader::open(settings).unwrap();
+    let model = status::load(&mut reader).unwrap();
+    assert_eq!(model.requests.len(), 1);
+    let row = &model.requests[0];
+    assert_eq!(
+        row.issue,
+        "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing"
+    );
+    assert_eq!(row.phase, "Making the change");
+    assert_eq!(row.waiting_on, "preparing the change files");
+    assert_eq!(row.credit, 4);
+    assert_eq!(row.details, status::RequestDetails::default());
+    let expected_text = concat!(
+        "Request\tPhase\tWaiting on\tCredit\tLast progress\tOpen incidents\n",
+        "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing\t",
+        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\n"
+    );
+    assert_eq!(status::render_text(&model), expected_text);
+    let expected_html = status::render_html(&model);
+    assert!(expected_html.contains("<td>RobTand/tl3-sandbox#42: Fix &lt;script&gt;alert(&#39;oops&#39;)&lt;/script&gt; &amp; spacing</td>"));
+    assert!(expected_html.contains("<td>Making the change</td><td>preparing the change files</td><td>4</td><td>none recorded</td><td>none recorded</td>"));
+    assert!(!expected_html.contains("<script>"));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = config_file(settings, root.path());
+    let contents = fs::read_to_string(&config)
+        .unwrap()
+        .replace("127.0.0.1:8033", &address.to_string());
+    fs::write(&config, contents).unwrap();
+    drop(listener);
+    let mut server = StatusServer(
+        Command::new(env!("CARGO_BIN_EXE_tl3"))
+            .args(["status-serve", "--config"])
+            .arg(&config)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut ready = String::new();
+    BufReader::new(server.0.stdout.take().unwrap())
+        .read_line(&mut ready)
+        .unwrap();
+    assert!(
+        ready.contains(&address.to_string()),
+        "server failed to start: {ready}"
+    );
+    assert_eq!(cli_status(&config), expected_text);
+    let (headers, body) = http(address, "GET", "/");
+    assert!(headers.starts_with("http/1.1 200"), "{headers}");
+    assert!(!headers.contains("www-authenticate") && !headers.contains("set-cookie"));
+    assert!(headers.contains("cache-control: no-store"));
+    assert!(headers.contains("connection: close"));
+    assert!(headers.contains("x-content-type-options: nosniff"));
+    assert!(headers.contains("content-security-policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"));
+    assert_eq!(body, expected_html);
+    let (headers, body) = http(address, "HEAD", "/");
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(headers.contains(&format!("content-length: {}", expected_html.len())));
+    assert!(body.is_empty());
+    for method in ["POST", "PUT", "DELETE", "OPTIONS"] {
+        let (headers, _) = http(address, method, "/");
+        assert!(headers.starts_with("http/1.1 405"), "{method}: {headers}");
+        assert!(headers.contains("allow: get, head"));
+    }
+    assert!(
+        http(address, "GET", "/missing")
+            .0
+            .starts_with("http/1.1 404")
+    );
+    assert_eq!(
+        controller.snapshot().unwrap(),
+        before,
+        "status must write nothing"
+    );
+    drain(&mut controller);
+    let final_model = status::load(&mut reader).unwrap();
+    assert_ne!(final_model, model);
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+    assert_eq!(cli_status(&config), status::render_text(&final_model));
+    status_socket_limits(address);
+    let mut large = labelled();
+    large.delivery = "large-status-delivery".into();
+    large.number = 43;
+    large.title = "x".repeat(256 * 1024);
+    controller.intake(large).unwrap();
+    let slow: Vec<_> = (0..4)
+        .map(|_| {
+            let mut stream = small_receive_window(address);
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            stream
+        })
+        .collect();
+    // Small receive windows fill the sockets without expensive page rendering.
+    // The fifth request queues behind four replies larger than the TCP windows.
+    // Keep those clients open without reading while a normal client is served.
+    let (headers, body) = http(address, "HEAD", "/");
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(body.is_empty());
+    std::thread::sleep(Duration::from_secs(3));
+    for mut stream in slow {
+        socket2::SockRef::from(&stream)
+            .set_recv_buffer_size(1024 * 1024)
+            .unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut reply = Vec::new();
+        let result = stream.read_to_end(&mut reply);
+        assert!(
+            result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::ConnectionReset
+        );
+        let header_end = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let headers = std::str::from_utf8(&reply[..header_end]).unwrap();
+        let length: usize = headers
+            .split("Content-Length: ")
+            .nth(1)
+            .unwrap()
+            .split("\r\n")
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            reply.len() - header_end < length,
+            "stuck writer must time out before sending the full body"
+        );
+    }
+    let final_model = status::load(&mut reader).unwrap();
+    drop(controller);
+    database.restart();
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+    database.stop();
+    let (headers, body) = http(address, "GET", "/");
+    assert!(headers.starts_with("http/1.1 503"));
+    assert_eq!(body, "Status is temporarily unavailable.\n");
+    let mut logged = String::new();
+    BufReader::new(server.0.stderr.take().unwrap())
+        .read_line(&mut logged)
+        .unwrap();
+    assert!(
+        logged.contains("status unavailable: Postgres operation failed"),
+        "{logged}"
+    );
+    database.resume();
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+}
+
+fn status_requires_initialized_database(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config_file(settings, root.path());
+    for command in ["status", "status-serve"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tl3"))
+            .args([command, "--config"])
+            .arg(&config)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("database not initialized"), "{error}");
+        assert!(!error.contains("Postgres operation failed"));
+    }
+}
+
+fn small_receive_window(address: std::net::SocketAddr) -> TcpStream {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .unwrap();
+    // Set before connect so the negotiated TCP window cannot auto-grow.
+    socket.set_recv_buffer_size(1024).unwrap();
+    socket.connect(&address.into()).unwrap();
+    socket.into()
+}
+
+fn status_socket_limits(address: std::net::SocketAddr) {
+    assert!(http(address, "GET", "/?x=1").0.starts_with("http/1.1 200"));
+    assert!(http(address, "HEAD", "/?x=1").0.starts_with("http/1.1 200"));
+    assert!(
+        http(address, "GET", "/missing?x=1")
+            .0
+            .starts_with("http/1.1 404")
+    );
+    let mut split = TcpStream::connect(address).unwrap();
+    split
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    split
+        .write_all(b"GET /?split=1 HTTP/1.1\r\nHost: local")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    split.write_all(b"host\r\n\r\n").unwrap();
+    let mut response = String::new();
+    split.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let mut stalled = TcpStream::connect(address).unwrap();
+    stalled.write_all(b"GET / HTTP/1.1\r\nHost:").unwrap();
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
+    stalled
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut response = String::new();
+    stalled.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
+
+    let mut oversized = TcpStream::connect(address).unwrap();
+    let mut request = b"GET / HTTP/1.1\r\nX-Large: ".to_vec();
+    request.resize(8 * 1024, b'x');
+    oversized.write_all(&request).unwrap();
+    oversized
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut response = String::new();
+    oversized.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 431"), "{response}");
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
+
+    for header in [
+        "Content-Length: 1",
+        "Transfer-Encoding: chunked",
+        "Bad Header: value",
+    ] {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        write!(stream, "GET / HTTP/1.1\r\n{header}\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"), "{header}: {response}");
+    }
+
+    let blocked: Vec<_> = (0..8)
+        .map(|_| TcpStream::connect(address).unwrap())
+        .collect();
+    let mut refused = TcpStream::connect(address).unwrap();
+    refused
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let mut byte = [0];
+    match refused.read(&mut byte) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        result => panic!("ninth connection must be refused immediately: {result:?}"),
+    }
+    drop(blocked);
+    for attempt in 0..20 {
+        if try_http(address, "GET", "/")
+            .is_ok_and(|(headers, _)| headers.starts_with("http/1.1 200"))
+        {
+            return;
+        }
+        assert!(attempt < 19, "status did not recover after clients closed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn raw(settings: &tl3_config::Store) -> postgres::Client {
@@ -1173,7 +1505,7 @@ fn cancelled_absence(settings: &tl3_config::Store) {
         controller_effect(&mut controller, "effect:0:0").state,
         EffectState::Cancelled
     );
-    let events = Store::open_read_only(settings)
+    let events = Reader::open(settings)
         .unwrap()
         .events_after(before.revision, 10)
         .unwrap();
@@ -1341,7 +1673,7 @@ fn invalid_footprints(settings: &tl3_config::Store) {
             ))
         ));
         assert_eq!(
-            status::render(&mut Store::open_read_only(settings).unwrap())
+            status::load(&mut Reader::open(settings).unwrap())
                 .unwrap_err()
                 .to_string(),
             "stored footprint must be sorted and deduplicated"
@@ -1366,10 +1698,8 @@ fn status_is_read_only(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config_file(settings, root.path());
     assert!(matches!(
-        Store::open_read_only(settings),
-        Err(tl3_store::Error::Invalid(
-            "store is uninitialized; start tl3d first"
-        ))
+        Reader::open(settings),
+        Err(tl3_store::Error::NotInitialized)
     ));
     let output = Command::new(env!("CARGO_BIN_EXE_tl3"))
         .args(["status", "--config"])
@@ -1377,7 +1707,7 @@ fn status_is_read_only(settings: &tl3_config::Store) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("uninitialized"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("database not initialized"));
     assert_eq!(
         raw(settings)
             .query_one(
@@ -1391,22 +1721,33 @@ fn status_is_read_only(settings: &tl3_config::Store) {
     );
     let mut writer = Store::open(settings).unwrap();
     assert!(
-        status::render(&mut Store::open_read_only(settings).unwrap())
-            .unwrap_err()
-            .to_string()
-            .contains("uninitialized")
+        status::load(&mut Reader::open(settings).unwrap())
+            .unwrap()
+            .requests
+            .is_empty()
     );
     let mut controller = open(settings, &root.path().join("upstreams"));
     controller.intake(labelled()).unwrap();
     let before = writer.load().unwrap();
-    assert!(cli_status(&config).contains("Ingesting"));
-    let mut reader = Store::open_read_only(settings).unwrap();
-    let attempted = Commit::new("reader-must-not-write", serde_json::json!(null), &before);
+    assert!(cli_status(&config).contains("Understanding the request"));
+    let mut reader = Reader::open(settings).unwrap();
     assert!(
-        reader.commit(&attempted).is_err(),
-        "the server must enforce read-only access"
+        reader
+            .transaction()
+            .unwrap()
+            .batch_execute("CREATE TABLE must_not_write (id integer)")
+            .is_err()
     );
-    assert!(reader.intern_repo("must", "not-write").is_err());
+    assert!(
+        reader
+            .transaction()
+            .unwrap()
+            .execute(
+                "INSERT INTO tl3_intern (kind, scope, value) VALUES ('Repo', 'must', 'not-write')",
+                &[]
+            )
+            .is_err()
+    );
     assert_eq!(writer.load().unwrap(), before);
 }
 

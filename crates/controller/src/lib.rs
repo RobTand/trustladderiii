@@ -5,6 +5,7 @@ pub mod cli;
 pub mod executor;
 mod snapshot;
 pub mod status;
+pub mod status_web;
 
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,8 @@ pub struct LabelledIssue {
     pub repo: String,
     pub installation: u64,
     pub number: u64,
+    #[serde(default)]
+    pub title: String,
     pub actor: u64,
     pub label: String,
 }
@@ -84,6 +87,8 @@ pub struct LabelledIssue {
 struct Request {
     repo: Repository,
     issue: u64,
+    #[serde(default)]
+    title: String,
     issue_id: i64,
 }
 
@@ -192,6 +197,7 @@ impl Controller {
                 json!(Request {
                     repo,
                     issue: issue.number,
+                    title: issue.title.clone(),
                     issue_id
                 }),
             ));
