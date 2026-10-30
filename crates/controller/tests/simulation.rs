@@ -16,7 +16,7 @@ use tl3_controller::{
     status,
 };
 use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase};
-use tl3_store::{Commit, EffectState, EffectTransition, Epoch, RowChange, Reader, Snapshot, Store};
+use tl3_store::{Commit, EffectState, EffectTransition, Epoch, Reader, RowChange, Snapshot, Store};
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
@@ -642,15 +642,26 @@ impl Drop for StatusServer {
 }
 
 fn http(address: std::net::SocketAddr, method: &str, path: &str) -> (String, String) {
-    let mut connection = TcpStream::connect(address).unwrap();
-    connection
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    write!(connection, "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").unwrap();
+    try_http(address, method, path).unwrap()
+}
+
+fn try_http(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+) -> std::io::Result<(String, String)> {
+    let mut connection = TcpStream::connect(address)?;
+    connection.set_read_timeout(Some(Duration::from_secs(10)))?;
+    write!(
+        connection,
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    )?;
     let mut response = String::new();
-    connection.read_to_string(&mut response).unwrap();
-    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-    (headers.to_ascii_lowercase(), body.into())
+    connection.read_to_string(&mut response)?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| std::io::Error::other("incomplete HTTP response"))?;
+    Ok((headers.to_ascii_lowercase(), body.into()))
 }
 
 fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database) {
@@ -761,17 +772,18 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
     let mut large = labelled();
     large.delivery = "large-status-delivery".into();
     large.number = 43;
-    large.title = "x".repeat(16 * 1024 * 1024);
+    large.title = "x".repeat(256 * 1024);
     controller.intake(large).unwrap();
     let slow: Vec<_> = (0..4)
         .map(|_| {
-            let mut stream = TcpStream::connect(address).unwrap();
+            let mut stream = small_receive_window(address);
             stream
                 .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
                 .unwrap();
             stream
         })
         .collect();
+    // Small receive windows fill the sockets without expensive page rendering.
     // The fifth request queues behind four replies larger than the TCP windows.
     // Keep those clients open without reading while a normal client is served.
     let (headers, body) = http(address, "HEAD", "/");
@@ -779,6 +791,9 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
     assert!(body.is_empty());
     std::thread::sleep(Duration::from_secs(3));
     for mut stream in slow {
+        socket2::SockRef::from(&stream)
+            .set_recv_buffer_size(1024 * 1024)
+            .unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -811,7 +826,17 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
         status::render_html(&final_model)
     );
     database.stop();
-    assert!(http(address, "GET", "/").0.starts_with("http/1.1 503"));
+    let (headers, body) = http(address, "GET", "/");
+    assert!(headers.starts_with("http/1.1 503"));
+    assert_eq!(body, "Status is temporarily unavailable.\n");
+    let mut logged = String::new();
+    BufReader::new(server.0.stderr.take().unwrap())
+        .read_line(&mut logged)
+        .unwrap();
+    assert!(
+        logged.contains("status unavailable: Postgres operation failed"),
+        "{logged}"
+    );
     database.resume();
     assert_eq!(
         http(address, "GET", "/").1,
@@ -835,7 +860,39 @@ fn status_requires_initialized_database(settings: &tl3_config::Store) {
     }
 }
 
+fn small_receive_window(address: std::net::SocketAddr) -> TcpStream {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .unwrap();
+    // Set before connect so the negotiated TCP window cannot auto-grow.
+    socket.set_recv_buffer_size(1024).unwrap();
+    socket.connect(&address.into()).unwrap();
+    socket.into()
+}
+
 fn status_socket_limits(address: std::net::SocketAddr) {
+    assert!(http(address, "GET", "/?x=1").0.starts_with("http/1.1 200"));
+    assert!(http(address, "HEAD", "/?x=1").0.starts_with("http/1.1 200"));
+    assert!(
+        http(address, "GET", "/missing?x=1")
+            .0
+            .starts_with("http/1.1 404")
+    );
+    let mut split = TcpStream::connect(address).unwrap();
+    split
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    split
+        .write_all(b"GET /?split=1 HTTP/1.1\r\nHost: local")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    split.write_all(b"host\r\n\r\n").unwrap();
+    let mut response = String::new();
+    split.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     let mut stalled = TcpStream::connect(address).unwrap();
     stalled.write_all(b"GET / HTTP/1.1\r\nHost:").unwrap();
     assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
@@ -887,7 +944,15 @@ fn status_socket_limits(address: std::net::SocketAddr) {
         result => panic!("ninth connection must be refused immediately: {result:?}"),
     }
     drop(blocked);
-    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
+    for attempt in 0..20 {
+        if try_http(address, "GET", "/")
+            .is_ok_and(|(headers, _)| headers.starts_with("http/1.1 200"))
+        {
+            return;
+        }
+        assert!(attempt < 19, "status did not recover after clients closed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn raw(settings: &tl3_config::Store) -> postgres::Client {
@@ -1553,14 +1618,34 @@ fn status_is_read_only(settings: &tl3_config::Store) {
         "status must not migrate an empty database"
     );
     let mut writer = Store::open(settings).unwrap();
-    assert!(status::load(&mut Reader::open(settings).unwrap()).unwrap().requests.is_empty());
+    assert!(
+        status::load(&mut Reader::open(settings).unwrap())
+            .unwrap()
+            .requests
+            .is_empty()
+    );
     let mut controller = open(settings, &root.path().join("upstreams"));
     controller.intake(labelled()).unwrap();
     let before = writer.load().unwrap();
     assert!(cli_status(&config).contains("Understanding the request"));
     let mut reader = Reader::open(settings).unwrap();
-    assert!(reader.transaction().unwrap().batch_execute("CREATE TABLE must_not_write (id integer)").is_err());
-    assert!(reader.transaction().unwrap().execute("INSERT INTO tl3_intern (kind, scope, value) VALUES ('Repo', 'must', 'not-write')", &[]).is_err());
+    assert!(
+        reader
+            .transaction()
+            .unwrap()
+            .batch_execute("CREATE TABLE must_not_write (id integer)")
+            .is_err()
+    );
+    assert!(
+        reader
+            .transaction()
+            .unwrap()
+            .execute(
+                "INSERT INTO tl3_intern (kind, scope, value) VALUES ('Repo', 'must', 'not-write')",
+                &[]
+            )
+            .is_err()
+    );
     assert_eq!(writer.load().unwrap(), before);
 }
 

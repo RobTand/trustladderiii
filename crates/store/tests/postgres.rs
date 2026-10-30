@@ -107,10 +107,7 @@ fn arrival_within_transaction(settings: &tl3_config::Store) {
         after.rows.iter().map(|r| r.arrival).collect::<Vec<_>>(),
         before.rows.iter().map(|r| r.arrival).collect::<Vec<_>>()
     );
-    assert_eq!(
-        Reader::open(settings).unwrap().load().unwrap(),
-        after
-    );
+    assert_eq!(Reader::open(settings).unwrap().load().unwrap(), after);
 }
 
 fn effect(key: &str) -> NewEffect {

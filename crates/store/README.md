@@ -49,11 +49,6 @@ SQL file and its exact text is recorded in `tl3_schema_migrations`, in the
 same transaction as the schema change. A changed or newer migration refuses
 to open. Add a new migration rather than editing an applied one.
 
-`Store::open_read_only` never migrates. It requires the exact current schema
-and sets Postgres's default transactions to read-only before connecting.
-An empty database returns an uninitialized-store error. Status callers use
-this constructor. `load` also uses an explicit read-only transaction.
-
 ## Commit and recovery
 
 `commit` locks the singleton world revision before checking the event key.

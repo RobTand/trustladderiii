@@ -339,16 +339,19 @@ impl Reader {
         tx.commit()?;
         Ok(events)
     }
-
 }
 
 fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
-        client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
+    client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
             .into_iter().map(decode_effect).collect()
 }
 
-fn load_events(client: &mut impl postgres::GenericClient, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
-        client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
+fn load_events(
+    client: &mut impl postgres::GenericClient,
+    revision: Revision,
+    limit: u32,
+) -> Result<Vec<EventRecord>> {
+    client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
             .into_iter().map(|row| Ok(EventRecord {
                 key: row.get(0), payload: row.get(1),
                 receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },

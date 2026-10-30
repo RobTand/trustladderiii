@@ -10,7 +10,7 @@ and do not load GitHub or model credentials.
 
 Both commands use `Config::load`, which checks secret-file metadata, including
 the optional store password. Only the store reads its password at runtime.
-`tl3 status` uses `Store::open_read_only`. It never migrates or writes and
+`tl3 status` uses `Reader::open`. It never migrates or writes and
 reports an uninitialized database clearly.
 
 ```text
@@ -62,7 +62,11 @@ reader and retries once. Failed reads return a generic 503.
 
 The std-only HTTP server uses four handler threads and caps accepted open
 connections at eight, including queued clients. Extra connections close immediately.
-Read and write socket timeouts are two seconds. Request lines plus headers are
+Reading headers and writing each response have separate two-second total deadlines.
+Response writes use chunks and the remaining deadline, so trickle readers cannot
+keep a handler indefinitely. Accept errors are logged and skipped; file-table
+exhaustion also backs off briefly. Each 503 logs its cause to stderr without
+including it in the HTTP body. Queries on `/` are ignored. Request lines plus headers are
 limited to 8 KiB. Request bodies are rejected and every response closes its
 connection. Responses keep the content security policy and disable caching.
 

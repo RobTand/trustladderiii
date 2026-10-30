@@ -43,8 +43,26 @@ pub fn serve(config: &tl3_config::Config) -> Result<()> {
     println!("Status page listening on http://{}", listener.local_addr()?);
     std::io::stdout().flush()?;
     let open = Arc::new(AtomicUsize::new(0));
-    for stream in listener.incoming() {
-        let stream = stream?;
+    accept_connections(listener.incoming(), send, open)
+}
+
+fn accept_connections(
+    incoming: impl Iterator<Item = io::Result<TcpStream>>,
+    send: mpsc::SyncSender<Connection>,
+    open: Arc<AtomicUsize>,
+) -> Result<()> {
+    for stream in incoming {
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("status accept failed: {error}");
+                // File-table exhaustion must not turn the accept loop into a busy loop.
+                if matches!(error.raw_os_error(), Some(23 | 24)) {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            }
+        };
         if open
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                 (count < MAX_CONNECTIONS).then_some(count + 1)
@@ -105,21 +123,23 @@ fn connection_error(error: &tl3_store::DatabaseError) -> bool {
 }
 
 fn handle(stream: &mut TcpStream, reader: &Mutex<StatusReader>) -> io::Result<()> {
-    stream.set_write_timeout(Some(SOCKET_TIMEOUT))?;
     let (code, body, head) = match read_request(stream) {
         Err((code, head)) => (code, "Invalid HTTP request.\n".into(), head),
         Ok(request) => {
             let head = request.method == "HEAD";
             if !matches!(request.method.as_str(), "GET" | "HEAD") {
                 (405, "Only GET and HEAD are allowed.\n".into(), head)
-            } else if request.path != "/" {
+            } else if request.path.split('?').next() != Some("/") {
                 (404, "Page not found.\n".into(), head)
             } else {
                 let model = reader.lock().expect("status reader lock").load();
                 match model {
                     Ok(model) => (200, status::render_html(&model), head),
                     // Neither database errors nor stored payloads belong in HTTP errors.
-                    Err(_) => (503, "Status is temporarily unavailable.\n".into(), head),
+                    Err(error) => {
+                        eprintln!("status unavailable: {error}");
+                        (503, "Status is temporarily unavailable.\n".into(), head)
+                    }
                 }
             }
         }
@@ -222,17 +242,30 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str, head: bool) -> 
         503 => "Service Unavailable",
         _ => "Bad Request",
     };
-    write!(
-        stream,
+    let started = Instant::now();
+    let mut headers = format!(
         "HTTP/1.1 {code} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'\r\n",
         body.len()
-    )?;
+    );
     if code == 405 {
-        write!(stream, "Allow: GET, HEAD\r\n")?;
+        headers.push_str("Allow: GET, HEAD\r\n");
     }
-    write!(stream, "\r\n")?;
-    if !head {
-        stream.write_all(body.as_bytes())?;
+    headers.push_str("\r\n");
+    for mut bytes in [headers.as_bytes(), if head { b"" } else { body.as_bytes() }] {
+        while !bytes.is_empty() {
+            let remaining = SOCKET_TIMEOUT
+                .checked_sub(started.elapsed())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::TimedOut, "status response deadline")
+                })?;
+            stream.set_write_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+            match stream.write(&bytes[..bytes.len().min(4096)]) {
+                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                Ok(count) => bytes = &bytes[count..],
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
     }
     Ok(())
 }
@@ -240,6 +273,90 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str, head: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accept_errors_do_not_stop_later_connections() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let (send, receive) = mpsc::sync_channel(1);
+        let open = Arc::new(AtomicUsize::new(0));
+        let incoming = [
+            Err(io::ErrorKind::ConnectionAborted.into()),
+            Err(io::Error::from_raw_os_error(24)),
+            Err(io::Error::from_raw_os_error(23)),
+            Ok(stream),
+        ];
+        let started = Instant::now();
+        accept_connections(incoming.into_iter(), send, Arc::clone(&open)).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        let connection = receive.recv().unwrap();
+        assert_eq!(open.load(Ordering::Relaxed), 1);
+        drop(connection);
+        assert_eq!(open.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn trickle_reader_cannot_extend_total_response_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .unwrap();
+        socket.set_recv_buffer_size(1024).unwrap();
+        socket
+            .connect(&listener.local_addr().unwrap().into())
+            .unwrap();
+        let mut client: TcpStream = socket.into();
+        client
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        socket2::SockRef::from(&stream)
+            .set_send_buffer_size(1024)
+            .unwrap();
+        let (send, receive) = mpsc::channel();
+        let writer = thread::spawn(move || {
+            let started = Instant::now();
+            let result = write_response(&mut stream, 200, &"x".repeat(256 * 1024), false);
+            send.send((result, started.elapsed())).unwrap();
+        });
+        let started = Instant::now();
+        let mut reads = 0;
+        let (result, elapsed) = loop {
+            if let Ok(ending) = receive.try_recv() {
+                break ending;
+            }
+            assert!(
+                started.elapsed() < SOCKET_TIMEOUT + Duration::from_secs(2),
+                "trickle reads extended the response deadline"
+            );
+            let mut bytes = [0; 1024];
+            match client.read(&mut bytes) {
+                Ok(count) if count > 0 => reads += 1,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::ConnectionReset
+                    ) => {}
+                Err(error) => panic!("trickle read: {error}"),
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert!(reads > 2, "the client must make progress during the write");
+        assert!(elapsed >= SOCKET_TIMEOUT);
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        drop(client);
+        writer.join().unwrap();
+    }
 
     #[test]
     fn serve_validates_even_programmatically_changed_configuration() {
