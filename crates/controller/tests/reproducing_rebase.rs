@@ -172,3 +172,40 @@ fn unreplayable_reviewed_tree_drops_reproducers_with_a_reason() {
         .unwrap();
     assert!(git(&f.repo, &["for-each-ref", "refs/heads/tl3-reviewed/"]).is_empty());
 }
+
+#[test]
+fn failed_review_pin_reaches_the_next_review_reason() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let mut adapter = f.adapter();
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    adapter.execute(&prepare).unwrap();
+    let checkout = adapter.checkout(&prepare);
+    let base = git(&checkout, &["rev-parse", "HEAD"]);
+    let reviewed = commit(&checkout, "product.py", "def value(): return 1\n");
+    let fixed = commit(&checkout, "product.py", "def value(): return 2\n");
+    // A ref at the namespace's parent prevents pinning any reviewed commit.
+    git(&f.repo, &["update-ref", "refs/heads/tl3-reviewed", &base]);
+    commit(&f.source, "upstream.txt", "upstream\n");
+    git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+    let mut rebase = f.delivery(EffectKind::StartRebase, 2);
+    rebase.head_sha = Some(fixed);
+    rebase.checks = Some(serde_json::from_value(serde_json::json!({
+        "repository": f.repo, "base_sha": base, "reviewed_sha": reviewed,
+        "plan": [{"name":"ordinary", "kind":"regression", "tests":["test_value.py::test_value"]},
+                 {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"]}]
+    })).unwrap());
+    let result = adapter.execute(&rebase).unwrap();
+    let run = result.observations.iter().find_map(|o| match o {
+        Observation::CheckPlan { run, .. } => Some(run),
+        _ => None,
+    }).unwrap();
+    assert!(run.reviewed_sha.is_none());
+    assert_eq!(run.plan.len(), 1);
+    assert_eq!(run.plan[0].kind, Kind::Regression);
+    assert!(run.reproducing_unavailable.as_ref().unwrap().contains("pin failed"));
+    assert_eq!(
+        serde_json::to_value(&result).unwrap(),
+        serde_json::to_value(adapter.execute(&rebase).unwrap()).unwrap()
+    );
+}

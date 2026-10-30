@@ -93,3 +93,61 @@ def test_unrelated_imports_and_setup_errors_do_not_demonstrate(tmp_path, code):
                      frozenset({('product.py', 'helper')}))
     assert outcomes[tests[0]] == Outcome.ERROR
     assert outcomes[tests[1]] == Outcome.PASSED
+
+
+@pytest.mark.parametrize('collection', [False, True])
+@pytest.mark.parametrize(('files', 'added_file', 'added_name'), [
+    ({'broken.py': 'from other import typo\n', 'other.py': ''}, 'other.py', 'extra'),
+    ({'broken.py': 'from other import typo\n', 'other.py': ''}, 'broken.py', 'typo'),
+    ({'broken.py': '', 'other.py': ''}, 'other.py', 'extra'),
+])
+def test_import_error_must_name_the_added_symbol_in_its_own_module(
+        tmp_path, collection, files, added_file, added_name):
+    before, after = tmp_path / 'before', tmp_path / 'after'
+    for tree in (before, after):
+        tree.mkdir()
+        for name, content in files.items():
+            (tree / name).write_text(content)
+    with (after / added_file).open('a') as target:
+        target.write(f'def {added_name}(): return 2\n')
+    code = ('from broken import extra\ndef test_import(): assert True\n' if collection else
+            'def test_import():\n    from broken import extra\n    assert True\n')
+    (before / 'test_import.py').write_text(code)
+    tests = ('test_import.py::test_import',)
+    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(before)],
+                           capture_output=True)
+    outcomes = parse([decode(line) for line in child.stdout.splitlines()], tests, set(),
+                     child.returncode, added_names(before, after, ['test_*.py']))
+    assert outcomes[tests[0]] == Outcome.ERROR
+
+
+@pytest.mark.parametrize('collection', [False, True])
+@pytest.mark.parametrize(('source_root', 'statement', 'new_path', 'content'), [
+    ('', 'from pkg import newmod', 'pkg/newmod.py', ''),
+    ('', 'from pkg import newmod', 'pkg/newmod/__init__.py', ''),
+    ('src', 'import srcmod', 'srcmod.py', ''),
+    ('workers/src', 'from pkg.sub import name', 'pkg/sub.py', 'def name(): return 2\n'),
+])
+def test_added_imports_follow_the_active_source_roots(
+        tmp_path, collection, source_root, statement, new_path, content):
+    before, after = tmp_path / 'before', tmp_path / 'after'
+    code = (f'{statement}\ndef test_import(): assert True\n' if collection else
+            f'def test_import():\n    {statement}\n    assert True\n')
+    for tree in (before, after):
+        product = tree / source_root
+        (product / 'pkg').mkdir(parents=True)
+        (product / 'pkg/__init__.py').write_text('')
+        (tree / 'pyproject.toml').write_text(
+            f'[tool.pytest.ini_options]\npythonpath = ["{source_root or "."}"]\n')
+        (tree / 'test_import.py').write_text(code)
+    added = after / source_root / new_path
+    added.parent.mkdir(parents=True, exist_ok=True)
+    added.write_text(content)
+    tests = ('test_import.py::test_import',)
+    additions = added_names(before, after, ['test_*.py'])
+    for tree, expected in ((before, Outcome.ADDED_NAME), (after, Outcome.PASSED)):
+        child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)],
+                               capture_output=True)
+        outcomes = parse([decode(line) for line in child.stdout.splitlines()], tests, set(),
+                         child.returncode, additions)
+        assert outcomes[tests[0]] == expected
