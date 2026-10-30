@@ -112,6 +112,12 @@ impl Source {
     fn register(&mut self, key: String) -> Result<()> {
         let path = self.settings.records.join(format!("{}.job", encoded(&key)));
         if path.with_extension("done").exists() {
+            self.active
+                .as_mut()
+                .unwrap()
+                .retain(|_, job| job.delivery.key != key);
+            self.tool_errors
+                .retain(|action| self.active.as_ref().unwrap().contains_key(action));
             return Ok(());
         }
         let Some(job) = read_job(&path) else {

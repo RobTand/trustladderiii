@@ -408,6 +408,15 @@ impl Executor for Adapter {
                         .block_on(self.client.read(&job.action))
                         .map_err(adapter_error)?
                     else {
+                        // Authoritative absence also ends a source watch for a cancelled seal.
+                        write(
+                            &self
+                                .settings
+                                .records
+                                .join(format!("{}.done", encoded(&job.delivery.key))),
+                            &Completion::confirmed(vec![]),
+                        )?;
+                        let _ = self.keys.send(job.delivery.key.clone());
                         continue;
                     };
                     if matches!(record.state, ActionState::Queued | ActionState::Claimed) {

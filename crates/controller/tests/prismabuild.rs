@@ -836,6 +836,54 @@ fn bell_outage_does_not_retry_result_tools() {
     );
 }
 
+fn absent_withdrawal_retires_source_watch() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    fs::write(root.path().join("queue/fail_publish"), "true").unwrap();
+    assert!(adapter.execute(&delivery).is_err());
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    let mut withdrawal = delivery.clone();
+    withdrawal.key = "effect:0:6".into();
+    withdrawal.output = Out::Effect {
+        node: NodeId(0),
+        seq: 6,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    adapter.execute(&withdrawal).unwrap();
+    let done: Completion =
+        serde_json::from_slice(&fs::read(record_path(root.path(), &delivery.key, "done")).unwrap())
+            .unwrap();
+    assert!(done.observations.is_empty());
+    // Reply after cancellation. A forgotten watch must not open another bell wait.
+    waiting.reply(1, serde_json::json!([]));
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        bell.requests.as_ref().unwrap().try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    drop(running);
+    let running = adapter.source().spawn(sender);
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        bell.requests.as_ref().unwrap().try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    drop(running);
+    assert!(!root.path().join("queue/publications").exists());
+}
+
 fn completed_records_retire_only_when_superseded() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1271,6 +1319,10 @@ fn main() {
             bell_outage_does_not_retry_result_tools,
         ),
         (
+            "absent_withdrawal_retires_source_watch",
+            absent_withdrawal_retires_source_watch,
+        ),
+        (
             "source_skips_bad_jobs_and_surfaces_failure",
             source_skips_bad_jobs_and_surfaces_failure,
         ),
@@ -1300,5 +1352,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("18 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("19 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }

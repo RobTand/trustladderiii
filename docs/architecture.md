@@ -234,6 +234,8 @@ a `.job`, because no attempt can have been published without that binding.
 A saved seal with no `.done` and no PB record also returns `Absent`. A later
 input, look or restart lets the controller retry `execute`, which publishes the
 same saved key idempotently. A Cancelling effect instead uses `cancel_absent`.
+Withdrawal of an absent sealed action saves an empty completion and notifies
+the source to forget its watch. There is no PB terminal event for that key.
 Reconciliation never publishes.
 
 `prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter

@@ -145,6 +145,8 @@ again. Only `execute` seals or publishes. With no `.job`, reconciliation returns
 `Absent`. A saved seal with no `.done` and no PB record also returns `Absent`.
 The controller can then retry `execute` with the saved key after an input, look
 or restart. A Cancelling effect instead settles through `cancel_absent`.
+Withdrawal of an absent sealed action saves an empty completion and notifies
+the source to forget its watch. There is no PB terminal event for that key.
 Re-execution uses that saved CAS key,
 even after the source checkout disappears or PB publishes a new runtime.
 Existing queue records prevent another publication. Retries belong to the
