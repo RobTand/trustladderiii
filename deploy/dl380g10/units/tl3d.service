@@ -3,7 +3,7 @@ Description=TL3 controller with worker and webhook sources
 Requires=tl3-postgres.service
 PartOf=tl3-postgres.service
 After=tl3-postgres.service
-# Remove this gate only after #20 supplies production startup.
+# The coordinator creates this marker after the go-live checks.
 ConditionPathExists=%h/.config/tl3/production-ready
 ConditionPathExists=%h/.config/tl3/secrets/model-key
 
@@ -19,8 +19,8 @@ RuntimeDirectoryMode=0700
 Environment=TIKTOKEN_CACHE_DIR=%h/.local/share/tl3/tiktoken
 Environment=OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service controller
-# Durable worker supervisors must survive a controller restart (#9).
-KillMode=process
+# Stop all local children before recovery reconciles their durable run records.
+KillMode=control-group
 Restart=on-failure
 RestartSec=5
 

@@ -193,6 +193,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         text = text.replace(old, new)
     text = text.replace('[github]\n', '[github]\nwebhook_listen = "127.0.0.1:8081"\n')
     if issue is not None:
+        text = text.replace('[github]\n', '[github]\noperations = ' + toml_value({"owner": "RobTand", "name": "trustladderiii", "number": issue, "installation_id": installation}) + '\n')
         text += f'\n[operations]\nowner = "RobTand"\nrepo = "trustladderiii"\nissue = {issue}\n'
     tomllib.loads(text)
     return text
@@ -229,6 +230,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
     for table, fields in (
         ("github", {"webhook_listen": "127.0.0.1:8081"}),
         ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
+        ("hindsight", {"bank": tomllib.loads(defaults)["hindsight"]["bank"]}),
         ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
         ("hindsight", {"api_key_file": str(config / "secrets/hindsight-key")}),
     ):
@@ -244,6 +246,11 @@ def configure(home, listen, state, image=None, primary=None, alternate=None):
                    if key not in data.get("operations", {})}
         if missing:
             text = add_fields(text, "[operations]", missing)
+    if "operations" not in data["github"] and data.get("operations"):
+        operations = data["operations"]
+        identity = {"owner": operations["owner"], "name": operations["repo"],
+                    "number": operations["issue"], "installation_id": data["github"]["repos"][0].get("installation_id", state.get("installation_id", 1))}
+        text = add_fields(text, "[github]", {"operations": toml_value(identity)})
     tomllib.loads(text)
     save_config(destination, original, text)
 
@@ -315,7 +322,13 @@ def install(args):
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
     for unit in (HERE / "units").glob("*.service"):
-        shutil.copy2(unit, units / unit.name)
+        if unit.name != "tl3-cloudflared.service" or args.managed_tunnel:
+            shutil.copy2(unit, units / unit.name)
+    managed = root / "deploy/managed-tunnel"
+    if args.managed_tunnel:
+        write_file(managed, b"managed\n")
+    else:
+        managed.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
 
@@ -339,7 +352,7 @@ def service(home, name):
         os.execv(root / "bin/tl3-deploy", ["tl3-deploy", "database", str(target)])
     if name == "status":
         os.execv(root / "bin/tl3", ["tl3", "status-serve", "--config", str(target)])
-    os.execv(root / "bin/tl3d", ["tl3d", "--config", str(target), "--workers"])
+    os.execv(root / "bin/tl3d", ["tl3d", "--config", str(target)])
 
 
 def start(home):
@@ -352,7 +365,13 @@ def start(home):
 def check(home):
     root, config, _ = paths(home)
     missing = 0
-    for unit in ("tl3-postgres", "tl3d", "tl3-status", "tl3-cloudflared"):
+    managed = (root / "deploy/managed-tunnel").exists()
+    units = ["tl3-postgres", "tl3d", "tl3-status"]
+    if managed:
+        units.append("tl3-cloudflared")
+    else:
+        print("OK external webhook route selected; verify public reception with a signed ping")
+    for unit in units:
         result = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True)
         active = result.returncode == 0
         print(f"{'OK' if active else 'MISSING'} {unit}: {'active' if active else 'inactive or failed'}")
@@ -390,8 +409,10 @@ def check(home):
             connection.close()
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
-    for label, path in (("model credential", config / "secrets/model-key"),
-                        ("Cloudflare token", config / "secrets/cloudflared-token")):
+    credentials = [("model credential", config / "secrets/model-key")]
+    if managed:
+        credentials.append(("Cloudflare token", config / "secrets/cloudflared-token"))
+    for label, path in credentials:
         try:
             private_file(path)
             ok = True
@@ -410,8 +431,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults"])
     parser.add_argument("--home", type=Path, default=Path.home())
-    parser.add_argument("--binaries", type=Path, default=SOURCE / "target/debug")
+    parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
+    parser.add_argument("--managed-tunnel", action="store_true", help="install and require TL3's own Cloudflare connector; default uses the external route")
     parser.add_argument("--image")
     parser.add_argument("--primary")
     parser.add_argument("--alternate")

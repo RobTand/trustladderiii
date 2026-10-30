@@ -19,11 +19,17 @@ fn main() {
     }
     let mut database = Database::start();
     let cases = [
-        ("mvp_schema_6_upgrades_to_hindsight", mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store)),
+        (
+            "mvp_schema_6_upgrades_to_hindsight",
+            mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
+        ),
         (
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
         ),
+        ("wait_clears_on_progress", wait_clears_on_progress),
+        ("wait_resets_on_attempt", wait_resets_on_attempt),
+        ("wait_resets_on_generation", wait_resets_on_generation),
         ("all_effect_transitions", all_effect_transitions),
         ("credit_and_interning", credit_and_interning),
         ("concurrent_writers", concurrent_writers),
@@ -37,6 +43,9 @@ fn main() {
         ("ingress_retirement", ingress_retirement),
     ];
     for (name, test) in &cases {
+        if args.get(1).is_some_and(|s| s == "--r3") && !name.starts_with("wait_") {
+            continue;
+        }
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
@@ -506,25 +515,79 @@ fn mvp_schema_6_upgrades_to_hindsight(settings: &tl3_config::Store) {
         include_str!("../migrations/0005_worker_retirement.sql"),
         include_str!("fixtures/mvp_schema_6.sql"),
     ];
-    client.batch_execute("CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)").unwrap();
+    client
+        .batch_execute(
+            "CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)",
+        )
+        .unwrap();
     for (index, sql) in deployed.iter().enumerate() {
         client.batch_execute(sql).unwrap();
-        client.execute("INSERT INTO tl3_schema_migrations VALUES ($1, $2)", &[&((index + 1) as i32), sql]).unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&((index + 1) as i32), sql],
+            )
+            .unwrap();
     }
-    client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms, external_wait) VALUES ('existing', '1', 1, 1, 0, 'tokens', 1, $1)", &[&json!({"upstream": "prismabuild"})]).unwrap();
-    assert_eq!(client.query_one("SELECT MAX(version) FROM tl3_schema_migrations", &[]).unwrap().get::<_, i32>(0), 6);
+    client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms, external_wait) VALUES ('existing', '1', 1, 1, 0, 'tokens', 1, $1)", &[&json!({"upstream": "prismabuild", "key": "existing-action"})]).unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT MAX(version) FROM tl3_schema_migrations", &[])
+            .unwrap()
+            .get::<_, i32>(0),
+        6
+    );
     let upgraded = Store::open(settings);
-    assert!(upgraded.is_ok(), "schema 6 must upgrade to Hindsight: {:?}", upgraded.err());
+    assert!(
+        upgraded.is_ok(),
+        "schema 6 must upgrade to Hindsight: {:?}",
+        upgraded.err()
+    );
     for table in ["tl3_memory_outbox", "tl3_memory_health"] {
-        assert!(client.query_one("SELECT to_regclass($1)::text IS NOT NULL", &[&table]).unwrap().get::<_, bool>(0), "missing Hindsight table {table}");
+        assert!(
+            client
+                .query_one("SELECT to_regclass($1)::text IS NOT NULL", &[&table])
+                .unwrap()
+                .get::<_, bool>(0),
+            "missing Hindsight table {table}"
+        );
     }
-    assert_eq!(client.query_one("SELECT external_wait FROM tl3_worker_progress WHERE run_key = 'existing'", &[]).unwrap().get::<_, serde_json::Value>(0), json!({"upstream": "prismabuild"}));
-    assert_eq!(client.query_one("SELECT sql FROM tl3_schema_migrations WHERE version = 6", &[]).unwrap().get::<_, String>(0), deployed[5]);
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT external_wait FROM tl3_worker_progress WHERE run_key = 'existing'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, serde_json::Value>(0),
+        json!({"upstream": "prismabuild", "key": "existing-action"})
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT sql FROM tl3_schema_migrations WHERE version = 6",
+                &[]
+            )
+            .unwrap()
+            .get::<_, String>(0),
+        deployed[5]
+    );
     let mut store = Store::open(settings).unwrap();
-    store.queue_memory("upgrade-record", &json!({"summary": "after MVP"})).unwrap();
+    store
+        .queue_memory("upgrade-record", &json!({"summary": "after MVP"}))
+        .unwrap();
     store.park_memory("upgrade-record", 422).unwrap();
     assert!(store.pending_memories(0).unwrap().is_empty());
-    assert_eq!(client.query_one("SELECT http_status FROM tl3_memory_outbox WHERE operation_id = 'upgrade-record'", &[]).unwrap().get::<_, i32>(0), 422);
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT http_status FROM tl3_memory_outbox WHERE operation_id = 'upgrade-record'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, i32>(0),
+        422
+    );
 }
 
 fn migrations_and_append_only(settings: &tl3_config::Store) {
@@ -544,7 +607,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7]
+        [1, 2, 3, 4, 5, 6, 7, 8]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -940,4 +1003,87 @@ fn ingress_retirement(settings: &tl3_config::Store) {
     store.register_ingress_translators(&[]).unwrap();
     store.consume_ingress(sequence).unwrap();
     assert!(store.ingress_after(0).unwrap().is_empty());
+}
+
+fn declared_wait(store: &mut Store, key: &str) -> ExternalWait {
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker(key, "0", epoch, 1).unwrap();
+    let wait = ExternalWait {
+        upstream: "prismabuild".into(),
+        key: "a".repeat(64),
+    };
+    store
+        .record_worker_progress(key, 1, 10, "external_wait", Some(&wait))
+        .unwrap();
+    assert_eq!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .find(|r| r.key == key)
+            .unwrap()
+            .external_wait
+            .as_ref(),
+        Some(&wait)
+    );
+    wait
+}
+fn wait_clears_on_progress(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "run:1");
+    store
+        .record_worker_progress("run:1", 1, 20, "tool_result", None)
+        .unwrap();
+    let row = store.worker_progress(None).unwrap().remove(0);
+    assert!(row.external_wait.is_none(), "own progress clears a wait");
+    assert_eq!(row.unit, "tool_result");
+    assert!(row.last_progress_ms.is_some());
+}
+fn wait_resets_on_attempt(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "run:1");
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("run:1", "0", epoch, 2).unwrap();
+    let row = store.worker_progress(None).unwrap().remove(0);
+    assert!(row.external_wait.is_none(), "new attempt clears a wait");
+    assert_eq!(row.output_offset, 0);
+    assert_eq!(row.attempt, 2);
+    store
+        .record_worker_progress(
+            "run:1",
+            1,
+            30,
+            "external_wait",
+            Some(&ExternalWait {
+                upstream: "prismabuild".into(),
+                key: "b".repeat(64),
+            }),
+        )
+        .unwrap();
+    assert!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .remove(0)
+            .external_wait
+            .is_none(),
+        "old attempt cannot restore its wait"
+    );
+}
+fn wait_resets_on_generation(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "effect:0:1");
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("effect:0:2", "0", epoch, 1).unwrap();
+    assert!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .find(|r| r.key == "effect:0:2")
+            .unwrap()
+            .external_wait
+            .is_none(),
+        "new generation has no inherited wait"
+    );
 }

@@ -192,3 +192,13 @@ The status hook reads active progress first, or the per-request summary when
 no active run exists, within its existing read-only snapshot. A worker that
 never reported progress still shows no recorded progress. Closed requests have
 no summary. These side-table writes do not change the kernel revision.
+
+
+## MVP and Hindsight upgrades
+
+Migration 6 is `0006_worker_wait.sql`. Its deployed SQL remains unchanged.
+Migration 7, `0007_hindsight.sql`, adds `tl3_memory_outbox`. Migration 8,
+`0008_memory_parking.sql`, adds parked records and `tl3_memory_health`.
+`mvp_schema_6_upgrades_to_hindsight` recreates the MVP schema, upgrades it,
+and checks the Hindsight tables, parking and preservation of an existing wait.
+Readers require schema version 8 after this upgrade.

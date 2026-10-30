@@ -121,6 +121,7 @@ def _run(request, emit):
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
         if worktree is not None:
             worktree.hindsight_key_file = request.get("hindsight_key_file")
+            worktree.progress_emit = emit
         if role.run is None:
             agent = build_agent(model, role, worktree)
             reply = _run_agent(agent, request, emit)

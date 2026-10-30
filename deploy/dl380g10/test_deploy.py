@@ -107,7 +107,7 @@ class DeployTests(unittest.TestCase):
                       (deploy.HERE / "units/tl3d.service").read_text())
         self.assertEqual(runtime_config["models"]["key_file"], str(credentials / "model-key"))
         self.assertEqual(runtime_config["github"]["app_credentials_file"], str(credentials / "github-app.json"))
-        self.assertEqual(execute.call_args.args[1][-1], "--workers")
+        self.assertEqual(execute.call_args.args[1][-2:], ["--config", str(runtime / "tl3.toml")])
         self.assertNotIn("uv", runtime_config["workers"]["python"])
 
     def test_unit_syntax_and_ordering(self):
@@ -134,7 +134,7 @@ class DeployTests(unittest.TestCase):
         result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service"))], capture_output=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         controller = (units / "tl3d.service").read_text()
-        self.assertIn("KillMode=process", controller)
+        self.assertIn("KillMode=control-group", controller)
         self.assertIn("Requires=tl3-postgres.service", controller)
         self.assertIn("After=tl3-postgres.service", controller.splitlines())
         self.assertIn(f"ConditionPathExists={self.home}/.config/tl3/production-ready", controller.splitlines())
@@ -200,6 +200,23 @@ class DeployTests(unittest.TestCase):
         self.assertNotIn("--alternate", output.getvalue())
         self.assertEqual(destination.read_bytes(), config.read_bytes())
 
+    def test_older_hindsight_config_migrates_without_replacing_endpoint_or_bank(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        for bank in (None, "operator-bank"):
+            with self.subTest(bank=bank):
+                original = config.read_text().replace('bank = "tl3"\n', '')
+                if bank:
+                    original = original.replace('[hindsight]\n', f'[hindsight]\nbank = "{bank}"\n')
+                before = tomllib.loads(original)["hindsight"]
+                deploy.write_file(destination, original.encode())
+                deploy.configure(self.home, "192.168.1.107:8033", {})
+                parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
+                actual = tomllib.loads(destination.read_text())["hindsight"]
+                self.assertEqual(actual["endpoint"], before["endpoint"])
+                self.assertEqual(actual["bank"], bank or "tl3")
+
     def test_configure_explains_a_config_without_github_repos(self):
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.write_file(destination, b"[store]\nhost = \"x\"\n")
@@ -222,6 +239,7 @@ class DeployTests(unittest.TestCase):
 
     def test_check_reports_both_bad_credentials_as_missing(self):
         config, data = self.config()
+        deploy.write_file(deploy.paths(self.home)[0] / "deploy/managed-tunnel", b"managed\n")
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.write_file(destination, config.read_bytes())
         key = destination.parent / "secrets/model-key"
@@ -236,6 +254,32 @@ class DeployTests(unittest.TestCase):
             prefix = "OK" if content and mode == 0o600 else "MISSING"
             self.assertIn(f"{prefix} model credential\n", output.getvalue())
             self.assertIn(f"{prefix} Cloudflare token\n", output.getvalue())
+
+    def test_external_tunnel_needs_no_token_or_tl3_connector(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        deploy.write_file(destination.parent / "secrets/model-key", b"fixture")
+        deploy.write_file(destination.parent / "production-ready", b"")
+        calls = []
+
+        def command(argv, **kwargs):
+            calls.append(list(map(str, argv)))
+            return subprocess.CompletedProcess(argv, 0)
+
+        with patch.object(subprocess, "run", side_effect=command), \
+             patch.object(deploy.http.client, "HTTPConnection") as http, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            http.return_value.getresponse.return_value.status = 200
+            deploy.check(self.home)
+        self.assertNotIn("Cloudflare token", output.getvalue())
+        self.assertFalse(any("tl3-cloudflared" in call for call in calls))
+        self.assertIn("external webhook route", output.getvalue())
+
+    def test_controller_stops_its_whole_process_group_and_preserves_gate(self):
+        unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
+        self.assertIn("KillMode=control-group", unit)
+        self.assertIn("ConditionPathExists=%h/.config/tl3/production-ready", unit)
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:

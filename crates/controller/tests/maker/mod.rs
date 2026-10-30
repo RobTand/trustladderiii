@@ -2,6 +2,10 @@ use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
 mod real;
 
+pub(super) fn review_trial(settings: &tl3_config::Store) {
+    real::review_feedback(settings);
+}
+
 pub(super) fn rebase_trial(settings: &tl3_config::Store, new_edits: bool) {
     real::rebase_revisit(settings, new_edits);
 }
@@ -111,6 +115,7 @@ fn fixture(
 struct Workers {
     real: Supervisor,
     fake: adapters::workers::Fake,
+    review: bool,
 }
 impl Workers {
     fn plan(completion: &mut Completion) {
@@ -122,17 +127,47 @@ impl Workers {
     }
 }
 impl Executor for Workers {
+    fn look(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Look> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Make),
+                ..
+            }
+        ) {
+            self.real.look(delivery)
+        } else {
+            self.fake.look(delivery)
+        }
+    }
+
+    fn stop_stalled(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        self.real.stop_stalled(delivery)
+    }
+
     fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
         self.real.retire(store)
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.execute(delivery)
         } else {
             let mut result = self.fake.execute(delivery)?;
@@ -141,13 +176,22 @@ impl Executor for Workers {
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.reconcile(delivery)
         } else {
             let mut result = self.fake.reconcile(delivery)?;
@@ -172,6 +216,11 @@ fn registry(
         Workers {
             real,
             fake: adapters::workers::Fake::new(root),
+            review: config
+                .workers
+                .command
+                .get(1)
+                .is_some_and(|mode| mode == "review-feedback"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(
@@ -829,6 +878,10 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    declared_wait(&database.create("maker_declared_wait"));
+    println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
+    real::review_feedback(&database.create("maker_review_feedback"));
+    println!("test reviewer_blockers_reach_real_maker ... ok");
     legacy_session(&database.create("maker_legacy_session"));
     println!("test maker_legacy_session_fails_closed ... ok");
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));
@@ -874,4 +927,105 @@ pub(super) fn run(database: &mut Database) {
         assert!(child.status().unwrap().success(), "maker scenario {name}");
         println!("test maker_{name} ... ok");
     }
+}
+
+pub(super) fn declared_wait(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (config, worktree, _) = fixture(settings, root.path(), "external-wait");
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let open = || {
+        let (mut registry, source, _) = registry(&config, &root.path().join("fakes"), false);
+        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        let mut controller = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        let mut allowances = config.allowances.clone();
+        allowances.agent_worker.silence_secs = 1;
+        allowances.agent_worker.no_progress_secs = 3;
+        controller.set_allowances(allowances);
+        (controller, source)
+    };
+    let mut store = Store::open(settings).unwrap();
+    let (mut controller, mut source) = open();
+    waits::bind(root.path(), &worktree);
+    waits::record(root.path(), "claimed");
+    controller.intake(labelled()).unwrap();
+    let mut previous_key = None;
+    let mut checkpoint = None;
+    for failure_count in 0..2 {
+        wait(|| {
+            drive(&mut controller, &mut source, &mut store);
+            store
+                .worker_progress(None)
+                .unwrap()
+                .iter()
+                .any(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
+        });
+        let run = store
+            .worker_progress(None)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
+            .unwrap();
+        let attempt = root_for(&config, &run.key).join(format!("attempt-{:08}", run.attempt));
+        let request: Value =
+            serde_json::from_slice(&fs::read(attempt.join("request.json")).unwrap()).unwrap();
+        let head_path =
+            PathBuf::from(request["session_file"].as_str().unwrap()).with_extension("head");
+        let saved = fs::read(&head_path).unwrap();
+        if let Some(checkpoint) = &checkpoint {
+            assert_eq!(
+                &saved, checkpoint,
+                "RunFailed must retain the visit checkpoint"
+            );
+        }
+        checkpoint = Some(saved);
+        controller.look_now().unwrap();
+        drop(controller);
+        drop(source);
+        (controller, source) = open();
+        drive(&mut controller, &mut source, &mut store);
+        clock.0.set(clock.0.get() + 1_000_000);
+        controller.look_due().unwrap();
+        while controller.drive_once().unwrap() {}
+        assert_eq!(
+            controller.world().unwrap().nodes[0].run_failures,
+            failure_count,
+            "a maker waiting on a claimed action must survive recovery and retry"
+        );
+        assert!(
+            !attempt.join("exit.json").exists(),
+            "a live wait must not stop its maker"
+        );
+        if failure_count == 0 {
+            kill_record_and_wait(&attempt.join("process.json"));
+            wait(|| {
+                drive(&mut controller, &mut source, &mut store);
+                controller.world().unwrap().nodes[0].run_failures == 1
+            });
+            previous_key = Some(run.key);
+        }
+    }
+    controller
+        .observe(
+            "stop-wait-fixture",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
 }

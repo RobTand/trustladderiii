@@ -424,6 +424,10 @@ proof!(
 );
 proof!(apply_conflict, check_apply(fact(Fact::Conflict)));
 proof!(
+    apply_upstream_stalled,
+    check_apply(fact(Fact::UpstreamStalled))
+);
+proof!(
     apply_incident_cleared,
     check_apply(fact(Fact::IncidentCleared {
         by_rob: kani::any()
