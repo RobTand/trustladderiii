@@ -408,6 +408,12 @@ impl Served {
                     // Finish any checkout restoration interrupted after the atomic ref update.
                     if writable {
                         self.git.recover_rebase(branch, checkout).map_err(adapter)?;
+                    } else if !self
+                        .git
+                        .rebase_complete(branch, checkout)
+                        .map_err(adapter)?
+                    {
+                        return Ok(None);
                     }
                     if !self
                         .git

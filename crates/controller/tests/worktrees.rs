@@ -326,25 +326,46 @@ fn leases_and_exact_heads() {
     );
 }
 fn old_epoch_partial_attempts() {
-    for kind in [EffectKind::Push, EffectKind::StartRebase] {
+    for kind in [
+        EffectKind::PrepareWorktree,
+        EffectKind::Push,
+        EffectKind::StartRebase,
+        EffectKind::RemoveWorktree,
+    ] {
         for boundary in ["before", "after"] {
             let scratch = tempfile::tempdir().unwrap();
             let f = Fixture::create(scratch.path());
-            let prepare = prepared(&f);
-            let push = made(&f, &prepare, false);
-            let delivery = if kind == EffectKind::Push {
-                push.clone()
+            let delivery = if kind == EffectKind::PrepareWorktree {
+                f.delivery(kind, 1)
             } else {
-                f.adapter().execute(&push).unwrap();
-                f.advance_main(false);
-                f.delivery(EffectKind::StartRebase, 3)
+                let prepare = prepared(&f);
+                let push = made(&f, &prepare, false);
+                if kind == EffectKind::Push {
+                    push
+                } else {
+                    f.adapter().execute(&push).unwrap();
+                    if kind == EffectKind::StartRebase {
+                        f.advance_main(false);
+                    }
+                    f.delivery(kind, 3)
+                }
             };
             kill(&f, &delivery, boundary);
-            let head = f.head(&delivery);
+            let branch = Real::branch(&delivery).unwrap();
+            let head = git(
+                &f.repo,
+                &[
+                    "for-each-ref",
+                    "--format=%(objectname)",
+                    &format!("refs/heads/{}", branch.as_str()),
+                ],
+            );
+            let checkout = f.adapter().checkout(&delivery);
+            let exists = checkout.exists();
             // Opening the replacement fences stale handles before any new execute.
             let mut stale = f.adapter();
             let mut replacement = f.adapter_at(2);
-            assert!(f.adapter().execute(&delivery).is_err());
+            assert!(stale.execute(&delivery).is_err());
             let result = stale.reconcile(&delivery).unwrap();
             same_reconciliation(&result, &replacement.reconcile(&delivery).unwrap());
             if boundary == "before" {
@@ -354,27 +375,80 @@ fn old_epoch_partial_attempts() {
                 }
             } else {
                 let completion = found(result);
-                if kind == EffectKind::Push {
-                    assert_eq!(
-                        git(
-                            &f.remote,
-                            &["rev-parse", Real::branch(&push).unwrap().as_str()]
-                        ),
-                        push.head_sha.unwrap()
-                    );
-                } else {
-                    assert!(
+                match kind {
+                    EffectKind::Push => assert_eq!(
+                        git(&f.remote, &["rev-parse", branch.as_str()]),
+                        delivery.head_sha.unwrap()
+                    ),
+                    EffectKind::StartRebase => assert!(
                         matches!(completion.observations.as_slice(), [Observation::Rebased { sha, .. }] if sha == &head)
-                    );
+                    ),
+                    EffectKind::RemoveWorktree => assert_removed(&f, &delivery),
+                    _ => {}
                 }
             }
             assert_eq!(
-                f.head(&delivery),
+                git(
+                    &f.repo,
+                    &[
+                        "for-each-ref",
+                        "--format=%(objectname)",
+                        &format!("refs/heads/{}", branch.as_str())
+                    ]
+                ),
                 head,
                 "old-epoch reconciliation cannot change Git"
             );
+            assert_eq!(checkout.exists(), exists);
         }
     }
+}
+
+fn fenced_rebase_before_checkout_restoration() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    let prepare = prepared(&f);
+    let push = made(&f, &prepare, false);
+    f.adapter().execute(&push).unwrap();
+    f.advance_main(false);
+    let rebase = f.delivery(EffectKind::StartRebase, 3);
+    kill(&f, &rebase, "after");
+    let checkout = f.adapter().checkout(&rebase);
+    let marker = git(
+        &checkout,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "tl3-rebase-branch",
+        ],
+    );
+    let branch = Real::branch(&rebase).unwrap();
+    fs::write(&marker, format!("refs/heads/{}", branch.as_str())).unwrap();
+    git(
+        &checkout,
+        &["checkout", "--detach", push.head_sha.as_ref().unwrap()],
+    );
+    let mut stale = f.adapter();
+    let mut current = f.adapter_at(2);
+    assert!(matches!(
+        stale.reconcile(&rebase).unwrap(),
+        Reconciliation::Absent
+    ));
+    assert!(Path::new(&marker).exists());
+    assert_eq!(
+        git(&checkout, &["rev-parse", "HEAD"]),
+        push.head_sha.unwrap()
+    );
+    let mut retry = f.delivery(EffectKind::StartRebase, 4);
+    retry.epoch = 2;
+    current.execute(&retry).unwrap();
+    assert!(!Path::new(&marker).exists());
+    assert_eq!(
+        git(&checkout, &["symbolic-ref", "--short", "HEAD"]),
+        branch.as_str()
+    );
+    assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
 }
 
 fn same_reconciliation(a: &Reconciliation, b: &Reconciliation) {
@@ -433,6 +507,30 @@ fn incomplete_prepare() {
             assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
         }
     }
+}
+
+fn populated_prepare_with_initialization_lock() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    kill(&f, &prepare, "after");
+    let checkout = f.adapter().checkout(&prepare);
+    let locked = git(
+        &checkout,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "locked",
+        ],
+    );
+    fs::write(&locked, "initializing\n").unwrap();
+    found(f.adapter().reconcile(&prepare).unwrap());
+    assert!(!Path::new(&locked).exists());
+    f.adapter()
+        .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
+        .unwrap();
+    assert_removed(&f, &prepare);
 }
 
 fn incomplete_remove() {
@@ -637,7 +735,9 @@ fn main() {
     fences_and_unknowns();
     leases_and_exact_heads();
     old_epoch_partial_attempts();
+    fenced_rebase_before_checkout_restoration();
     incomplete_prepare();
+    populated_prepare_with_initialization_lock();
     incomplete_remove();
     removal_without_gitlink();
     killed_git_add();

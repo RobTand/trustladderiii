@@ -245,43 +245,7 @@ impl Worktrees {
             return Ok(false);
         }
         self.verify_checkout(path, name)?;
-        if self.status(path)?.is_empty() {
-            return Ok(true);
-        }
-        if !writable {
-            return Ok(false);
-        }
-        if self.resolve_optional(&name.reference())?.as_ref() != Some(base)
-            || self.resolve_optional(&name.base_ref())?.as_ref() != Some(base)
-        {
-            return Err(Error::Recovery);
-        }
-        // Repository ownership guarantees the killed controller's Git children have ended.
-        let lock = path_line(
-            &self
-                .run(
-                    path,
-                    "prepare index lock",
-                    [
-                        "rev-parse",
-                        "--path-format=absolute",
-                        "--git-path",
-                        "index.lock",
-                    ],
-                )?
-                .stdout,
-        )?;
-        match fs::remove_file(lock) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(Error::Io),
-        }
-        self.run(
-            path,
-            "populate prepared checkout",
-            ["reset", "--hard", &name.reference()],
-        )?;
-        self.require_clean(path)?;
+        let dirty = !self.status(path)?.is_empty();
         let locked = path_line(
             &self
                 .run(
@@ -296,7 +260,48 @@ impl Worktrees {
                 )?
                 .stdout,
         )?;
-        if fs::read(&locked).is_ok_and(|reason| reason == b"initializing\n") {
+        let initializing = match fs::read(&locked) {
+            Ok(reason) => reason == b"initializing\n",
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => return Err(Error::Io),
+        };
+        if !writable {
+            return Ok(!dirty && !initializing);
+        }
+        if dirty {
+            if self.resolve_optional(&name.reference())?.as_ref() != Some(base)
+                || self.resolve_optional(&name.base_ref())?.as_ref() != Some(base)
+            {
+                return Err(Error::Recovery);
+            }
+            // Repository ownership guarantees the killed controller's Git children have ended.
+            let lock = path_line(
+                &self
+                    .run(
+                        path,
+                        "prepare index lock",
+                        [
+                            "rev-parse",
+                            "--path-format=absolute",
+                            "--git-path",
+                            "index.lock",
+                        ],
+                    )?
+                    .stdout,
+            )?;
+            match fs::remove_file(lock) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(Error::Io),
+            }
+            self.run(
+                path,
+                "populate prepared checkout",
+                ["reset", "--hard", &name.reference()],
+            )?;
+            self.require_clean(path)?;
+        }
+        if initializing {
             self.run(
                 &self.repo,
                 "unlock prepared checkout",
@@ -352,6 +357,19 @@ impl Worktrees {
         }
         self.verify_checkout(path, name)?;
         self.require_clean(path)
+    }
+
+    pub fn rebase_complete(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        self.verify_repository(path)?;
+        if self.rebase_marker(path)?.exists() || self.rebase_active(path)? {
+            return Ok(false);
+        }
+        self.verify_checkout(path, name)?;
+        Ok(self.status(path)?.is_empty())
     }
 
     /// Deletes only the head recorded by the teardown effect, never a newer push.
