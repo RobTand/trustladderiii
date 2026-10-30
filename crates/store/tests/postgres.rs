@@ -3,10 +3,10 @@ use postgres::{Client, NoTls};
 use serde_json::json;
 use std::{
     env, fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Command, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use support::Database;
 use tl3_store::*;

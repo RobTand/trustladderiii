@@ -1,7 +1,6 @@
 # TL3 config
 
-`tl3-config` reads slice one's single TOML file. It is a standalone Rust 2024
-crate with its own lockfile. The coordinator adds it to the Cargo workspace.
+`tl3-config` reads slice one's single TOML file. It is a Rust 2024 crate in the root workspace with one shared lockfile.
 [example.toml](example.toml) cites the source of each setting.
 
 `Config::parse(text)` rejects unknown fields at every level and validates the

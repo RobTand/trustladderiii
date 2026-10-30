@@ -10,6 +10,12 @@ pub struct Delivery {
     pub output: Out,
     pub generation: u64,
     pub head_sha: Option<String>,
+    pub repository: crate::Repository,
+    pub issue: u64,
+    pub pull_request: Option<u64>,
+    pub paths: Vec<String>,
+    pub attempt: u8,
+    pub round: u8,
 }
 
 impl Delivery {

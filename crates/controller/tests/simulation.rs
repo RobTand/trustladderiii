@@ -63,7 +63,7 @@ fn main() {
     retry_uses_the_kernels_new_key(&database.create("retry"));
     println!("test restart_without_duplicate_deliveries ... ok");
     database.stop();
-    println!("2 controller integration scenarios passed; no skips");
+    println!("2 required controller scenarios and 3 recovery edge cases passed; no skips");
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {

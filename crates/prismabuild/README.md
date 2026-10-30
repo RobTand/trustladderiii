@@ -1,7 +1,6 @@
 # tl3-prismabuild
 
-Standalone Rust edition 2024 client for ticket #30. The coordinator adds this
-package to the workspace from ticket #2.
+Rust edition 2024 client for ticket #30, in the root Cargo workspace.
 
 `PrismaBuild::new(Options)` takes an absolute queue path, a submission tool and
 the numeric HTTP origin of the bell for that queue. Production uses

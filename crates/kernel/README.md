@@ -3,7 +3,7 @@
 `tl3-kernel` implements slice one of [the state table](../../docs/state-table.md), version 5.
 It is an edition-2024 Rust crate in the root Cargo workspace, with `no_std` plus `alloc` in ordinary builds.
 It does no I/O. The controller commits its decisions and carries out its outputs.
-The root workspace contains the kernel. The existing config, GitHub, Mergify, PrismaBuild and worktree packages keep their independent Cargo manifests and lockfiles.
+All production crates share the root workspace and Cargo.lock. The optional `serde` feature supplies controller snapshot encoding and is disabled for Kani.
 
 ## Controller API
 
@@ -164,7 +164,7 @@ To generate a smaller campaign, name `tests` or the proof harnesses:
 python3 crates/kernel/run.py manifest tests apply_conflict > /tmp/tl3-kernel-campaign.json
 ```
 
-Inside an admitted action, `run.py tests` checks formatting and Clippy, builds the workspace in ordinary `no_std` mode and runs the scenarios, random walks and proof-map check.
+Inside an admitted action, `run.py tests` checks formatting and Clippy, builds the kernel in ordinary `no_std` mode and runs the scenarios, random walks and proof-map check.
 `run.py prove NAME...` runs the named harnesses. Omitting the names runs every proof sequentially, so use the campaign for a full fleet run.
 The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUTPUT=regular` shows CBMC's detailed progress.
 

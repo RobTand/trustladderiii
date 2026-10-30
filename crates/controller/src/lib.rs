@@ -181,14 +181,6 @@ impl Controller {
         );
         if !existing {
             let node = world.nodes.len().to_string();
-            self.apply(
-                &snapshot,
-                world,
-                Event::NewRequest {
-                    repo: tl3_kernel::RepoId(index),
-                },
-                &mut commit,
-            )?;
             commit.rows.push(put(
                 "requests",
                 node,
@@ -198,6 +190,14 @@ impl Controller {
                     issue_id
                 }),
             ));
+            self.apply(
+                &snapshot,
+                world,
+                Event::NewRequest {
+                    repo: tl3_kernel::RepoId(index),
+                },
+                &mut commit,
+            )?;
         }
         self.store.commit(&commit)?;
         Ok(true)
@@ -238,8 +238,7 @@ impl Controller {
         }
         let mut progressed = false;
         for effect in &snapshot.pending_effects {
-            let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
-            delivery.epoch = effect.epoch.get();
+            let delivery = hydrate(effect, &snapshot)?;
             match effect.state {
                 EffectState::Intended => {
                     if effect.epoch != snapshot.epoch {
@@ -247,10 +246,11 @@ impl Controller {
                     }
                     self.transition(effect, EffectState::Sent)?;
                     hook(Boundary::BeforeDispatch, &effect.key);
-                    let epoch = self.store.load()?.epoch.get();
+                    let current = self.store.load()?;
+                    let delivery = hydrate(effect, &current)?;
                     let completion = self
                         .adapters
-                        .adapter(&delivery, epoch)?
+                        .adapter(&delivery, current.epoch.get())?
                         .execute(&delivery)?;
                     hook(Boundary::AfterDispatch, &effect.key);
                     self.complete(&effect.key, completion)?;
@@ -378,6 +378,25 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
+        if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+            // A terminal failed attempt was found. Return to the sending state
+            // through the effect machine before recording its failure.
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from: EffectState::Uncertain,
+                to: EffectState::Intended,
+            });
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from: EffectState::Intended,
+                to: EffectState::Sent,
+            });
+        }
+        let from = if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+            EffectState::Sent
+        } else {
+            effect.state
+        };
         let state = match completion.ack {
             Ack::Confirmed => EffectState::Confirmed,
             Ack::Retryable => EffectState::Intended,
@@ -385,7 +404,7 @@ impl Controller {
         };
         commit.transitions.push(EffectTransition {
             key: key.into(),
-            from: effect.state,
+            from,
             to: state,
         });
         if let Out::Effect { node, seq, .. } = delivery.output {
@@ -456,12 +475,46 @@ impl Controller {
                         .ok_or(Error::Invalid("head missing from intern dictionary"))
                 })
                 .transpose()?;
+            let binding = commit.rows.iter().find_map(|row| match row {
+                RowChange::Put { table, id, value }
+                    if table == "requests" && id == &node.0.to_string() =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            });
+            let request: Request = match binding {
+                Some(value) => serde_json::from_value(value)?,
+                None => request(snapshot, node)?,
+            };
+            let pull_request = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "pull_requests" && r.id == node.0.to_string())
+                .and_then(|r| r.value["number"].as_u64());
+            let paths = world
+                .files(n.footprint)
+                .ok_or(Error::Invalid("unknown footprint"))?
+                .map(|file| {
+                    dictionary
+                        .iter()
+                        .find(|i| i.kind == tl3_store::InternKind::Path && i.id == file.0 as i64)
+                        .map(|i| i.value.clone())
+                        .ok_or(Error::Invalid("path missing from intern dictionary"))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
                 output,
                 generation: n.generation,
                 head_sha,
+                repository: request.repo,
+                issue: request.issue,
+                pull_request,
+                paths,
+                attempt: n.attempt,
+                round: n.round,
             };
             if matches!(
                 output,
@@ -510,6 +563,11 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
+            Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
+                return Err(Error::Invalid(
+                    "acknowledgements require an effect key; requests require authorized intake",
+                ));
+            }
             Observation::Kernel(event) => event,
             Observation::Plan {
                 node,
@@ -623,4 +681,15 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
         id,
         value,
     }
+}
+
+fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
+    let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+    delivery.epoch = effect.epoch.get();
+    delivery.pull_request = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "pull_requests" && r.id == delivery.node().0.to_string())
+        .and_then(|r| r.value["number"].as_u64());
+    Ok(delivery)
 }

@@ -1,7 +1,6 @@
 # TL3 store
 
-`tl3-store` is a standalone Rust 2024 crate with its own lockfile. The
-coordinator will add it to the workspace after the kernel lands. It imports
+`tl3-store` is a Rust 2024 crate in the root workspace, with one shared lockfile. It imports
 no kernel types. Events, row values, effects and commit results are JSON.
 
 The controller uses it in this order:
