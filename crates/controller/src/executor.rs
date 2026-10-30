@@ -144,6 +144,8 @@ pub enum Observation {
         failed_tests: Vec<crate::findings::FailedTest>,
         report: bool,
         pass: bool,
+        #[serde(default)]
+        results: Vec<serde_json::Value>,
     },
     Plan {
         node: NodeId,

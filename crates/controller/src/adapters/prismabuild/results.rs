@@ -4,7 +4,7 @@ use crate::{
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read};
 use tl3_prismabuild::{ActionKey, Tool};
@@ -43,7 +43,7 @@ struct Report {
     head: String,
     results: Vec<CheckResult>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct CheckResult {
     name: String,
     kind: Kind,
@@ -51,19 +51,19 @@ struct CheckResult {
     custody: Custody,
     tests: Vec<TestResult>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Verdict {
     Pass,
     Fail,
     InfrastructureFailure,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Custody {
     InProcess,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct TestResult {
     test: String,
     #[serde(rename = "base")]
@@ -76,7 +76,7 @@ struct TestResult {
     #[serde(default)]
     message: String,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Outcome {
     Passed,
@@ -123,23 +123,26 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
     }
-    let (report, pass, failed_tests) = match evidence(ending, job) {
+    let (report, pass, results, failed_tests) = match evidence(ending, job) {
         Ok(verdict) => verdict,
         Err(error @ Error::Io(_)) => return Err(error),
         Err(error) => {
             eprintln!("PrismaBuild result {}: {error}", job.action);
-            (false, false, Vec::new())
+            (false, false, vec![], vec![])
         }
     };
-    Ok(Some(completion(job, report, pass, failed_tests)?))
+    Ok(Some(completion(job, report, pass, results, failed_tests)?))
 }
 
-fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool, Vec<FailedTest>)> {
+type CheckEvidence = (bool, bool, Vec<serde_json::Value>, Vec<FailedTest>);
+
+fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
         && ending.exit_code == Some(0);
     let mut report = false;
     let mut pass = false;
+    let mut results = vec![];
     let mut failed_tests = Vec::new();
     if let Some(evidence) = ending.result {
         if !evidence.verified
@@ -192,6 +195,11 @@ fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool, Vec<FailedTest>)> 
                     .results
                     .iter()
                     .all(|r| matches!(r.verdict, Verdict::Pass));
+            results = parsed
+                .results
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<std::result::Result<_, _>>()?;
         }
     } else if matches!(ending.status.as_str(), "executed" | "cache_hit") {
         // A receipt-only cache hit can outlive its queue record. Missing result evidence is unknown.
@@ -199,13 +207,14 @@ fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool, Vec<FailedTest>)> 
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok((report, pass, failed_tests))
+    Ok((report, pass, results, failed_tests))
 }
 
 fn completion(
     job: &Job,
     report: bool,
     pass: bool,
+    results: Vec<serde_json::Value>,
     failed_tests: Vec<FailedTest>,
 ) -> Result<Completion> {
     Ok(Completion::confirmed(vec![Observation::Checks {
@@ -222,6 +231,7 @@ fn completion(
         failed_tests,
         report,
         pass,
+        results,
     }]))
 }
 

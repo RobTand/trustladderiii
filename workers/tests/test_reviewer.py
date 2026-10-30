@@ -118,6 +118,13 @@ def test_invalid_review_input_fails_before_model(tmp_path, review_request, field
     assert result.stderr.strip() == "tl3_workers: request failed"
 
 
+def test_review_accepts_harness_failure_messages(tmp_path, review_request):
+    review_request["inputs"]["checks"][0]["tests"][0]["message"] = "assert 'goodbye' == 'hello'"
+    result = start_worker(tmp_path, review_request, [{"content": json.dumps(changes(blocker()))}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"] == changes(blocker())
+
+
 def test_review_accepts_empty_diff_checks_and_rules(tmp_path, review_request):
     review_request["inputs"].update(diff="", checks=[], standing_rules=[])
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])

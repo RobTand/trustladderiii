@@ -99,9 +99,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
-`adapters::simulation_with_workers` replaces ingest, audit, planning and maker with Python
-worker processes and returns a `WorkerOutputSource`. Review remains on
-the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Review needs
+committed Git and check evidence. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
@@ -274,8 +274,8 @@ The controller's separate connection advances cursors and retires rows.
 
 ### Register a delivery translator
 
-PR #69 registers its Mergify translator, and #13 registers its PR translator,
-on the controller before `Sources::run` or `ingress::drain`:
+Register the Mergify translator on the controller before `Sources::run` or
+`ingress::drain`. It handles PR updates as well as queue facts:
 
 ```rust
 controller.register_github_translator("mergify", mergify_translator);
@@ -309,7 +309,7 @@ writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13. Incident notices use
+PR effects use the same adapter's publishing implementation. Incident notices use
 the operations issue. Replacements start a new request on the same issue from
 Rob's text. Corrections create linked issues with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
@@ -321,9 +321,14 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Supply issue and
+repository text through `Store::put_worker_materials` before dispatch. Review also
+needs committed Git and check evidence.
+
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
-ingest, audit, planning and maker, with the remaining roles and upstreams simulated. Add
+ingest, audit, planning, maker and review, with other upstreams simulated. Add
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
 sources against a local GitHub mock. Without `--workers`, workers stay simulated.
 Worker replies enter the same controller channel as webhook notifications. A
@@ -427,8 +432,9 @@ registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, recor
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
 check baselines and receipts by effect key. A label write alone leaves enqueue
 uncertain. Mergify must report queue membership or the attempt's terminal result.
-The kernel has no dequeue effect, so this adapter adds none. GitHub PR effects
-remain on the fake until ticket #13.
+An outside commit between Mergify's head check and adding `tl3-queue` can leave a stale label; the new head has no approval check, so it cannot merge.
+The kernel has no dequeue effect, so this adapter adds none. The GitHub adapter
+owns approval checks and opening and closing PRs.
 
 Register queue translation on the controller before draining ingress:
 
@@ -602,7 +608,7 @@ Supersession and withdrawal list only that node's files.
 `action_key(&Delivery)` locates the binding directly. Startup moves flat bindings
 into node directories while preserving their completion markers.
 The last pair stays until that node delivers a newer ending. After the request
-closes and every effect and watch for that node has settled, ticket #13 teardown
+closes and every effect and watch for that node has settled, the adapter retirement hook
 calls `prismabuild::Adapter::retire_node(node)`. The call is idempotent and removes
 the final records and source watches. Neither age nor a timer permits deletion.
 
@@ -990,3 +996,74 @@ workspace checks, worker protocol tests, kernel tests and stall proof with `pyth
 manifest with the published `pbcampaign.py`. Process and timing tests run once
 on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
 receipt before reporting a pass.
+
+## Review and publishing
+
+The supervisor maps `Role::Review` to the `reviewer` worker. It selects the first
+model returned by `models.reviewer_for` for the current maker attempt's family.
+A missing independent family blocks dispatch. Review runs in its own process and
+reads a private clone at the exact checked commit. Dirty maker files never enter
+that clone.
+
+The controller retains each check's tests, outcomes and `custody: in-process` in
+`check_reports`. Each node keeps only its latest head's report, and closure deletes
+it. A review needs the matching check plan, base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
+identifiers when ingest did not supply IDs. Optional `standing_rules` in worker
+materials supplement the controller's rules. The reserved `test-report-integrity`
+rule always replaces any supplied rule with the same ID. It protects test output
+and pytest internals while permitting ordinary program output. Review blockers
+must cite a supplied goal or rule. Approvals must name the exact reviewed head.
+The controller carries blocking findings into planning.
+
+Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
+covers resuming the round-0 session with the session store from #12. It is blocked
+by #12 and #13 and must land before the live tracer, #20.
+
+`github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
+client. The check is named `TL3 approval`. Its external ID contains the effect key
+and exact SHA. Recovery requires a successful completed check from that App on
+that SHA. PR recovery reads all open and closed PRs for the request's owned branch.
+Opening an existing unmerged closed PR reopens it. Closing an absent, closed or
+merged PR confirms without another write. Transport failures remain unknown.
+
+The kernel sequences push, approval, PR opening and queueing. Mergify adds the
+queue label only after those steps. A new commit or clean catch-up receives fresh
+checks and review. Outside pushes retain the request's check plan. Clean rebases
+carry that plan onto the reported new base. The worktree adapter performs rebases and removes
+the worktree and branch during teardown. The GitHub message pipeline posts the
+closing summary and closes the issue.
+
+After closure, PrismaBuild retirement requires every check effect and watch to
+be terminal. `retire_node` also reads each unfinished binding and refuses a
+Queued or Claimed upstream row. Corrupt bindings and failed reads retain records.
+Retirement continues with other closed nodes after a failure, then returns the
+first error. Successful retirement removes the request's directory and notifies the source.
+The configured submission tool must be `pbrun` itself or a wrapper that `exec`s it,
+so the controller's death signal reaches the publisher.
+
+To add a supervisor role, update these points together:
+
+1. Map the existing kernel role in `workers/protocol.rs`.
+2. Register its packaged input and reply schemas there.
+3. Assemble its input, model and committed worktree in `Supervisor`.
+4. Validate input-dependent evidence in `workers/source.rs`.
+5. Translate and persist the reply in `Controller::translate`.
+6. Exercise the process and its retirement on all three fleet hosts.
+
+Generate the development campaign from a clean commit:
+
+```bash
+python3 crates/controller/tools/publishing_review_manifest.py hosts > /tmp/tl3-publishing.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-publishing.json
+```
+
+This runs the publishing, GitHub and PrismaBuild adapter scenarios once per host
+on dl380g10, sparky and sparklina. It also runs the affected Rust suites,
+including process recovery scenarios, and the worker package's offline tests. The
+`publishing` target combines local repositories, mock GitHub HTTP, recorded
+PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
+entry point with an offline model. Making uses the worker fake until ticket #12
+merges. It covers merge and cleanup, an outside commit, a free catch-up recheck,
+an unapproved merge, and lost-response recovery for GitHub writes. No test submits
+nested fleet work. After the host runs pass, generate the `workspace` campaign
+and submit it for formatting, Clippy and full workspace verification.

@@ -155,7 +155,7 @@ pub(super) fn stop(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,

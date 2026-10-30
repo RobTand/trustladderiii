@@ -7,6 +7,9 @@ use crate::{
 use std::path::Path;
 use tl3_kernel::EffectKind;
 
+mod publishing;
+pub use publishing::APPROVAL_CHECK;
+
 pub struct Fake(Records);
 impl Fake {
     pub fn new(root: &Path) -> Self {
@@ -50,7 +53,6 @@ use tl3_github::{
 use tl3_kernel::{Ack, NoteKind, Notice, Outcome, QKind};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
-/// PR effects stay on the tracer fake until ticket 13 replaces them here.
 pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
     writer: Box<dyn Writer>,
@@ -74,6 +76,7 @@ impl Adapter {
                 "real GitHub adapter requires [github.operations]",
             ));
         }
+        std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
             writer: Box::new(writer),
@@ -204,6 +207,9 @@ impl Executor for Adapter {
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
+        if publishing::handles(delivery) {
+            return self.publish(delivery);
+        }
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             return self.file_request(delivery);
         }
@@ -396,6 +402,11 @@ impl Executor for Adapter {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.fake.0.fence(self.epoch)?;
+        if publishing::handles(delivery) {
+            return Ok(self
+                .reconcile_publication(delivery)
+                .unwrap_or(Reconciliation::Pending));
+        }
         if let Some(crate::steering::Task::FileRequest {
             correction, since, ..
         }) = &delivery.steering
@@ -590,7 +601,7 @@ fn writer_input(
             MessageKind::Summary,
             json!({"issue_title": title, "request": request,
             "outcome": match outcome {
-                Outcome::Merged => "Your change was merged after its checks and review passed.",
+                Outcome::Merged => "Your change was merged.",
                 Outcome::AlreadyDone => "The requested work was already done.",
                 Outcome::Duplicate => "This request duplicates work already tracked elsewhere.",
                 Outcome::NotActionable => "This request could not be acted on.",

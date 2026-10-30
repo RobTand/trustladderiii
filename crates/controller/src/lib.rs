@@ -861,13 +861,14 @@ impl Controller {
         }
         if completion.ack == Ack::Confirmed {
             self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
-            for (index, observation) in completion.observations.iter().enumerate() {
-                commit.rows.push(put(
-                    "inbox",
-                    format!("{key}:{index:08}"),
-                    json!(observation),
-                ));
-            }
+        }
+        // Upstream facts remain evidence even when the attempted write was refused.
+        for (index, observation) in completion.observations.iter().enumerate() {
+            commit.rows.push(put(
+                "inbox",
+                format!("{key}:{index:08}"),
+                json!(observation),
+            ));
         }
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
@@ -1138,6 +1139,21 @@ impl Controller {
                 });
             }
         }
+        for row in &snapshot.rows {
+            if row.table == "check_reports"
+                && row
+                    .id
+                    .split(':')
+                    .next()
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .is_some_and(|id| closed.contains(&NodeId(id)))
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -1322,9 +1338,27 @@ impl Controller {
                     Evidence::Conflict { .. } => Fact::Conflict,
                     Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
                     Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
-                    Evidence::PushByOther { head } => Fact::PushByOther {
-                        head: self.head(node, &head)?,
-                    },
+                    Evidence::PushByOther { head } => {
+                        let previous_sha = current.head.and_then(|head| {
+                            snapshot
+                                .interned
+                                .iter()
+                                .find(|i| {
+                                    i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                                })
+                                .map(|i| i.value.as_str())
+                        });
+                        if let Some(run) = check_run(snapshot, node, previous_sha)? {
+                            commit.rows.push(put(
+                                "check_plans",
+                                format!("{}:{head}", node.0),
+                                json!(run),
+                            ));
+                        }
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }
@@ -1385,6 +1419,8 @@ impl Controller {
                 failed_tests: tests,
                 report,
                 pass,
+                results,
+                base_sha,
                 ..
             } => {
                 let request = request(snapshot, node)?;
@@ -1397,6 +1433,24 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
+                if n.job == Some(generation) && n.generation == generation && exact_head {
+                    let prefix = format!("{}:", node.0);
+                    for row in snapshot.rows.iter().filter(|row| {
+                        row.table == "check_reports"
+                            && row.id.starts_with(&prefix)
+                            && row.id != format!("{}:{sha}", node.0)
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: row.table.clone(),
+                            id: row.id.clone(),
+                        });
+                    }
+                    commit.rows.push(put(
+                        "check_reports",
+                        format!("{}:{sha}", node.0),
+                        json!({"base_sha": base_sha, "results": results}),
+                    ));
+                }
                 let mut in_footprint = true;
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
@@ -1446,6 +1500,7 @@ impl Controller {
                         | (tl3_kernel::Phase::Auditing, "audit")
                         | (tl3_kernel::Phase::Making, "maker")
                         | (tl3_kernel::Phase::Planning { .. }, "planner")
+                        | (tl3_kernel::Phase::Reviewing, "reviewer")
                 );
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
@@ -1457,9 +1512,52 @@ impl Controller {
                         }));
                     }
                 };
+                if role == "reviewer" {
+                    let mut criteria = adapters::workers::review::criteria(&mut self.store, node)?;
+                    criteria["head_sha"] = json!(n.head.and_then(|head| {
+                        snapshot
+                            .interned
+                            .iter()
+                            .find(|i| {
+                                i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                            })
+                            .map(|i| i.value.clone())
+                    }));
+                    if adapters::workers::review::validate_reply(&reply, &criteria).is_err() {
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    if reply["verdict"] == "approve" {
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
+                            });
+                    }
+                    let mut findings = self
+                        .store
+                        .worker_document(&node.0.to_string(), "findings")?
+                        .unwrap_or(json!([]));
+                    for finding in reply["blocking_findings"].as_array().unwrap() {
+                        findings
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("findings must be a list"))?
+                            .push(json!(format!(
+                                "{}: {}",
+                                finding["problem"].as_str().unwrap(),
+                                finding["evidence"].as_str().unwrap()
+                            )));
+                    }
+                    commit
+                        .rows
+                        .push(put("findings", node.0.to_string(), findings));
+                }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
                     "audit" => "audits",
+                    "reviewer" => "reviews",
                     "maker" => "maker_replies",
                     _ => "plans",
                 };

@@ -6,6 +6,7 @@ mod fake;
 mod json;
 mod process;
 pub(crate) mod protocol;
+pub(crate) mod review;
 mod source;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
@@ -199,7 +200,9 @@ impl Supervisor {
         };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
-        if role == "planner" {
+        if role == "reviewer" {
+            inputs = review::inputs(delivery, store, snapshot)?;
+        } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];
             rung = usize::from(n.plan_retries);
@@ -223,6 +226,12 @@ impl Supervisor {
         if role == "ingest" {
             inputs["forecast"] = forecast;
         }
+        if role != "reviewer" {
+            inputs
+                .as_object_mut()
+                .ok_or(Error::Invalid("worker materials must be an object"))?
+                .remove("standing_rules");
+        }
         protocol::validate_inputs(role, &inputs)?;
         let ladder: &[tl3_config::Model] = match role {
             "classifier" => &self.models.comment_classifier,
@@ -230,9 +239,17 @@ impl Supervisor {
             "audit" => &self.models.audit,
             "maker" => &self.models.maker,
             "planner" => &self.models.planner,
+            "reviewer" => &self.models.reviewer,
             _ => return Err(Error::Invalid("unsupported worker role")),
         };
-        let model = &ladder[rung.min(ladder.len() - 1)];
+        let model = if role == "reviewer" {
+            let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
+            self.models
+                .reviewer_for(&maker.family)
+                .ok_or(Error::Invalid("reviewer needs a different model family"))?
+        } else {
+            &ladder[rung.min(ladder.len() - 1)]
+        };
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
@@ -464,7 +481,9 @@ impl Supervisor {
         if role != "maker" {
             fs::create_dir_all(root.join("worktree"))?;
         }
-        if matches!(role, "ingest" | "planner") {
+        if role == "reviewer" {
+            review::checkout(&root.join("worktree"), delivery)?;
+        } else if matches!(role, "ingest" | "planner") {
             let materials = self.materials(delivery, &mut store, &snapshot)?;
             materialize(&root.join("worktree"), &materials["repo"])?;
         }

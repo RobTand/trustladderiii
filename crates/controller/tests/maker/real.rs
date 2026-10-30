@@ -389,6 +389,7 @@ pub(super) fn outside_paths_bounded(settings: &tl3_config::Store) {
         .observe(
             "many-outside-paths",
             Observation::Checks {
+                results: vec![],
                 node: NodeId(0),
                 generation: node.generation,
                 action_key: "a".repeat(64),
