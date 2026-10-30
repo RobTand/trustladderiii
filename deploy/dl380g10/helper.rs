@@ -370,13 +370,12 @@ async fn operations(
         let creation = api.request(Method::POST, "repos/RobTand/trustladderiii/issues", token,
             Some(json!({"title": TITLE, "body": format!("{MARKER}\n\nTL3 posts incidents here. Questions about a request stay on that request's issue.")})))
             .await;
-        if let Err(error) = &creation {
-            if error
+        if let Err(error) = &creation
+            && error
                 .downcast_ref::<HttpFailure>()
                 .is_some_and(|error| (400..500).contains(&error.0))
-            {
-                save_state(state, json!({"installation_id": installation}))?;
-            }
+        {
+            save_state(state, json!({"installation_id": installation}))?;
         }
         creation?["number"]
             .as_u64()

@@ -3,6 +3,9 @@ set -euo pipefail
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2}
 export RUST_TEST_THREADS=2
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+"$HOME/.local/bin/uv" tool run --from ruff==0.14.14 ruff check --isolated --select E9,F deploy/dl380g10/*.py
+cargo fmt --all -- --check
+cargo clippy --locked -p tl3-config -p tl3-controller --all-targets -- -D warnings
 cargo test --locked -p tl3-config
 cargo test --locked -p tl3-controller --example tl3-deploy
 cargo build --locked -p tl3-controller --bins --example tl3-deploy
