@@ -367,8 +367,10 @@ token. Repeated identical reads leave equal tokens and cause no further commits.
 Progress bookkeeping does not schedule another look. The driver still visits
 other watches in the same pass. The comparison survives restart and leaves with
 the watch, so it does not retain finished history. Retirement errors are logged
-and retried on a later drive. They do not stop inbox or effect processing. Only Mergify retirement calls an
-adapter because only this adapter owns per-effect files requiring retirement.
+and retried on a later drive. They do not stop inbox or effect processing.
+Mergify's `retire_delivery` resolves an adapter only for delivery files requiring
+cleanup. Worker retirement keeps its separate store-based `retire` hook; errors
+from that hook are also logged without stopping the driver.
 
 Ticket #15 owns allowances and scheduled looks. On an unchanged authoritative
 read after the progress allowance, it can report: "GitHub merged at X, Mergify
