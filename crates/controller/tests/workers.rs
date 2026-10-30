@@ -1236,6 +1236,33 @@ fn retirement(settings: &tl3_config::Store) {
     restarted.retire(&mut store).unwrap();
     restarted.retire(&mut store).unwrap();
     assert_retired(&config, &mut store);
+
+    // A source can attach before a launcher claims its attempt, with no pidfd to wake it.
+    fs::create_dir_all(run_root.join("attempt-00000000")).unwrap();
+    store.claim_worker(&run.key, "0", 0, 0).unwrap();
+    save(
+        &mut store,
+        vec![RowChange::Put {
+            table: "watches".into(),
+            id: run.key.clone(),
+            value: json!(run),
+        }],
+        vec![],
+        vec![],
+    );
+    let mut unclaimed_source = restarted.source();
+    unclaimed_source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(unclaimed_source.active_runs(), 1);
+    unwatch(&mut store, &run);
+    restarted.retire(&mut store).unwrap();
+    unclaimed_source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        unclaimed_source.active_runs(),
+        0,
+        "directory removal wakes a source without process identities"
+    );
+    assert!(rx.try_recv().is_err());
+    assert_retired(&config, &mut store);
 }
 
 fn kill_record_and_wait(path: &Path) {

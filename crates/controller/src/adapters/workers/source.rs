@@ -168,6 +168,11 @@ impl WorkerOutputSource {
             match reader.next() {
                 Ok(event) => {
                     overflow |= event.events().contains(inotify::ReadFlags::QUEUE_OVERFLOW);
+                    if event.events().contains(inotify::ReadFlags::IGNORED)
+                        && let Some(root) = self.watches.get(&event.wd())
+                    {
+                        dirty.insert(root.clone());
+                    }
                     let Some(name) = event.file_name() else {
                         continue;
                     };
@@ -278,6 +283,9 @@ impl WorkerOutputSource {
         store: &mut Store,
         sender: &Sender<Input>,
     ) -> Result<bool> {
+        if !store.worker_reconcilable(&run.delivery.key)? {
+            return Ok(false);
+        }
         if run.attempt.is_none() {
             run.attempt = latest(&run.root)?;
             if let Some((_, attempt)) = &run.attempt {
