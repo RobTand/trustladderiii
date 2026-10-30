@@ -1,0 +1,27 @@
+merge_queue:
+  mode: serial
+  max_parallel_checks: 2
+  reset_on_external_merge: always
+  queue_controls_comment: false
+
+queue_rules:
+  - name: default
+    queue_conditions:
+      - base = main
+      - label = tl3-queue
+      - check-success = @tl3-robtand/TL3 approval
+    merge_conditions:
+      - check-success = Sandbox tests
+    merge_method: merge
+    batch_size: 1
+    max_checks_retries: 0
+
+pull_request_rules:
+  - name: Queue TL3-approved PRs
+    conditions:
+      - base = main
+      - label = tl3-queue
+      - check-success = @tl3-robtand/TL3 approval
+    actions:
+      queue:
+        name: default

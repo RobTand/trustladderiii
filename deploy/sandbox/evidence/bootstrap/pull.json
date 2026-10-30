@@ -1,0 +1,36 @@
+{
+  "number": 15,
+  "user": {
+    "id": 24923402,
+    "login": "RobTand"
+  },
+  "state": "closed",
+  "merged": true,
+  "merged_at": "2026-10-30T13:46:06Z",
+  "merge_commit_sha": "8901bccfca30f1297c1c6312e6a239ec3b669d76",
+  "head": {
+    "ref": "t17-sandbox-gate",
+    "sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "f557d92951ea0a3b04e4ff0f49d3fe04613b8d16",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "updated_at": "2026-10-30T13:46:07Z"
+}

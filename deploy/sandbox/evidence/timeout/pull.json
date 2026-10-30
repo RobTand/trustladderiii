@@ -1,0 +1,36 @@
+{
+  "number": 25,
+  "user": {
+    "id": 24923402,
+    "login": "RobTand"
+  },
+  "state": "open",
+  "merged": false,
+  "merged_at": null,
+  "merge_commit_sha": "f424e5bec4aad1d739e2dc529eb4ade4bc23d469",
+  "head": {
+    "ref": "tl3/issue-17-node-250",
+    "sha": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "8901bccfca30f1297c1c6312e6a239ec3b669d76",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "updated_at": "2026-10-30T14:16:47Z"
+}

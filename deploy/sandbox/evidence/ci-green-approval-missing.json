@@ -1,0 +1,12 @@
+{
+  "pr": 20,
+  "head": "d14b963af0aed01917361bc5416ed9095e04581e",
+  "ci": "success",
+  "approval_present": false,
+  "returncode": 1,
+  "response": {
+    "message": "Repository rule violations found\n\nRequired status check \"TL3 approval\" is expected.\n\n",
+    "documentation_url": "https://docs.github.com/rest/pulls/pulls#merge-a-pull-request",
+    "status": "405"
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "repository": {
+    "allow_merge_commit": true,
+    "allow_squash_merge": false,
+    "allow_rebase_merge": false,
+    "allow_auto_merge": false,
+    "allow_update_branch": false,
+    "delete_branch_on_merge": true,
+    "merge_commit_title": "PR_TITLE",
+    "merge_commit_message": "PR_BODY",
+    "default_branch": "main",
+    "visibility": "private"
+  },
+  "rulesets": [
+    {
+      "name": "TL3 branch ownership",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [
+        {
+          "actor_id": 5542171,
+          "actor_type": "Integration",
+          "bypass_mode": "always"
+        }
+      ],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/heads/tl3/**/*"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        {
+          "type": "creation"
+        },
+        {
+          "type": "update"
+        },
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        }
+      ]
+    },
+    {
+      "name": "TL3 main merge gate",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/heads/main"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": true,
+            "require_code_owner_review": true,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "allowed_merge_methods": [
+              "merge"
+            ],
+            "require_extra_approval_for_unattributed_changes": true,
+            "required_reviewers": []
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "TL3 approval",
+                "integration_id": 5542171
+              },
+              {
+                "context": "Sandbox tests",
+                "integration_id": 15368
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "branch_protection": {
+    "main": null
+  },
+  "files": {
+    ".mergify.yml": "aa9d569c679a33cf9fc9ba0dd531b7a46eac25fae6039aa5aefdde8a6e293a34",
+    ".github/CODEOWNERS": "cb9f7d98a46af0716ba25e0f5163f780caaac65b6a6f10e89cf814a80e8db7e8",
+    ".github/workflows/tests.yml": "6136e52f425d8e74432a3a5022d67d6492344cea296588a6665ed5cfae582f1d"
+  }
+}

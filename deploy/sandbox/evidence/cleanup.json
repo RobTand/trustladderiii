@@ -1,0 +1,29 @@
+[
+  {
+    "pr": 17,
+    "state": "closed",
+    "approved_head": "b8ce166c019c7f618f46e005741782edd9567746",
+    "final_head": "b8ce166c019c7f618f46e005741782edd9567746",
+    "head_unchanged": true,
+    "branch": "tl3/issue-17-node-170",
+    "branch_deleted": true
+  },
+  {
+    "pr": 20,
+    "state": "closed",
+    "approved_head": "d14b963af0aed01917361bc5416ed9095e04581e",
+    "final_head": "d14b963af0aed01917361bc5416ed9095e04581e",
+    "head_unchanged": true,
+    "branch": "tl3/issue-17-node-190",
+    "branch_deleted": true
+  },
+  {
+    "pr": 25,
+    "state": "closed",
+    "approved_head": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "final_head": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "head_unchanged": true,
+    "branch": "tl3/issue-17-node-250",
+    "branch_deleted": true
+  }
+]

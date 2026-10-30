@@ -32,3 +32,11 @@ fn unfinished_checks_omit_conclusions_and_completed_checks_send_them() {
         );
     }
 }
+
+#[test]
+fn actions_check_accepts_a_null_output_title() {
+    let check: CheckRun =
+        serde_json::from_slice(include_bytes!("fixtures/actions-check-null-title.json")).unwrap();
+    assert_eq!(check.name, "Sandbox tests");
+    assert_eq!(check.app.unwrap().slug, "github-actions");
+}

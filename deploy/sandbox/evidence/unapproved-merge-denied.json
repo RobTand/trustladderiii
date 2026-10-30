@@ -1,0 +1,9 @@
+{
+  "head": "9042768866e4ddcda9bf48949e82d11272d9008a",
+  "returncode": 1,
+  "response": {
+    "message": "Repository rule violations found\n\n2 of 2 required status checks are expected.\n\n",
+    "documentation_url": "https://docs.github.com/rest/pulls/pulls#merge-a-pull-request",
+    "status": "405"
+  }
+}
