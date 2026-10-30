@@ -18,7 +18,7 @@ env = {
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
 if args.suite == "references":
-    rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "writer_references", "--test", "writer_quote", "--test", "github", "--locked"]}
+    rows = [{**common, "tags": [host], "argv": ["bash", "-c", "cargo test -p tl3-controller --test writer_references --test writer_quote --test github --locked && cargo test -p tl3-github --test messages --locked"]}
             for host in ("dl380g10", "sparky", "sparklina")]
 elif args.suite == "steering":
     rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "github", "--locked"]}

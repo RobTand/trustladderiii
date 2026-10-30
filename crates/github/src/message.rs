@@ -121,10 +121,8 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
-    let mut rendered = format!(
-        "You asked for \"{}\".\n\n{}\n",
-        draft.request_quote, draft.obstacle
-    );
+    let request_prefix = format!("You asked for \"{}\".\n\n", draft.request_quote);
+    let mut rendered = format!("{request_prefix}{}\n", draft.obstacle);
     for (i, option) in draft.options.iter().enumerate() {
         rendered.push_str(&format!(
             "\n{}. {}: {}\n",
@@ -150,6 +148,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         draft.how_to_answer.as_str(),
     ]);
     errors.extend(content_errors(&written.join("\n"), policy));
+    errors.extend(reference_errors(&rendered[request_prefix.len()..], policy));
     if errors.is_empty() {
         Ok(CheckedMessage(rendered))
     } else {
@@ -160,6 +159,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
 /// Notes and summaries use the same content rules without question-only fields.
 pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Violation>> {
     let mut errors = content_errors(text, policy);
+    errors.extend(reference_errors(text, policy));
     if is_blank(text) {
         errors.push(Violation::MissingObstacle);
     }
@@ -172,7 +172,7 @@ pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Vi
 
 fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     let normalized = normalize(text);
-    let mut errors = reference_errors(text, policy);
+    let mut errors = Vec::new();
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }
