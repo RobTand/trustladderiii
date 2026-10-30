@@ -302,6 +302,20 @@ A node that spans several repos is admitted at once, because its plan must split
 
 ### Planning
 
+The controller supplies the planner with these inputs, alongside the brief,
+goals and forecast settings:
+
+- `must_split`: true after a maker ran out of room, otherwise false. A leaf
+  reply is rejected when it is true.
+- `findings`: everything learned before a re-plan, including failed checks and
+  review findings, as a list of text reports. It is empty for initial planning.
+  The planner uses these findings when choosing its next plan.
+- `protected_paths`: repo-relative glob patterns for files a leaf or split may
+  not declare. Code rejects matching declarations. The controller's defaults
+  include `.github/**`, `.mergify.yml`, `**/conftest.py`, `pytest.ini`, `tox.ini`,
+  `noxfile.py`, `setup.cfg` and `pyproject.toml`. `**` matches zero or more path
+  segments, including a root `conftest.py`.
+
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Plan: leaf | The leaf rules hold | Ready(fresh) | |
@@ -382,7 +396,7 @@ When the last step confirms, the leaf moves to Queued.
 - **Round 1 fails, or the maker says it can't meet:** move to the next step below. Each step costs 1. Each new attempt runs in a fresh session, starting from the branch, with every finding so far.
   - After attempt 1: Making(attempt 2, round 0), with a bigger budget.
   - After attempt 2: Making(attempt 3, round 0), on the next model in the maker's ladder.
-  - After attempt 3, if the leaf hasn't been re-planned: release the slot and files, and go to Planning with every finding. The new plan starts again at attempt 1.
+  - After attempt 3, if the leaf hasn't been re-planned: release the slot and files, and go to Planning with every finding in the planner's `findings` input. `must_split` is false unless the maker ran out of room. The new plan starts again at attempt 1.
   - After attempt 3 of a re-planned leaf: release the slot and files, and go to AwaitingRob(can't meet, continue to Ready(Making, new attempt)).
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 
@@ -677,6 +691,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 - Rob eventually answers.
 - Mergify merges only through the queue, with the required checks, and doesn't rewrite queued PRs. This needs confirming when Mergify is wired.
 - GitHub closes a PR when its branch is deleted.
+- Code under test doesn't forge its own test reports. pytest's reporter runs in the tests' own interpreter, so the harness can't rule it out. Rob decided on 2026-10-30 that hostile code isn't a concern at this point. Tamper-proof reports wait for PB #2403.
 
 ## Staging
 

@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-input.json",
+  "type": "object",
+  "properties": {
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification": {
+            "enum": [
+              "test",
+              "review"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "verification"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "demonstrating",
+              "regression",
+              "behavior-preserving"
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "pass",
+              "fail",
+              "infrastructure-failure"
+            ]
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "test": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "base": {
+                  "enum": [
+                    "passed",
+                    "assertion",
+                    "added-name",
+                    "error",
+                    "skipped",
+                    "missing",
+                    "uncollected",
+                    "no-report"
+                  ]
+                },
+                "head": {
+                  "enum": [
+                    "passed",
+                    "assertion",
+                    "added-name",
+                    "error",
+                    "skipped",
+                    "missing",
+                    "uncollected",
+                    "no-report"
+                  ]
+                },
+                "pre_existing": {
+                  "type": "boolean"
+                },
+                "passed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "test",
+                "base",
+                "head",
+                "pre_existing",
+                "passed"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "custody": {
+            "const": "in-process"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "verdict",
+          "tests",
+          "custody"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "standing_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "goals",
+    "base_sha",
+    "head_sha",
+    "diff",
+    "checks",
+    "standing_rules"
+  ],
+  "additionalProperties": false
+}

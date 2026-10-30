@@ -494,6 +494,10 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q26 GitHub App:** the manifest is prepared so Rob only clicks "create". It is installed on `tl3-sandbox` first.
 - **Q28 Committing:** Rob asked for a private GitHub repo, `RobTand/trustladderiii`, rather than local commits only.
 
+**After the grilling**
+
+- **Report trust (2026-10-30):** the check harness's pytest reports run in-process, so deliberately hostile code could forge them. Rob: "I'm not super worried about hostile code at this point." Slice one accepts them, each result records its custody, and tamper-proof reports wait for PB #2403.
+
 **Slice three and later**
 
 - **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. The judge grades everything that needed a fix, a retry or an escalation, plus a random share of clean work. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.

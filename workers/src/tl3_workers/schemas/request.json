@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": 1,
+      "type": "integer"
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "node",
+        "generation",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "pattern": "^https?://[^/\\s]+(?:/[^\\s]*)?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "budget_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "base_url",
+        "name",
+        "effort",
+        "budget_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "key_file": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "worktree": {
+      "type": "string",
+      "pattern": "^/"
+    }
+  },
+  "required": [
+    "protocol",
+    "operation",
+    "role",
+    "model",
+    "key_file",
+    "inputs",
+    "worktree"
+  ],
+  "additionalProperties": false
+}

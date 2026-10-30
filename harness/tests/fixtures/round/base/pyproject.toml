@@ -1,0 +1,3 @@
+[tool.tl3.harness]
+command = ["python", "-m", "pytest"]
+test-files = ["tests/*.py"]
