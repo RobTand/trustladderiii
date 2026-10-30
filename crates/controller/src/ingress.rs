@@ -546,7 +546,7 @@ impl Source for Webhooks {
                         }
                     };
                     let headers = if status == 405 { "Allow: POST\r\n" } else { "" };
-                    if connection.respond(status, "", head, headers).is_err() {
+                    if connection.respond(status, "", head, headers).is_err() && status == 202 {
                         let _ = requests.send(WebhookMessage::Gap);
                     }
                 })
@@ -577,7 +577,8 @@ impl Source for Webhooks {
                         if status == 202 {
                             let _ = sender.send(Input::Wake);
                         }
-                        if status == 503 || reply.send(status).is_err() {
+                        let disconnected = reply.send(status).is_err();
+                        if status == 503 || disconnected {
                             gap = true;
                         }
                     }
