@@ -1,4 +1,5 @@
 mod worktree_fixture;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     env, fs,
     io::{BufRead, BufReader, Write},
@@ -12,6 +13,7 @@ use tl3_controller::{
 };
 use tl3_kernel::{Ack, EffectKind, Event, Reply};
 use worktree_fixture::{Fixture, commit, git};
+static VERIFIED_KILLS: AtomicUsize = AtomicUsize::new(0);
 
 fn found(result: Reconciliation) -> Completion {
     match result {
@@ -66,6 +68,7 @@ fn kill(fixture: &Fixture, delivery: &Delivery, boundary: &str) {
     assert_eq!(line.trim(), "parked");
     child.kill().unwrap();
     assert_eq!(child.wait().unwrap().signal(), Some(9));
+    VERIFIED_KILLS.fetch_add(1, Ordering::Relaxed);
 }
 fn prepared(f: &Fixture) -> Delivery {
     let delivery = f.delivery(EffectKind::PrepareWorktree, 1);
@@ -320,29 +323,52 @@ fn leases_and_exact_heads() {
     );
 }
 fn old_epoch_partial_attempts() {
-    for boundary in ["before", "after"] {
-        let scratch = tempfile::tempdir().unwrap();
-        let f = Fixture::create(scratch.path());
-        let prepare = prepared(&f);
-        let push = made(&f, &prepare, false);
-        kill(&f, &push, boundary);
-        let mut newer = prepare.clone();
-        newer.key = "new-epoch".into();
-        newer.epoch = 2;
-        f.adapter().execute(&newer).unwrap();
-        assert!(f.adapter().execute(&push).is_err());
-        let result = f.adapter().reconcile(&push).unwrap();
-        if boundary == "before" {
-            assert!(matches!(result, Reconciliation::Pending));
-            assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
-        } else {
-            found(result);
+    for kind in [EffectKind::Push, EffectKind::StartRebase] {
+        for boundary in ["before", "after"] {
+            let scratch = tempfile::tempdir().unwrap();
+            let f = Fixture::create(scratch.path());
+            let prepare = prepared(&f);
+            let push = made(&f, &prepare, false);
+            let delivery = if kind == EffectKind::Push {
+                push.clone()
+            } else {
+                f.adapter().execute(&push).unwrap();
+                f.advance_main(false);
+                f.delivery(EffectKind::StartRebase, 3)
+            };
+            kill(&f, &delivery, boundary);
+            let head = f.head(&delivery);
+            let mut newer = prepare.clone();
+            newer.key = "new-epoch".into();
+            newer.epoch = 2;
+            f.adapter().execute(&newer).unwrap();
+            assert!(f.adapter().execute(&delivery).is_err());
+            let result = f.adapter().reconcile(&delivery).unwrap();
+            if boundary == "before" {
+                assert!(matches!(result, Reconciliation::Pending));
+                if kind == EffectKind::Push {
+                    assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+                }
+            } else {
+                let completion = found(result);
+                if kind == EffectKind::Push {
+                    assert_eq!(
+                        git(
+                            &f.remote,
+                            &["rev-parse", Real::branch(&push).unwrap().as_str()]
+                        ),
+                        push.head_sha.unwrap()
+                    );
+                } else {
+                    assert!(
+                        matches!(completion.observations.as_slice(), [Observation::Rebased { sha, .. }] if sha == &head)
+                    );
+                }
+            }
             assert_eq!(
-                git(
-                    &f.remote,
-                    &["rev-parse", Real::branch(&push).unwrap().as_str()]
-                ),
-                push.head_sha.unwrap()
+                f.head(&delivery),
+                head,
+                "old-epoch reconciliation cannot change Git"
             );
         }
     }
@@ -360,6 +386,7 @@ fn main() {
     leases_and_exact_heads();
     old_epoch_partial_attempts();
     println!(
-        "worktree lifecycle, 14 SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips"
+        "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
+        VERIFIED_KILLS.load(Ordering::Relaxed)
     );
 }
