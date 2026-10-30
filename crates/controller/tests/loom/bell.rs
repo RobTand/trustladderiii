@@ -2,6 +2,10 @@ use super::*;
 use crate::executor::Executor;
 use crate::loom_tests::delivery;
 use crate::sync::mpsc;
+#[allow(
+    dead_code,
+    reason = "shared fixture also serves ordinary process tests"
+)]
 #[path = "../fixtures/waits/mod.rs"]
 mod waits;
 

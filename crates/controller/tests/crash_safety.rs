@@ -173,10 +173,18 @@ fn child(args: &[String]) {
         ingress
             .receive_ingress("github-webhook", &issue.delivery, "issues", &bytes)
             .unwrap();
-        let caught_up = tl3_controller::ingress::GitHubDelivery::Webhook(Box::new(
-            tl3_github::webhook::parse(&format!("{}-catch-up", issue.delivery), "issues", &bytes)
-                .unwrap(),
-        ));
+        let changes = serde_json::from_value(json!({
+            "repository":format!("{}/{}", issue.owner, issue.repo),
+            "issues":[payload["issue"]], "comments":[], "pull_requests":[],
+            "check_runs":[], "check_suites":[],
+            "labels":[[issue.number, {"id":7, "event":"labeled", "actor":payload["sender"],
+                "label":payload["label"], "created_at":"2026-10-30T01:00:00Z"}]]
+        }))
+        .unwrap();
+        let caught_up = tl3_controller::ingress::GitHubDelivery::CatchUp {
+            repository: bootstrap().repos[0].clone(),
+            changes: Box::new(changes),
+        };
         ingress
             .receive_catch_up(
                 "crash-fixture",

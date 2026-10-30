@@ -15,11 +15,11 @@ pub(crate) mod mpsc {
     use loom::sync::{Arc, Mutex, mpsc as channel};
     use std::sync::mpsc::{RecvError, RecvTimeoutError, SendError, TryRecvError};
 
-    pub(crate) struct Sender<T> {
+    pub struct Sender<T> {
         inner: channel::Sender<T>,
         alive: Arc<Mutex<bool>>,
     }
-    pub(crate) struct Receiver<T> {
+    pub struct Receiver<T> {
         inner: Option<channel::Receiver<T>>,
         alive: Arc<Mutex<bool>>,
     }
