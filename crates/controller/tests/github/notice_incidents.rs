@@ -16,6 +16,7 @@ impl Writer for WriterFault {
         let targeted = match f.kind.as_str() {
             "question" => input.kind == MessageKind::Question,
             "summary" => input.kind == MessageKind::Summary,
+            "note" => input.kind == MessageKind::Note && !key.starts_with("incident:"),
             "dropped" => input.facts["change_quote"].is_string(),
             _ => false,
         };
@@ -25,6 +26,24 @@ impl Writer for WriterFault {
             }));
         }
         FakeWriter.draft(key, input)
+    }
+}
+struct Complaint(adapters::workers::Fake);
+impl Executor for Complaint {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if d.is_classifier() {
+            Ok(Completion::confirmed(vec![Observation::Classified {
+                key: d.key.clone(),
+                reply: Some(
+                    json!({"kind":"complaint","summary":"The result needs a correction.","revert":false}),
+                ),
+            }]))
+        } else {
+            self.0.execute(d)
+        }
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.0.reconcile(d)
     }
 }
 struct SplitPlan(adapters::workers::Fake);
@@ -60,6 +79,12 @@ fn open(
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     let ask = faults.lock().unwrap().kind == "question";
+    if faults.lock().unwrap().kind == "filing" {
+        registry.register(
+            Upstream::Workers,
+            Complaint(adapters::workers::Fake::new(root)),
+        );
+    }
     if ask {
         registry.register(
             Upstream::Workers,
@@ -107,6 +132,8 @@ pub(super) fn run(db: &mut support::Database) {
         "lost_summary",
         "incident_no_loop",
         "dropped_change",
+        "lost_note",
+        "filing_403",
     ] {
         let settings = db.create(name);
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -150,6 +177,8 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let kind = match name {
         "rejected_ask" | "question_403" => "question",
         "dropped_change" => "dropped",
+        "lost_note" => "note",
+        "filing_403" => "filing",
         _ => "summary",
     };
     let faults = Arc::new(Mutex::new(Faults {
@@ -186,6 +215,22 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         c.intake(labelled()).unwrap();
     }
     drain(&mut c);
+    if kind == "filing" {
+        api.state.lock().unwrap().forbidden_filing = true;
+        let mut comment = fixture(true)["comment"].clone();
+        comment["id"] = json!(90000);
+        comment["body"] = json!("The result needs a correction.");
+        c.observe(
+            "file-correction",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+        drain(&mut c);
+    }
     let snapshot = c.snapshot().unwrap();
     let failed = Store::open(settings)
         .unwrap()
@@ -254,6 +299,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     faults.lock().unwrap().reject = false;
     faults.lock().unwrap().incident = false;
     api.state.lock().unwrap().forbidden_question = false;
+    api.state.lock().unwrap().forbidden_filing = false;
     let mut comment = fixture(true)["comment"].clone();
     comment["id"] = json!(90001);
     comment["body"] = json!(format!("clear incident {incident_id}"));
@@ -312,30 +358,22 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let mut c = open(settings, root.path(), &api.uri(), faults.clone());
     drain(&mut c);
     let count = |api: &Server| {
-        api.state
-            .lock()
-            .unwrap()
-            .comments
+        let state = api.state.lock().unwrap();
+        let records = if kind == "filing" {
+            &state.linked
+        } else {
+            &state.comments
+        };
+        records
             .iter()
             .filter(|v| {
-                let s = v["body"].as_str().unwrap();
-                match kind {
-                    "question" => s.contains("recommend option"),
-                    "dropped" => s.contains("Return goodbye instead of hello."),
-                    _ => s.contains("merged"),
-                }
+                v["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&GitHub::marker(&failed.key))
             })
             .count()
     };
-    // Check the original marker too, including summaries that posted before closing failed.
-    let comments = api.state.lock().unwrap().comments.clone();
-    assert!(
-        comments.iter().any(|v| v["body"]
-            .as_str()
-            .unwrap()
-            .contains(&GitHub::marker(&failed.key))),
-        "retry must preserve the notice marker"
-    );
     assert_eq!(
         count(&api),
         1,
