@@ -36,7 +36,9 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         let n = &controller.world().unwrap().nodes[0];
-        n.phase.is_closed() || n.question.is_some()
+        n.phase.is_closed()
+            || n.question.is_some()
+            || (mode == "plan-bad-schema" && n.run_incidents > 0)
     });
     let world = controller.world().unwrap();
     let n = &world.nodes[0];
@@ -53,7 +55,9 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         .filter(|v: &Value| v["role"] == "planner")
         .collect();
     if mode == "plan-bad-schema" {
-        assert_eq!(n.question.unwrap().kind, tl3_kernel::QKind::CantMeet);
+        assert!(matches!(n.phase, Phase::Planning { .. }));
+        assert_eq!(n.run_incidents, 1);
+        assert!(n.question.is_none());
         assert_eq!(requests.len(), 2);
         assert!(
             plan.is_none(),
