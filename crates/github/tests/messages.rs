@@ -420,3 +420,17 @@ fn decorated_paths_and_line_suffixes_are_rejected() {
     }
     assert!(check_prose("The docs and tests are ready.", &policy).is_ok());
 }
+
+#[test]
+fn references_follow_the_rendered_question_markdown() {
+    let mut d = draft();
+    d.options[0].action = "```".into();
+    d.options[0].outcome = "Ask @octocat".into();
+    assert!(
+        check(&d, &Policy::default())
+            .expect_err(
+                "a fence after a numbered list marker and before a colon is not a code block"
+            )
+            .contains(&Violation::Mention("@octocat".into()))
+    );
+}
