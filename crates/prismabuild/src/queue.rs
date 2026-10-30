@@ -190,6 +190,14 @@ async fn document<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<
 impl PrismaBuild {
     /// Missing records return None. Unreadable records remain errors, never evidence of loss.
     pub async fn read(&self, key: &ActionKey) -> Result<Option<ActionRecord>, Error> {
+        self.read_with(key, |_| {}).await
+    }
+
+    async fn read_with(
+        &self,
+        key: &ActionKey,
+        mut after_read: impl FnMut(&str),
+    ) -> Result<Option<ActionRecord>, Error> {
         let root = &self.options.queue_root;
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
         for (rank, state) in STATES.iter().enumerate() {
@@ -204,7 +212,9 @@ impl PrismaBuild {
                 return Err(invalid(&directory, "expected a queue state directory"));
             }
             let path = directory.join(format!("{key}.json"));
-            let Some(record) = document::<Record>(&path).await? else {
+            let record = document::<Record>(&path).await?;
+            after_read(state);
+            let Some(record) = record else {
                 continue;
             };
             if &record.action_key != key
@@ -348,5 +358,54 @@ impl PrismaBuild {
             records.insert(key.clone(), self.read(key).await);
         }
         records
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Options, Tool};
+
+    fn fixture() -> (tempfile::TempDir, PrismaBuild, ActionKey) {
+        let root = tempfile::tempdir().unwrap();
+        for state in STATES {
+            std::fs::create_dir(root.path().join(state)).unwrap();
+        }
+        let key: ActionKey = "a".repeat(64).parse().unwrap();
+        let client = PrismaBuild::new(Options {
+            queue_root: root.path().into(),
+            tool: Tool { program: "/never-submit".into(), args: vec![] },
+            bell_url: "http://127.0.0.1:9/".into(),
+        }).unwrap();
+        std::fs::write(root.path().join(format!("claimed/{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": ITEM_SCHEMA, "action_key": key, "published_unix": 100
+            })).unwrap()).unwrap();
+        (root, client, key)
+    }
+
+    #[tokio::test]
+    async fn lookup_keeps_unstarted_claim_live_during_requeue() {
+        let (root, client, key) = fixture();
+        let mut moved = false;
+        let record = client.read_with(&key, |state| {
+            if state == "ready" && !moved {
+                // PrismaBuild _ClaimReservation.abandon links ready before unlinking claimed.
+                let claimed = root.path().join(format!("claimed/{key}.json"));
+                std::fs::hard_link(&claimed, root.path().join(format!("ready/{key}.json"))).unwrap();
+                std::fs::remove_file(claimed).unwrap();
+                moved = true;
+            }
+        }).await.unwrap();
+        assert!(record.is_some_and(|record| matches!(record.state, ActionState::Queued | ActionState::Claimed)),
+            "live requeue read as absent");
+    }
+
+    #[tokio::test]
+    async fn lookup_does_not_declare_absence_during_finish_handoff() {
+        let (root, client, key) = fixture();
+        std::fs::rename(root.path().join(format!("claimed/{key}.json")),
+            root.path().join(format!("claimed/{key}.100.host.1.abc.tombstone"))).unwrap();
+        assert!(client.read(&key).await.is_err(), "in-flight handoff read as absent");
     }
 }
