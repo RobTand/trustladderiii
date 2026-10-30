@@ -22,7 +22,7 @@ pub fn simulation(root: &Path) -> Result<Registry> {
     Ok(adapters)
 }
 
-pub use record::{delivered_notes, delivery_counts};
+pub use record::{delivered_notes, delivery_counts, delivery_epochs};
 
 /// Real ingest and audit processes, with the remaining upstreams simulated.
 pub fn simulation_with_workers(
@@ -35,3 +35,4 @@ pub fn simulation_with_workers(
     registry.register(Upstream::Workers, supervisor);
     Ok((registry, source))
 }
+

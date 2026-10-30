@@ -178,7 +178,6 @@ impl Executor for Supervisor {
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        self.fence(delivery)?;
         match delivery.output {
             Out::Effect {
                 kind: EffectKind::StartRun(role),

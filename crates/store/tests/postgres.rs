@@ -30,13 +30,14 @@ fn main() {
         ("migrations_and_append_only", migrations_and_append_only),
         ("killed_writer_recovers", killed_writer_recovers),
         ("durability_settings", durability_settings),
+        ("arrival_within_transaction", arrival_within_transaction),
     ] {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
     database.stop();
-    println!("8 Postgres integration scenarios passed; no skips");
+    println!("9 Postgres integration scenarios passed; no skips");
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -56,6 +57,51 @@ fn put(id: &str, value: serde_json::Value) -> RowChange {
         id: id.into(),
         value,
     }
+}
+
+fn arrival_within_transaction(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("arrivals", json!(null), &snapshot);
+    for key in ["effect:2", "effect:12", "effect:1"] {
+        change.rows.push(RowChange::Put {
+            table: "inbox".into(),
+            id: key.into(),
+            value: json!(key),
+        });
+    }
+    store.commit(&change).unwrap();
+    let before = store.load().unwrap();
+    assert_eq!(
+        before
+            .rows
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        ["effect:2", "effect:12", "effect:1"]
+    );
+    assert!(
+        before
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].arrival < pair[1].arrival)
+    );
+    let mut update = Commit::new("update-arrival", json!(null), &before);
+    update.rows.push(RowChange::Put {
+        table: "inbox".into(),
+        id: "effect:2".into(),
+        value: json!("updated"),
+    });
+    store.commit(&update).unwrap();
+    let after = store.load().unwrap();
+    assert_eq!(
+        after.rows.iter().map(|r| r.arrival).collect::<Vec<_>>(),
+        before.rows.iter().map(|r| r.arrival).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        Store::open_read_only(settings).unwrap().load().unwrap(),
+        after
+    );
 }
 
 fn effect(key: &str) -> NewEffect {

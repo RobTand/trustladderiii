@@ -21,6 +21,8 @@ credit_reserve = 3
 free_rechecks = 3
 # Q29, docs/state-table.md, "Gates": slice one has one slot per repo.
 w = 1
+# Q39, docs/state-machine.md: simultaneous agent runs.
+agent_pool = 1
 
 [github]
 # deploy/github-app/README.md: existing JSON with id, slug, pem, webhook_secret.

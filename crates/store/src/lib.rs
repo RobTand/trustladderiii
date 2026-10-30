@@ -43,13 +43,54 @@ pub struct Store {
 
 const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/0001_store.sql")),
-    (2, include_str!("../migrations/0002_workers.sql")),
+    (2, include_str!("../migrations/0002_world_arrival.sql")),
+    (3, include_str!("../migrations/0003_workers.sql")),
 ];
 
 impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let mut store = Self::connect(settings, false)?;
+        if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
+            return Err(Error::Invalid("store requires Postgres fsync = on"));
+        }
+        store.client.batch_execute("SET synchronous_commit = on")?;
+        store.migrate()?;
+        Ok(store)
+    }
+
+    /// Never migrates. Postgres rejects writes for the lifetime of this connection.
+    pub fn open_read_only(settings: &tl3_config::Store) -> Result<Self> {
+        let mut store = Self::connect(settings, true)?;
+        if !store
+            .client
+            .query_one(
+                "SELECT to_regclass('tl3_schema_migrations') IS NOT NULL",
+                &[],
+            )?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("store is uninitialized; start tl3d first"));
+        }
+        let applied = store.client.query(
+            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+            &[],
+        )?;
+        if applied.len() != MIGRATIONS.len()
+            || applied
+                .iter()
+                .zip(MIGRATIONS)
+                .any(|(row, &(version, sql))| {
+                    row.get::<_, i32>(0) != version || row.get::<_, &str>(1) != sql
+                })
+        {
+            return Err(Error::MigrationMismatch);
+        }
+        Ok(store)
+    }
+
+    fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Self> {
         settings.validate()?;
         let mut connection = postgres::Config::new();
         connection
@@ -58,21 +99,18 @@ impl Store {
             .dbname(&settings.database)
             .user(&settings.user)
             .connect_timeout(Duration::from_secs(settings.connect_timeout_secs.into()));
+        if read_only {
+            connection.options("-c default_transaction_read_only=on");
+        }
         if let Some(path) = &settings.password_file {
             let password = fs::read(path).map_err(Error::Password)?;
             let password = password.strip_suffix(b"\n").unwrap_or(&password);
             let password = password.strip_suffix(b"\r").unwrap_or(password);
             connection.password(password);
         }
-        let mut store = Self {
+        Ok(Self {
             client: connection.connect(NoTls)?,
-        };
-        if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
-            return Err(Error::Invalid("store requires Postgres fsync = on"));
-        }
-        store.client.batch_execute("SET synchronous_commit = on")?;
-        store.migrate()?;
-        Ok(store)
+        })
     }
 
     /// Hold a session advisory lock for the sole controller writer. Status readers
@@ -86,7 +124,9 @@ impl Store {
             )?
             .get::<_, bool>(0)
         {
-            return Err(Error::Invalid("another controller owns this database"));
+            return Err(Error::Invalid(
+                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
+            ));
         }
         Ok(())
     }
@@ -134,9 +174,10 @@ impl Store {
             .read_only(true)
             .start()?;
         let (revision, epoch) = metadata(&mut tx, false)?;
-        let rows = tx.query("SELECT table_name, row_id, value, version FROM tl3_world ORDER BY table_name, row_id", &[])?
+        let rows = tx.query("SELECT table_name, row_id, value, version, arrival FROM tl3_world ORDER BY table_name, arrival", &[])?
             .into_iter().map(|row| Ok(WorldRow {
                 table: row.get(0), id: row.get(1), value: row.get(2), version: Revision::try_from(row.get::<_, i64>(3))?,
+                arrival: row.get(4),
             })).collect::<Result<_>>()?;
         let pending_effects = tx.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects WHERE state IN ('Intended', 'Sent', 'Uncertain', 'Cancelling') ORDER BY created_revision, effect_key", &[])?
             .into_iter().map(decode_effect).collect::<Result<_>>()?;
@@ -263,6 +304,12 @@ impl Store {
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
         self.client.query_opt("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects WHERE effect_key = $1", &[&key])?
             .map(decode_effect).transpose()
+    }
+
+    /// Includes terminal deliveries so callers can audit coverage, not just pending work.
+    pub fn effects(&mut self) -> Result<Vec<Effect>> {
+        self.client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
+            .into_iter().map(decode_effect).collect()
     }
 
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.

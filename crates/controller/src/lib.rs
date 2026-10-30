@@ -26,6 +26,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("controller I/O failed")]
     Io(#[from] std::io::Error),
+    #[error("upstream adapter failed: {0}")]
+    Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Invalid(&'static str),
 }
@@ -62,7 +64,7 @@ impl Bootstrap {
                 .w
                 .try_into()
                 .map_err(|_| Error::Invalid("slot count exceeds kernel range"))?,
-            pool: 1,
+            pool: config.limits.agent_pool,
         })
     }
 }
@@ -237,34 +239,62 @@ impl Controller {
             return Ok(true);
         }
         let mut progressed = false;
+        let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
+            let cancelling = effect.epoch < snapshot.epoch
+                || match delivery.output {
+                    Out::Effect { node, seq, .. } => world.nodes
+                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
+                    .effect_cancelling(seq),
+                    Out::Notice { .. } => false,
+                };
+            if cancelling {
+                match effect.state {
+                    EffectState::Intended => {
+                        self.cancel_absent(effect, &delivery)?;
+                        return Ok(true);
+                    }
+                    EffectState::Sent | EffectState::Uncertain => {
+                        self.transition(effect, EffectState::Cancelling)?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+            }
             match effect.state {
                 EffectState::Intended => {
-                    if effect.epoch != snapshot.epoch {
-                        return Err(Error::Invalid("old Intended effect needs epoch migration"));
-                    }
                     self.transition(effect, EffectState::Sent)?;
                     hook(Boundary::BeforeDispatch, &effect.key);
                     let current = self.store.load()?;
                     let delivery = hydrate(effect, &current)?;
-                    let completion = self
-                        .adapters
-                        .adapter(&delivery, current.epoch.get())?
-                        .execute(&delivery)?;
+                    let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
-                    self.complete(&effect.key, completion)?;
-                    return Ok(true);
+                    match result {
+                        Ok(completion) => {
+                            self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        Err(error) => {
+                            // A transport error is not an upstream acknowledgement.
+                            eprintln!("adapter execute failed for {}: {error}", effect.key);
+                            progressed = true;
+                            continue;
+                        }
+                    }
                 }
                 EffectState::Sent => {
                     self.transition(effect, EffectState::Uncertain)?;
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
-                    let result = self
-                        .adapters
-                        .adapter(&delivery, snapshot.epoch.get())?
-                        .reconcile(&delivery)?;
+                    let result = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            eprintln!("adapter reconciliation failed for {}: {error}", effect.key);
+                            continue;
+                        }
+                    };
                     match result {
                         Reconciliation::Found(completion) => {
                             self.complete(&effect.key, completion)?;
@@ -296,55 +326,44 @@ impl Controller {
                 .node()
                 .index()
                 .ok_or(Error::Invalid("node index overflow"))?];
-            let active = match delivery.output {
-                Out::Effect {
-                    kind: tl3_kernel::EffectKind::Enqueue,
-                    ..
-                } => node.phase == tl3_kernel::Phase::Queued,
-                Out::Effect {
-                    kind: tl3_kernel::EffectKind::SubmitChecks,
-                    ..
-                } => node.job == Some(delivery.generation),
-                Out::Effect { .. } => node.run == Some(delivery.generation),
-                Out::Notice { .. } => false,
-            };
+            let effect = self
+                .store
+                .effect(&delivery.key)?
+                .ok_or(Error::Invalid("missing watched effect"))?;
+            if effect.state.is_pending() {
+                continue;
+            }
+            let active = effect.state == EffectState::Confirmed
+                && match delivery.output {
+                    Out::Effect { kind, .. } => node.operation_pending(kind, delivery.generation),
+                    Out::Notice { .. } => false,
+                };
             let mut commit = Commit::new(
                 format!("look:{}:{}", row.id, snapshot.revision.get()),
                 json!({"look": row.id}),
                 &snapshot,
             );
             if active {
-                let effect = self
-                    .store
-                    .effect(&delivery.key)?
-                    .ok_or(Error::Invalid("missing watched effect"))?;
-                // Pending starts belong to the delivery recovery path above.
-                // Only acknowledged work can fail through its retained watch.
-                if effect.state != EffectState::Confirmed {
-                    continue;
-                }
                 delivery.epoch = effect.epoch.get();
-                let result = self
-                    .adapters
-                    .adapter(&delivery, snapshot.epoch.get())?
-                    .reconcile(&delivery)?;
+                let result = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                 let completion = match result {
-                    Reconciliation::Found(completion) => Some(completion),
-                    Reconciliation::Absent
+                    Ok(Reconciliation::Found(completion)) => Some(completion),
+                    Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {
                         Some(Completion::confirmed(vec![Observation::Kernel(
-                            Event::Reply {
-                                node: delivery.node(),
-                                generation: delivery.generation,
-                                reply: Reply::RunFailed,
-                            },
+                            Event::Reply { node: delivery.node(), generation: delivery.generation,
+                                reply: Reply::RunFailed },
                         )]))
+                    }
+                    Err(error) => {
+                        eprintln!("adapter watch failed for {}: {error}", delivery.key);
+                        None
                     }
                     _ => None,
                 };
                 if let Some(completion) = completion {
-                    if completion.observations.is_empty() {
+                    if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                         continue;
                     }
                     for (index, observation) in completion.observations.iter().enumerate() {
@@ -393,7 +412,7 @@ impl Controller {
         );
         commit.transitions.push(EffectTransition {
             key: effect.key.clone(),
-            from: EffectState::Cancelling,
+            from: effect.state,
             to: EffectState::Cancelled,
         });
         if let Out::Effect { node, seq, .. } = delivery.output {
@@ -403,7 +422,7 @@ impl Controller {
                 Event::Ack {
                     node,
                     seq,
-                    ack: Ack::Confirmed,
+                    ack: Ack::Retryable,
                 },
                 &mut commit,
             )?;
@@ -444,10 +463,14 @@ impl Controller {
         } else {
             effect.state
         };
-        let state = match completion.ack {
-            Ack::Confirmed => EffectState::Confirmed,
-            Ack::Retryable => EffectState::Intended,
-            Ack::Permanent => EffectState::Failed,
+        let state = if effect.state == EffectState::Cancelling {
+            EffectState::Confirmed
+        } else {
+            match completion.ack {
+                Ack::Confirmed => EffectState::Confirmed,
+                Ack::Retryable => EffectState::Intended,
+                Ack::Permanent => EffectState::Failed,
+            }
         };
         commit.transitions.push(EffectTransition {
             key: key.into(),
@@ -466,7 +489,10 @@ impl Controller {
                 &mut commit,
             )?;
         }
-        if completion.ack == Ack::Retryable && matches!(delivery.output, Out::Effect { .. }) {
+        if completion.ack == Ack::Retryable
+            && state == EffectState::Intended
+            && matches!(delivery.output, Out::Effect { .. })
+        {
             // The kernel assigns a fresh sequence to its retry. Retire the old
             // delivery and its watch together, so absence of the cancelled key
             // cannot fail the replacement operation in the same generation.
