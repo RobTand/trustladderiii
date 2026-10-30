@@ -183,8 +183,8 @@ registry.register(Upstream::GitHub, github_adapter_using_a_local_mock);
 ```
 
 The `mixed_registry` controller scenario does this with the real worktree
-client in a temporary Git repository. Its test adapter delegates worktree
-operations outside that test's scope to the worktree fake. The same registration
+client in a temporary Git repository. It registers `worktrees::Real` for prepare, push, rebase and teardown against
+local bare remotes over `file://`. Other upstreams remain fake. The same registration
 shape lets #10 test its real GitHub adapter against local fixtures.
 
 Simulation fakes persist receipts, delivery counts and every accepted delivery's
@@ -196,6 +196,28 @@ teardown. A fake queue receipt supplies a merge fact independently of its enqueu
 acknowledgement. GitHub ingress and notice delivery can use the real receiver
 and a local REST server in simulation. Remaining live clients stay with their
 tickets.
+
+## Clock and systematic crash tests
+
+`clock::Clock` supplies wall-clock timestamps. `Controller::open` selects the
+system clock, and `open_with_clock` accepts a fake. `Controller::now` exposes
+that clock. Only tests read it today; ticket #15 will be the first controller
+loop user, for liveness and allowance probes. Time never proves failure or
+absence, and the kernel has no clock.
+
+`Store::set_boundary_hook` exposes the writes inside a controller transaction
+and either side of its commit. `drive_once_with` also exposes reconciliation,
+including watch reads. Hooks are optional and do not change acknowledgement or
+recovery rules. Dictionary inserts now use an explicit transaction so their
+connection can die before commit too.
+
+[The crash simulation](crash-simulation.md) documents all thirteen cuts, the
+upstream contracts, replay controls, and the placeholder ingress model for loom.
+That model runs no controller code. Ticket #71 covers the real ingress and
+worker source after #64 and #60 merge. Every
+cut kills a real controller process while Postgres and upstream records remain
+alive. The test audits the outbox against kernel outputs and compares the
+recovered world with an uninterrupted run.
 
 ## Commands and verification
 
@@ -329,3 +351,61 @@ The shared ingress supervisor propagates its errors. The controller translates t
 changed-file evidence from `git diff base...head --name-only -z --no-renames`
 through repository-scoped path interning and supplies
 `in_footprint` to the kernel. No kernel transition or store schema changed.
+
+## Real worktree records
+
+`adapters::worktrees::Real` serves configured repositories beneath
+`config.worktrees_root`. `serve_github` uses the GitHub client's cached
+installation token. `serve_local` uses token-free file transport for tests.
+A single registry entry handles all four worktree effects. Production startup
+registration remains separate from the explicit simulation daemon.
+
+The common Git directory holds a `tl3-controller` journal and durable epoch fence.
+Its repository and root binding prevents a restart from redirecting an unfinished
+operation to a different checkout. An in-process mutex serializes journal and Git
+operations for that repository. The existing client mutex serializes individual
+Git commands across handles. No OS file locks are used.
+
+Each effect records its exact prepare base, push head and lease, rebase target,
+or teardown lease before changing request state. Completed records preserve the
+original acknowledgement and observations, including after teardown. Unfinished
+records reconcile the local refs, checkout registration and remote ref. Missing
+intent proves the adapter never started that effect's Git mutation. Network and
+filesystem errors prove no terminal outcome. Old epochs can read existing results
+and confirm already-applied Git evidence, but cannot resume unfinished writes.
+Opening a repository advances its durable fence to the adapter's configured
+controller epoch, before any execute or reconcile. A fenced intent with no
+terminal Git evidence returns `Absent`: its Git steps converge and the prior
+controller and all its Git children have ended. Transport or filesystem errors
+still prove no absence.
+
+Prepare pins its creation base before writing refs. Git keeps an administrative
+lock at `<common-git-dir>/worktrees/<id>/locked` with reason `initializing\n`
+while `worktree add` populates files, then removes it on success. Any key may
+repair an interrupted checkout only while that lock exists and the branch head
+equals the durable base ref. Repair resets to the branch, verifies the files,
+then unlocks. A newer fetched main does not replace the durable base.
+Without the initializing lock, Prepare verifies registration and branch without
+changing files, even when an older unfinished key reconciles later. Maker commits,
+edits and untracked files survive every re-entry to Making. The next maker sees
+leftover files through `git status`.
+
+Remove records a clean preflight before deletion begins. Git's initializing lock
+plus head equal to the durable base also proves that no maker ran. Partial
+tracked files from a killed checkout are safe to remove under this rule.
+Remove reads this evidence directly, so its work does not grow with the journal
+and unrelated unreadable records cannot block it. Git retains the initializing
+lock until removal ends. A retry may finish a checkout with only deletions.
+Other edits and new files remain errors.
+
+A clean rebase updates branch and recorded base atomically in the client. Recovery
+restores an interrupted checkout before returning its new SHA through controller
+interning. A conflicting rebase aborts to a clean checkout before reporting
+`RebaseNeedsChanges`. Pushes use immutable heads and explicit leases. Teardown
+refuses dirty files and remote heads this controller did not publish, and deletes
+the local branch last.
+
+Keep the Git journal with its repository, and terminate the controller's whole
+service process group before a replacement takes ownership. Concurrent external
+Git writers and maintenance are outside repository ownership. This adapter adds
+no SQL schema or kernel transition.

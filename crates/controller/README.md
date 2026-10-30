@@ -36,8 +36,12 @@ modules under `src/adapters` each contain a fake. The controller owns interning
 and persistence. Executors own authoritative reconciliation and epoch fencing.
 `adapters::simulation` builds the fake registry. A test starts
 with it and replaces one entry with `register`. The `mixed_registry` scenario
-uses the real `tl3-worktrees` client in a temporary repository and delegates
-the remaining worktree effects to its fake. The other four upstreams stay fake.
+registers `worktrees::Real` for all four worktree effects against local bare
+repositories over `file://`. The other four upstreams stay fake. The worker
+fixture commits a real change and reports its head. Separate runs move main
+with a nonconflicting or conflicting commit. The conflict reply passes through
+the adapter and controller inbox to the kernel, which returns to Making and
+spends one credit in the same attempt and round.
 
 Each adapter ticket extends `Delivery` with the fields its real client needs.
 The tracer does not predefine issue text, branch text, or PR text fields.
@@ -308,6 +312,11 @@ validation. The result tool is `python3` with the published `pbwait.py` argument
 The Python command must provide Python 3.14 on every eligible worker. For the
 current fleet, `uv run --python 3.14 --no-project python` does that.
 
+The PrismaBuild tool must be `pbrun` itself, or a wrapper that `exec`s it.
+The parent-death signal protects only the process the adapter execs. A wrapper
+that starts `pbrun` without `exec` leaves it as a grandchild that can survive a
+controller crash.
+
 The adapter clones committed Git objects into its own clean checkout at the
 exact head. Dirty maker files never enter it. A bundle retains both base and
 head. The bundle, trusted harness copy, check plan and entry point form a clean
@@ -403,6 +412,16 @@ The trial submits a fixture demonstrating check through the real adapter. Its
 base fails and its exact head passes. The final command feeds the real ending
 through the ingress parser and prints the checks observation. It refuses to run
 inside an admitted action. Controller/store tests and this trial are separate.
+
+The systematic [crash simulation](../../docs/crash-simulation.md) uses real
+SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
+default `merge` smoke scenario covers all thirteen save points. Set
+`TL3_SIM_FULL=1` for the full matrix and effect-and-phase coverage assertion.
+Its seed and optional scenario and save-point filters appear in failure output.
+Generate the required three-host and two-portable campaign with
+`python3 crates/controller/tools/crash_manifest.py`. All execution still goes
+through PrismaBuild.
+
 For PR #64's receiver and status review evidence, create a clean detached worktree
 at the final commit. From that worktree, submit the three host checks:
 
@@ -416,9 +435,89 @@ and `sparklina`. Controller targets include the status page and process tests.
 After they pass, submit the full workspace `tools/verify.sh` command shown above
 once with `--anywhere`. Record every action key and result in the PR body.
 
+
+## Worktree adapter
+
+`worktrees::Real::new(&config.worktrees_root, epoch)` uses the existing configurable
+root. Add each repository with `serve_github(identity, local_repository, github)`.
+The GitHub client must match the repository's installation. The client supplies
+cached installation tokens at runtime. For simulation, use `serve_local` with a
+local bare remote. Local operations never obtain or pass a token.
+
+Register the adapter once with `registry.register(Upstream::Worktrees, real)`.
+The daemon still requires explicit simulation; production ingress and startup
+registration belong to their adapter tickets.
+
+The adapter owns branches named `tl3/issue-N-node-M`. Checkout paths beneath the
+configured root separate repositories and requests. `Real::branch` and
+`Real::checkout` expose those names for worker registration. One controller
+process and its Git children own each repository. Stop the whole service process
+group before starting a replacement. Do not run another Git writer or maintenance
+process against an owned repository.
+
+Keep `<common-git-dir>/tl3-controller` across restarts. It binds the repository
+and worktree root, advances the epoch fence as soon as the repository opens, and journals immutable
+operation intents and terminal evidence. Changing that root requires an explicit
+migration of existing checkouts and records. Records use atomic replacement and
+sync both the file and its directory. No store migration is required.
+
+Prepare pins fetched main before creating missing resources. Git's administrative
+lock `<common-git-dir>/worktrees/<id>/locked`, with the exact reason `initializing\n`,
+is the evidence of interrupted checkout population. Any key may repair it only
+while the branch head equals the durable base ref. Repair runs
+`reset --hard <branch>` and unlocks after verifying the files, even if main has advanced.
+Without that lock, Prepare only verifies registration and the request branch.
+It preserves maker commits, edits and untracked files across fix rounds, new
+attempts and stale intent reconciliation. The next maker sees them in `git status`.
+Earlier intents remain readable. Their checkout ownership fields are ignored.
+Push pins the delivery's exact head and leases against the last head this adapter
+published. Rebase pins its target before execution, so recovery cannot silently
+use a newer main. A clean rebase reports `Observation::Rebased`; the controller
+interns its SHA before the kernel receives `RebaseClean`. A conflict reports
+`RebaseNeedsChanges` after aborting and verifying a clean checkout at the old
+head. The kernel alone selects the next phase.
+
+Teardown records that the checkout is clean before deletion begins. It also accepts
+Git's initializing lock plus head equal to the durable base, even when an
+interrupted checkout left tracked files. It reads this evidence directly without
+scanning the journal. Removal keeps the lock until Git deletes the checkout.
+A retry may finish removal if its only changes are deletions. Other edits and new
+files are refused.
+It leases deletion of the recorded remote head, then removes the local branch
+and base. A dirty checkout or changed remote
+ref returns an adapter error. Unknown outcomes keep their original effect key.
+Interrupted current-epoch operations reconcile against Git and finish their
+original intent. Older epochs may read terminal evidence, but cannot resume
+unfinished Git writes. Once fenced, an unfinished intent with no terminal Git
+evidence returns `Absent`, so a Cancelling delivery can settle. Git steps converge;
+transport errors remain unknown. No duration or silence establishes absence.
+
+The `worktrees` test executable kills adapter children with SIGKILL before and
+after Git applies each effect, including conflict and stale-epoch cases. The
+workspace verification script runs it, the mixed registry lifecycle, and the
+existing controller and store scenarios through PrismaBuild.
+
+Tickets #12 and #13 open `tl3_worktrees::Worktrees` for the served repository and
+call `branch_state(&Real::branch(delivery)?)` to read its recorded base and current
+head. The tuple is `(head, base)`. `changed_files(&base, &head)` returns the changed
+paths for the check harness and publication footprint. After a clean rebase,
+read both values again: the base and head move together. `Delivery::head_sha`
+remains the exact commit requested by an individual push effect.
+
+
+`tools/worktree_review_manifest.py worktrees` generates the three host-tagged
+PrismaBuild checks from a clean detached worktree at the final commit. Each runs
+all controller and worktrees targets, including the 50 SIGKILL boundaries and real
+killed-add recoveries. Submit its JSON with `pbcampaign.py --detach`. After those
+pass, submit `tools/worktree_review_manifest.py workspace` the same way to run
+`verify.sh` once with portable placement. Record every action key and result in
+the PR body. See the [worktrees recovery guide](../worktrees/README.md#recovery)
+for manual initialization locks and half-registered adds that need operator cleanup.
+
+
 ## Add a worker role
 
-For #11, #12 and #13, update each boundary together:
+For each new worker role, update these boundaries together:
 
 - Add the kernel role mapping in `adapters/workers/protocol.rs` `role`.
 - Map and validate the reply in `map_reply`, using the package's role schema.
@@ -455,17 +554,22 @@ files. The controller initializes size with `ceil(tokens / fit_tokens)`. The ker
 adds the credit reserve. An unrepresentable size fails explicitly rather than
 wrapping or silently clamping the request's credit.
 
-Supply a complete text snapshot in `repo.materials` for each existing path in
-`repo.file_list`, through `Store::put_worker_materials`. Ingest and planner runs
+Supply the text snapshot in `repo.materials` for each UTF-8 text path in
+`repo.file_list`, through `Store::put_worker_materials`. Listed paths without text
+receive a binary marker in the worktree. They do not block dispatch, but declaring
+one for measurement fails instead of treating it as an empty new file. Ingest and planner runs
 materialize that snapshot into their own worktree. Paths must be canonical and
 relative. New declared files have no base content. Deployment must preload the
 pinned o200k_base data in `TIKTOKEN_CACHE_DIR`. Files above 1 MiB fail measurement.
 
 `[planning.overhead_tokens]` contains named initial estimates. It is the seam for
-later MLflow calibration. No MLflow calls run in this flow. Protected paths can
+later MLflow calibration. Their sum must be below `limits.fit_tokens`.
+No MLflow calls run in this flow. Protected paths can
 be extended in config, but the slice-one defaults cannot be removed.
 
-Accepted plans live in `plans`; `plan_reports` retains each generation's evidence.
+`plans` holds the latest schema-valid planner reply, accepted or rejected;
+`plan_reports` retains each generation's evidence. Malformed output fails the run
+and does not replace either document.
 `findings` includes rejected-plan reasons and reports for the next planner run.
 Callers that record failed checks or review findings append them to that same
 text-list document before requesting a re-plan.
@@ -479,3 +583,13 @@ question. This adapter does not draft messages.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
+Generate all three host actions with
+`python3 crates/controller/tools/worker_review_manifest.py planning` and submit
+the manifest through `pbcampaign.py --detach`.
+
+The planner process scenarios cover malformed output, a controller killed while a
+planner is running, and stopping a live planner. Malformed replies fail without
+storing a plan. Recovery reattaches to the same process and key with one attempt.
+Stop proves the process has ended and stores no plan. The leaf, split, rejected
+leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
+context and retry findings.

@@ -142,3 +142,8 @@ delivers the death signal when that thread exits, even if the process remains
 alive. The controller adapter spawns on its daemon owner thread through a
 current-thread runtime. This prevents a publisher from surviving controller
 SIGKILL and landing work after recovery has established absence.
+
+The submission tool must be `pbrun` itself, or a wrapper that `exec`s it.
+The parent-death signal protects only the process the adapter execs. A wrapper
+that starts `pbrun` without `exec` leaves it as a grandchild that can survive a
+controller crash.

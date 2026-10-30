@@ -9,6 +9,9 @@ use std::{
 };
 use tokio::process::Command;
 
+/// Use pbrun itself, or a wrapper that execs it. The parent-death signal protects
+/// only the process the adapter execs; a non-exec wrapper leaves pbrun as a
+/// grandchild that can survive a controller crash.
 #[derive(Clone, Debug)]
 pub struct Tool {
     pub program: PathBuf,
