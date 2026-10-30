@@ -1012,6 +1012,8 @@ Rob can reply `clear incident <id>` on the operations issue after fixing the cau
 A healthy adapter probe can also clear the first incident. `retry_notice` creates
 a fresh delivery and writer attempt with the original `Delivery.marker_key` for
 GitHub reconciliation. Clearing and scheduling the retry share one transaction.
+If the retry fails permanently, the later incident requires Rob and probes cannot
+clear it. Confirmation deletes the incident counter for that original marker.
 The kernel world, question ID, continuation and credit stay unchanged. The
 classifier continues to offer the original question's answers. If that question
 is no longer open when the incident clears, no retry is queued.
@@ -1027,8 +1029,9 @@ The GitHub target includes notices, steering and retry crashes at every store
 and adapter save point, including question 403 and incident-post failures.
 The host actions also run looks. The `workspace` selection runs `tools/verify.sh`.
 Use `all` to generate both sets. These commands run through PrismaBuild.
-There is no kernel or state-table change beyond the approved #80 tree, so this
-controller change needs no Kani campaign.
+The kernel and state table match `main`, so this controller change needs no
+Kani campaign.
+
 ## Review and publishing
 
 The supervisor maps `Role::Review` to the `reviewer` worker. It selects the first

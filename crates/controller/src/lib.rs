@@ -875,6 +875,12 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            if let Some(marker) = &delivery.marker_key {
+                commit.rows.push(RowChange::Delete {
+                    table: "notice_incidents".into(),
+                    id: marker.clone(),
+                });
+            }
             self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.

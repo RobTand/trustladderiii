@@ -463,11 +463,22 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         clear_incident(&mut c, &incident_id);
         drain(&mut c);
         let snapshot = c.snapshot().unwrap();
-        let incidents: Vec<_> = snapshot.rows.iter().filter(|r| r.table == "incidents").collect();
-        assert_eq!(incidents.len(), 2, "a rejected retry raises exactly one later incident");
+        let incidents: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents")
+            .collect();
+        assert_eq!(
+            incidents.len(),
+            2,
+            "a rejected retry raises exactly one later incident"
+        );
         let second = incidents.iter().find(|r| r.id != incident_id).unwrap();
         assert_eq!(second.value["open"], true);
-        assert_eq!(second.value["needs_rob"], true, "a later notice incident requires Rob");
+        assert_eq!(
+            second.value["needs_rob"], true,
+            "a later notice incident requires Rob"
+        );
         let retry_key = second.value["effect"].as_str().unwrap().to_owned();
         assert_eq!(api.state.lock().unwrap().rejected_question_posts, 2);
         for _ in 0..3 {
@@ -479,12 +490,22 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         c.look_key(&retry_key).unwrap();
         drain(&mut c);
         let after = c.snapshot().unwrap();
-        assert_eq!(after.rows.iter().filter(|r| r.table == "incidents").count(), 2);
-        assert!(after.rows.iter().any(|r| r.table == "incidents"
-            && r.id == second.id && r.value["open"] == true && r.value["needs_rob"] == true),
-            "a passing probe must not clear the second incident, including after restart");
-        assert_eq!(api.state.lock().unwrap().rejected_question_posts, 2,
-            "a passing probe must not cause a third post");
+        assert_eq!(
+            after.rows.iter().filter(|r| r.table == "incidents").count(),
+            2
+        );
+        assert!(
+            after.rows.iter().any(|r| r.table == "incidents"
+                && r.id == second.id
+                && r.value["open"] == true
+                && r.value["needs_rob"] == true),
+            "a passing probe must not clear the second incident, including after restart"
+        );
+        assert_eq!(
+            api.state.lock().unwrap().rejected_question_posts,
+            2,
+            "a passing probe must not cause a third post"
+        );
         return;
     }
     faults.lock().unwrap().reject = false;
@@ -566,8 +587,11 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     };
     if name != "stale_ask" {
         assert!(
-            !c.snapshot().unwrap().rows.iter().any(|r|
-                r.table == "notice_incidents" && r.id == failed.key),
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "notice_incidents" && r.id == failed.key),
             "confirmed retry must delete its notice incident counter"
         );
     }
