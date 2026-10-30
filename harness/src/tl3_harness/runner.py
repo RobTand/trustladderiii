@@ -50,6 +50,7 @@ class Reporter:
         self.descriptor = descriptor
         self.summary = summary
         self.phases = {}
+        self.collection_errors = []
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True) + "\n").encode()
@@ -63,14 +64,13 @@ class Reporter:
     def pytest_collection_modifyitems(self, items):
         if self.summary:
             return
+        self.emit_collection_errors()
         selected = [item for item in items if item.nodeid in self.tests]
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected])
 
-    @pytest.hookimpl(wrapper=True)
     def pytest_exception_interact(self, node, call, report):
         report.tl3_missing = missing_name(call.excinfo.value)
-        yield
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -79,9 +79,15 @@ class Reporter:
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
             else:
-                self.emit(event="collection-error", test=report.nodeid,
-                          missing=getattr(report, "tl3_missing", None),
-                          message=str(report.longrepr)[:1000])
+                self.collection_errors.append(report)
+
+    def emit_collection_errors(self):
+        # pytest exposes the exception after its collection report hook.
+        for report in self.collection_errors:
+            self.emit(event="collection-error", test=report.nodeid,
+                      missing=getattr(report, "tl3_missing", None),
+                      message=str(report.longrepr)[:1000])
+        self.collection_errors.clear()
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):
@@ -115,6 +121,7 @@ class Reporter:
                   message=message[:1000], truncated=len(message) > 1000 or any(p[3] for p in failures))
 
     def pytest_sessionfinish(self, exitstatus):
+        self.emit_collection_errors()
         self.emit(event="finish", exit_code=int(exitstatus))
 
 
