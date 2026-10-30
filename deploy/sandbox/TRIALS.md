@@ -16,9 +16,9 @@ default branch. No trustladderiii PR was merged.
 |---|---|---|
 | Mergify installation | Its App posted a queue check on #14 | `activation/ready/` |
 | Missing approval | #20 had green CI and the queue label. REST merge returned 405, naming only the missing TL3 approval check | `unapproved/`, `ci-green-approval-missing.json` |
-| TL3 branch ownership | Human creation of `tl3/issue-17-node-999` returned 422. The original record omitted the actor; a follow-up PrismaBuild probe records the authenticated actor and exact request. Creation by integration 5542171 succeeded in the original trial | `human-branch-denied.json`, issue #17's trial comment |
+| TL3 branch ownership | Human creation of `tl3/issue-17-node-999` returned 422. The original record omitted the actor; a follow-up PrismaBuild probe records actor `RobTand` and the exact request. Creation by integration 5542171 succeeded in the original trial | `human-branch-denied.json`, `post-recovery/human-branch-denied.json`, issue #17's trial comment |
 | Draft checks | #16 kept its approved head while Mergify tested draft #18 on a separate branch | `queued/`, `draft/`, `draft-cleanup.json` |
-| Label removal | Removing the label dequeued #16. REST event 34696807438 confirms `mergify[bot]` closed draft #18 | `dequeued/` |
+| Label removal | Removing the label dequeued #16. REST event 34696807438 confirms `mergify[bot]` closed draft #18 | `dequeued/`, `post-recovery/draft-18-events.json` |
 | Check placement and head matching | Queue checks appeared on the original head. Drafts carried Actions CI and Mergify protections, with no queue check | `queued/`, `blocked-original/`, `blocked-successful-draft/` |
 | Queued title | `In merge queue`, followed by `Running merge queue checks` | `queued/`, `approval-injected-on-draft/` |
 | Failed draft CI | Original #21 passed CI. Draft #24 failed. The queue reported `Dequeued — checks failed` | `failed/`, `failed-draft/` |
@@ -97,3 +97,9 @@ The trial verifier's fixtures are synthetic unit inputs, not live trial evidence
 Follow-up action keys, terminal exit codes, log hashes, and receipt hashes are in
 `evidence/prismabuild-followup.json`. No successful-merge or main-advancement
 result is claimed until sandbox CI runs. Webhook observations remain unobserved.
+
+All three follow-up host suites passed formatting, Clippy, 59 client tests, the
+caller-description example test, 38 Mergify scenarios, the bootstrap adapter
+replay, and all 28 Python tests. No tests were skipped. The live GET-only checker
+and repeated human-branch probe also exited 0. Their terminal records, logs,
+receipts and CAS payload hashes were verified. The expected red action exited 1.

@@ -1,0 +1,141 @@
+{
+  "red_commit": "918d934716b9af4ab6c809831d20df91be0cc699",
+  "green_code_commit": "aba7f76983e9d6094ff65a48dfcf6917f563f715",
+  "actions": [
+    {
+      "suite": "followup-red",
+      "action_key": "1c09d2ee195dc7d26da56c05734b9709076a61bc58fde9c72956b6c04468718f",
+      "host": "dl380g10",
+      "exit_code": 1,
+      "terminal_verified": true,
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "stdout_sha256": "ce0870505eb21613953d4d41b2a99fda25370e20f2ba126365f8a6d82c89e2e0",
+      "stderr_sha256": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f",
+      "expected_failure": "Live Mergify hash mismatch, NotImplementedError trial verifier stubs, and caller-description todo panic."
+    },
+    {
+      "suite": "followup-host-verification",
+      "action_key": "fa084bd527c817997a5f30b41603bb009c07361151c64038d18d4d8731eff176",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "15dd636750ed87f953557197c9982313c5e15b46d46bc00830af6e8488216cdf",
+      "stdout_sha256": "8c4a0d1571c8da40e2fd0238878425b32f794a51615c244538e095fdd50c7866",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "test_summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.85s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "Ran 28 tests in 0.044s",
+        "OK"
+      ],
+      "local_result_claim_sha256": "87c31fc68dd167d7ed193c6b80969dfc78427ce0df27f229a6c30346ace79c6b",
+      "payload_sha256": "77ee988625aaf9464d4a567b6ac0f837c1b76cc06cd59d5ba05c462bec489ed9",
+      "payload_hash_checked": true
+    },
+    {
+      "suite": "followup-host-verification",
+      "action_key": "e463baa70c2d9385a768d7e204334a00c1f3375c6eef7c9aacdba7a398862170",
+      "host": "sparky",
+      "exit_code": 0,
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "d5f825fc9a7b2afc74d5f593f5f1ee0605fc5d90a26effeb12ec4cb11c0cec2e",
+      "stdout_sha256": "643ea09e28cc4c2ccdbd46a1cd0281559e4561b2943b9f4c6ee40fd3daf1b6e0",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "test_summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.88s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "Ran 28 tests in 0.009s",
+        "OK"
+      ],
+      "local_result_claim_sha256": "c854e3b1ffe6e46c770498b060e75f2e29d8084e2f4821c9e95cb6a298acef7f",
+      "payload_sha256": "0976c5b83b41590bbdae32e0125ed3e6b802f51d19a5f6bde698dae0d42c3851",
+      "payload_hash_checked": true
+    },
+    {
+      "suite": "followup-host-verification",
+      "action_key": "2ffd045a97e0697ee5fc07cf6a29218c9527cb3c2314215dcfe6a6a5969dc69f",
+      "host": "sparklina",
+      "exit_code": 0,
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "9ff2b633ab3e70a01f5651be0a3ccd7d50a08cb19ceae4c56b0b658944fddb34",
+      "stdout_sha256": "3258654b228adff9455553b74252af03dc99df35cdbea51accc7e3a46025bbd5",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "test_summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.72s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "Ran 28 tests in 0.009s",
+        "OK"
+      ],
+      "local_result_claim_sha256": "856998461f24cb5cdf0c38c3ade78bfcbde6457f23ed4565ce24d18ad4a0ccd4",
+      "payload_sha256": "9229eedda8fe696e1dec461d8a1ff5e174038008166944fbd8ac1d676f674a41",
+      "payload_hash_checked": true
+    },
+    {
+      "suite": "live-get-only-settings",
+      "action_key": "be9c638dc4cfc402416885782c4fb2949b7df3bb05c184356a4a6a0047fda833",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "f214eacfb70fc9074fe9ad38ebe798e11ac30aabb7de2c4a5b7ef7e2e7987871",
+      "stdout_sha256": "3928f2ba14cdb9526b50752a7108784873967113a7405913370cad6aaaf3db4c",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "local_result_claim_sha256": "3169f3f07041edf8d232e73988cb7e46d6ff76169c19d6f06eae92c8e7bd3a32",
+      "payload_sha256": "7c1faec95ebf8e6a8bef7f9a687674cbeb9c30add89b7d19cd2776cc12ca027d",
+      "payload_hash_checked": true
+    },
+    {
+      "suite": "denied-human-branch",
+      "action_key": "668d3b4156507b36307a42a2e88d2f0765a6e140b2d63080549a84f88895d6bc",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "terminal_verified": true,
+      "receipt_verified": true,
+      "receipt_sha256": "eda8289953624eb1a76764ddd1e929202b25001e25bd837277235bea85b48901",
+      "stdout_sha256": "4cbd1c1b7869d6d1aebaf759fab202244c712d9a43e48f1f378bd9bee8f26741",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "local_result_claim_sha256": "01db229dd71880a0ce8f279462d42e89ee57ea695e46d7fad14be9ddf9a0cd54",
+      "payload_sha256": "5bad7ff7e916c5847d5235666803e32e0f0bebeaf5ec77760acb2e5cae5dfe45",
+      "payload_hash_checked": true
+    }
+  ],
+  "skipped_tests": [],
+  "blocked_live_trials": [
+    "successful queue merge",
+    "main advancement"
+  ],
+  "blocker": "Sandbox tests still uses ubuntu-24.04; the account billing limit blocks hosted Actions and no sandbox self-hosted runners were registered.",
+  "unobserved": [
+    "successful-merge production adapter replay",
+    "in-progress check-run webhook delivery",
+    "merged closed webhook delivery"
+  ]
+}

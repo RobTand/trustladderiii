@@ -14,11 +14,13 @@
     "action_key": "afc2942468099e3e833c61233cf23d6d12770fd1728db2d5415f4a6cff703065",
     "host": "dl380g10",
     "exit_code": 1,
-    "receipt_verified": true,
+    "receipt_verified": false,
     "receipt_sha256": null,
     "stdout_sha256": "309bcd845ea205960b4f627aa4594699ce05ee4aa82557f1ee999d811ff61710",
     "stderr_sha256": "f411c0e799f980939358f6688afeb4623eca3edab52f90761cc985931986e26e",
-    "cargo_exit_code": 101
+    "cargo_exit_code": 101,
+    "terminal_verified": true,
+    "note": "Expected failure publishes no CAS receipt. Queue exit 1 wraps cargo exit 101."
   },
   {
     "suite": "client-after",
