@@ -458,6 +458,15 @@ impl Controller {
                 delivery = hydrate(&effect, &snapshot)?;
                 let completion = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
                     Ok(Reconciliation::Found(completion)) => completion,
+                    Ok(Reconciliation::Absent)
+                        if executor::upstream(delivery.output) == executor::Upstream::Workers =>
+                    {
+                        Completion::confirmed(vec![Observation::Kernel(Event::Reply {
+                            node: delivery.node(),
+                            generation: delivery.generation,
+                            reply: Reply::RunFailed,
+                        })])
+                    }
                     Ok(Reconciliation::Absent | Reconciliation::Pending) => continue,
                     Err(error) => {
                         eprintln!(
@@ -596,7 +605,12 @@ impl Controller {
             && matches!(delivery.output, Out::Effect { .. })
         {
             // The kernel assigns a fresh sequence to its retry. Retire the old
-            // delivery so only that new decision can start another attempt.
+            // delivery and its watch together, so absence of the cancelled key
+            // cannot fail the replacement operation in the same generation.
+            commit.rows.push(RowChange::Delete {
+                table: "watches".into(),
+                id: key.into(),
+            });
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Intended,
@@ -692,6 +706,7 @@ impl Controller {
                 attempt: n.attempt,
                 round: n.round,
                 question: n.question,
+                note: None,
             };
             if matches!(
                 output,
@@ -860,6 +875,51 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::WorkerReply {
+                node,
+                generation,
+                role,
+                reply,
+            } => {
+                let n = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("worker node missing"))?;
+                if n.run != Some(generation) || n.generation != generation {
+                    return Ok(None);
+                }
+                let valid_role = matches!(
+                    (n.phase, role.as_str()),
+                    (tl3_kernel::Phase::Ingesting, "ingest")
+                        | (tl3_kernel::Phase::Auditing, "audit")
+                );
+                let mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                    Ok(reply) if valid_role => reply,
+                    _ => {
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                };
+                let document = if role == "ingest" { "briefs" } else { "audits" };
+                commit
+                    .rows
+                    .push(put(document, node.0.to_string(), reply.clone()));
+                if role == "ingest" {
+                    commit.rows.push(put(
+                        "goals",
+                        node.0.to_string(),
+                        reply.get("goals").cloned().unwrap_or(json!([])),
+                    ));
+                }
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: mapped,
+                }
+            }
             Observation::Plan {
                 node,
                 generation,
@@ -982,5 +1042,25 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         .iter()
         .find(|r| r.table == "pull_requests" && r.id == delivery.node().0.to_string())
         .and_then(|r| r.value["number"].as_u64());
+    if matches!(
+        delivery.output,
+        Out::Notice {
+            notice: tl3_kernel::Notice::MeasuresPosted,
+            ..
+        }
+    ) {
+        let goals = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "goals" && r.id == delivery.node().0.to_string());
+        delivery.note = goals.and_then(|r| r.value.as_array()).map(|goals| {
+            goals
+                .iter()
+                .filter_map(|g| g["description"].as_str())
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+    }
     Ok(delivery)
 }

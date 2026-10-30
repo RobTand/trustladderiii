@@ -50,8 +50,33 @@ pub struct Store {
 const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/0001_store.sql")),
     (2, include_str!("../migrations/0002_world_arrival.sql")),
-    (3, include_str!("../migrations/0003_ingress.sql")),
+    (3, include_str!("../migrations/0003_workers.sql")),
+    (4, include_str!("../migrations/0004_ingress.sql")),
 ];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ingress {
+    pub sequence: i64,
+    pub source: String,
+    pub delivery_key: String,
+    pub event_name: String,
+    pub payload: Vec<u8>,
+}
+
+fn ingress_row(row: Row) -> Ingress {
+    Ingress {
+        sequence: row.get(0),
+        source: row.get(1),
+        delivery_key: row.get(2),
+        event_name: row.get(3),
+        payload: row.get(4),
+    }
+}
+
+fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
+    tx.execute("DELETE FROM tl3_ingress WHERE consumed AND sequence <= (SELECT MIN(sequence) FROM tl3_ingress_consumers)", &[])?;
+    Ok(())
+}
 
 impl Store {
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
@@ -60,42 +85,80 @@ impl Store {
         Ok(())
     }
 
-    pub fn ingress_after(&mut self, sequence: i64) -> Result<Vec<(i64, serde_json::Value)>> {
-        Ok(self.client.query("SELECT sequence, payload FROM tl3_ingress WHERE source IN ('github-webhook', 'github-catch-up') AND sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    /// Sequence cursors require one connection to insert all GitHub deliveries, including
+    /// catch-up. Concurrent inserters could commit a lower sequence after a cursor passed it.
+    pub fn ingress_after(&mut self, sequence: i64) -> Result<Vec<Ingress>> {
+        Ok(self.client.query("SELECT sequence, source, delivery_key, event_name, payload FROM tl3_ingress WHERE sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(ingress_row).collect())
     }
 
-    pub fn set_ingress_cursor(&mut self, source: &str, cursor: &serde_json::Value) -> Result<()> {
-        self.client.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
+    /// Register the current translator set before consuming a batch. New names start at
+    /// intake's durable position; catch-up supplies recent state, not retained history.
+    pub fn register_ingress_translators(&mut self, names: &[&str]) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "DELETE FROM tl3_ingress_consumers WHERE name <> 'intake' AND NOT (name = ANY($1))",
+            &[&names],
+        )?;
+        for name in names {
+            tx.execute("INSERT INTO tl3_ingress_consumers (name, sequence) SELECT $1, sequence FROM tl3_ingress_consumers WHERE name = 'intake' ON CONFLICT (name) DO NOTHING", &[name])?;
+        }
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
         Ok(())
     }
 
-    /// Sources have separate connections and never change the controller revision.
-    /// The unique delivery key and its complete payload become durable together.
+    pub fn translator_cursor(&mut self, name: &str) -> Result<i64> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT sequence FROM tl3_ingress_consumers WHERE name = $1",
+                &[&name],
+            )?
+            .get(0))
+    }
+
+    pub fn advance_translator(&mut self, name: &str, sequence: i64) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $2) WHERE name = $1",
+            &[&name, &sequence],
+        )?;
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The unique delivery id, event name and verified raw payload become durable together.
     pub fn receive_ingress(
         &mut self,
         source: &str,
         key: &str,
-        payload: &serde_json::Value,
+        event_name: &str,
+        payload: &[u8],
     ) -> Result<bool> {
         Ok(self.client.execute(
-            "INSERT INTO tl3_ingress (source, delivery_key, payload) VALUES ($1, $2, $3) ON CONFLICT (source, delivery_key) DO NOTHING",
-            &[&source, &key, payload],
+            "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, $3, $4) ON CONFLICT (source, delivery_key) DO NOTHING",
+            &[&source, &key, &event_name, &payload],
         )? == 1)
     }
 
-    pub fn pending_ingress(&mut self) -> Result<Vec<(i64, serde_json::Value)>> {
+    pub fn pending_ingress(&mut self) -> Result<Vec<Ingress>> {
         Ok(self.client.query(
-            "SELECT sequence, payload FROM tl3_ingress WHERE NOT consumed ORDER BY sequence LIMIT 100",
+            "SELECT sequence, source, delivery_key, event_name, payload FROM tl3_ingress WHERE NOT consumed ORDER BY sequence LIMIT 100",
             &[],
-        )?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+        )?.into_iter().map(ingress_row).collect())
     }
 
     /// Call only after every input in the delivery has reached the controller store.
     pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
-        self.client.execute(
+        let mut tx = self.client.transaction()?;
+        tx.execute(
             "UPDATE tl3_ingress SET consumed = true WHERE sequence = $1",
             &[&sequence],
         )?;
+        tx.execute("UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $1) WHERE name = 'intake'", &[&sequence])?;
+        retire_ingress(&mut tx)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -113,13 +176,13 @@ impl Store {
     pub fn receive_catch_up(
         &mut self,
         source: &str,
-        deliveries: &[(String, serde_json::Value)],
+        deliveries: &[(String, Vec<u8>)],
         cursor: &serde_json::Value,
     ) -> Result<()> {
         let mut tx = self.client.transaction()?;
         for (key, payload) in deliveries {
             tx.execute(
-                "INSERT INTO tl3_ingress (source, delivery_key, payload) VALUES ($1, $2, $3) ON CONFLICT (source, delivery_key) DO NOTHING",
+                "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, 'catch-up', $3) ON CONFLICT (source, delivery_key) DO NOTHING",
                 &[&source, key, payload],
             )?;
         }
@@ -305,6 +368,64 @@ impl Store {
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.
     pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
         load_events(&mut self.client, revision, limit)
+    }
+
+    /// Materials are supplied by ingress, never fetched or invented by the worker.
+    pub fn put_worker_materials(&mut self, node: &str, inputs: &serde_json::Value) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_worker_materials VALUES ($1, $2) ON CONFLICT (node_id) DO UPDATE SET inputs = EXCLUDED.inputs", &[&node, inputs])?;
+        Ok(())
+    }
+
+    pub fn worker_materials(&mut self, node: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT inputs FROM tl3_worker_materials WHERE node_id = $1",
+                &[&node],
+            )?
+            .map(|r| r.get(0)))
+    }
+
+    /// Read the accepted brief, goals, or audit without controller ownership.
+    pub fn worker_document(
+        &mut self,
+        node: &str,
+        document: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        if !matches!(document, "briefs" | "goals" | "audits") {
+            return Err(Error::Invalid("unknown worker document"));
+        }
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT value FROM tl3_world WHERE table_name = $1 AND row_id = $2",
+                &[&document, &node],
+            )?
+            .map(|r| r.get(0)))
+    }
+
+    /// Claim time exists even if the worker never emits progress.
+    pub fn claim_worker(&mut self, key: &str, node: &str, epoch: i64, attempt: i64) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms) SELECT $1, $2, $3, $4, 0, '', (extract(epoch FROM clock_timestamp()) * 1000)::bigint FROM tl3_meta WHERE epoch = $3 ON CONFLICT (run_key) DO UPDATE SET attempt = EXCLUDED.attempt, output_offset = 0, unit = '', started_ms = EXCLUDED.started_ms, last_progress_ms = NULL WHERE tl3_worker_progress.epoch = EXCLUDED.epoch AND tl3_worker_progress.attempt < EXCLUDED.attempt", &[&key, &node, &epoch, &attempt])?;
+        Ok(())
+    }
+
+    /// Replaying an output prefix never refreshes its progress time.
+    pub fn record_worker_progress(
+        &mut self,
+        key: &str,
+        attempt: i64,
+        offset: i64,
+        unit: &str,
+    ) -> Result<()> {
+        self.client.execute("UPDATE tl3_worker_progress SET output_offset = $3, unit = $4, last_progress_ms = (extract(epoch FROM clock_timestamp()) * 1000)::bigint WHERE run_key = $1 AND attempt = $2 AND output_offset < $3 AND epoch = (SELECT epoch FROM tl3_meta)", &[&key, &attempt, &offset, &unit])?;
+        Ok(())
+    }
+
+    pub fn worker_progress(&mut self, node: Option<&str>) -> Result<Vec<WorkerProgress>> {
+        Ok(self.client.query("SELECT run_key, node_id, epoch, attempt, output_offset, unit, started_ms, last_progress_ms FROM tl3_worker_progress WHERE ($1::text IS NULL OR node_id = $1) ORDER BY started_ms DESC, run_key", &[&node])?.into_iter().map(|r| WorkerProgress {
+            key: r.get(0), node: r.get(1), epoch: r.get(2), attempt: r.get(3), output_offset: r.get(4), unit: r.get(5), started_ms: r.get(6), last_progress_ms: r.get(7),
+        }).collect())
     }
 
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {

@@ -33,7 +33,7 @@ without reading stdin. EOF ends an interactive simulation.
 Register a replacement executor with one `Registry::register` call. The five
 modules under `src/adapters` each contain a fake. The controller owns interning
 and persistence. Executors own authoritative reconciliation and epoch fencing.
-`adapters::simulation` is currently the only registry builder. A test starts
+`adapters::simulation` builds the fake registry. A test starts
 with it and replaces one entry with `register`. The `mixed_registry` scenario
 uses the real `tl3-worktrees` client in a temporary repository and delegates
 the remaining worktree effects to its fake. The other four upstreams stay fake.
@@ -115,20 +115,23 @@ POST deliveries to `/github/events`, matching the App manifest, with GitHub's
 delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
 The status page and receiver share `src/http.rs`. Four handlers cap open
 connections at eight, including queued sockets. Headers have an 8 KiB limit and
-webhook bodies have a 25 MiB limit. Each complete request has a two-second read
-deadline. Oversized bodies return 413, transfer encoding returns 400, and POST
+webhook bodies have a 25 MiB limit. Oversized bodies return 413, transfer
+encoding returns 400, and webhook POST
 requires `Content-Length`. Socket reads finish before reaching the receiver
 thread, so a stalled client cannot hold delivery persistence or catch-up.
 Accept errors are logged and skipped. Response writes have a total deadline too.
 
-The library verifies the HMAC before parsing. The receiver stores the parsed
-`GitHubDelivery::Webhook` under the delivery id in `tl3_ingress` before returning
-202. It retains both the typed event and the verified JSON payload, including
-unknown event names. PR updates, check runs, check suites and merge groups remain
-available for their owning adapters. Persistence errors log their `Display`,
+The library verifies the HMAC before parsing. The receiver stores
+the event name, delivery id and unchanged raw bytes in `tl3_ingress` before returning
+202. Replay parses them into the current `GitHubDelivery::Webhook` type, including
+unknown event names. Rows that no longer parse log their delivery id and advance
+every consumer past the row, so an older payload cannot crash-loop startup.
+PR updates, check runs, check suites and merge groups remain available for their
+owning adapters. Persistence errors log their `Display`,
 reopen the ingress connection and retry once. Only a failed retry returns 503.
-Delivery ids remain unique after consumption. A crash between applying an input
-and advancing its consumer cursor replays the same intake or observation key.
+Delivery ids remain unique while retained. After retirement, repeated deliveries
+still use the same durable intake and observation keys. A crash between applying
+an input and advancing its consumer cursor replays the same intake or observation key.
 
 `Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
 to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
@@ -140,9 +143,20 @@ names without case and use the trailing issue number. Rob's comments on issues
 and PRs enter `github_comments` in both paths, deduplicated by repository,
 installation and comment id. Ticket #14 classifies them.
 
+Headers have a two-second total read deadline. Body reads get a separate total
+budget of at least two seconds, scaled at 1 MiB/s by the declared length and
+capped at 25 seconds for GitHub's 25 MiB limit. The listener is loopback-only
+behind `cloudflared`. Failed reads never trigger catch-up because their bytes
+are unauthenticated. Ticket #15 will read GitHub's failed-delivery records on a look.
+
+One ingress connection inserts webhooks and catch-up rows in commit order.
+Sequence cursors depend on this single-writer invariant: a concurrent inserter
+could allocate a lower sequence and commit it after consumers had passed it.
+The controller's separate connection advances cursors and retires rows.
+
 ### Register a delivery translator
 
-Ticket #63 registers its Mergify translator, and #13 registers its PR translator,
+PR #69 registers its Mergify translator, and #13 registers its PR translator,
 on the controller before `Sources::run` or `ingress::drain`:
 
 ```rust
@@ -157,12 +171,15 @@ webhook and catch-up overlap. Translators never call the kernel.
 
 `ingress::drain` reads the stored deliveries in arrival order, calls the
 translator on the controller thread, applies its inputs and then persists its
-`github-translator:<name>` cursor. Each translator has an independent cursor.
-A new name starts at the first stored delivery, even if intake or another
-translator already consumed it. Reusing the name after restart resumes it.
+`github-translator:<name>` sequence in `tl3_ingress_consumers`. Each translator has
+an independent cursor. A new name starts at intake's current durable position,
+skipping consumed history even if another translator still retains it. Pending
+deliveries and catch-up supply recent state. Reusing the name after restart resumes it.
 An error leaves that delivery's cursor unchanged. Inputs must be idempotent
-because a crash after applying them can replay the delivery. Legacy translated
-inbox rows from earlier #10 builds still drain normally.
+because a crash after applying them can replay the delivery. Intake and cursor advances delete rows in the same transaction once intake and
+every registered translator have passed them. No clock drives retirement. The
+registered set is reconciled before each drain, so removed translators stop retaining
+rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
@@ -182,6 +199,71 @@ The `github` integration target uses the recorded webhook fixtures, the actual
 HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
+
+`adapters::simulation_with_workers` replaces ingest and audit with Python worker
+processes and returns a `WorkerOutputSource`. Other roles remain on the worker
+fake. Supply issue and repository text through `Store::put_worker_materials`
+before dispatch. Audit reads the stored ingest reply. An ingest revision reads
+the audit's objections. Missing materials block dispatch.
+
+`tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
+source alongside stdin and optional webhooks. It uses configured Python for
+ingest and audit, with the remaining roles and upstreams simulated. Add
+`--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
+sources against a local GitHub mock. Without `--workers`, workers stay simulated.
+Worker replies enter the same controller channel as webhook notifications. A
+worker source error stops the daemon even while webhooks or stdin remain alive.
+The source writes progress to a separate store table. Simulations can still call
+`poll_once` and feed its channel to `Controller::observe`.
+
+Each effect key owns a directory of immutable attempts. stdout and stderr are
+files. A Python supervisor records its identity before launching the worker,
+waits for it, fsyncs output and publishes its exit status. The worker wrapper
+records its identity before exec. Atomic claims also let recovery cancel a
+launcher that has not started. No file locks are used. Machine ID, PID, process start time
+and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
+Keep these runs on the controller's host, including after a restart.
+For #19, workers and their supervisors must live outside the controller's kill
+scope. Use systemd `KillMode=process` for the controller or put workers in their
+own scope. Otherwise stopping the controller kills the workers too.
+
+Sync the worker environment once at deployment with
+`uv sync --locked --project /srv/tl3/workers --python 3.14+gil`.
+Set `workers.python` to its `.venv/bin/python`. Each launch uses that interpreter
+directly, without uv cache or venv locks. `workers.command` contains Python's
+arguments, normally `-m tl3_workers run`.
+
+The source watches only active runs with inotify for output and exit records,
+and pidfds for process exits. A durable per-key notification registers a new
+attempt. Completed runs leave the watched set. Startup reads the store watches
+and run directories once to rebuild it. Stop indexes active runs by node.
+
+Only a valid role reply followed by exit zero is accepted. A recorded failed
+exit reports `RunFailed`. A lost supervisor record is absent only after both
+identities are proven dead and delayed launches are fenced. The controller
+reports absence of an acknowledged worker as `RunFailed`; an uncertain start
+can retry the same key. The source emits only `Found` evidence, never `Absent`
+or a cancelled claim. The controller watch owns confirmed absence.
+If a supervisor dies while its worker lives, recovery waits for that worker.
+A valid reply without a recorded exit is discarded, and the run is redone.
+This is the safe path because nobody proved a successful process exit.
+No clock or liveness threshold makes this decision.
+
+`Store::worker_progress` reads the last progress for every run, optionally
+filtered by request node. `Store::worker_document` reads briefs, goals and audit
+replies. Replaying output does not refresh progress time. These reads do not
+claim controller ownership. `tl3_worker_progress` records `run_key`, `node_id`,
+`epoch`, `attempt`, `started_ms`, `output_offset`, `unit`, and nullable
+`last_progress_ms`. A start row exists before the first progress event.
+Replaying a claim or output does not refresh its timestamp. Ticket #15 can
+measure silence from `started_ms`. Ticket #18's status hook receives a
+`Transaction` and queries this table directly in its read-only snapshot.
+
+Submit `bash crates/controller/tools/verify-workers.sh` through PrismaBuild to
+run the process acceptance scenarios. They run the actual worker entry point
+with a fake model and deny network calls. They kill workers and controllers
+with SIGKILL, check reattachment, exercise invalid and premature replies, and
+verify the goals delivered to the GitHub fake.
 
 For the review-fix evidence, create a clean detached worktree at the final
 commit, then generate the campaign there:
@@ -239,8 +321,8 @@ python3 crates/controller/tools/mergify_review_manifest.py > /tmp/tl3-mergify-re
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-mergify-review.json
 ```
 
-The manifest runs controller, GitHub and Mergify tests on `dl380g10`, `sparky` and
-`sparklina`. Then submit `bash crates/controller/tools/verify.sh` once with
+The manifest runs controller, GitHub, Mergify and store tests on `dl380g10`,
+`sparky` and `sparklina`. Then submit `bash crates/controller/tools/verify.sh` once with
 `--anywhere`. The scenarios use local HTTP servers and embedded Postgres.
 See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
 inputs. Real queue payload confirmation remains the sandbox trial on #17.
@@ -253,7 +335,31 @@ python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-revi
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
 ```
 
-The manifest pins the controller and GitHub test targets to `dl380g10`, `sparky`
+The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
 and `sparklina`. Controller targets include the status page and process tests.
 After they pass, submit the full workspace `tools/verify.sh` command shown above
 once with `--anywhere`. Record every action key and result in the PR body.
+
+## Add a worker role
+
+For #11, #12 and #13, update each boundary together:
+
+- Add the kernel role mapping in `adapters/workers/protocol.rs` `role`.
+- Map and validate the reply in `map_reply`, using the package's role schema.
+- Validate role inputs in `validate_inputs`.
+- Build inputs and select the model ladder in `Supervisor::request`.
+- Extend `lib.rs` `valid_role` and the document names in `translate`.
+- Add process scenarios for accepted replies, invalid output, recovery and stop.
+
+Ticket #11 replaces `IngestDone { size: 1 }`. The forecaster owns sizing.
+Until these boundaries support a role, its starts and stops use the worker fake.
+
+Worker tests resolve `TL3_TEST_UV` first, then `uv` on PATH. Missing uv fails
+with an installation message. They sync the locked Python 3.14 environment once
+per test process. Run the process scenarios on dl380g10, sparky and sparklina
+through PrismaBuild with `--tag HOST`. From a clean detached worktree, run
+`python3 crates/controller/tools/worker_review_manifest.py workers` to generate
+the three host actions, including controller and store process scenarios.
+After they pass, generate the portable full check with
+`python3 crates/controller/tools/worker_review_manifest.py workspace`.
+Submit each generated manifest with `pbcampaign.py --detach`.

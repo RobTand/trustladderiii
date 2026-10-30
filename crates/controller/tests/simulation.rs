@@ -537,6 +537,16 @@ fn sent_but_absent(settings: &tl3_config::Store) {
     let mut controller = open(settings, &records);
     drain(&mut controller);
     assert_finished(&mut controller, &records, settings);
+    let events = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 1000)
+        .unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.receipt.result["kernel_event"]["Reply"]["reply"] == "RunFailed"),
+        "absence of an unacknowledged start must retry delivery without failing the run"
+    );
 }
 
 struct WriteDown {
@@ -836,6 +846,17 @@ fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database
     assert!(headers.starts_with("http/1.1 200"));
     assert!(headers.contains(&format!("content-length: {}", expected_html.len())));
     assert!(body.is_empty());
+    let mut connection = TcpStream::connect(address).unwrap();
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    connection
+        .write_all(b"POST / HTTP/1.1\r\nHost: first\r\nHost: second\r\n\r\n")
+        .unwrap();
+    let mut reply = String::new();
+    connection.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 405"), "{reply}");
+    assert!(reply.contains("Allow: GET, HEAD\r\n"), "{reply}");
     for method in ["POST", "PUT", "DELETE", "OPTIONS"] {
         let (headers, _) = http(address, method, "/");
         assert!(headers.starts_with("http/1.1 405"), "{method}: {headers}");

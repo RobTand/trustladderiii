@@ -343,7 +343,7 @@ fn writer_input(
         notice => (
             MessageKind::Note,
             json!({"issue_title": title, "request": request, "change": match notice {
-                Notice::MeasuresPosted => "The reading of your request passed its independent check. Work will continue without waiting for your approval.",
+                Notice::MeasuresPosted => delivery.note.as_deref().unwrap_or("The reading of your request passed its independent check. Work will continue without waiting for your approval."),
                 Notice::Note(NoteKind::UnapprovedMerge) => "A change was merged without the required approval. I have recorded the merge and the problem.",
                 Notice::Note(NoteKind::Replanned) => "The earlier approach did not work. I will try a different plan for your request.",
                 Notice::Note(NoteKind::PrClosed) => "The proposed change was closed. Work on this request is stopping.",

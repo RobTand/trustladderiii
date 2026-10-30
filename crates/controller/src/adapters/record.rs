@@ -17,6 +17,8 @@ struct Record {
     #[serde(default)]
     epochs: Vec<i64>,
     completion: Completion,
+    #[serde(default)]
+    note: Option<String>,
 }
 
 pub(super) struct Records(PathBuf);
@@ -68,6 +70,7 @@ impl Records {
                 deliveries: 0,
                 epochs: Vec::new(),
                 completion,
+                note: delivery.note.clone(),
             },
             Err(e) => return Err(e.into()),
         };
@@ -98,6 +101,20 @@ pub fn delivery_counts(root: &Path) -> Result<BTreeMap<String, u64>> {
         }
     }
     Ok(counts)
+}
+
+pub fn delivered_notes(root: &Path) -> Result<Vec<String>> {
+    let mut notes = vec![];
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|x| x == "json") {
+            let record: Record = serde_json::from_slice(&fs::read(path)?)?;
+            if let Some(note) = record.note {
+                notes.push(note);
+            }
+        }
+    }
+    Ok(notes)
 }
 
 pub fn delivery_epochs(root: &Path) -> Result<BTreeMap<String, Vec<i64>>> {

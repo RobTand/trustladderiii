@@ -170,64 +170,80 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
 
 /// Replays use the same intake and observation keys after a crash before consumption.
 pub fn drain(controller: &mut Controller) -> Result<()> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Stored {
-        GitHub(GitHubDelivery),
-        Legacy(Vec<Input>),
-    }
+    let names: Vec<_> = controller
+        .github_translators
+        .iter()
+        .map(|entry| format!("github-translator:{}", entry.name))
+        .collect();
+    controller
+        .store
+        .register_ingress_translators(&names.iter().map(String::as_str).collect::<Vec<_>>())?;
     loop {
         let deliveries = controller.store.pending_ingress()?;
         if deliveries.is_empty() {
             break;
         }
-        for (sequence, payload) in deliveries {
-            let inputs = match serde_json::from_value::<Stored>(payload)? {
-                Stored::GitHub(delivery) => translate(delivery, &controller.bootstrap),
-                Stored::Legacy(inputs) => inputs,
-            };
-            for input in inputs {
-                apply(controller, input)?;
+        for stored in deliveries {
+            if let Some(delivery) = replay(&stored) {
+                for input in translate(delivery, &controller.bootstrap) {
+                    apply(controller, input)?;
+                }
             }
-            controller.store.consume_ingress(sequence)?;
+            controller.store.consume_ingress(stored.sequence)?;
         }
     }
-    // Independent cursors let a newly registered translator replay earlier deliveries,
-    // including those already consumed by intake or another translator.
     for index in 0..controller.github_translators.len() {
-        let cursor_key = format!(
+        let name = format!(
             "github-translator:{}",
             controller.github_translators[index].name
         );
-        let mut cursor = controller
-            .store
-            .ingress_cursor(&cursor_key)?
-            .map(serde_json::from_value)
-            .transpose()?
-            .unwrap_or(0_i64);
+        let mut cursor = controller.store.translator_cursor(&name)?;
         loop {
             let deliveries = controller.store.ingress_after(cursor)?;
             if deliveries.is_empty() {
                 break;
             }
-            for (sequence, payload) in deliveries {
-                if let Stored::GitHub(delivery) = serde_json::from_value::<Stored>(payload)? {
-                    let snapshot = controller.store.load()?;
+            let mut snapshot = None;
+            for stored in deliveries {
+                if let Some(delivery) = replay(&stored) {
+                    if snapshot.is_none() {
+                        snapshot = Some(controller.store.load()?);
+                    }
                     let inputs = controller.github_translators[index]
                         .translator
-                        .translate(&delivery, &snapshot)?;
+                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))?;
                     for input in inputs {
                         apply(controller, input)?;
                     }
                 }
                 controller
                     .store
-                    .set_ingress_cursor(&cursor_key, &json!(sequence))?;
-                cursor = sequence;
+                    .advance_translator(&name, stored.sequence)?;
+                cursor = stored.sequence;
             }
         }
     }
     Ok(())
+}
+
+fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {
+    let result = if stored.source == "github-webhook" {
+        webhook::parse(&stored.delivery_key, &stored.event_name, &stored.payload)
+            .map(|delivery| GitHubDelivery::Webhook(Box::new(delivery)))
+            .map_err(|error| error.to_string())
+    } else {
+        serde_json::from_slice(&stored.payload).map_err(|error| error.to_string())
+    };
+    match result {
+        Ok(delivery) => Some(delivery),
+        Err(error) => {
+            eprintln!(
+                "GitHub delivery {} skipped during replay: {error}",
+                stored.delivery_key
+            );
+            None
+        }
+    }
 }
 
 fn comment_number(repo: &Repository, url: &str) -> Result<u64> {
@@ -411,8 +427,8 @@ impl CatchUp {
                     repository: repo.clone(),
                     changes: Box::new(changes),
                 };
-                let payload = serde_json::to_value(delivery)?;
-                let key = format!("{name}:{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
+                let payload = serde_json::to_vec(&delivery)?;
+                let key = format!("{name}:{:x}", Sha256::digest(&payload));
                 deliveries.push((key, payload));
                 notifications.push(Input::Wake);
             }
@@ -506,14 +522,15 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
         Err(_) => return 400,
     };
     let id = delivery.id.clone();
-    let payload = json!(GitHubDelivery::Webhook(Box::new(delivery)));
-    match store.receive_ingress("github-webhook", &id, &payload) {
+    let event_name = delivery.event_name;
+    let payload = &request.body;
+    match store.receive_ingress("github-webhook", &id, &event_name, payload) {
         Ok(_) => 202,
         Err(error) => {
             eprintln!("GitHub delivery {id} persistence failed: {error}");
             match store
                 .reconnect()
-                .and_then(|()| store.receive_ingress("github-webhook", &id, &payload))
+                .and_then(|()| store.receive_ingress("github-webhook", &id, &event_name, payload))
             {
                 Ok(_) => 202,
                 Err(error) => {
@@ -541,7 +558,7 @@ impl Source for Webhooks {
         let server_thread = thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 server.serve(move |connection| {
-                    let (status, head) = match connection.read(25 * 1024 * 1024) {
+                    let (status, head) = match connection.read(http::MAX_BODY) {
                         Err((status, head)) => (status, head),
                         Ok(request) if request.method != "POST" => (405, request.method == "HEAD"),
                         Ok(request) if request.path != "/github/events" => (404, false),

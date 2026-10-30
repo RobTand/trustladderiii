@@ -15,6 +15,7 @@ const HANDLERS: usize = 4;
 const MAX_CONNECTIONS: usize = 8;
 const MAX_HEADERS: usize = 8 * 1024;
 const SEND_BUFFER: usize = 32 * 1024;
+pub(crate) const MAX_BODY: usize = 25 * 1024 * 1024;
 // Socket deadlines bound untrusted clients, never the duration of TL3's work.
 pub(crate) const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -170,12 +171,13 @@ fn read_request(
     stream: &mut TcpStream,
     max_body: usize,
 ) -> std::result::Result<Request, (u16, bool)> {
-    let started = Instant::now();
+    let headers_deadline = Instant::now() + SOCKET_TIMEOUT;
     let mut bytes = Vec::new();
     let mut head = false;
     let end = loop {
         let mut chunk = [0; 1024];
-        let count = read_before(stream, &mut chunk, started).map_err(|code| (code, head))?;
+        let count =
+            read_before(stream, &mut chunk, headers_deadline).map_err(|code| (code, head))?;
         if count == 0 {
             return Err((400, head));
         }
@@ -191,10 +193,18 @@ fn read_request(
             return Err((431, head));
         }
     };
+    if Instant::now() >= headers_deadline {
+        return Err((408, head));
+    }
     let (mut request, length) = parse_request(&bytes[..end]).map_err(|code| (code, head))?;
-    if length > max_body {
+    if max_body > 0 && request.method == "POST" && length.is_none() {
+        return Err((411, head));
+    }
+    let length = length.unwrap_or(0);
+    if length > max_body.min(MAX_BODY) {
         return Err((if max_body == 0 { 400 } else { 413 }, head));
     }
+    let body_deadline = Instant::now() + body_timeout(length);
     request
         .body
         .extend_from_slice(&bytes[end + 4..][..length.min(bytes.len() - end - 4)]);
@@ -202,26 +212,34 @@ fn read_request(
         let mut chunk = [0; 4096];
         let limit = chunk.len().min(length - request.body.len());
         let count =
-            read_before(stream, &mut chunk[..limit], started).map_err(|code| (code, head))?;
+            read_before(stream, &mut chunk[..limit], body_deadline).map_err(|code| (code, head))?;
         if count == 0 {
             return Err((400, head));
         }
         request.body.extend_from_slice(&chunk[..count]);
     }
-    if started.elapsed() >= SOCKET_TIMEOUT {
+    if Instant::now() >= body_deadline {
         return Err((408, head));
     }
     Ok(request)
 }
 
+// The webhook socket is loopback-only behind cloudflared. Allow at least 1 MiB/s,
+// capped at GitHub's 25 MiB payload limit, with a two-second minimum for small bodies.
+fn body_timeout(length: usize) -> Duration {
+    SOCKET_TIMEOUT.max(Duration::from_secs(
+        length.min(MAX_BODY).div_ceil(1024 * 1024) as u64,
+    ))
+}
+
 fn read_before(
     stream: &mut TcpStream,
     bytes: &mut [u8],
-    started: Instant,
+    deadline: Instant,
 ) -> std::result::Result<usize, u16> {
     loop {
-        let remaining = SOCKET_TIMEOUT
-            .checked_sub(started.elapsed())
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
             .ok_or(408_u16)?;
         stream
             .set_read_timeout(Some(remaining.max(Duration::from_millis(1))))
@@ -244,7 +262,7 @@ fn read_before(
     }
 }
 
-fn parse_request(bytes: &[u8]) -> std::result::Result<(Request, usize), u16> {
+fn parse_request(bytes: &[u8]) -> std::result::Result<(Request, Option<usize>), u16> {
     let source = std::str::from_utf8(bytes).map_err(|_| 400_u16)?;
     let mut lines = source.split("\r\n");
     let parts: Vec<_> = lines.next().unwrap_or("").split(' ').collect();
@@ -268,26 +286,24 @@ fn parse_request(bytes: &[u8]) -> std::result::Result<(Request, usize), u16> {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
             || value.bytes().any(|b| b.is_ascii_control() && b != b'\t')
-            || headers
-                .iter()
-                .any(|(key, _)| key.eq_ignore_ascii_case(name))
         {
             return Err(400);
         }
         if name.eq_ignore_ascii_case("transfer-encoding") {
             return Err(400);
         }
+        let value = value.trim_matches([' ', '\t']);
         if name.eq_ignore_ascii_case("content-length") {
-            let value = value.trim();
-            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+            if length.is_some()
+                || value.is_empty()
+                || !value.bytes().all(|b| b.is_ascii_digit())
+                || (value.len() > 1 && value.starts_with('0'))
+            {
                 return Err(400);
             }
             length = Some(value.parse::<usize>().map_err(|_| 413_u16)?);
         }
-        headers.push((name.into(), value.trim().into()));
-    }
-    if *method == "POST" && length.is_none() {
-        return Err(411);
+        headers.push((name.into(), value.into()));
     }
     Ok((
         Request {
@@ -296,7 +312,7 @@ fn parse_request(bytes: &[u8]) -> std::result::Result<(Request, usize), u16> {
             headers,
             body: Vec::new(),
         },
-        length.unwrap_or(0),
+        length,
     ))
 }
 
@@ -344,6 +360,15 @@ fn write_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn body_deadline_scales_with_declared_length_and_is_capped() {
+        assert_eq!(body_timeout(0), SOCKET_TIMEOUT);
+        assert_eq!(body_timeout(100), SOCKET_TIMEOUT);
+        assert_eq!(body_timeout(2 * 1024 * 1024 + 1), Duration::from_secs(3));
+        assert_eq!(body_timeout(MAX_BODY), Duration::from_secs(25));
+        assert_eq!(body_timeout(usize::MAX), Duration::from_secs(25));
+    }
+
     #[test]
     fn accept_errors_do_not_stop_later_connections() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

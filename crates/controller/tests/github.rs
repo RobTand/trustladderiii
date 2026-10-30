@@ -11,14 +11,14 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use std::{
     collections::BTreeMap,
-    env,
+    env, fs,
     io::{BufRead, BufReader, Read, Write},
     net::{Shutdown, SocketAddr, TcpStream},
     path::Path,
     process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
@@ -338,8 +338,10 @@ fn main() {
     println!("test parsed_deliveries_and_translators ... ok");
     catch_up_preserves_evidence(&database.create("catch_up_evidence"));
     println!("test catch_up_preserves_evidence ... ok");
+    daemon_with_workers(&database.create("daemon_workers"));
+    println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
     database.stop();
-    println!("10 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("11 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -446,7 +448,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
         store
             .receive_catch_up(
                 "rollback",
-                &[("one".into(), json!([])), ("".into(), json!([]))],
+                &[("one".into(), b"[]".to_vec()), ("".into(), b"[]".to_vec())],
                 &json!("must not advance")
             )
             .is_err()
@@ -580,6 +582,7 @@ fn delivery(notice: Notice) -> Delivery {
         attempt: 1,
         round: 0,
         question: None,
+        note: None,
     }
 }
 fn message_reconciliation() {
@@ -880,6 +883,17 @@ fn receiver_limits(settings: &tl3_config::Store) {
         ("Transfer-Encoding: chunked", 400),
         ("Content-Length: 1\r\nContent-Length: 1", 400),
         ("Content-Length: -1", 400),
+        ("Content-Length: +5", 400),
+        ("Content-Length: 05", 400),
+        ("Content-Length: 00", 400),
+        ("Content-Length: \u{a0}5", 400),
+        ("Content-Length: 999999999999999999999999999999999999", 413),
+        ("Transfer-Encoding: chunked\r\nContent-Length: 5", 400),
+        ("Content-Length: 5\r\nTransfer-Encoding: chunked", 400),
+        (
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked",
+            400,
+        ),
         ("", 411),
     ] {
         assert!(
@@ -907,6 +921,19 @@ fn receiver_limits(settings: &tl3_config::Store) {
         ),
         202
     );
+    let mut large = fixture(false);
+    large["padding"] = json!("x".repeat(3 * 1024 * 1024));
+    assert_eq!(post(address, "multi-read", false, large, true), 202);
+    let body = br#"{"zen":"first request only"}"#;
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
+    mac.update(body);
+    let signature = hex::encode(mac.finalize().into_bytes());
+    let mut pipelined = format!("POST /github/events HTTP/1.1\r\nHost: first\r\nHost: second\r\nContent-Length:\t{} \t\r\nX-GitHub-Event: ping\r\nX-GitHub-Delivery: pipeline-first\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len()).into_bytes();
+    pipelined.extend_from_slice(body);
+    pipelined.extend_from_slice(b"POST /github/events HTTP/1.1\r\nContent-Length: 0\r\nX-GitHub-Delivery: pipeline-second\r\n\r\n");
+    let reply = raw_http(address, &pipelined);
+    assert!(reply.starts_with("HTTP/1.1 202"), "{reply}");
+    assert_eq!(reply.matches("HTTP/1.1").count(), 1);
     control.stop();
     handle.join().unwrap().unwrap();
     assert_eq!(
@@ -915,7 +942,7 @@ fn receiver_limits(settings: &tl3_config::Store) {
             .pending_ingress()
             .unwrap()
             .len(),
-        6
+        8
     );
 }
 struct WaitingSource(mpsc::Receiver<()>);
@@ -1105,53 +1132,76 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let pending = store.pending_ingress().unwrap();
     assert_eq!(pending.len(), 7);
-    for (_, payload) in &pending[..4] {
-        let GitHubDelivery::Webhook(delivery) = serde_json::from_value(payload.clone()).unwrap()
-        else {
-            panic!("webhook missing");
-        };
-        assert!(delivery.event.is_some(), "{}", delivery.event_name);
-        assert_eq!(delivery.payload, event_fixture(&delivery.event_name));
+    for stored in &pending[..4] {
+        let payload: Value = serde_json::from_slice(&stored.payload).unwrap();
+        assert_eq!(payload, event_fixture(&stored.event_name));
+        assert!(
+            payload.get("Webhook").is_none(),
+            "only raw evidence is stored"
+        );
     }
     let mut controller = controller(settings, root.path(), &api.uri());
+    let calls = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    controller.register_github_translator("retry-test", FailsOnce(true));
+    assert!(ingress::drain(&mut controller).is_err());
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    assert_eq!(
+        store
+            .translator_cursor("github-translator:retry-test")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        7,
+        "failed consumer retains evidence"
+    );
     drain(&mut controller);
+    assert!(
+        store.ingress_after(0).unwrap().is_empty(),
+        "last cursor retires evidence"
+    );
     let rows = controller.snapshot().unwrap().rows;
     let comments: Vec<_> = rows
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 1);
-    assert_eq!(comments[0].value["issue"], 25);
+    assert_eq!(comments.len(), 2);
+    assert!(comments.iter().any(|row| row.value["issue"] == 25));
     assert!(store.pending_ingress().unwrap().is_empty());
-    // Register after intake has consumed the deliveries. A new consumer still sees all seven.
-    let calls = Arc::new(Mutex::new(vec![]));
-    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
-    drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 7);
-    drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 7);
-    controller.register_github_translator("retry-test", FailsOnce(true));
-    assert!(ingress::drain(&mut controller).is_err());
-    assert!(
-        store
-            .ingress_cursor("github-translator:retry-test")
-            .unwrap()
-            .is_none()
-    );
+    let later = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("later", RecordingTranslator(later.clone()));
     drain(&mut controller);
     assert!(
-        store
-            .ingress_cursor("github-translator:retry-test")
-            .unwrap()
-            .is_some()
+        later.lock().unwrap().is_empty(),
+        "a new translator skips history"
     );
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    let (address, control, handle) = start_receiver(settings);
+    assert_eq!(
+        post_event(
+            address,
+            "recent",
+            "ping",
+            json!({"zen": "recent state"}),
+            true
+        ),
+        202
+    );
+    control.stop();
+    handle.join().unwrap().unwrap();
+    drain(&mut controller);
+    assert_eq!(later.lock().unwrap().len(), 1);
+    assert_eq!(calls.lock().unwrap().len(), 8);
+    assert!(store.ingress_after(0).unwrap().is_empty());
     drop(controller);
     let mut restored = self::controller(settings, root.path(), &api.uri());
     restored.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
     drain(&mut restored);
     assert_eq!(
         calls.lock().unwrap().len(),
-        7,
+        8,
         "consumer cursor survives restart"
     );
     assert_eq!(
@@ -1175,11 +1225,29 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
     let mut store = Store::open(settings).unwrap();
+    let mut older = fixture(false);
+    older["issue"].as_object_mut().unwrap().remove("title");
+    store
+        .receive_ingress(
+            "github-webhook",
+            "older-shape",
+            "issues",
+            &serde_json::to_vec(&older).unwrap(),
+        )
+        .unwrap();
+    store
+        .receive_ingress(
+            "github-catch-up",
+            "older-catch-up",
+            "catch-up",
+            br#"{"CatchUp":{"repository":{}}}"#,
+        )
+        .unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
     let pending = store.pending_ingress().unwrap();
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.len(), 3);
     let GitHubDelivery::CatchUp { changes, .. } =
-        serde_json::from_value(pending[0].1.clone()).unwrap()
+        serde_json::from_slice(&pending[2].payload).unwrap()
     else {
         panic!("catch-up missing");
     };
@@ -1202,4 +1270,216 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
         .collect();
     assert_eq!(comments.len(), 3);
     assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert_eq!(calls.lock().unwrap().len(), 1, "older shapes were skipped");
+    assert!(
+        store.ingress_after(0).unwrap().is_empty(),
+        "skipped rows retire too"
+    );
+    drain(&mut controller);
+    assert_eq!(calls.lock().unwrap().len(), 1);
+}
+
+fn daemon_with_workers(settings: &tl3_config::Store) {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        Command::new(env::var_os("TL3_TEST_UV").unwrap_or_else(|| "uv".into()))
+            .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
+            .arg(&package)
+            .status()
+            .expect("daemon worker test requires uv 0.10.10 on PATH or TL3_TEST_UV")
+            .success()
+    );
+    let root = tempfile::tempdir().unwrap();
+    let api = Server::new();
+    let credentials = root.path().join("app.json");
+    let model_key = root.path().join("model-key");
+    fs::write(
+        &credentials,
+        serde_json::to_vec(&json!({
+            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(&model_key, "fixture-only").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&credentials, &model_key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let marker = root.path().join("entered");
+    let runs = root.path().join("runs");
+    let config = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace(
+            "connect_timeout_secs = 10",
+            &format!(
+                "password_file = {:?}\nconnect_timeout_secs = 10",
+                settings.password_file.as_ref().unwrap()
+            ),
+        )
+        .replace(
+            "/home/rob/.config/tl3/github-app.json",
+            credentials.to_str().unwrap(),
+        )
+        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        .replace("owner = \"RobTand\"", "owner = \"owner\"")
+        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
+        .replace("installation_id = 1", "installation_id = 3")
+        .replace("id = 24923402", "id = 42")
+        .replace(
+            "/srv/tl3/workers/.venv/bin/python",
+            package.join(".venv/bin/python").to_str().unwrap(),
+        )
+        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace(
+            "command = [\"-m\", \"tl3_workers\", \"run\"]",
+            &format!(
+                "command = [{:?}, \"audit-blocked\", {marker:?}]",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+            ),
+        );
+    let config_path = root.path().join("config.toml");
+    fs::write(&config_path, config).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    store.put_worker_materials("0", &json!({
+        "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
+        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"]}
+    })).unwrap();
+    struct Daemon(std::process::Child);
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_tl3d"))
+            .arg("--config")
+            .arg(&config_path)
+            .arg("--simulate")
+            .arg(root.path().join("fakes"))
+            .args([
+                "--workers",
+                "--github-listen",
+                "127.0.0.1:0",
+                "--github-api",
+            ])
+            .arg(api.uri())
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let (logs, received) = mpsc::channel();
+    let stderr = daemon.0.stderr.take().unwrap();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            logs.send(line.unwrap()).unwrap();
+        }
+    });
+    let address = loop {
+        let line = received.recv_timeout(Duration::from_secs(90)).unwrap();
+        if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
+            break address.parse().unwrap();
+        }
+    };
+    assert_eq!(
+        post(address, "daemon-labelled", false, fixture(false), true),
+        202
+    );
+    let wait = |condition: &mut dyn FnMut() -> bool| {
+        let started = Instant::now();
+        while !condition() {
+            assert!(
+                started.elapsed() < Duration::from_secs(90),
+                "daemon did not produce expected evidence"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    // The source's observation key proves ingress delivered the reply, even if a look also found it.
+    wait(&mut || {
+        store
+            .events_after(tl3_store::Revision::ZERO, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| {
+                event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "ingest"
+            })
+    });
+    wait(&mut || store.worker_progress(Some("0")).unwrap().len() == 2);
+    assert_eq!(
+        store.worker_document("0", "briefs").unwrap().unwrap()["brief"],
+        "Fix the greeting."
+    );
+    // Webhooks remain live while audit waits. Redelivery must preserve one request and one ingest.
+    assert_eq!(
+        post(
+            address,
+            "daemon-labelled-again",
+            false,
+            fixture(false),
+            true
+        ),
+        202
+    );
+    fs::write(marker.with_extension("release"), "go").unwrap();
+    wait(&mut || {
+        store
+            .events_after(tl3_store::Revision::ZERO, 1000)
+            .unwrap()
+            .iter()
+            .any(|event| {
+                event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "audit"
+            })
+    });
+    wait(&mut || api.state.lock().unwrap().closed);
+    assert_eq!(
+        store.worker_document("0", "audits").unwrap().unwrap()["verdict"],
+        "agree"
+    );
+    let progress = store.worker_progress(Some("0")).unwrap();
+    assert_eq!(progress.len(), 2);
+    assert!(progress.iter().all(|p| p.last_progress_ms.is_some()));
+    let snapshot = store.load().unwrap();
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "requests")
+            .count(),
+        1
+    );
+    assert!(!snapshot.rows.iter().any(|row| row.table == "watches"));
+    assert!(
+        api.state
+            .lock()
+            .unwrap()
+            .comments
+            .iter()
+            .any(|comment| comment["body"].as_str().unwrap().contains("Return hello."))
+    );
+    // Malformed durable worker notification fails the actual source while webhooks and stdin live.
+    fs::write(runs.join(".ready-dead"), "{").unwrap();
+    let mut ending = None;
+    wait(&mut || {
+        ending = daemon.0.try_wait().unwrap();
+        ending.is_some()
+    });
+    assert_eq!(ending.unwrap().code(), Some(1));
+    reader.join().unwrap();
+    let logs: Vec<_> = received.try_iter().collect();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("WorkerOutputSource failed:")),
+        "{logs:?}"
+    );
 }

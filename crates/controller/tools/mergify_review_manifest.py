@@ -21,7 +21,7 @@ env = {
 }
 print(json.dumps([{
     "cwd": str(root),
-    "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-github", "-p", "tl3-mergify", "--all-targets", "--locked"],
+    "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-github", "-p", "tl3-mergify", "-p", "tl3-store", "--all-targets", "--locked"],
     "tags": [host],
     "cpus": 2,
     "demand": {"mem_gb": 6},

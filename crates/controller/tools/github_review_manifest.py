@@ -7,7 +7,7 @@ root = Path(__file__).resolve().parents[3]
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
     raise SystemExit("Commit changes and use a clean detached worktree before submitting.")
 env = {
-    "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+    "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "RUSTUP_HOME": "/home/rob/.rustup",
     "CARGO_HOME": "/home/rob/.cargo",
     "KANI_HOME": "/home/rob/.kani",
@@ -19,7 +19,7 @@ env = {
 }
 print(json.dumps([{
     "cwd": str(root),
-    "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-github", "--all-targets", "--locked"],
+    "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-github", "-p", "tl3-store", "--all-targets", "--locked"],
     "tags": [host],
     "cpus": 2,
     "demand": {"mem_gb": 6},

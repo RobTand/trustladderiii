@@ -737,12 +737,12 @@ fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
     api.state.lock().unwrap().fail_reads = true;
     deliver(settings, &api, "check_run", &body);
     assert!(ingress::drain(&mut controller).is_err());
-    assert!(
+    assert_eq!(
         Store::open(settings)
             .unwrap()
-            .ingress_cursor("github-translator:mergify")
-            .unwrap()
-            .is_none()
+            .translator_cursor("github-translator:mergify")
+            .unwrap(),
+        0
     );
     api.state.lock().unwrap().fail_reads = false;
     ingress::drain(&mut controller).unwrap();
@@ -794,6 +794,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         question: None,
+        note: None,
     }
 }
 fn label_removed_before_confirmation() {

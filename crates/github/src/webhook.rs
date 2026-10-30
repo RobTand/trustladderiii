@@ -150,6 +150,12 @@ pub fn verify_and_parse(
     {
         return Err(WebhookError::DeliveryId);
     }
+    parse(delivery_id, event_name, body)
+}
+
+/// Parse verified evidence on replay using the current event types.
+/// Callers must authenticate live bytes before persisting or using them.
+pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Delivery, WebhookError> {
     let value: serde_json::Value =
         serde_json::from_slice(body).map_err(|_| WebhookError::Payload)?;
     if !value.is_object() {

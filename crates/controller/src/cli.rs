@@ -20,6 +20,7 @@ struct Arguments {
     config: tl3_config::Config,
     simulation: Option<PathBuf>,
     drain: bool,
+    workers: bool,
     github_listen: Option<SocketAddr>,
     github_api: Option<String>,
     serve_status: bool,
@@ -43,6 +44,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
     let mut path = None;
     let mut simulation = None;
     let mut drain = false;
+    let mut workers = false;
     let mut github_listen = None;
     let mut github_api = None;
     while let Some(arg) = args.next() {
@@ -50,6 +52,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
             "--config" => path = args.next().map(PathBuf::from),
             "--simulate" if daemon => simulation = args.next().map(PathBuf::from),
             "--drain" if daemon => drain = true,
+            "--workers" if daemon => workers = true,
             "--github-listen" if daemon => {
                 github_listen = Some(
                     args.next()
@@ -68,6 +71,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         config,
         simulation,
         drain,
+        workers,
         github_listen,
         github_api,
         serve_status,
@@ -94,6 +98,7 @@ pub fn daemon() -> Result<()> {
         config,
         simulation,
         drain,
+        workers,
         github_listen,
         github_api,
         ..
@@ -101,8 +106,14 @@ pub fn daemon() -> Result<()> {
     let simulation =
         simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;
     let bootstrap = Bootstrap::from_config(&config)?;
-    let mut adapters = adapters::simulation(&simulation)?;
     let mut sources = crate::ingress::Sources::default();
+    let mut adapters = if workers {
+        let (adapters, source) = adapters::simulation_with_workers(&simulation, &config)?;
+        sources.register(source);
+        adapters
+    } else {
+        adapters::simulation(&simulation)?
+    };
     let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
         github_api
             .as_ref()
@@ -165,13 +176,15 @@ pub fn daemon() -> Result<()> {
                 &simulation,
             )?,
         );
-        sources.register(crate::ingress::Webhooks::bind(
+        let webhooks = crate::ingress::Webhooks::bind(
             listen,
             Store::open(&config.store)?,
             bootstrap.clone(),
             secret,
             Some(crate::ingress::CatchUp::new(catch_up_clients)?),
-        )?);
+        )?;
+        eprintln!("GitHub webhooks listening on {}", webhooks.address());
+        sources.register(webhooks);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
     crate::ingress::drain(&mut controller)?;
