@@ -10,3 +10,7 @@ omit a sender. Issue label payloads must retain the sender.
 
 Source: [GitHub webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
 The issue, comment, pull request, check run and check suite sections define these shapes.
+
+`pull-request-unlabeled.json` and `merge-group-checks-requested.json` are synthetic
+variants for queue ingress. The merge-group payload describes a notification,
+not proof that a PR merged.

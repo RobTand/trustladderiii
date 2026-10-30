@@ -18,7 +18,7 @@ env = {
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
 if args.suite == "hosts":
-    rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "-p", "tl3-github", "--tests", "--locked"]}
+    rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "-p", "tl3-github", "-p", "tl3-mergify", "--tests", "--locked"]}
                 for host in ("dl380g10", "sparky", "sparklina")]
 elif args.suite == "workers":
     rows = [{**common, "tags": [host], "argv": ["bash", "-c", "cd workers && /home/rob/.local/bin/uv run --locked --no-editable --python 3.14+gil pytest -q"]}

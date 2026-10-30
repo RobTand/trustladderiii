@@ -157,6 +157,7 @@ impl Executor for Fake {
         });
         let mut completion = if failed && matches!(self.scenario.as_str(), "retry" | "permanent") {
             Completion {
+                progress: None,
                 ack: if self.scenario == "retry" {
                     Ack::Retryable
                 } else {
