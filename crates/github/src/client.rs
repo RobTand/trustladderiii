@@ -714,6 +714,9 @@ impl GitHub {
                         .and_then(|value| value.parse::<DateTime<Utc>>().ok())
                         .is_some_and(|created_at| created_at < since);
                     if event.get("event").and_then(Value::as_str) == Some("closed") {
+                        if id.is_none() {
+                            continue;
+                        }
                         let Some(number) = event["issue"]["number"].as_u64() else {
                             continue;
                         };
