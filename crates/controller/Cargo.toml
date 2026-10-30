@@ -21,6 +21,7 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
+loom = "0.7"
 tl3-worktrees = { path = "../worktrees" }
 postgres = "0.19"
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
@@ -39,6 +40,11 @@ harness = false
 [[test]]
 name = "github"
 path = "tests/github.rs"
+harness = false
+
+[[test]]
+name = "crash_safety"
+path = "tests/crash_safety.rs"
 harness = false
 
 [[test]]

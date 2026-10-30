@@ -289,6 +289,14 @@ The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`
 and `sparklina`. Controller targets include the status page and process tests.
 After they pass, submit the full workspace `tools/verify.sh` command shown above
 once with `--anywhere`. Record every action key and result in the PR body.
+The systematic [crash simulation](../../docs/crash-simulation.md) uses real
+SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
+default `merge` smoke scenario covers all thirteen save points. Set
+`TL3_SIM_FULL=1` for the full matrix and effect-and-phase coverage assertion.
+Its seed and optional scenario and save-point filters appear in failure output.
+Generate the required three-host and two-portable campaign with
+`python3 crates/controller/tools/crash_manifest.py`. All execution still goes
+through PrismaBuild.
 
 ## Add a worker role
 

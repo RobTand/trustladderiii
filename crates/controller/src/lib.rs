@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod cli;
+pub mod clock;
 pub mod executor;
 mod http;
 pub mod ingress;
@@ -106,6 +107,8 @@ struct Request {
 pub enum Boundary {
     BeforeDispatch,
     AfterDispatch,
+    BeforeReconcile,
+    AfterReconcile,
 }
 
 pub struct Controller {
@@ -113,10 +116,20 @@ pub struct Controller {
     adapters: Registry,
     bootstrap: Bootstrap,
     github_translators: Vec<ingress::Translation>,
+    clock: Box<dyn clock::Clock>,
     held_effects: BTreeSet<String>,
 }
 impl Controller {
-    pub fn open(mut store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
+    pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
+        Self::open_with_clock(store, adapters, bootstrap, clock::SystemClock)
+    }
+
+    pub fn open_with_clock(
+        mut store: Store,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+        clock: impl clock::Clock + 'static,
+    ) -> Result<Self> {
         store.claim_controller()?;
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
@@ -141,6 +154,7 @@ impl Controller {
             adapters,
             bootstrap,
             github_translators: Vec::new(),
+            clock: Box::new(clock),
             held_effects: BTreeSet::new(),
         })
     }
@@ -162,6 +176,10 @@ impl Controller {
             name: name.into(),
             translator: Box::new(translator),
         });
+    }
+
+    pub fn now(&self) -> std::time::SystemTime {
+        self.clock.now()
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
@@ -357,7 +375,10 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
-                    let result = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                    hook(Boundary::BeforeReconcile, &effect.key);
+                    let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                    hook(Boundary::AfterReconcile, &effect.key);
+                    let result = match reconciled {
                         Ok(result) => result,
                         Err(error) => {
                             eprintln!("adapter reconciliation failed for {}: {error}", effect.key);
@@ -416,7 +437,10 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
-                let completion = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                hook(Boundary::BeforeReconcile, &delivery.key);
+                let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                hook(Boundary::AfterReconcile, &delivery.key);
+                let completion = match reconciled {
                     Ok(Reconciliation::Found(completion)) => completion,
                     Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
