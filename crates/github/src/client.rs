@@ -336,6 +336,41 @@ impl GitHub {
         .await
     }
 
+    /// GitHub leaves an existing label unchanged.
+    pub async fn add_label(
+        &self,
+        repo: &str,
+        number: u64,
+        label: &str,
+    ) -> Result<Vec<Label>, Error> {
+        self.request(
+            Method::POST,
+            format!("{}/issues/{number}/labels", repo_path(repo)?),
+            vec![],
+            Some(json!({"labels": [label]})),
+        )
+        .await
+    }
+
+    pub async fn remove_label(&self, repo: &str, number: u64, label: &str) -> Result<(), Error> {
+        match self
+            .request::<Value>(
+                Method::DELETE,
+                format!(
+                    "{}/issues/{number}/labels/{}",
+                    repo_path(repo)?,
+                    segment(label)?
+                ),
+                vec![],
+                None,
+            )
+            .await
+        {
+            Ok(_) | Err(Error::Http { status: 404 }) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn comments(&self, repo: &str, number: u64) -> Result<Vec<Comment>, Error> {
         self.list(
             format!("{}/issues/{number}/comments", repo_path(repo)?),
