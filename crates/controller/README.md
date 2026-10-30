@@ -202,8 +202,9 @@ before `--publish-sealed` can start work, then deletes the `.input` bundle.
 Startup removes every leftover `.input`, including failed staging without a
 binding. Reconciliation removes inputs for cancelled effects that never execute
 again. Only `execute` seals or publishes. With no `.job`, reconciliation returns
-`Absent`. A saved seal with no `.done` and no PB record also returns `Absent`.
-The controller can then retry `execute` with the saved key after an input, look
+`Absent`. With a saved seal and no queue row, the adapter consults the cleaned
+ending first. A readable ending supplies the result. A waiting ending permits
+`Absent`; tool errors stay unknown. The controller can then retry `execute` with the saved key after an input, look
 or restart. A Cancelling effect instead settles through `cancel_absent`.
 Withdrawal of an absent sealed action saves an empty completion and notifies
 the source to forget its watch. There is no PB terminal event for that key.
@@ -243,7 +244,7 @@ by resubmission, source delivery and footprint failures through the real
 controller. Thread tests start the registered source, introduce new keys over
 the adapter channel, deliver bell events, restart after delivery, and check
 that idle sources make no bell requests or repeated ending reads. The channel
-holds at most 64 keys; lag rebuilds the active set from durable records. Finished
+holds at most 64 node IDs; lag rebuilds the active set from durable records. Finished
 jobs leave memory and get `.done` markers, which restarts skip. Withdrawal
 skips jobs with `.done` before parsing. A later `SubmitChecks` for the same node
 in a newer generation retires older `.job` and `.done` records only after
@@ -252,9 +253,14 @@ permits one in-flight effect per node, so the later submission proves the prior
 effect has settled and its watch no longer reconciles. Current jobs and other nodes remain intact. Superseded seals with no ending
 also retire, including never-published cancellations. Retirement fsyncs deletion of `.job` before deleting
 `.done`; startup removes orphan markers after an interrupted retirement.
-The last pair stays until that node delivers a newer ending. Teardown #13
-should retire the final per-node records after all of that node's effects and
-watches have settled. Neither age nor a timer permits deletion.
+Records live under `<records>/<node id>/`, keyed by encoded effect key.
+Supersession and withdrawal list only that node's files.
+`action_key(&Delivery)` locates the binding directly. Startup moves flat bindings
+into node directories while preserving their completion markers.
+The last pair stays until that node delivers a newer ending. After the request
+closes and every effect and watch for that node has settled, ticket #13 teardown
+calls `prismabuild::Adapter::retire_node(node)`. The call is idempotent and removes
+the final records and source watches. Neither age nor a timer permits deletion.
 
 The source logs and skips bad `.job` records at startup or registration. A
 directory failure, failed `.done` write or closed ingress receiver reaches
@@ -346,9 +352,3 @@ question. This adapter does not draft messages.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
-
-PrismaBuild bindings and completion markers live in per-node directories.
-Ticket #13 teardown calls `prismabuild::Adapter::retire_node(node)` only after
-the request closes and every effect and watch for that node has settled.
-The call is idempotent and removes the final records as well as source watches.
-`action_key(&Delivery)` locates a binding directly by node and effect key.
