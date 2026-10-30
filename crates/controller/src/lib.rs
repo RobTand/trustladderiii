@@ -140,7 +140,7 @@ pub struct Controller {
     bootstrap: Bootstrap,
     github_translators: Vec<ingress::Translation>,
     clock: Box<dyn clock::Clock>,
-    held_effects: BTreeMap<String, String>,
+    held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
 }
 impl Controller {
@@ -285,13 +285,14 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
-        self.retry_held_effects();
+        self.retry_held_effects(executor::Upstream::GitHub);
         Ok(true)
     }
 
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::GitHubComment {
             repository,
             comment,
@@ -309,7 +310,7 @@ impl Controller {
                 (row.table == "github_comments" && row.id == id)
                     || (row.table == "inbox" && row.id == format!("external:{key}"))
             }) {
-                self.retry_held_effects();
+                self.retry_held_effects(executor::Upstream::GitHub);
                 return Ok(());
             }
         }
@@ -318,14 +319,30 @@ impl Controller {
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
         self.store.commit(&commit)?;
-        self.retry_held_effects();
+        if let Some(source) = news {
+            self.retry_held_effects(source);
+        }
         Ok(())
     }
 
-    /// Allow one new attempt after input or an authoritative look (ticket #15).
-    /// Holds are in memory, so reopening the controller also allows a retry.
-    pub fn retry_held_effects(&mut self) {
-        self.held_effects.clear();
+    /// Only news from an effect's own upstream releases its holds.
+    pub fn retry_held_effects(&mut self, source: executor::Upstream) {
+        self.held_effects.remove(&source);
+    }
+
+    fn is_held(&self, delivery: &Delivery) -> bool {
+        self.held_effects
+            .get(&executor::upstream(delivery.output))
+            .is_some_and(|effects| effects.contains_key(&delivery.key))
+    }
+
+    fn remove_hold(&mut self, delivery: &Delivery) {
+        if let Some(effects) = self
+            .held_effects
+            .get_mut(&executor::upstream(delivery.output))
+        {
+            effects.remove(&delivery.key);
+        }
     }
 
     pub fn drive_once(&mut self) -> Result<bool> {
@@ -374,6 +391,9 @@ impl Controller {
                     _ => {}
                 }
             }
+            if looks::outage_waiting(&snapshot, &delivery.key) && !cancelling {
+                continue;
+            }
             match effect.state {
                 EffectState::Intended => {
                     self.transition(effect, EffectState::Sent)?;
@@ -394,6 +414,8 @@ impl Controller {
                                 self.defer_quota(&effect.key, *retry_after)?;
                             }
                             self.held_effects
+                                .entry(executor::upstream(delivery.output))
+                                .or_default()
                                 .insert(effect.key.clone(), looks::failure_class(&error).into());
                             progressed = true;
                             continue;
@@ -420,7 +442,7 @@ impl Controller {
                     };
                     match result {
                         Reconciliation::Found(completion) => {
-                            self.retry_held_effects();
+                            self.retry_held_effects(executor::upstream(delivery.output));
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -429,7 +451,7 @@ impl Controller {
                                 self.cancel_absent(effect, &delivery)?;
                                 return Ok(true);
                             }
-                            if !self.held_effects.contains_key(&effect.key) {
+                            if !self.is_held(&delivery) {
                                 self.transition(effect, EffectState::Intended)?;
                                 progressed = true;
                             }
@@ -471,6 +493,9 @@ impl Controller {
                 json!({"look": row.id}),
                 &snapshot,
             );
+            if active && looks::outage_waiting(&snapshot, &delivery.key) {
+                continue;
+            }
             if active {
                 delivery.epoch = effect.epoch.get();
                 hook(Boundary::BeforeReconcile, &delivery.key);
@@ -499,7 +524,7 @@ impl Controller {
                 if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                     continue;
                 }
-                self.retry_held_effects();
+                self.retry_held_effects(executor::upstream(delivery.output));
                 for (index, observation) in completion.observations.iter().enumerate() {
                     commit.rows.push(put(
                         "inbox",
@@ -525,6 +550,7 @@ impl Controller {
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
         let snapshot = self.store.load()?;
+        let delivery = hydrate(effect, &snapshot)?;
         let mut commit = Commit::new(
             format!("delivery:{}:{}", effect.key, snapshot.revision.get()),
             json!({"effect": effect.key, "from": effect.state, "to": to}),
@@ -536,7 +562,10 @@ impl Controller {
             to,
         });
         if to == EffectState::Uncertain
-            && let Some(class) = self.held_effects.get(&effect.key)
+            && let Some(class) = self
+                .held_effects
+                .get(&executor::upstream(delivery.output))
+                .and_then(|effects| effects.get(&effect.key))
         {
             self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
         }
@@ -569,7 +598,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
-        self.held_effects.remove(&effect.key);
+        self.remove_hold(delivery);
         Ok(())
     }
 
@@ -658,7 +687,7 @@ impl Controller {
             }
         }
         self.store.commit(&commit)?;
-        self.held_effects.remove(key);
+        self.remove_hold(&delivery);
         Ok(())
     }
 
@@ -800,11 +829,8 @@ impl Controller {
             {
                 let id = format!("{}.{}", snapshot.revision.get() + 1, index);
                 let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
-                let summary = if needs_rob {
-                    "Work needs Rob to clear a recurring problem."
-                } else {
-                    "Work is waiting for a service to recover."
-                };
+                let signature = format!("{source:?}:{class}");
+                let summary = looks::incident_summary(&request.title, &signature, needs_rob);
                 commit.rows.push(put(
                     "incidents",
                     id.clone(),
@@ -814,13 +840,18 @@ impl Controller {
                         open: true,
                         needs_rob,
                         blocking: n.waiting_incident,
-                        summary: summary.into(),
-                        signature: format!("{source:?}:{class}"),
+                        summary: summary.clone(),
+                        signature: signature.clone(),
+                        effect: None,
                     }),
                 ));
                 delivery.note = Some(format!(
                     "{summary} Reply with \"clear incident {id}\" on this issue after fixing the cause."
                 ));
+                delivery.question_context = Some(json!({"issue_title":request.title,
+                    "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
+                        delivery.repository.owner, delivery.repository.name, delivery.issue),
+                    "signature":signature}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -892,6 +923,71 @@ impl Controller {
         Ok(world.intern_footprint(files))
     }
 
+    fn operations_comment(
+        &self,
+        snapshot: &Snapshot,
+        repository: &Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        let operations = self.bootstrap.operations.as_ref().is_some_and(|o| {
+            o.owner.eq_ignore_ascii_case(&repository.owner)
+                && o.name.eq_ignore_ascii_case(&repository.name)
+                && o.installation_id == repository.installation
+                && o.number == issue
+        });
+        if !operations {
+            return Ok(false);
+        }
+        if comment.user.id != self.bootstrap.rob {
+            return Ok(true);
+        }
+        let key = format!(
+            "{}/{}/{}/{}",
+            repository.owner.to_ascii_lowercase(),
+            repository.name.to_ascii_lowercase(),
+            repository.installation,
+            comment.id
+        );
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "operations_comments" && r.id == key)
+        {
+            return Ok(true);
+        }
+        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
+        {
+            let mut incident: looks::Incident = serde_json::from_value(row.value.clone())?;
+            if incident.blocking {
+                commit.rows.push(put(
+                    "inbox",
+                    format!("incident-clear:{}:{id}", comment.id),
+                    json!(Observation::Kernel(Event::Fact {
+                        node: incident.node,
+                        fact: Fact::IncidentCleared { by_rob: true }
+                    })),
+                ));
+            } else {
+                incident.open = false;
+                commit
+                    .rows
+                    .push(put("incidents", id.into(), json!(incident)));
+            }
+        }
+        commit.rows.push(put(
+            "operations_comments",
+            key,
+            json!({"repository":repository, "issue":issue, "comment":comment}),
+        ));
+        Ok(true)
+    }
+
     fn translate(
         &mut self,
         snapshot: &Snapshot,
@@ -899,6 +995,15 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        if let Observation::GitHubComment {
+            repository,
+            issue,
+            comment,
+        } = &observation
+            && self.operations_comment(snapshot, repository, *issue, comment, commit)?
+        {
+            return Ok(None);
+        }
         let event = match observation {
             Observation::Progress { key, checkpoint } => {
                 self.progress_allowance(snapshot, &key, checkpoint, commit)?;
@@ -914,13 +1019,7 @@ impl Controller {
                 comment,
             } => {
                 if comment.user.id == self.bootstrap.rob
-                    && (self.bootstrap.repos.contains(&repository)
-                        || self.bootstrap.operations.as_ref().is_some_and(|o| {
-                            o.owner.eq_ignore_ascii_case(&repository.owner)
-                                && o.name.eq_ignore_ascii_case(&repository.name)
-                                && o.installation_id == repository.installation
-                                && o.number == issue
-                        }))
+                    && self.bootstrap.repos.contains(&repository)
                 {
                     let id = format!(
                         "{}/{}/{}/{}",
@@ -934,33 +1033,6 @@ impl Controller {
                         .iter()
                         .any(|row| row.table == "github_comments" && row.id == id)
                     {
-                        if let Some(operations) = &self.bootstrap.operations
-                            && operations.owner.eq_ignore_ascii_case(&repository.owner)
-                            && operations.name.eq_ignore_ascii_case(&repository.name)
-                            && operations.installation_id == repository.installation
-                            && operations.number == issue
-                            && let Some(id) = comment.body.trim().strip_prefix("clear incident ")
-                            && let Some(row) = snapshot.rows.iter().find(|r| {
-                                r.table == "incidents" && r.id == id && r.value["open"] == true
-                            })
-                        {
-                            let incident: looks::Incident =
-                                serde_json::from_value(row.value.clone())?;
-                            if incident.blocking {
-                                commit.rows.push(put(
-                                    "inbox",
-                                    format!("incident-clear:{}:{}", comment.id, id),
-                                    json!(Observation::Kernel(Event::Fact {
-                                        node: incident.node,
-                                        fact: Fact::IncidentCleared { by_rob: true }
-                                    })),
-                                ));
-                            } else {
-                                let mut closed = incident;
-                                closed.open = false;
-                                commit.rows.push(put("incidents", id.into(), json!(closed)));
-                            }
-                        }
                         commit.rows.push(put(
                             "github_comments",
                             id,
@@ -1199,4 +1271,49 @@ fn evidence_key(observation: &Observation) -> Result<String> {
         "{:x}",
         Sha256::digest(serde_json::to_vec(observation)?)
     ))
+}
+
+fn observation_upstream(
+    snapshot: &Snapshot,
+    observation: &Observation,
+) -> Result<Option<executor::Upstream>> {
+    use executor::Upstream;
+    Ok(match observation {
+        Observation::Progress { .. }
+        | Observation::Quota { .. }
+        | Observation::Kernel(Event::Fact {
+            fact: Fact::UpstreamStalled,
+            ..
+        }) => None,
+        Observation::GitHubComment { .. } | Observation::PullRequest { .. } => {
+            Some(Upstream::GitHub)
+        }
+        Observation::WorkerReply { .. }
+        | Observation::Plan { .. }
+        | Observation::Made { .. }
+        | Observation::Reviewed { .. } => Some(Upstream::Workers),
+        Observation::Rebased { .. } => Some(Upstream::Worktrees),
+        Observation::Merged { .. } => Some(Upstream::Mergify),
+        Observation::Kernel(Event::Reply {
+            node, generation, ..
+        }) => snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "allowances")
+            .map(|r| serde_json::from_value::<looks::AllowanceState>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|s| {
+                s.delivery.node() == *node
+                    && s.delivery.generation == *generation
+                    && matches!(s.delivery.output, Out::Effect { .. })
+            })
+            .map(|s| executor::upstream(s.delivery.output)),
+        Observation::Kernel(Event::Fact {
+            fact: Fact::IncidentCleared { .. },
+            ..
+        }) => None,
+        Observation::Kernel(Event::Fact { .. }) => Some(Upstream::GitHub),
+        Observation::Kernel(_) => None,
+    })
 }

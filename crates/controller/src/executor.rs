@@ -151,7 +151,7 @@ pub trait Executor {
         Err(crate::Error::Invalid("adapter cannot stop a stalled run"))
     }
     /// Recover missed authenticated webhooks, returning a durable delivery watermark.
-    fn recover_deliveries(&mut self, _after: u64) -> Result<Option<u64>> {
+    fn recover_deliveries(&mut self, _after: Option<u64>) -> Result<Option<u64>> {
         Ok(None)
     }
     /// Reclaim upstream evidence after the controller has drained durable work.

@@ -120,6 +120,11 @@ pub fn daemon() -> Result<()> {
             .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
     });
     if let Some(listen) = listen {
+        if config.github.operations.is_none() {
+            return Err(Error::Invalid(
+                "real GitHub adapter requires [github.operations]",
+            ));
+        }
         if !listen.ip().is_loopback() {
             return Err(Error::Invalid("webhook listen address must be loopback"));
         }
@@ -174,8 +179,8 @@ pub fn daemon() -> Result<()> {
                 epoch,
                 tl3_github::message::Policy::default(),
                 &simulation,
-            )?
-            .with_operations(config.github.operations.clone()),
+                config.github.operations.clone(),
+            )?,
         );
         let webhooks = crate::ingress::Webhooks::bind(
             listen,

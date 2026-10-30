@@ -679,3 +679,32 @@ fn an_unknown_footprint_handle_is_a_failed_reply() {
     assert_eq!(run.phase(), Phase::Planning { must_split: false });
     assert_eq!(run.node().run_failures, 1);
 }
+
+#[test]
+fn queue_stalls_raise_incidents_and_later_incidents_need_rob() {
+    let mut run = Run::new();
+    let before = run.node();
+    run.fact(Fact::UpstreamStalled);
+    assert_eq!(run.node(), before, "stalls outside Queued are ignored");
+    run.start_making();
+    run.pass(&mut HeadId(0));
+    run.fact(Fact::UpstreamStalled);
+    assert!(run.node().waiting_incident && !run.node().incident_needs_rob);
+    let before = run.node();
+    let notices = run.notices.len();
+    run.fact(Fact::UpstreamStalled);
+    assert_eq!(
+        run.node(),
+        before,
+        "an open incident absorbs repeated stalls"
+    );
+    assert_eq!(run.notices.len(), notices);
+    run.fact(Fact::IncidentCleared { by_rob: false });
+    assert!(!run.node().waiting_incident);
+    run.fact(Fact::UpstreamStalled);
+    assert!(run.node().waiting_incident && run.node().incident_needs_rob);
+    run.fact(Fact::IncidentCleared { by_rob: false });
+    assert!(run.node().waiting_incident);
+    run.fact(Fact::IncidentCleared { by_rob: true });
+    assert!(!run.node().waiting_incident);
+}

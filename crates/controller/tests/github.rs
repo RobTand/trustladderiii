@@ -310,6 +310,12 @@ fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
             ..Policy::default()
         },
         root,
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap()
 }
@@ -680,6 +686,12 @@ fn message_reconciliation() {
         1,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     current.execute(&newer).unwrap();
@@ -694,6 +706,12 @@ fn message_reconciliation() {
         0,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     assert!(restarted.execute(&note).is_err());
@@ -808,6 +826,12 @@ fn writer_checks() {
         0,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
@@ -1404,6 +1428,9 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             ),
         );
     let config_path = root.path().join("config.toml");
+    let config = format!(
+        "{config}\n[github.operations]\nowner = \"owner\"\nname = \"tl3\"\ninstallation_id = 3\nnumber = 17\n"
+    );
     fs::write(&config_path, config).unwrap();
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0", &json!({
@@ -1579,11 +1606,26 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     let mut boot = bootstrap();
     boot.operations = Some(operations.clone());
     let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::GitHub,
-        adapter(&api.uri(), root.path()).with_operations(Some(operations.clone())),
-    );
+    registry.register(Upstream::GitHub, adapter(&api.uri(), root.path()));
     let mut controller = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    controller.look_now().unwrap();
+    assert!(
+        api.state.lock().unwrap().redeliveries.is_empty(),
+        "first start skips retained failures"
+    );
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "fixture-delivery-watermark",
+        json!({"fixture":true}),
+        &snapshot,
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "delivery_looks".into(),
+        id: "github".into(),
+        value: json!(17),
+    });
+    store.commit(&commit).unwrap();
     controller.look_now().unwrap();
     assert_eq!(api.state.lock().unwrap().redeliveries, vec![20, 18]);
     controller.look_now().unwrap();
@@ -1604,11 +1646,14 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     delivery.key = "incident-fixture".into();
     delivery.repository.name = "tl3".into();
     delivery.issue = 17;
+    delivery.question_context = Some(
+        json!({"issue_title":"Fix a greeting", "request":"Fix a greeting (https://github.com/owner/sandbox/issues/12)", "signature":"GitHub:permission"}),
+    );
     delivery.note = Some(
-        "Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
+        "For Fix a greeting, GitHub refused access. Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
             .into(),
     );
-    let mut adapter = adapter(&api.uri(), root.path()).with_operations(Some(operations));
+    let mut adapter = adapter(&api.uri(), root.path());
     assert!(adapter.probe(&delivery).unwrap());
     adapter.execute(&delivery).unwrap();
     adapter.execute(&delivery).unwrap();

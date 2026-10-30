@@ -179,7 +179,9 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
                 // URLs were validated before advancing the durable catch-up cursor.
                 let number =
                     comment_number(&repository, &comment.issue_url).expect("validated issue URL");
-                result.extend(comment_input(&repository, number, comment, bootstrap.rob));
+                if accepts_comment(bootstrap, &repository, number) {
+                    result.extend(comment_input(&repository, number, comment, bootstrap.rob));
+                }
             }
             result
         }
@@ -326,12 +328,25 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             }) else {
                 return vec![];
             };
+            if !accepts_comment(bootstrap, &repo, issue.number) {
+                return vec![];
+            }
             comment_input(&repo, issue.number, comment, bootstrap.rob)
                 .into_iter()
                 .collect()
         }
         _ => vec![],
     }
+}
+
+fn accepts_comment(bootstrap: &Bootstrap, repo: &Repository, issue: u64) -> bool {
+    bootstrap.repos.contains(repo)
+        || bootstrap.operations.as_ref().is_some_and(|o| {
+            o.owner.eq_ignore_ascii_case(&repo.owner)
+                && o.name.eq_ignore_ascii_case(&repo.name)
+                && o.installation_id == repo.installation
+                && o.number == issue
+        })
 }
 
 fn comment_input(

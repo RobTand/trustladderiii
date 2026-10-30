@@ -66,7 +66,13 @@ impl Adapter {
         epoch: i64,
         policy: Policy,
         simulation: &Path,
+        operations: Option<tl3_config::OperationsIssue>,
     ) -> Result<Self> {
+        if operations.is_none() {
+            return Err(Error::Invalid(
+                "real GitHub adapter requires [github.operations]",
+            ));
+        }
         Ok(Self {
             clients,
             writer: Box::new(writer),
@@ -76,14 +82,9 @@ impl Adapter {
                 .enable_all()
                 .build()?,
             fake: Fake::new(simulation),
-            operations: None,
+            operations,
         })
     }
-    pub fn with_operations(mut self, operations: Option<tl3_config::OperationsIssue>) -> Self {
-        self.operations = operations;
-        self
-    }
-
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
@@ -163,13 +164,30 @@ impl Executor for Adapter {
             .block_on(client.reconcile_comments(&repo, delivery.issue, &delivery.key))?
             .is_none()
         {
-            let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-            let input = writer_input(
-                delivery,
-                notice,
-                &issue.title,
-                issue.body.as_deref().unwrap_or(""),
-            )?;
+            let input = if matches!(notice, Notice::Incident { .. }) {
+                let context = delivery
+                    .question_context
+                    .as_ref()
+                    .ok_or(Error::Invalid("incident needs its request context"))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    context["issue_title"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request title missing"))?,
+                    context["request"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request link missing"))?,
+                )?
+            } else {
+                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    &issue.title,
+                    issue.body.as_deref().unwrap_or(""),
+                )?
+            };
             let mut policy = self.policy.clone();
             policy
                 .internal_terms
@@ -208,10 +226,12 @@ impl Executor for Adapter {
         }
         Ok(Completion::confirmed(vec![]))
     }
-    fn recover_deliveries(&mut self, after: u64) -> Result<Option<u64>> {
+    fn recover_deliveries(&mut self, after: Option<u64>) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {
             return Ok(None);
         };
+        let baseline = after.is_none();
+        let after = after.unwrap_or_default();
         let mut cursor = None;
         let mut newest = after;
         let mut oldest = u64::MAX;
@@ -220,6 +240,11 @@ impl Executor for Adapter {
             let page = self
                 .runtime
                 .block_on(client.hook_deliveries(cursor.as_deref()))?;
+            if baseline {
+                return Ok(Some(
+                    page.deliveries.iter().map(|d| d.id).max().unwrap_or(0),
+                ));
+            }
             let mut reached = false;
             let previous_oldest = oldest;
             for delivery in page.deliveries {

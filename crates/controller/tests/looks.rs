@@ -438,6 +438,266 @@ fn permanent_incident_clear(settings: &tl3_config::Store) {
         Phase::AwaitingRob
     ));
 }
+
+#[derive(Default)]
+struct OutageState {
+    reads: usize,
+    writes: usize,
+    probes: usize,
+    recovered: bool,
+    fail_probe: bool,
+    fail_stop: bool,
+    fail_resume: bool,
+}
+struct Outage {
+    state: Rc<RefCell<OutageState>>,
+    fake: adapters::github::Fake,
+}
+impl Executor for Outage {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(d.output, Out::Notice { .. }) {
+            return self.fake.execute(d);
+        }
+        self.state.borrow_mut().writes += 1;
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+    }
+    fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
+        let mut s = self.state.borrow_mut();
+        s.reads += 1;
+        if s.recovered {
+            Ok(Look::Healthy)
+        } else {
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+        }
+    }
+    fn probe(&mut self, _: &Delivery) -> tl3_controller::Result<bool> {
+        let mut s = self.state.borrow_mut();
+        s.probes += 1;
+        if s.fail_probe {
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+        } else {
+            Ok(s.recovered)
+        }
+    }
+    fn stop_stalled(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        self.state.borrow_mut().fail_stop = true;
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
+    }
+    fn resume_after_quota(&mut self, _: &Delivery) -> tl3_controller::Result<Option<Completion>> {
+        self.state.borrow_mut().fail_resume = true;
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
+    }
+}
+fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(OutageState {
+        fail_probe,
+        ..Default::default()
+    }));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        Outage {
+            state: state.clone(),
+            fake: adapters::github::Fake::new(root.path()),
+        },
+    );
+    assert_eq!(state.borrow().writes, 1);
+    for n in 0..2 {
+        clock.advance(1);
+        c.look_due().unwrap();
+        drain(&mut c);
+        assert!(c.next_look_in().unwrap().is_some());
+        let incidents = c
+            .snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .count();
+        assert_eq!(incidents, usize::from(n == 1));
+    }
+    let id = incident(&mut c);
+    let snapshot = c.snapshot().unwrap();
+    assert!(
+        snapshot
+            .pending_effects
+            .iter()
+            .any(|e| e.state == EffectState::Uncertain),
+        "read failures cannot acknowledge an unknown write"
+    );
+    let probes = state.borrow().probes;
+    clock.advance(1);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(
+        state.borrow().probes > probes,
+        "first incident keeps probing"
+    );
+    assert_eq!(incident(&mut c), id);
+    state.borrow_mut().recovered = true;
+    state.borrow_mut().fail_probe = false;
+    clock.advance(1);
+    c.look_due().unwrap();
+    // Don't dispatch another write until checking that the later probe cleared the incident.
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == id && r.value["open"] == false)
+    );
+}
+fn progress_releases_nothing(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let calls = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Workers,
+        WriteDown {
+            fake: adapters::workers::Fake::new(root.path()),
+            found: Rc::new(Cell::new(false)),
+            calls: calls.clone(),
+            quota: false,
+        },
+    );
+    let key = c.snapshot().unwrap().pending_effects[0].key.clone();
+    for n in 0..12 {
+        c.observe(
+            &format!("progress:{n}"),
+            Observation::Progress {
+                key: key.clone(),
+                checkpoint: n.to_string(),
+            },
+        )
+        .unwrap();
+        drain(&mut c);
+    }
+    c.observe(
+        "quota",
+        Observation::Quota {
+            key,
+            reset_ms: clock.0.get() + 1000,
+        },
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(
+        calls.get(),
+        1,
+        "progress and quota cannot retry even their own upstream's held writes"
+    );
+    c.observe(
+        "github-news",
+        Observation::PullRequest {
+            node: NodeId(0),
+            number: 100,
+        },
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(
+        calls.get(),
+        1,
+        "unrelated upstream news cannot release a held write"
+    );
+}
+fn look_adapter_errors_survive(settings: &tl3_config::Store, resume: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(OutageState::default()));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Workers,
+        Live(Rc::new(RefCell::new(LiveState::default()))),
+    );
+    // Seed the same durable stop/quota intent that a crash would leave behind.
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "allowances"
+                && r.value["delivery"]["output"]["Effect"]["kind"]
+                    .get("StartRun")
+                    .is_some()
+        })
+        .unwrap();
+    let mut value = row.value.clone();
+    value["due_ms"] = serde_json::json!(clock.0.get());
+    if resume {
+        value["quota_ms"] = serde_json::json!(clock.0.get());
+    } else {
+        value["stopping"] = serde_json::json!(true);
+    }
+    let mut commit = tl3_store::Commit::new(
+        "fixture-intent",
+        serde_json::json!({"intent":true}),
+        &snapshot,
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "allowances".into(),
+        id: row.id.clone(),
+        value,
+    });
+    store.commit(&commit).unwrap();
+    drop(c);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        Outage {
+            state: state.clone(),
+            fake: adapters::github::Fake::new(root.path()),
+        },
+    );
+    c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    c.set_allowances(allowances());
+    c.look_due().unwrap();
+    assert!(c.next_look_in().unwrap().is_some());
+    clock.advance(1);
+    c.look_due().unwrap();
+    assert!(if resume {
+        state.borrow().fail_resume
+    } else {
+        state.borrow().fail_stop
+    });
+    assert!(!incident(&mut c).is_empty());
+}
+fn settled_looks_are_quiet(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut c = Controller::open(
+        Store::open(settings).unwrap(),
+        adapters::simulation(root.path()).unwrap(),
+        bootstrap(),
+    )
+    .unwrap();
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert!(c.next_look_in().unwrap().is_none());
+    let before = c.snapshot().unwrap();
+    c.look_due().unwrap();
+    assert_eq!(c.snapshot().unwrap(), before);
+}
 fn main() {
     let mut db = support::Database::start();
     stalled_runs_and_incident_controls(&db.create("stalls"));
@@ -460,6 +720,12 @@ fn main() {
     println!("test queue_stall_incident ... ok");
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");
+    progress_releases_nothing(&db.create("progress_holds"));
+    read_outages_keep_looking(&db.create("read_outage"), false);
+    read_outages_keep_looking(&db.create("probe_outage"), true);
+    look_adapter_errors_survive(&db.create("stop_eperm"), false);
+    look_adapter_errors_survive(&db.create("resume_eperm"), true);
+    settled_looks_are_quiet(&db.create("quiet_timer"));
     db.stop();
-    println!("8 allowance and incident scenarios passed; no skips");
+    println!("14 allowance and incident scenarios passed; no skips");
 }

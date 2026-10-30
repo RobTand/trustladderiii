@@ -90,7 +90,9 @@ impl Supervisor {
                 Some((_, path)) => inspect(&path, &delivery),
                 None => Ok(Reconciliation::Absent),
             }) {
-                Ok(Reconciliation::Pending) => active.add(&delivery, latest(&root)?.expect("pending attempt").0),
+                Ok(Reconciliation::Pending) => {
+                    active.add(&delivery, latest(&root)?.expect("pending attempt").0)
+                }
                 Ok(_) => {}
                 Err(error) => eprintln!("worker startup skipped {}: {error}", delivery.key),
             }

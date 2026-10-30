@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, UNIX_EPOCH};
 use tl3_kernel::{Ack, Event, Fact, NodeId, Out};
-use tl3_store::{Commit, EffectState, RowChange, Snapshot};
+use tl3_store::{Commit, EffectState, NewEffect, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AllowanceState {
@@ -26,6 +26,10 @@ pub(crate) struct AllowanceState {
     found: Option<String>,
     #[serde(default)]
     failure: Option<String>,
+    #[serde(default)]
+    read_failures: u8,
+    #[serde(default)]
+    read_incidents: u8,
 }
 
 impl AllowanceState {
@@ -42,6 +46,8 @@ impl AllowanceState {
             healthy: false,
             found: None,
             failure: None,
+            read_failures: 0,
+            read_incidents: 0,
         }
     }
 }
@@ -55,6 +61,8 @@ pub(crate) struct Incident {
     pub blocking: bool,
     pub summary: String,
     pub signature: String,
+    #[serde(default)]
+    pub effect: Option<String>,
 }
 
 impl Controller {
@@ -92,8 +100,7 @@ impl Controller {
         )
     }
 
-    /// One timer for the next outstanding allowance. A consumed allowance stays
-    /// disarmed until an upstream record supplies a new checkpoint or a baseline.
+    /// One timer for the earliest outstanding allowance, including outage probes.
     pub fn next_look_in(&mut self) -> Result<Option<Duration>> {
         let now = self.now_ms();
         Ok(self
@@ -148,25 +155,33 @@ impl Controller {
                 if effect.state == EffectState::Confirmed {
                     let mut delivery = state.delivery.clone();
                     delivery.epoch = self.store.load()?.epoch.get();
-                    if let Some(completion) = self
+                    match self
                         .adapters
                         .adapter(&delivery)?
-                        .resume_after_quota(&delivery)?
+                        .resume_after_quota(&delivery)
                     {
-                        self.look_observations(&delivery, completion)?;
-                        state.progress = None;
-                        state.progress_ms = now;
-                        state.due_ms = Some(now.saturating_add(
-                            u64::from(self.allowance(&delivery).silence_secs) * 1000,
-                        ));
-                    } else {
-                        return Err(crate::Error::Invalid(
-                            "adapter cannot resume a quota ending",
-                        ));
+                        Ok(Some(completion)) => {
+                            self.look_observations(&delivery, completion)?;
+                            state.progress = None;
+                            state.progress_ms = now;
+                            self.rearm(&mut state);
+                        }
+                        result => {
+                            let error = match result {
+                                Err(error) => error,
+                                Ok(None) => {
+                                    crate::Error::Invalid("adapter cannot resume a quota ending")
+                                }
+                                Ok(Some(_)) => unreachable!(),
+                            };
+                            self.look_failed(&mut state, &error)?;
+                            self.save_allowance(&state)?;
+                            continue;
+                        }
                     }
                 }
                 state.quota_ms = None;
-                self.held_effects.remove(&state.delivery.key);
+                self.remove_hold(&state.delivery);
                 self.save_allowance(&state)?;
                 continue;
             }
@@ -190,7 +205,7 @@ impl Controller {
                             && !completion.observations.is_empty());
                     state.found = Some(found);
                     if new {
-                        self.retry_held_effects();
+                        self.retry_held_effects(upstream(state.delivery.output));
                         if effect.state.is_pending() {
                             self.complete(&effect.key, completion)?;
                         } else {
@@ -203,12 +218,12 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    if self.held_effects.contains_key(&effect.key)
+                    if self.is_held(&state.delivery)
                         && effect.state != EffectState::Cancelling
                         && matches!(state.delivery.output, Out::Effect { .. })
                     {
-                        // The owner proved no write survived. Count this failed
-                        // delivery once, using the kernel's existing retry rule.
+                        // Authoritative absence permits the kernel to retry this write.
+                        // An unreadable record never grants that permission.
                         self.complete(
                             &effect.key,
                             Completion {
@@ -225,7 +240,7 @@ impl Controller {
                     if changed {
                         state.progress = Some(progress);
                         state.progress_ms = now;
-                        self.retry_held_effects();
+                        self.retry_held_effects(upstream(state.delivery.output));
                         if state.incident.is_some() {
                             self.probe_passed(&state)?;
                         }
@@ -266,43 +281,58 @@ impl Controller {
                 }
                 Ok(Look::Healthy) => {
                     if !state.healthy {
-                        self.retry_held_effects();
+                        self.retry_held_effects(upstream(state.delivery.output));
                     }
                     state.healthy = true;
                     self.probe_passed(&state)?;
                 }
                 Ok(Look::Quota { reset_ms }) => {
                     state.quota_ms = Some(reset_ms);
-                    state.due_ms = (reset_ms > now).then_some(reset_ms);
+                    state.due_ms = Some(reset_ms.max(now));
                 }
-                Ok(Look::Pending) => {}
+                Ok(Look::Pending) => {
+                    self.look_failed(
+                        &mut state,
+                        &crate::Error::Invalid("upstream record unavailable"),
+                    )?;
+                }
                 Err(crate::Error::Quota { retry_after }) => {
                     let reset =
                         now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
                     state.quota_ms = Some(reset);
-                    state.due_ms = (reset > now).then_some(reset);
+                    state.due_ms = Some(reset.max(now));
                 }
                 Err(error) => {
-                    eprintln!("allowance look failed for {}: {error}", state.delivery.key)
+                    self.look_failed(&mut state, &error)?;
                 }
             }
-            if state.incident.is_some() && !state.healthy {
-                let world = self.world()?;
-                let node = &world.nodes[state.delivery.node().0 as usize];
-                if node.waiting_incident && !node.incident_needs_rob {
-                    match self
-                        .adapters
-                        .adapter(&state.delivery)?
-                        .probe(&state.delivery)
-                    {
-                        Ok(true) => {
-                            state.healthy = true;
-                            self.retry_held_effects();
-                            self.probe_passed(&state)?;
+            if let Some(id) = &state.incident {
+                let incident = self
+                    .store
+                    .load()?
+                    .rows
+                    .into_iter()
+                    .find(|r| r.table == "incidents" && r.id == *id)
+                    .map(|r| serde_json::from_value::<Incident>(r.value))
+                    .transpose()?;
+                if let Some(incident) = incident.filter(|i| i.open) {
+                    if !incident.needs_rob {
+                        match self
+                            .adapters
+                            .adapter(&state.delivery)?
+                            .probe(&state.delivery)
+                        {
+                            Ok(true) => {
+                                state.healthy = true;
+                                self.retry_held_effects(upstream(state.delivery.output));
+                                self.probe_passed(&state)?;
+                            }
+                            Ok(false) => self.rearm(&mut state),
+                            Err(error) => self.look_failed(&mut state, &error)?,
                         }
-                        Ok(false) => {}
-                        Err(error) => eprintln!("upstream probe failed: {error}"),
                     }
+                } else {
+                    state.incident = None;
                 }
             }
             self.save_allowance(&state)?;
@@ -314,14 +344,13 @@ impl Controller {
                 .rows
                 .iter()
                 .find(|r| r.table == "delivery_looks" && r.id == "github")
-                .and_then(|r| r.value.as_u64())
-                .unwrap_or(0);
+                .and_then(|r| r.value.as_u64());
             match self
                 .adapters
                 .get(Upstream::GitHub)?
                 .recover_deliveries(after)
             {
-                Ok(Some(next)) if next > after => {
+                Ok(Some(next)) if Some(next) > after => {
                     let snapshot = self.store.load()?;
                     let mut commit = Commit::new(
                         format!("github-delivery-look:{next}"),
@@ -344,11 +373,129 @@ impl Controller {
     fn finish_stall(&mut self, state: &mut AllowanceState) -> Result<()> {
         let mut delivery = state.delivery.clone();
         delivery.epoch = self.store.load()?.epoch.get();
-        let completion = self.adapters.adapter(&delivery)?.stop_stalled(&delivery)?;
+        let completion = match self.adapters.adapter(&delivery)?.stop_stalled(&delivery) {
+            Ok(completion) => completion,
+            Err(error) => {
+                self.look_failed(state, &error)?;
+                return self.save_allowance(state);
+            }
+        };
         self.look_observations(&delivery, completion)?;
         state.stopping = false;
         state.due_ms = None;
         self.save_allowance(state)
+    }
+
+    fn rearm(&self, state: &mut AllowanceState) {
+        state.due_ms = Some(
+            self.now_ms()
+                .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
+        );
+    }
+
+    fn look_failed(&mut self, state: &mut AllowanceState, error: &crate::Error) -> Result<()> {
+        eprintln!(
+            "allowance action failed for {}: {error}",
+            state.delivery.key
+        );
+        if let crate::Error::Quota { retry_after } = error {
+            let reset = self
+                .now_ms()
+                .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+            state.quota_ms = Some(reset);
+            state.due_ms = Some(reset);
+            return Ok(());
+        }
+        state.failure = Some(failure_class(error).into());
+        state.healthy = false;
+        self.rearm(state);
+        let snapshot = self.store.load()?;
+        if state.incident.as_ref().is_some_and(|id| {
+            snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+        }) {
+            return Ok(());
+        }
+        if matches!(
+            state.delivery.output,
+            Out::Notice {
+                notice: tl3_kernel::Notice::Incident { .. },
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        state.read_failures += 1;
+        if state.read_failures < 2 {
+            return Ok(());
+        }
+        state.read_failures = 0;
+        state.read_incidents = state.read_incidents.saturating_add(1);
+        let needs_rob = state.read_incidents > 1;
+        let id = format!("read.{}.{}", self.now_ms(), snapshot.revision.get());
+        state.incident = Some(id.clone());
+        let request = crate::request(&snapshot, state.delivery.node())?;
+        let signature = format!(
+            "{:?}:{}",
+            upstream(state.delivery.output),
+            failure_class(error)
+        );
+        let summary = incident_summary(&request.title, &signature, needs_rob);
+        let mut commit = Commit::new(
+            format!("incident:{id}"),
+            json!({"read_outage":state.delivery.key}),
+            &snapshot,
+        );
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node: state.delivery.node(),
+                open: true,
+                needs_rob,
+                blocking: false,
+                summary: summary.clone(),
+                signature: signature.clone(),
+                effect: Some(state.delivery.key.clone()),
+            }),
+        ));
+        let mut delivery = state.delivery.clone();
+        delivery.key = format!("incident:{id}");
+        delivery.output = Out::Notice {
+            node: delivery.node(),
+            notice: tl3_kernel::Notice::Incident { needs_rob },
+        };
+        delivery.epoch = snapshot.epoch.get();
+        delivery.note = Some(format!(
+            "{summary} Reply with \"clear incident {id}\" on this issue after fixing the cause."
+        ));
+        delivery.question_context = Some(json!({"issue_title":request.title,
+            "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
+                request.repo.owner, request.repo.name, request.issue), "signature":signature}));
+        if let Some(o) = &self.bootstrap.operations {
+            delivery.repository = crate::Repository {
+                owner: o.owner.clone(),
+                name: o.name.clone(),
+                installation: o.installation_id,
+            };
+            delivery.issue = o.number;
+        }
+        commit
+            .rows
+            .push(put("allowances", state.delivery.key.clone(), json!(state)));
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit.effects.push(NewEffect {
+            key: delivery.key.clone(),
+            kind: "GitHub".into(),
+            payload: json!(delivery),
+        });
+        // Preserve the upstream key and unknown outcome. A read outage cannot
+        // acknowledge the write or authorize a replacement operation.
+        self.store.commit(&commit)?;
+        Ok(())
     }
 
     fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
@@ -366,6 +513,31 @@ impl Controller {
     }
 
     fn probe_passed(&mut self, state: &AllowanceState) -> Result<()> {
+        if let Some(id) = &state.incident {
+            let snapshot = self.store.load()?;
+            if let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == *id)
+            {
+                let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+                if incident.effect.is_some() {
+                    if incident.open && !incident.needs_rob {
+                        incident.open = false;
+                        let mut commit = Commit::new(
+                            format!("probe:{id}"),
+                            json!({"probe_passed":id}),
+                            &snapshot,
+                        );
+                        commit
+                            .rows
+                            .push(put("incidents", id.clone(), json!(incident)));
+                        self.store.commit(&commit)?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
         let world = self.world()?;
         let node = &world.nodes[state.delivery.node().0 as usize];
         if node.waiting_incident && !node.incident_needs_rob {
@@ -507,7 +679,7 @@ impl Controller {
                 .now_ms()
                 .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
             state.quota_ms = Some(reset);
-            state.due_ms = (reset > self.now_ms()).then_some(reset);
+            state.due_ms = Some(reset.max(self.now_ms()));
             self.save_allowance(&state)?;
         }
         Ok(())
@@ -642,4 +814,40 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
         crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
+}
+
+pub(crate) fn outage_waiting(snapshot: &Snapshot, key: &str) -> bool {
+    snapshot.rows.iter().any(|r| {
+        r.table == "incidents" && r.value["open"] == true && r.value["effect"].as_str() == Some(key)
+    })
+}
+
+pub(crate) fn incident_summary(title: &str, signature: &str, needs_rob: bool) -> String {
+    let (source, class) = signature
+        .split_once(':')
+        .unwrap_or((signature, "operation_failed"));
+    let source = match source {
+        "Workers" => "the agent worker",
+        "Worktrees" => "the Git worktree",
+        "PrismaBuild" => "PrismaBuild",
+        "Mergify" => "Mergify",
+        _ => "GitHub",
+    };
+    let reason = match class {
+        "no_progress" => "stopped making progress",
+        "permission" => "refused access",
+        "transport" => "could not be reached",
+        "upstream_server" => "reported a service error",
+        "invalid_response" => "returned an unreadable response",
+        "quota" => "reached its usage allowance",
+        "message_rejected" => "could not prepare a readable message",
+        "setup" => "could not complete its setup",
+        _ => "could not finish the operation",
+    };
+    let next = if needs_rob {
+        "Rob must clear this recurring problem."
+    } else {
+        "Work is waiting for recovery."
+    };
+    format!("For \"{title}\", {source} {reason}. {next}")
 }

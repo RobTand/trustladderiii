@@ -339,8 +339,10 @@ impl WorkerOutputSource {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
-        let recorded = store.worker_progress(Some(&delivery.node().0.to_string()))?
-            .into_iter().find(|row| row.key == delivery.key && row.attempt == *number)
+        let recorded = store
+            .worker_progress(Some(&delivery.node().0.to_string()))?
+            .into_iter()
+            .find(|row| row.key == delivery.key && row.attempt == *number)
             .map_or(0, |row| row.output_offset as u64);
         if let Some(file) = stdout {
             let mut reader = BufReader::new(file);
