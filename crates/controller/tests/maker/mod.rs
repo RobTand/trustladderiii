@@ -305,7 +305,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 .first()
                 .is_some_and(|node| node.waiting_incident)
         {
-            assert_eq!(world.nodes[0].run_failures, 2);
+            assert_eq!(world.nodes[0].run_failures, 0);
+            assert_eq!(world.nodes[0].run_incidents, 1);
+            assert!(!world.nodes[0].incident_needs_rob);
             controller
                 .observe(
                     "maker-health-restored",
@@ -315,6 +317,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     }),
                 )
                 .unwrap();
+            while controller.world().unwrap().nodes[0].waiting_incident {
+                assert!(controller.drive_once().unwrap());
+            }
             continue;
         }
         assert!(
@@ -359,6 +364,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 assert_ne!(git(&worktree, &["rev-parse", "HEAD"]), base);
                 reply["self_check"][0]["goal_id"] = json!("unexpected-goal");
                 observe(&mut controller, &key, observation, &worktree, &base);
+                while controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "inbox" && row.id == format!("external:{key}"))
+                {
+                    assert!(controller.drive_once().unwrap());
+                }
                 let node = controller.world().unwrap().nodes[0];
                 assert_eq!(node.phase, Phase::Making);
                 assert_eq!(
