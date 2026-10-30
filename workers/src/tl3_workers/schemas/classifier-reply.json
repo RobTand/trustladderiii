@@ -45,7 +45,11 @@
         "question": {
           "type": "string",
           "minLength": 1,
-          "pattern": "\\S"
+          "maxLength": 300,
+          "pattern": "\\S",
+          "not": {
+            "pattern": "[\\r\\n\\u0085\\u2028\\u2029]"
+          }
         }
       },
       "required": [
@@ -67,11 +71,15 @@
           "not": {
             "pattern": "[\\r\\n\\u0085\\u2028\\u2029]"
           }
+        },
+        "revert": {
+          "type": "boolean"
         }
       },
       "required": [
         "kind",
-        "summary"
+        "summary",
+        "revert"
       ],
       "additionalProperties": false
     },
@@ -169,7 +177,8 @@
         },
         "amount": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": [
