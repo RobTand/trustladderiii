@@ -88,8 +88,8 @@ container_image = "sha256:000000000000000000000000000000000000000000000000000000
 endpoint = "http://127.0.0.1:8890"
 
 [status]
-# Q24: read-only LAN page. Port 8033 is a deployment starting value.
-listen = "0.0.0.0:8033"
+# Q24: read-only page. Ticket #19 sets the deployment LAN address.
+listen = "127.0.0.1:8033"
 
 # docs/state-table.md, "Looks and stalls", and docs/stack.md, "Waits": each
 # upstream gets silence and no-progress allowances. Seconds below are tunable

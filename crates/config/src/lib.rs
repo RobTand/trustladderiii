@@ -427,7 +427,10 @@ impl Config {
                 "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
             ));
         }
-        if self.status.listen.port() == 0 || self.status.listen.ip().is_multicast() {
+        if self.status.listen.port() == 0
+            || self.status.listen.ip().is_multicast()
+            || self.status.listen.ip().is_unspecified()
+        {
             return Err(invalid(
                 "status.listen",
                 "use a unicast listen address with a fixed port from 1 to 65535 (Q24)",

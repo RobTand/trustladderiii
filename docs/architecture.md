@@ -19,7 +19,7 @@ The controller partitions a serialized kernel world into `nodes`, `gates`,
 `file_sets` and a `kernel/meta` row. It writes only changed rows. Closed nodes
 and file sets retain their indices. `repos` binds dense kernel gate indices to
 configured repositories. Store repository IDs can contain gaps and never index
-gates. `requests` binds node indices to issue numbers. `pull_requests` records
+gates. `requests` binds node indices to issue numbers and optional titles. `pull_requests` records
 PR numbers. `inbox` holds observations awaiting a kernel step. `watches` retains
 acknowledged operations whose upstream result may arrive later.
 
@@ -184,12 +184,20 @@ with their tickets.
 
 ## Commands and verification
 
-`tl3 status --config FILE` reads Postgres and prints request, phase, wait and
-credit. It uses `Store::open_read_only`, never migrates or writes, and reports
-an uninitialized database clearly. Both commands use `Config::load` to check
-secret-file metadata, including the optional store password. They do not read
-GitHub or model secrets in simulation. `limits.agent_pool` configures bootstrap
-capacity and defaults to 1. Existing world capacity requires a snapshot migration.
+`tl3 status --config FILE` and `tl3 status-serve --config FILE` use one status
+model. They show issue titles and numbers, phase, wait, credit, last progress
+and open incidents. The page serves GET and HEAD without login at the configured
+listen address, in a separate process from `tl3d`. Both commands use a reader
+that skips migrations and enforces read-only, repeatable-read transactions.
+They do not need worker or GitHub credential files. Tickets #9 and #15 fill
+`status::load_request_details` when their store tables exist. It receives all
+node IDs together and returns a map of public progress and incident summaries,
+using batch queries in the same read-only transaction.
+
+Both commands use `Config::load` to check secret-file metadata, including the
+optional store password. They do not read GitHub or model secrets in simulation.
+`limits.agent_pool` configures bootstrap capacity and defaults to 1. Existing
+world capacity requires a snapshot migration.
 
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after
