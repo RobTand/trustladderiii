@@ -35,13 +35,21 @@ use worktree_fixture::{Fixture, commit, git};
 fn repo() -> Repository {
     worktree_fixture::identity()
 }
+fn operations() -> tl3_config::OperationsIssue {
+    tl3_config::OperationsIssue {
+        owner: repo().owner,
+        name: "operations".into(),
+        installation_id: repo().installation,
+        number: 81,
+    }
+}
 fn bootstrap() -> Bootstrap {
     Bootstrap {
         repos: vec![repo()],
         rob: 1,
         slots: 1,
         pool: 1,
-        operations: None,
+        operations: Some(operations()),
     }
 }
 fn check_plan(f: &Fixture, base: String) -> CheckRun {
@@ -132,6 +140,7 @@ struct State {
     pull: Option<Value>,
     checks: Vec<Value>,
     comments: Vec<Value>,
+    operations_comments: Vec<Value>,
     labels: bool,
     closed: bool,
     fail_reads: bool,
@@ -148,6 +157,7 @@ impl Default for State {
             pull: None,
             checks: vec![],
             comments: vec![],
+            operations_comments: vec![],
             labels: false,
             closed: false,
             fail_reads: false,
@@ -192,6 +202,18 @@ impl Respond for Api {
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if path == "/repos/RobTand/operations/issues/81/comments" {
+            return match method {
+                "GET" => ResponseTemplate::new(200).set_body_json(json!(s.operations_comments)),
+                "POST" => {
+                    let body: Value = serde_json::from_slice(&r.body).unwrap();
+                    let comment = json!({"id":s.operations_comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/operations/issues/81"});
+                    s.operations_comments.push(comment.clone());
+                    ResponseTemplate::new(201).set_body_json(comment)
+                }
+                _ => panic!("unexpected operations request: {method} {path}"),
+            };
         }
         let prefix = "/repos/RobTand/tl3-sandbox";
         let path = path.strip_prefix(prefix).unwrap_or(path);
@@ -360,12 +382,7 @@ impl Server {
             epoch,
             Policy::default(),
             root,
-            Some(tl3_config::OperationsIssue {
-                owner: repo().owner,
-                name: "operations".into(),
-                installation_id: repo().installation,
-                number: 81,
-            }),
+            Some(operations()),
         )
         .unwrap()
     }
@@ -848,7 +865,18 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .unwrap()
             .contains("Your change was merged.")
     }));
+    assert_eq!(
+        state.operations_comments.len(),
+        usize::from(mode == "unapproved"),
+        "only an unapproved merge must post an operations incident"
+    );
     if mode == "unapproved" {
+        assert!(
+            state.operations_comments[0]["body"]
+                .as_str()
+                .unwrap()
+                .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
+        );
         assert!(state.comments.iter().any(|c| {
             c["body"]
                 .as_str()
@@ -856,15 +884,18 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 .contains("without the required approval")
         }));
         assert!(store.effects().unwrap().iter().any(|e| {
-            serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
-                matches!(
-                    d.output,
-                    Out::Notice {
-                        notice: tl3_kernel::Notice::Incident { .. },
-                        ..
-                    }
-                )
-            })
+            e.state == tl3_store::EffectState::Confirmed
+                && serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
+                    d.repository.name == operations().name
+                        && d.issue == operations().number
+                        && matches!(
+                            d.output,
+                            Out::Notice {
+                                notice: tl3_kernel::Notice::Incident { .. },
+                                ..
+                            }
+                        )
+                })
         }));
     }
     let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
