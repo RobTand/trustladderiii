@@ -181,3 +181,72 @@ are printed. After production setup, restart each service and rerun the check
 through PrismaBuild to finish #19's acceptance criteria.
 
 Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status address stays stable.
+
+## MLflow tracking server
+
+MLflow 3.17.2 was the current PyPI release on 2026-10-30. Both server and
+worker client pin it. Server dependencies are locked separately under `mlflow/`
+for Python 3.12. Workers keep Python 3.14 and install the tracing package only.
+`sqlparse` is explicit because the tracing package does not declare it.
+
+Port 5000 was occupied. `ss -ltn` showed port 5033 free before installation.
+The UI and write API bind to `192.168.1.107:5033`, reachable from the LAN at
+`http://192.168.1.107:5033`. This HTTP endpoint has no authentication. Anyone
+who can reach it can read or change traces. It has no public tunnel. The unit
+restricts allowed Host and browser origin values to this address and local
+health clients. Those restrictions are not authentication.
+
+The backend is database `tl3_mlflow` in TL3's user-level Postgres. Connections
+use `~/.local/share/tl3/postgres/socket`, port 5543. TCP stays disabled on
+Postgres. Artifacts use `~/.local/share/tl3/mlflow/artifacts`. Startup creates
+the separate database if absent, then MLflow applies its own migrations. There
+is no SQLite backend. The service receives only the Postgres password through
+systemd `LoadCredential`. The startup wrapper reads it in-process and puts the
+backend URI in the server environment, never in argv or a generated file.
+
+Run these exact commands from a checkout on dl380g10:
+
+```sh
+ss -ltn
+python3 deploy/dl380g10/deploy.py install-mlflow
+systemctl --user enable --now tl3-postgres.service
+systemctl --user enable --now tl3-mlflow.service
+systemctl --user show tl3-mlflow.service -p ActiveState -p SubState -p NRestarts
+ss -ltn 'sport = :5033'
+```
+
+If Postgres is stopped, starting `tl3-mlflow.service` also starts it through
+`Requires` and `After`. On a fresh machine, run the existing `deploy.py install`
+first to install Postgres and its unit. Do not run `deploy.py start` for this
+observability installation, because that command also starts the controller.
+
+`install-mlflow` preserves an existing `~/.config/tl3/mlflow.toml`. Its default
+contents are nonsecret:
+
+```toml
+[mlflow]
+tracking_uri = "http://192.168.1.107:5033"
+experiment = "tl3"
+```
+
+The installer adds `TL3_MLFLOW_CONFIG` through a `tl3d.service` drop-in and
+reloads the user manager. Worker tracing takes effect on the controller's next
+normal start. The installer does not start or restart the production controller.
+`deploy.py check` reports both the MLflow unit state and its `/health` response.
+
+Run the live check through PrismaBuild from a clean final commit, pinned to
+`dl380g10`. It records a fake-model trace, verifies its tags, restarts only the
+MLflow unit, then reads the same trace and checks Postgres storage. Reserve
+2 CPUs and 4 GiB and bound native threads as in the other deploy checks:
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+  --cwd "$PWD" --tag dl380g10 --cpus 2 --demand mem_gb=4 --priority -10 \
+  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
+  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
+  --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 \
+  --env XDG_RUNTIME_DIR=/run/user/1000 \
+  --env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus --detach -- \
+  /home/rob/.local/bin/uv run --project workers --locked --no-editable \
+  --python 3.14+gil python deploy/dl380g10/verify-mlflow.py
+```

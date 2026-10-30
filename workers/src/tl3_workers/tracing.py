@@ -92,6 +92,8 @@ def safe_span(span):
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
     kind = json.loads(span.attributes.get('mlflow.spanType', '"CHAIN"'))
+    if kind == 'CHAT_MODEL':
+        kind = 'LLM'
     if kind not in {'LLM', 'TOOL', 'AGENT', 'CHAIN', 'RETRIEVER'}:
         kind = 'CHAIN'
     result = Span(trace_id=span.context.trace_id.to_bytes(16, 'big'),
