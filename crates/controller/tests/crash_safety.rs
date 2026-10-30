@@ -521,7 +521,7 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     let mut deduplicated = 0;
     for upstream in upstreams::UPSTREAMS {
         let state = upstreams::load(&upstreams::path(&root.join("upstreams"), upstream));
-        resources.extend(state.resources);
+        resources.insert(format!("{upstream:?}"), json!(state.resources));
         deduplicated += state.removed_duplicates;
         for (key, record) in state.records {
             assert!(record.applications <= 1, "doubled effect {key}");
@@ -548,7 +548,15 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
             label,
             coverage[&effect.key].1,
             format!("{:?}", effect.state),
-            effect.epoch.get()
+            effect.epoch.get(),
+            delivery.node().0,
+            delivery.generation,
+            delivery.head_sha,
+            delivery.paths,
+            delivery.attempt,
+            delivery.round,
+            delivery.pull_request,
+            delivery.issue
         ]));
     }
     outputs.sort_by_key(Value::to_string);

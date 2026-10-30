@@ -66,3 +66,10 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
+
+The systematic [crash simulation](../../docs/crash-simulation.md) uses real
+SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
+seed and optional scenario and save-point filters appear in failure output.
+Generate the required three-host and two-portable campaign with
+`python3 crates/controller/tools/crash_manifest.py`. All execution still goes
+through PrismaBuild.

@@ -14,8 +14,9 @@ Postgres and the upstream records survive every cut.
 `cargo test -p tl3-controller --test crash_safety --locked` runs separate passes
 for each save point. In a pass, the parent kills the child once per distinct
 operation key, then restarts it from the database. Repeated visits to that key
-continue normally. Each pass ends at the same world as an uninterrupted run. A final coverage check
-requires every committed operation in that pass to appear in the injected cuts.
+continue normally. Each pass ends at the same world as an uninterrupted run.
+A final coverage check requires every committed operation in that pass to
+appear in the injected cuts.
 Separate passes let an earlier cut leave later save points reachable.
 
 Every cut uses SIGKILL. A panic or dropping the controller would run destructors
@@ -72,8 +73,8 @@ sending, cancelling a sent attempt that exists or is absent, retryable and
 permanent failure, and an upgrade with effects in flight.
 
 The existing fake adapters supply typed results. The simulation adds upstream
-records that enforce once-per-key starts and approvals, converging resource
-writes, and marked messages. Messages simulate a lost response and two copies.
+records that enforce once-per-key starts, once-per-head approvals, converging
+resource writes, and marked messages. Messages simulate a lost response and two copies.
 Reconciliation deletes the extra copy. Each non-cancelled delivery must have
 an upstream record, and each successful logical application must occur once.
 Acknowledged asynchronous starts return their results through watches. Some
@@ -90,9 +91,10 @@ by days while awaiting upstream evidence.
 Tickets #9 and #10 are absent from this branch. `ingress_loom.rs` models the
 wave brief's two source threads and one controller owner over a channel. It
 checks publication of durable webhook evidence, successful worker exit before
-its reply, source order, and one-time consumption. A standard-channel test checks send
-errors after the owner has gone, because loom 0.7 does not model disconnection. Integration must replace these model sources with the real ingress
-and worker-output source when those branches land.
+its reply, source order, and one-time consumption. A standard-channel test
+checks send errors after the owner has gone, because loom 0.7 does not model
+disconnection. Integration must replace these model sources with the real
+ingress and worker-output source when those branches land.
 
 ## Fleet verification
 
