@@ -1,12 +1,14 @@
 use crate::{
     Bootstrap, Controller, Error, LabelledIssue, Result, adapters, executor::Observation, status,
+    status_web,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, net::SocketAddr, path::PathBuf};
-use tl3_store::Store;
+use tl3_store::{Reader, Store};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
+    Wake,
     LabelledIssue(LabelledIssue),
     Observation {
         key: String,
@@ -20,13 +22,24 @@ struct Arguments {
     drain: bool,
     github_listen: Option<SocketAddr>,
     github_api: Option<String>,
+    serve_status: bool,
 }
 
 fn arguments(daemon: bool) -> Result<Arguments> {
     let mut args = std::env::args().skip(1);
-    if !daemon && args.next().as_deref() != Some("status") {
-        return Err(Error::Invalid("usage: tl3 status --config FILE"));
-    }
+    let serve_status = if daemon {
+        false
+    } else {
+        match args.next().as_deref() {
+            Some("status") => false,
+            Some("status-serve") => true,
+            _ => {
+                return Err(Error::Invalid(
+                    "usage: tl3 {status|status-serve} --config FILE",
+                ));
+            }
+        }
+    };
     let mut path = None;
     let mut simulation = None;
     let mut drain = false;
@@ -57,16 +70,23 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         drain,
         github_listen,
         github_api,
+        serve_status,
     })
 }
 
 pub fn status() -> Result<()> {
-    let config = arguments(false)?.config;
-    print!(
-        "{}",
-        status::render(&mut Store::open_read_only(&config.store)?)?
-    );
-    Ok(())
+    let Arguments {
+        config,
+        serve_status,
+        ..
+    } = arguments(false)?;
+    if serve_status {
+        status_web::serve(&config)
+    } else {
+        let model = status::load(&mut Reader::open(&config.store)?)?;
+        print!("{}", status::render_text(&model));
+        Ok(())
+    }
 }
 
 pub fn daemon() -> Result<()> {
@@ -76,14 +96,22 @@ pub fn daemon() -> Result<()> {
         drain,
         github_listen,
         github_api,
+        ..
     } = arguments(true)?;
     let simulation =
         simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;
     let bootstrap = Bootstrap::from_config(&config)?;
     let mut adapters = adapters::simulation(&simulation)?;
     let mut sources = crate::ingress::Sources::default();
-    let listen = github_listen.or(config.github.webhook_listen);
+    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
+        github_api
+            .as_ref()
+            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
+    });
     if let Some(listen) = listen {
+        if !listen.ip().is_loopback() {
+            return Err(Error::Invalid("webhook listen address must be loopback"));
+        }
         let api = github_api.ok_or(Error::Invalid(
             "simulation webhooks require --github-api with a loopback mock server",
         ))?;

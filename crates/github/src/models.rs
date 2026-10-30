@@ -175,7 +175,7 @@ pub struct LabelChange {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RepoChanges {
     pub repository: String,
     pub issues: Vec<Issue>,
@@ -210,6 +210,7 @@ pub struct PullClosed {
 pub struct MergeGroup {
     pub head_sha: String,
     pub head_ref: String,
+    pub base_sha: String,
     pub base_ref: String,
 }
 

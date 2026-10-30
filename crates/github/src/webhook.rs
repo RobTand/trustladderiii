@@ -46,8 +46,15 @@ pub enum Event {
         label: Label,
         actor: Actor,
     },
+    PullRequestUpdated {
+        context: Context,
+        action: String,
+        pull_request: PullRequest,
+        actor: Actor,
+    },
     MergeGroup {
         context: Context,
+        action: String,
         merge_group: MergeGroup,
     },
     CheckRunCompleted {
@@ -72,6 +79,8 @@ impl Event {
 pub struct Delivery {
     pub id: String,
     pub event: Option<Event>,
+    pub event_name: String,
+    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -147,14 +156,15 @@ pub fn verify_and_parse(
         (event_name, action),
         ("issues", "labeled")
             | ("issue_comment", "created")
-            | ("pull_request", "closed" | "synchronize" | "unlabeled")
-            | ("merge_group", "checks_requested" | "destroyed")
+            | ("pull_request" | "merge_group", _)
             | ("check_run" | "check_suite", "completed")
     );
     if !relevant {
         return Ok(Delivery {
             id: delivery_id.into(),
             event: None,
+            event_name: event_name.into(),
+            payload: value,
         });
     }
     #[derive(Deserialize)]
@@ -223,10 +233,17 @@ pub fn verify_and_parse(
             context,
             pull_request: field(&value, "pull_request")?,
             label: field(&value, "label")?,
+        actor: Actor,
+    },
+        ("pull_request", _) => Event::PullRequestUpdated {
+            context,
+            action: action.into(),
+            pull_request: field(&value, "pull_request")?,
             actor: field(&value, "sender")?,
         },
         ("merge_group", _) => Event::MergeGroup {
             context,
+            action: action.into(),
             merge_group: field(&value, "merge_group")?,
         },
         ("check_run", "completed") => Event::CheckRunCompleted {
@@ -242,5 +259,7 @@ pub fn verify_and_parse(
     Ok(Delivery {
         id: delivery_id.into(),
         event: Some(event),
+        event_name: event_name.into(),
+        payload: value,
     })
 }

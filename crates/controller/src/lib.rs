@@ -3,13 +3,16 @@
 pub mod adapters;
 pub mod cli;
 pub mod executor;
+mod http;
 pub mod ingress;
 mod snapshot;
 pub mod status;
+pub mod status_web;
 
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
     Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
@@ -85,6 +88,8 @@ pub struct LabelledIssue {
     pub repo: String,
     pub installation: u64,
     pub number: u64,
+    #[serde(default)]
+    pub title: String,
     pub actor: u64,
     pub label: String,
 }
@@ -92,6 +97,8 @@ pub struct LabelledIssue {
 struct Request {
     repo: Repository,
     issue: u64,
+    #[serde(default)]
+    title: String,
     issue_id: i64,
 }
 
@@ -105,6 +112,8 @@ pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
+    github_translators: Vec<ingress::Translation>,
+    held_effects: BTreeSet<String>,
 }
 impl Controller {
     pub fn open(mut store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -131,7 +140,28 @@ impl Controller {
             store,
             adapters,
             bootstrap,
+            github_translators: Vec::new(),
+            held_effects: BTreeSet::new(),
         })
+    }
+
+    pub fn register_github_translator(
+        &mut self,
+        name: &str,
+        translator: impl ingress::GitHubTranslator + 'static,
+    ) {
+        assert!(
+            !name.is_empty()
+                && self
+                    .github_translators
+                    .iter()
+                    .all(|entry| entry.name != name),
+            "unique GitHub translator name required"
+        );
+        self.github_translators.push(ingress::Translation {
+            name: name.into(),
+            translator: Box::new(translator),
+        });
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
@@ -198,6 +228,7 @@ impl Controller {
                 json!(Request {
                     repo,
                     issue: issue.number,
+                    title: issue.title.clone(),
                     issue_id
                 }),
             ));
@@ -211,6 +242,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
+        self.retry_held_effects();
         Ok(true)
     }
 
@@ -250,7 +282,14 @@ impl Controller {
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
         self.store.commit(&commit)?;
+        self.retry_held_effects();
         Ok(())
+    }
+
+    /// Allow one new attempt after input or an authoritative look (ticket #15).
+    /// Holds are in memory, so reopening the controller also allows a retry.
+    pub fn retry_held_effects(&mut self) {
+        self.held_effects.clear();
     }
 
     pub fn drive_once(&mut self) -> Result<bool> {
@@ -347,6 +386,7 @@ impl Controller {
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
+                            self.held_effects.insert(effect.key.clone());
                             progressed = true;
                             continue;
                         }
@@ -374,8 +414,10 @@ impl Controller {
                                 self.cancel_absent(effect, &delivery)?;
                                 return Ok(true);
                             }
-                            self.transition(effect, EffectState::Intended)?;
-                            progressed = true;
+                            if !self.held_effects.contains(&effect.key) {
+                                self.transition(effect, EffectState::Intended)?;
+                                progressed = true;
+                            }
                         }
                         Reconciliation::Pending => {}
                     }
@@ -414,21 +456,26 @@ impl Controller {
             );
             if active {
                 delivery = hydrate(&effect, &snapshot)?;
-                if let Ok(Reconciliation::Found(completion)) =
-                    self.adapters.adapter(&delivery)?.reconcile(&delivery)
-                {
-                    if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
+                let completion = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                    Ok(Reconciliation::Found(completion)) => completion,
+                    Ok(Reconciliation::Absent | Reconciliation::Pending) => continue,
+                    Err(error) => {
+                        eprintln!(
+                            "adapter reconciliation failed for {}: {error}",
+                            delivery.key
+                        );
                         continue;
                     }
-                    for (index, observation) in completion.observations.iter().enumerate() {
-                        commit.rows.push(put(
-                            "inbox",
-                            format!("{}:{index:08}", delivery.key),
-                            json!(observation),
-                        ));
-                    }
-                } else {
+                };
+                if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                     continue;
+                }
+                for (index, observation) in completion.observations.iter().enumerate() {
+                    commit.rows.push(put(
+                        "inbox",
+                        format!("{}:{index:08}", delivery.key),
+                        json!(observation),
+                    ));
                 }
             }
             commit.rows.push(RowChange::Delete {
@@ -482,6 +529,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
+        self.held_effects.remove(&effect.key);
         Ok(())
     }
 
@@ -565,6 +613,7 @@ impl Controller {
             }
         }
         self.store.commit(&commit)?;
+        self.held_effects.remove(key);
         Ok(())
     }
 

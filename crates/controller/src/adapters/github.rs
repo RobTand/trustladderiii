@@ -63,13 +63,9 @@ impl Adapter {
         clients: BTreeMap<u64, GitHub>,
         writer: impl Writer + 'static,
         epoch: i64,
-        mut policy: Policy,
+        policy: Policy,
         simulation: &Path,
     ) -> Result<Self> {
-        let tl3_paths: &[&str] = include!(concat!(env!("OUT_DIR"), "/message_paths.rs"));
-        policy
-            .known_paths
-            .extend(tl3_paths.iter().map(|path| (*path).to_owned()));
         Ok(Self {
             clients,
             writer: Box::new(writer),

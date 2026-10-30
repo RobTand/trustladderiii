@@ -13,7 +13,7 @@ use std::{
     collections::BTreeMap,
     env,
     io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::{Shutdown, SocketAddr, TcpStream},
     path::Path,
     process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex, mpsc},
@@ -25,8 +25,9 @@ use tl3_controller::{
     adapters::workers::writer::{
         FakeWriter, MessageKind, WriteRequest, Writer, WriterReply, checked_draft,
     },
-    executor::{Delivery, Executor, Reconciliation, Upstream},
-    ingress::{self, CatchUp, Source, Webhooks},
+    cli::Input,
+    executor::{Delivery, Executor, Observation, Reconciliation, Upstream},
+    ingress::{self, CatchUp, GitHubDelivery, GitHubTranslator, Source, Sources, Webhooks},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
 use tl3_kernel::{NodeId, Notice, Out, Outcome, Phase};
@@ -67,6 +68,7 @@ fn labelled() -> LabelledIssue {
         repo: "sandbox".into(),
         installation: 3,
         number: 12,
+        title: "Add a blue button".into(),
         actor: 42,
         label: "tl3".into(),
     }
@@ -100,6 +102,7 @@ struct ApiState {
     catch_up_passes: usize,
     fail_reads: bool,
     empty_body: bool,
+    catch_up_evidence: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -162,7 +165,17 @@ impl Respond for Api {
                         let mut comment = fixture(true)["comment"].clone();
                         comment["created_at"] = json!(Utc::now());
                         comment["updated_at"] = comment["created_at"].clone();
-                        json!([comment])
+                        if state.catch_up_evidence {
+                            comment["issue_url"] =
+                                json!("https://api.github.com/repos/OWNER/SANDBOX/issues/12");
+                            let mut pr_comment = comment.clone();
+                            pr_comment["id"] = json!(901);
+                            pr_comment["issue_url"] =
+                                json!("https://api.github.com/repos/OWNER/SANDBOX/issues/25");
+                            json!([comment, pr_comment])
+                        } else {
+                            json!([comment])
+                        }
                     }
                 } else {
                     json!([])
@@ -176,14 +189,27 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(events)
             }
             ("GET", "/repos/owner/sandbox/pulls") => {
-                ResponseTemplate::new(200).set_body_json(json!([]))
+                let pulls = if state.catch_up_evidence {
+                    let mut pull = event_fixture("pull_request")["pull_request"].clone();
+                    pull["updated_at"] = json!(Utc::now());
+                    json!([pull])
+                } else {
+                    json!([])
+                };
+                ResponseTemplate::new(200).set_body_json(pulls)
             }
-            ("GET", path) if path.ends_with("/check-runs") => {
-                ResponseTemplate::new(200).set_body_json(json!({"check_runs": []}))
-            }
-            ("GET", path) if path.ends_with("/check-suites") => {
-                ResponseTemplate::new(200).set_body_json(json!({"check_suites": []}))
-            }
+            ("GET", path) if path.ends_with("/check-runs") => ResponseTemplate::new(200)
+                .set_body_json(if state.catch_up_evidence {
+                    json!({"check_runs": [event_fixture("check_run")["check_run"]]})
+                } else {
+                    json!({"check_runs": []})
+                }),
+            ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200)
+                .set_body_json(if state.catch_up_evidence {
+                    json!({"check_suites": [event_fixture("check_suite")["check_suite"]]})
+                } else {
+                    json!({"check_suites": []})
+                }),
             _ => panic!("unexpected mock API call {method} {path}"),
         }
     }
@@ -252,6 +278,21 @@ fn drain(controller: &mut Controller) {
     panic!("controller failed to settle");
 }
 fn post(address: SocketAddr, id: &str, comment: bool, body: Value, signature_valid: bool) -> u16 {
+    post_event(
+        address,
+        id,
+        if comment { "issue_comment" } else { "issues" },
+        body,
+        signature_valid,
+    )
+}
+fn post_event(
+    address: SocketAddr,
+    id: &str,
+    event: &str,
+    body: Value,
+    signature_valid: bool,
+) -> u16 {
     let body = serde_json::to_vec(&body).unwrap();
     let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
     mac.update(&body);
@@ -264,7 +305,7 @@ fn post(address: SocketAddr, id: &str, comment: bool, body: Value, signature_val
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    write!(stream, "POST /webhooks/github HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len(), if comment { "issue_comment" } else { "issues" }).unwrap();
+    write!(stream, "POST /github/events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len(), event).unwrap();
     stream.write_all(&body).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
@@ -287,8 +328,18 @@ fn main() {
     println!("test message_reconciliation ... ok");
     writer_checks();
     println!("test writer_checks ... ok");
+    receiver_limits(&database.create("receiver_limits"));
+    println!("test receiver_limits ... ok");
+    source_failures(&database.create("source_failures"));
+    println!("test source_failures ... ok");
+    delivery_reconnects(&database.create("reconnect"), &mut database);
+    println!("test delivery_reconnects ... ok");
+    parsed_deliveries_and_translators(&database.create("parsed"));
+    println!("test parsed_deliveries_and_translators ... ok");
+    catch_up_preserves_evidence(&database.create("catch_up_evidence"));
+    println!("test catch_up_preserves_evidence ... ok");
     database.stop();
-    println!("5 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("10 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -385,7 +436,6 @@ fn gap_catch_up(settings: &tl3_config::Store) {
     let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     api.state.lock().unwrap().gap = true;
     control.gap();
-    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     control.stop();
     handle.join().unwrap().unwrap();
@@ -715,4 +765,441 @@ fn writer_checks() {
     );
     assert_eq!(calls.lock().unwrap().len(), 3);
     assert_eq!(api.state.lock().unwrap().posts, posted);
+}
+
+fn raw_http(address: SocketAddr, request: &[u8]) -> String {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream.write_all(request).unwrap();
+    response(&mut stream)
+}
+fn response(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+fn start_receiver(
+    settings: &tl3_config::Store,
+) -> (
+    SocketAddr,
+    ingress::WebhookControl,
+    thread::JoinHandle<tl3_controller::Result<()>>,
+) {
+    let source = Webhooks::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        Store::open(settings).unwrap(),
+        bootstrap(),
+        b"test-secret".to_vec(),
+        None,
+    )
+    .unwrap();
+    let address = source.address();
+    let control = source.control();
+    let (sender, _receiver) = mpsc::channel();
+    let handle = thread::spawn(move || source.run(sender));
+    (address, control, handle)
+}
+fn receiver_limits(settings: &tl3_config::Store) {
+    for address in ["0.0.0.0:0", "[::]:0", "192.168.1.2:8081"] {
+        assert!(
+            Webhooks::bind(
+                address.parse().unwrap(),
+                Store::open(settings).unwrap(),
+                bootstrap(),
+                b"test-secret".to_vec(),
+                None
+            )
+            .is_err()
+        );
+    }
+    let (address, control, handle) = start_receiver(settings);
+    let mut stalled = TcpStream::connect(address).unwrap();
+    stalled
+        .write_all(b"POST /github/events HTTP/1.1\r\nContent-Length: 100\r\n\r\nx")
+        .unwrap();
+    assert_eq!(
+        post(address, "during-stalled-body", false, fixture(false), true),
+        202
+    );
+    assert!(response(&mut stalled).starts_with("HTTP/1.1 408"));
+    assert_eq!(
+        post(address, "after-stalled-body", false, fixture(false), true),
+        202
+    );
+
+    let mut oversized = b"POST /github/events HTTP/1.1\r\nX-Large: ".to_vec();
+    oversized.resize(8 * 1024, b'x');
+    assert!(raw_http(address, &oversized).starts_with("HTTP/1.1 431"));
+    assert_eq!(
+        post(address, "after-large-header", false, fixture(false), true),
+        202
+    );
+    assert!(
+        raw_http(
+            address,
+            b"POST /github/events HTTP/1.1\r\nContent-Length: 26214401\r\n\r\n"
+        )
+        .starts_with("HTTP/1.1 413")
+    );
+    assert_eq!(
+        post(address, "after-large-body", false, fixture(false), true),
+        202
+    );
+
+    let blocked: Vec<_> = (0..8)
+        .map(|_| TcpStream::connect(address).unwrap())
+        .collect();
+    let mut refused = TcpStream::connect(address).unwrap();
+    refused
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    match refused.read(&mut [0]) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        result => panic!("ninth connection was not refused: {result:?}"),
+    }
+    for mut blocked in blocked {
+        blocked.shutdown(Shutdown::Write).unwrap();
+        assert!(response(&mut blocked).starts_with("HTTP/1.1 400"));
+    }
+    assert_eq!(post(address, "after-cap", false, fixture(false), true), 202);
+    for method in ["GET", "HEAD", "PUT", "DELETE", "OPTIONS"] {
+        let reply = raw_http(
+            address,
+            format!("{method} /github/events HTTP/1.1\r\nContent-Length: 0\r\n\r\n").as_bytes(),
+        );
+        assert!(reply.starts_with("HTTP/1.1 405"), "{reply}");
+        assert!(reply.contains("Allow: POST\r\n"), "{reply}");
+    }
+    for (headers, status) in [
+        ("Transfer-Encoding: chunked", 400),
+        ("Content-Length: 1\r\nContent-Length: 1", 400),
+        ("Content-Length: -1", 400),
+        ("", 411),
+    ] {
+        assert!(
+            raw_http(
+                address,
+                format!("POST /github/events HTTP/1.1\r\n{headers}\r\n\r\n").as_bytes()
+            )
+            .starts_with(&format!("HTTP/1.1 {status}"))
+        );
+    }
+    assert!(
+        raw_http(
+            address,
+            b"POST /webhooks/github HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
+        )
+        .starts_with("HTTP/1.1 404")
+    );
+    assert_eq!(
+        post(
+            address,
+            "after-invalid-framing",
+            false,
+            fixture(false),
+            true
+        ),
+        202
+    );
+    control.stop();
+    handle.join().unwrap().unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .pending_ingress()
+            .unwrap()
+            .len(),
+        6
+    );
+}
+struct WaitingSource(mpsc::Receiver<()>);
+impl Source for WaitingSource {
+    fn run(self, _sender: mpsc::Sender<Input>) -> tl3_controller::Result<()> {
+        self.0.recv().unwrap();
+        Ok(())
+    }
+}
+struct FailingSource(bool);
+impl Source for FailingSource {
+    fn run(self, _sender: mpsc::Sender<Input>) -> tl3_controller::Result<()> {
+        if self.0 {
+            panic!("fixture source panic");
+        }
+        Err(tl3_controller::Error::Invalid("fixture source error"))
+    }
+}
+fn source_failures(settings: &tl3_config::Store) {
+    for panics in [false, true] {
+        let settings = settings.clone();
+        let (release, waiting) = mpsc::channel();
+        let (done, result) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let root = tempfile::tempdir().unwrap();
+            let mut controller = Controller::open(
+                Store::open(&settings).unwrap(),
+                adapters::simulation(root.path()).unwrap(),
+                bootstrap(),
+            )
+            .unwrap();
+            let mut sources = Sources::default();
+            sources.register(WaitingSource(waiting));
+            sources.register(FailingSource(panics));
+            let result = sources.run(&mut controller);
+            drop(controller);
+            done.send(result.map_err(|error| error.to_string()))
+                .unwrap();
+        });
+        let ending = result.recv_timeout(Duration::from_secs(10));
+        release.send(()).unwrap();
+        handle.join().unwrap();
+        let error = ending
+            .expect("one failed source must stop the loop while another remains alive")
+            .unwrap_err();
+        assert!(
+            error.contains(if panics {
+                "ingress source panicked"
+            } else {
+                "fixture source error"
+            }),
+            "{error}"
+        );
+    }
+}
+fn delivery_reconnects(settings: &tl3_config::Store, database: &mut support::Database) {
+    let (address, control, handle) = start_receiver(settings);
+    assert_eq!(
+        post(address, "before-restart", false, fixture(false), true),
+        202
+    );
+    database.restart();
+    assert_eq!(
+        post(address, "after-restart", false, fixture(false), true),
+        202
+    );
+    database.stop();
+    assert_eq!(
+        post(address, "during-outage", false, fixture(false), true),
+        503
+    );
+    database.resume();
+    assert_eq!(
+        post(address, "during-outage", false, fixture(false), true),
+        202
+    );
+    assert_eq!(
+        post(address, "during-outage", false, fixture(false), true),
+        202
+    );
+    control.stop();
+    handle.join().unwrap().unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .pending_ingress()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+fn event_fixture(event: &str) -> Value {
+    match event {
+        "pull_request" => serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/pull-request-merged.json"
+        ))
+        .unwrap(),
+        "check_run" => serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/check-run-completed.json"
+        ))
+        .unwrap(),
+        "check_suite" => serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/check-suite-completed.json"
+        ))
+        .unwrap(),
+        "merge_group" => {
+            json!({"action": "checks_requested", "repository": fixture(false)["repository"], "installation": {"id": 3}, "merge_group": {"head_sha": "abc1234", "head_ref": "refs/heads/queue/main/test", "base_sha": "def5678", "base_ref": "refs/heads/main"}})
+        }
+        _ => panic!("unknown fixture"),
+    }
+}
+struct RecordingTranslator(Arc<Mutex<Vec<GitHubDelivery>>>);
+impl GitHubTranslator for RecordingTranslator {
+    fn translate(
+        &mut self,
+        delivery: &GitHubDelivery,
+        _snapshot: &tl3_store::Snapshot,
+    ) -> tl3_controller::Result<Vec<Input>> {
+        self.0.lock().unwrap().push(delivery.clone());
+        Ok(vec![Input::Observation {
+            key: "translator-comment".into(),
+            observation: Observation::GitHubComment {
+                repository: bootstrap().repos[0].clone(),
+                issue: 12,
+                comment: {
+                    let mut comment = fixture(true)["comment"].clone();
+                    comment["id"] = json!(903);
+                    serde_json::from_value(comment).unwrap()
+                },
+            },
+        }])
+    }
+}
+struct FailsOnce(bool);
+impl GitHubTranslator for FailsOnce {
+    fn translate(
+        &mut self,
+        _delivery: &GitHubDelivery,
+        _snapshot: &tl3_store::Snapshot,
+    ) -> tl3_controller::Result<Vec<Input>> {
+        if std::mem::take(&mut self.0) {
+            return Err(tl3_controller::Error::Invalid("fixture translation error"));
+        }
+        Ok(vec![])
+    }
+}
+fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let (address, control, handle) = start_receiver(settings);
+    for event in ["pull_request", "check_run", "check_suite", "merge_group"] {
+        assert_eq!(
+            post_event(
+                address,
+                event.replace('_', "-").as_str(),
+                event,
+                event_fixture(event),
+                true
+            ),
+            202
+        );
+    }
+    let mut pr_comment = fixture(true);
+    pr_comment["issue"]["number"] = json!(25);
+    pr_comment["issue"]["pull_request"] =
+        json!({"url": "https://api.github.com/repos/owner/sandbox/pulls/25"});
+    assert_eq!(
+        post(address, "pr-comment", true, pr_comment.clone(), true),
+        202
+    );
+    let mut other = pr_comment.clone();
+    other["comment"]["id"] = json!(902);
+    other["comment"]["user"]["id"] = json!(7);
+    assert_eq!(post(address, "other-pr-comment", true, other, true), 202);
+    assert_eq!(
+        post_event(
+            address,
+            "ping",
+            "ping",
+            json!({"zen": "Keep the verified payload"}),
+            true
+        ),
+        202
+    );
+    control.stop();
+    handle.join().unwrap().unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let pending = store.pending_ingress().unwrap();
+    assert_eq!(pending.len(), 7);
+    for (_, payload) in &pending[..4] {
+        let GitHubDelivery::Webhook(delivery) = serde_json::from_value(payload.clone()).unwrap()
+        else {
+            panic!("webhook missing");
+        };
+        assert!(delivery.event.is_some(), "{}", delivery.event_name);
+        assert_eq!(delivery.payload, event_fixture(&delivery.event_name));
+    }
+    let mut controller = controller(settings, root.path(), &api.uri());
+    drain(&mut controller);
+    let rows = controller.snapshot().unwrap().rows;
+    let comments: Vec<_> = rows
+        .iter()
+        .filter(|row| row.table == "github_comments")
+        .collect();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].value["issue"], 25);
+    assert!(store.pending_ingress().unwrap().is_empty());
+    // Register after intake has consumed the deliveries. A new consumer still sees all seven.
+    let calls = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    drain(&mut controller);
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    drain(&mut controller);
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    controller.register_github_translator("retry-test", FailsOnce(true));
+    assert!(ingress::drain(&mut controller).is_err());
+    assert!(
+        store
+            .ingress_cursor("github-translator:retry-test")
+            .unwrap()
+            .is_none()
+    );
+    drain(&mut controller);
+    assert!(
+        store
+            .ingress_cursor("github-translator:retry-test")
+            .unwrap()
+            .is_some()
+    );
+    drop(controller);
+    let mut restored = self::controller(settings, root.path(), &api.uri());
+    restored.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    drain(&mut restored);
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        7,
+        "consumer cursor survives restart"
+    );
+    assert_eq!(
+        restored
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|row| row.table == "github_comments")
+            .count(),
+        2
+    );
+}
+fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
+    let api = Server::new();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.gap = true;
+        state.catch_up_evidence = true;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    catch_up.pass(&mut store, &bootstrap()).unwrap();
+    let pending = store.pending_ingress().unwrap();
+    assert_eq!(pending.len(), 1);
+    let GitHubDelivery::CatchUp { changes, .. } =
+        serde_json::from_value(pending[0].1.clone()).unwrap()
+    else {
+        panic!("catch-up missing");
+    };
+    assert_eq!(changes.pull_requests.len(), 1);
+    assert_eq!(changes.check_runs.len(), 1);
+    assert_eq!(changes.check_suites.len(), 1);
+    assert_eq!(changes.comments.len(), 2);
+    assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
+    let mut controller = controller(settings, root.path(), &api.uri());
+    let calls = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    drain(&mut controller);
+    assert!(
+        matches!(&calls.lock().unwrap()[0], GitHubDelivery::CatchUp { changes, .. } if changes.check_runs.len() == 1 && changes.check_suites.len() == 1 && changes.pull_requests.len() == 1)
+    );
+    let rows = controller.snapshot().unwrap().rows;
+    let comments: Vec<_> = rows
+        .iter()
+        .filter(|row| row.table == "github_comments")
+        .collect();
+    assert_eq!(comments.len(), 3);
+    assert!(comments.iter().any(|row| row.value["issue"] == 25));
 }

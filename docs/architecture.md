@@ -19,7 +19,7 @@ The controller partitions a serialized kernel world into `nodes`, `gates`,
 `file_sets` and a `kernel/meta` row. It writes only changed rows. Closed nodes
 and file sets retain their indices. `repos` binds dense kernel gate indices to
 configured repositories. Store repository IDs can contain gaps and never index
-gates. `requests` binds node indices to issue numbers. `pull_requests` records
+gates. `requests` binds node indices to issue numbers and optional titles. `pull_requests` records
 PR numbers. `inbox` holds observations awaiting a kernel step. `watches` retains
 acknowledged operations whose upstream result may arrive later.
 
@@ -74,7 +74,12 @@ silence alone declares work lost.
 An `execute` error means the response is unknown. The effect remains Sent and
 then becomes Uncertain. A reconciliation error or Pending result changes no
 acknowledgement or kernel state. Errors are isolated to their delivery, so other
-requests continue. The controller never converts a lost response into Retryable:
+requests continue. After an execute error, authoritative absence holds the effect
+Uncertain instead of redispatching it. The hold lasts until the next accepted
+`intake` or `observe` input, a call to `Controller::retry_held_effects` for a look,
+or a restart. Holds live only in memory. Repeated drives with only held effects
+return false without adding revisions. Found results and cancellation still
+settle held effects. The controller never converts a lost response into Retryable:
 the kernel would issue a new key and could duplicate the outside write.
 
 The tracer reconciles unresolved effects and watches when `drive_once` runs,
@@ -91,7 +96,9 @@ Sent or Uncertain effect becomes Cancelling and is reconciled by its original
 key and epoch. A moved-on node's cancelled delivery uses the same paths.
 Authoritative absence makes it Cancelled and reports Retryable to the kernel,
 never a fabricated confirmation. The kernel ignores that acknowledgement when
-its in-flight effect is cancelling. A found cancelling attempt becomes final
+its in-flight effect is cancelling. In stale-epoch recovery, when the kernel
+still awaits that effect, Retryable counts as a delivery failure toward its
+incident rule. A found cancelling attempt becomes final
 Confirmed in the delivery table, passes through its actual acknowledgement and
 observations, and leaves cleanup to the kernel.
 
@@ -166,12 +173,20 @@ following tickets.
 
 ## Commands and verification
 
-`tl3 status --config FILE` reads Postgres and prints request, phase, wait and
-credit. It uses `Store::open_read_only`, never migrates or writes, and reports
-an uninitialized database clearly. Both commands use `Config::load` to check
-secret-file metadata, including the optional store password. They do not read
-GitHub or model secrets in simulation. `limits.agent_pool` configures bootstrap
-capacity and defaults to 1. Existing world capacity requires a snapshot migration.
+`tl3 status --config FILE` and `tl3 status-serve --config FILE` use one status
+model. They show issue titles and numbers, phase, wait, credit, last progress
+and open incidents. The page serves GET and HEAD without login at the configured
+listen address, in a separate process from `tl3d`. Both commands use a reader
+that skips migrations and enforces read-only, repeatable-read transactions.
+They do not need worker or GitHub credential files. Tickets #9 and #15 fill
+`status::load_request_details` when their store tables exist. It receives all
+node IDs together and returns a map of public progress and incident summaries,
+using batch queries in the same read-only transaction.
+
+Both commands use `Config::load` to check secret-file metadata, including the
+optional store password. They do not read GitHub or model secrets in simulation.
+`limits.agent_pool` configures bootstrap capacity and defaults to 1. Existing
+world capacity requires a snapshot migration.
 
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after

@@ -40,7 +40,10 @@ as separate worker request fields.
 `webhook_secret`. This crate neither duplicates nor reads that secret type.
 Each served repo supplies the separate installation id that `GitHub::new`
 requires. Rob's numeric id authorizes label events, while his login is display
-metadata. Config does not resolve GitHub identities over the network.
+metadata. Optional `github.webhook_listen` requires a loopback IP and a nonzero
+port. The simulation receiver defaults to `127.0.0.1:8081` when `--github-api`
+enables it without a listen address. A local `cloudflared` process forwards the
+tunnel there. Config does not resolve GitHub identities over the network.
 
 `prismabuild.tools_dir` contains `pbrun.py`, `pbwait.py`, and the other published
 tools. The harness image uses `sha256:<64 lowercase hex digits>` or
@@ -61,7 +64,8 @@ The worktrees root and tools directory need not exist during offline validation.
 Allowances use positive integer seconds. Expiry triggers a look at the upstream,
 not a work-duration deadline. Credit reserve and free rechecks allow zero;
 W must be 1 for slice one. Listen addresses are numeric socket addresses with a
-fixed nonzero port. HTTP endpoints allow LAN HTTP and reject embedded credentials,
+fixed nonzero port. The example status address is `127.0.0.1:8033`; deployment
+sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP and reject embedded credentials,
 queries, and fragments. Parse diagnostics omit source lines.
 
 `limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.

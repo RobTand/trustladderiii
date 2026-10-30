@@ -294,6 +294,14 @@ impl Config {
         )?;
         absolute("models.key_file", &self.models.key_file)?;
         absolute("prismabuild.tools_dir", &self.prismabuild.tools_dir)?;
+        if let Some(address) = self.github.webhook_listen
+            && (!address.ip().is_loopback() || address.port() == 0)
+        {
+            return Err(invalid(
+                "github.webhook_listen",
+                "use a loopback address with a nonzero port; cloudflared forwards locally",
+            ));
+        }
         github_name("github.rob.login", &self.github.rob.login, false)?;
         if self.github.rob.id == 0 {
             return Err(invalid(
@@ -396,7 +404,10 @@ impl Config {
                 "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
             ));
         }
-        if self.status.listen.port() == 0 || self.status.listen.ip().is_multicast() {
+        if self.status.listen.port() == 0
+            || self.status.listen.ip().is_multicast()
+            || self.status.listen.ip().is_unspecified()
+        {
             return Err(invalid(
                 "status.listen",
                 "use a unicast listen address with a fixed port from 1 to 65535 (Q24)",

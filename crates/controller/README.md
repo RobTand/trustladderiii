@@ -4,24 +4,25 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. This release
-supports explicit simulation only. It never loads deployment GitHub or model
-credentials.
+All commands use the same TOML configuration as `tl3-config`. Controller execution
+supports explicit simulation only. Status commands read the configured store
+and do not load GitHub or model credentials.
 
 Both commands use `Config::load`, which checks secret-file metadata, including
 the optional store password. Only the store reads its password at runtime.
-`tl3 status` uses `Store::open_read_only`. It never migrates or writes and
+`tl3 status` uses `Reader::open`. It never migrates or writes and
 reports an uninitialized database clearly.
 
 ```text
 tl3 status --config /absolute/path/to/config.toml
+tl3 status-serve --config /absolute/path/to/config.toml
 tl3d --config /absolute/path/to/config.toml --simulate /absolute/path/to/fake-records
 ```
 
 The daemon reads one JSON `cli::Input` per line on stdin. For example:
 
 ```json
-{"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"actor":24923402,"label":"tl3"}}
+{"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"title":"Fix the sandbox build","actor":24923402,"label":"tl3"}}
 ```
 
 The example repository, installation and actor must match the configuration.
@@ -39,6 +40,42 @@ the remaining worktree effects to its fake. The other four upstreams stay fake.
 
 Each adapter ticket extends `Delivery` with the fields its real client needs.
 The tracer does not predefine issue text, branch text, or PR text fields.
+
+`tl3 status` and the page share `status::load`, one typed model and one set
+of columns. They show the issue title and number, phase, wait, credit, last
+progress and open incidents. Older requests without a title show "title not
+recorded". Both progress and incidents show "none recorded" until their store
+data exists. Tickets #9 and #15 fill `status::load_request_details`. It takes all
+node IDs at once and returns a map from node ID to `RequestDetails`, using batch
+queries on the existing read-only transaction. Missing entries use the empty
+details. Return public summaries there, never
+worker payloads, connection settings or tokens.
+
+`tl3 status-serve` is a separate process from `tl3d`. It serves `/` with GET
+and HEAD, needs no login and refuses other methods with 405. Reload the page
+to refresh it. The server uses `config.status.listen`; the example binds only
+to `127.0.0.1:8033`. Initialize the database through the controller before
+opening status. Status checks the schema and migration version before reading;
+an empty database reports "database not initialized". Status never runs migrations
+or creates request data. After a connection failure, the page reopens its single
+reader and retries once. Failed reads return a generic 503.
+
+The synchronous HTTP server uses four handler threads and caps accepted open
+connections at eight, including queued clients. Extra connections close immediately.
+Reading headers and writing each response have separate two-second total deadlines.
+Each socket requests a 32 KiB send buffer to bound queued replies.
+Response writes use chunks and the remaining deadline, so trickle readers cannot
+keep a handler indefinitely. Accept errors are logged and skipped; file-table
+exhaustion also backs off briefly. Each 503 logs its cause to stderr without
+including it in the HTTP body. Queries on `/` are ignored. Request lines plus headers are
+limited to 8 KiB. Request bodies are rejected and every response closes its
+connection. Responses keep the content security policy and disable caching.
+
+Ticket #19 owns deployment on dl380g10, the systemd unit and the LAN address.
+The page has no authentication. Run the status process in its own unit and set
+`[status].listen` to the LAN interface's specific address, never `0.0.0.0` or
+`[::]`. The status connection uses the `[store]` settings. A SELECT-only
+Postgres role can also restrict the status process's credentials.
 
 Run development verification through PrismaBuild from a clean commit:
 
@@ -59,31 +96,73 @@ exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
 `ingress::Source` runs on its own thread and sends `cli::Input` values to one
 controller thread. Register a source with `Sources::register`. The stdin reader
-uses that same interface. `ingress::run` drains persisted deliveries before
-applying inputs and drives the controller until no work remains.
+uses that same interface. `Sources::run` drains persisted deliveries before
+applying inputs and drives the controller until no work remains. Every source
+exit is logged. An error or panic wakes and stops the controller loop immediately,
+so `tl3d` exits and systemd can restart it while other sources are still alive.
 
 To exercise the receiver against a local GitHub mock server, supply
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:8082/` alongside
 `--simulate`. `github.webhook_listen` in the TOML file also sets the listen
-address. The mock App credentials come from `github.app_credentials_file`.
+address. With `--github-api` and no explicit listen address, the receiver defaults
+to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
+on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
 The API must be loopback HTTP in this simulation release. Ordinary stdin
 simulation still needs no App credentials. Live startup and tunnel deployment
 remain tickets #20 and #19.
 
-POST deliveries to `/webhooks/github` with GitHub's delivery, event and signature
-headers. The library verifies the signature. The receiver inserts the complete
-translated delivery into `tl3_ingress` before returning 202. Its connection never
-changes kernel rows or the controller revision. Delivery ids remain unique after
-consumption. A crash between applying an input and marking its delivery consumed
-replays the same intake or observation key.
+POST deliveries to `/github/events`, matching the App manifest, with GitHub's
+delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
+The status page and receiver share `src/http.rs`. Four handlers cap open
+connections at eight, including queued sockets. Headers have an 8 KiB limit and
+webhook bodies have a 25 MiB limit. Each complete request has a two-second read
+deadline. Oversized bodies return 413, transfer encoding returns 400, and POST
+requires `Content-Length`. Socket reads finish before reaching the receiver
+thread, so a stalled client cannot hold delivery persistence or catch-up.
+Accept errors are logged and skipped. Response writes have a total deadline too.
 
-`Webhooks` runs catch-up once at startup. A tunnel supervisor calls
-`WebhookControl::gap` after an outage. A failed persistence or response also marks
-a gap, and the next connection event retries catch-up. There is no polling timer.
-Catch-up uses the library's paging and original label actors. Its transaction
-persists every recovered input and the new cursor together. Overlapping webhook
-and catch-up inputs name one request per issue and one observation per comment.
-Rob's comments stay in `github_comments` for ticket #14 to classify.
+The library verifies the HMAC before parsing. The receiver stores the parsed
+`GitHubDelivery::Webhook` under the delivery id in `tl3_ingress` before returning
+202. It retains both the typed event and the verified JSON payload, including
+unknown event names. PR updates, check runs, check suites and merge groups remain
+available for their owning adapters. Persistence errors log their `Display`,
+reopen the ingress connection and retry once. Only a failed retry returns 503.
+Delivery ids remain unique after consumption. A crash between applying an input
+and advancing its consumer cursor replays the same intake or observation key.
+
+`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
+receiver's blocking channel. There is no polling timer. A failed persistence or
+response marks a gap, which is retried at the next receiver event. Catch-up stores
+`GitHubDelivery::CatchUp` with the full `RepoChanges` and its cursor in one
+transaction, including PRs and check results. Comment URLs compare repository
+names without case and use the trailing issue number. Rob's comments on issues
+and PRs enter `github_comments` in both paths, deduplicated by repository,
+installation and comment id. Ticket #14 classifies them.
+
+### Register a delivery translator
+
+Ticket #63 registers its Mergify translator, and #13 registers its PR translator,
+on the controller before `Sources::run` or `ingress::drain`:
+
+```rust
+controller.register_github_translator("mergify", mergify_translator);
+```
+
+Implement `ingress::GitHubTranslator::translate(&mut self, &GitHubDelivery,
+&tl3_store::Snapshot) -> Result<Vec<cli::Input>>`. Translate both `Webhook` and
+`CatchUp` variants into observations. Validate the served repository and
+installation before producing evidence, and use stable observation keys across
+webhook and catch-up overlap. Translators never call the kernel.
+
+`ingress::drain` reads the stored deliveries in arrival order, calls the
+translator on the controller thread, applies its inputs and then persists its
+`github-translator:<name>` cursor. Each translator has an independent cursor.
+A new name starts at the first stored delivery, even if intake or another
+translator already consumed it. Reusing the name after restart resumes it.
+An error leaves that delivery's cursor unchanged. Inputs must be idempotent
+because a crash after applying them can replay the delivery. Legacy translated
+inbox rows from earlier #10 builds still drain normally.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
@@ -95,8 +174,9 @@ options. Closing summaries close the issue, except when the request is replaced.
 PR effects still use this module's fake until ticket #13. Incident and replacement
 notices also stay on the fake for their owning tickets. Incidents need the
 operations issue, and replacements need a new request, not another comment.
-The checker includes TL3's tracked paths, generated during the build, the
-request's declared paths, and any further paths supplied in the adapter policy.
+The checker uses the request's own `Delivery.paths` and any further paths
+supplied in the adapter policy. No build script inventories TL3's checkout.
+It rejects both `:line` and `:line:column` suffixes.
 
 The `github` integration target uses the recorded webhook fixtures, the actual
 HTTP receiver, a local REST server and embedded Postgres. It covers delivery
@@ -147,3 +227,15 @@ with each of `--tag dl380g10`, `--tag sparky` and `--tag sparklina`. The integra
 scenarios use the real HTTP receiver, a local REST server and embedded Postgres.
 See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
 inputs.
+For PR #64's receiver and status review evidence, create a clean detached worktree
+at the final commit. From that worktree, submit the three host checks:
+
+```bash
+python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
+```
+
+The manifest pins the controller and GitHub test targets to `dl380g10`, `sparky`
+and `sparklina`. Controller targets include the status page and process tests.
+After they pass, submit the full workspace `tools/verify.sh` command shown above
+once with `--anywhere`. Record every action key and result in the PR body.
