@@ -86,6 +86,7 @@ def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monke
 @pytest.mark.parametrize("name,args", [
     ("execute", {"command": "touch forbidden"}), ("task", {"description": "delegate"}),
     ("fetch", {"url": "http://network.invalid"}), ("read_file", {"file_path": "/outside"}),
+    ("glob", {"pattern": "**/*"}), ("grep", {"pattern": "hello"}),
     ("write", {"path": "forbidden", "content": "no"}), ("read", {"path": "../outside"}),
 ])
 def test_role_dispatch_rejects_forbidden_calls(tmp_path, monkeypatch, name, args):

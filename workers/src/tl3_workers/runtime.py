@@ -66,7 +66,9 @@ def build_agent(model: BaseChatModel, role, worktree=None):
         base_system_prompt="",
         system_prompt_suffix="",
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        excluded_tools=frozenset(BUILTIN_TOOL_DESCRIPTIONS.keys() - role.tools.keys()),
+        # Deep Agents unions exclusions across registrations. glob and grep are
+        # TL3 tools, registered only for roles that declare them, never built-ins.
+        excluded_tools=frozenset(BUILTIN_TOOL_DESCRIPTIONS.keys() - {"glob", "grep"}),
         excluded_middleware=frozenset({
             "SummarizationMiddleware", "PatchToolCallsMiddleware",
             "AnthropicPromptCachingMiddleware", "UnsupportedContentMiddleware",
