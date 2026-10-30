@@ -15,7 +15,11 @@ pub(super) struct Flow {
 
 impl Flow {
     pub(super) fn start(settings: &tl3_config::Store, root: &Path) -> Self {
-        let (config, source, worktree, base) = repository_fixture(settings, root, "normal");
+        Self::start_mode(settings, root, "normal")
+    }
+
+    fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str) -> Self {
+        let (config, source, worktree, base) = repository_fixture(settings, root, mode);
         let remote = root.join("remote.git");
         let repository = root.join("served.git");
         git(
@@ -47,8 +51,7 @@ impl Flow {
             &remote,
         )
         .unwrap();
-        let (mut registry, source, checks_source) =
-            registry(&config, &root.join("fakes"), &worktree, &base, false);
+        let (mut registry, source, checks_source) = registry(&config, &root.join("fakes"), false);
         registry.register(Upstream::Worktrees, real);
         let controller = Controller::open(
             Store::open(settings).unwrap(),
@@ -212,4 +215,94 @@ pub(super) fn acceptance(settings: &tl3_config::Store) {
         pushed,
         "the real adapter verified publication before teardown"
     );
+}
+
+pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start_mode(
+        settings,
+        root.path(),
+        if new_edits { "rebase-edits" } else { "normal" },
+    );
+    flow.until(|phase| phase == Phase::Queued);
+    let first = flow.controller.world().unwrap().nodes[0];
+    let head = git(&flow.worktree, &["rev-parse", "HEAD"]);
+    let upstream = root.path().join("repo");
+    fs::write(
+        upstream.join("greeting.py"),
+        "def greet(): return 'upstream'\n",
+    )
+    .unwrap();
+    git(&upstream, &["add", "."]);
+    git(
+        &upstream,
+        &["commit", "--quiet", "-m", "Conflicting upstream greeting"],
+    );
+    git(
+        &upstream,
+        &["push", flow.remote.to_str().unwrap(), "HEAD:main"],
+    );
+    flow.controller
+        .observe(
+            "queue-conflict",
+            Observation::Kernel(Event::Fact {
+                node: NodeId(0),
+                fact: tl3_kernel::Fact::Conflict,
+            }),
+        )
+        .unwrap();
+    flow.until(|phase| phase == Phase::Making);
+    let revisit = flow.controller.world().unwrap().nodes[0];
+    assert_eq!(
+        (revisit.attempt, revisit.round),
+        (first.attempt, first.round)
+    );
+    assert_ne!(revisit.generation, first.generation);
+    while flow.controller.drive_once().unwrap() {}
+    let Input::Observation { key, observation } = flow.receiver.recv().unwrap() else {
+        panic!("worker observation")
+    };
+    if new_edits {
+        assert!(
+            matches!(&observation, Observation::WorkerReply { reply, .. } if reply["kind"] == "done")
+        );
+        assert_ne!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
+    } else {
+        assert!(matches!(
+            &observation,
+            Observation::Kernel(Event::Reply {
+                reply: Reply::RunFailed,
+                ..
+            })
+        ));
+        assert_eq!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
+        let runs = requests(&flow.config);
+        let run = &runs[1];
+        assert_eq!(run["operation"]["generation"], revisit.generation);
+    }
+    observe(
+        &mut flow.controller,
+        &key,
+        observation,
+        &flow.worktree,
+        &flow.base,
+    );
+    if new_edits {
+        assert_eq!(
+            flow.controller.world().unwrap().nodes[0].phase,
+            Phase::Checking
+        );
+    }
+    flow.controller
+        .observe(
+            "stop-rebase-fixture",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    flow.until(|phase| phase.is_closed());
+    while flow.controller.drive_once().unwrap() {}
 }

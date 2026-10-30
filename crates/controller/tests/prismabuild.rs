@@ -24,7 +24,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
 use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Out, Phase};
-use tl3_prismabuild::{PrismaBuild, Tool};
+use tl3_prismabuild::PrismaBuild;
 mod prismabuild_fixture;
 
 fn git(root: &Path, args: &[&str]) -> String {

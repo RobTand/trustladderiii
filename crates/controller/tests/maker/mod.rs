@@ -154,8 +154,6 @@ impl Executor for Workers {
 fn registry(
     config: &tl3_config::Config,
     root: &Path,
-    _worktree: &Path,
-    _base: &str,
     fail: bool,
 ) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
     let mut registry = adapters::simulation(root).unwrap();
@@ -267,8 +265,7 @@ impl Executor for CiFailureOnce {
 fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let root = tempfile::tempdir().unwrap();
     let (config, worktree, base) = fixture(settings, root.path(), mode);
-    let (mut adapters, source, checks_source) =
-        registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+    let (mut adapters, source, checks_source) = registry(&config, &root.path().join("fakes"), fail);
     if mode.starts_with("ci-") {
         adapters.register(
             Upstream::Mergify,
@@ -356,8 +353,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         });
         store.commit(&commit).unwrap();
         drop(controller);
-        let (registry, _, _) =
-            registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+        let (registry, _, _) = registry(&config, &root.path().join("fakes"), fail);
         controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -646,6 +642,13 @@ fn restart_after_replan(settings: &tl3_config::Store) {
 pub(super) fn run(database: &mut Database) {
     real::acceptance(&database.create("maker_real_worktrees"));
     println!("test maker_real_worktrees_and_recorded_harness ... ok");
+    for new_edits in [false, true] {
+        real::rebase_revisit(
+            &database.create(&format!("maker_rebase_{new_edits}")),
+            new_edits,
+        );
+        println!("test maker_rebase_revisit_new_edits_{new_edits} ... ok");
+    }
     restart_after_replan(&database.create("maker_replan_restart"));
     println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
     process_contract(&database.create("maker_process"));
