@@ -12,6 +12,7 @@ struct Fixture {
     manager: Worktrees,
     name: BranchName,
     token: InstallationToken,
+    upstream_emits_secret: bool,
 }
 
 impl Fixture {
@@ -38,6 +39,7 @@ impl Fixture {
             worktree,
             name: BranchName::new("tl3/issue-29").unwrap(),
             token: InstallationToken::new(TOKEN).unwrap(),
+            upstream_emits_secret: false,
             _temp: temp,
         }
     }
@@ -75,8 +77,19 @@ impl Drop for Fixture {
             for argument in &invocation.argv {
                 assert_no_secret(argument.as_bytes(), &encoded);
             }
-            assert_no_secret(&invocation.stdout, &encoded);
-            assert_no_secret(&invocation.stderr, &encoded);
+            if !self.upstream_emits_secret {
+                assert_no_secret(&invocation.stdout, &encoded);
+                assert_no_secret(&invocation.stderr, &encoded);
+            }
+            for (key, value) in &invocation.environment {
+                assert!(!key.as_bytes().starts_with(b"GIT_TRACE"));
+                if key == "GIT_CONFIG_VALUE_2" {
+                    assert_eq!(
+                        value.as_deref(),
+                        Some(OsStr::new(&format!("Authorization: Basic {encoded}")))
+                    );
+                }
+            }
         }
         for root in [&self.manager.common, &self.bare] {
             for name in ["config", "logs/HEAD"] {
@@ -118,7 +131,8 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new("git")
+    let mut command = Command::new("git");
+    command
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -132,9 +146,12 @@ where
             "commit.gpgsign=false",
         ])
         .args(args)
-        .current_dir(path)
-        .output()
-        .unwrap()
+        .current_dir(path);
+    let encoded = STANDARD.encode(format!("x-access-token:{TOKEN}"));
+    for argument in command.get_args() {
+        assert_no_secret(argument.as_bytes(), &encoded);
+    }
+    command.output().unwrap()
 }
 
 fn write_commit(repo: &Path, file: &str, contents: &str, message: &str) {
@@ -229,30 +246,48 @@ fn lost_registration_is_rebuilt_without_discarding_files() {
 
 #[test]
 fn interrupted_orphan_registration_converges() {
-    let f = Fixture::new();
-    f.checkout();
-    let admin = gitlink(&fs::read(f.worktree.join(".git")).unwrap()).unwrap();
-    fs::remove_dir_all(admin).unwrap();
-    let stage = f
-        .manager
-        .common
-        .join("tl3-worktree-staging")
-        .join(f.name.as_str());
-    fs::create_dir_all(stage.parent().unwrap()).unwrap();
-    git(
-        &f.repo,
-        [
-            OsStr::new("worktree"),
-            OsStr::new("add"),
-            OsStr::new("--no-checkout"),
-            stage.as_os_str(),
-            OsStr::new(f.name.as_str()),
-        ],
-    );
-    fs::copy(stage.join(".git"), f.worktree.join(".git")).unwrap();
-    f.manager.create_worktree(&f.name, &f.worktree).unwrap();
-    f.assert_clean();
-    assert!(!stage.exists());
+    for phase in 0..4 {
+        let f = Fixture::new();
+        f.checkout();
+        let admin = gitlink(&fs::read(f.worktree.join(".git")).unwrap()).unwrap();
+        fs::remove_dir_all(admin).unwrap();
+        let stage = f
+            .manager
+            .common
+            .join("tl3-worktree-staging")
+            .join(f.name.as_str());
+        fs::create_dir_all(stage.parent().unwrap()).unwrap();
+        git(
+            &f.repo,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                OsStr::new("--no-checkout"),
+                stage.as_os_str(),
+                OsStr::new(f.name.as_str()),
+            ],
+        );
+        if phase >= 1 {
+            fs::copy(stage.join(".git"), f.worktree.join(".git")).unwrap();
+        }
+        if phase >= 2 {
+            git(&stage, ["read-tree", &f.name.reference()]);
+            git(
+                &f.repo,
+                [
+                    OsStr::new("worktree"),
+                    OsStr::new("repair"),
+                    f.worktree.as_os_str(),
+                ],
+            );
+        }
+        if phase >= 3 {
+            fs::remove_file(stage.join(".git")).unwrap();
+        }
+        f.manager.create_worktree(&f.name, &f.worktree).unwrap();
+        f.assert_clean();
+        assert!(!stage.exists());
+    }
 }
 
 #[test]
@@ -487,7 +522,7 @@ fn a_remote_push_by_somebody_else_is_preserved() {
 
 #[test]
 fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
-    let f = Fixture::new();
+    let mut f = Fixture::new();
     f.checkout();
     // A bad remote hook can echo credentials. Only the exit code crosses the API boundary.
     let hook = f.bare.join("hooks/pre-receive");
@@ -503,10 +538,18 @@ fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
         format!("{error:?} {error}").as_bytes(),
         &STANDARD.encode(format!("x-access-token:{TOKEN}")),
     );
-    // Deliberately injected upstream output is expected here, but never in argv or errors.
-    for invocation in f.manager.invocations.borrow_mut().iter_mut() {
-        invocation.stderr.clear();
-    }
+    assert!(
+        f.manager
+            .invocations
+            .borrow()
+            .iter()
+            .any(|invocation| invocation
+                .stderr
+                .windows(TOKEN.len())
+                .any(|w| w == TOKEN.as_bytes())),
+        "remote must emit the fake token to exercise diagnostic suppression"
+    );
+    f.upstream_emits_secret = true;
 }
 
 #[test]

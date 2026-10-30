@@ -240,13 +240,7 @@ impl Worktrees {
             }
             if path.exists() {
                 self.verify_checkout(&path, name)?;
-                if stage.join(".git").is_file()
-                    && fs::read(stage.join(".git")).map_err(|_| Error::Io)?
-                        == fs::read(path.join(".git")).map_err(|_| Error::Io)?
-                {
-                    fs::remove_file(stage.join(".git")).map_err(|_| Error::Io)?;
-                    fs::remove_dir(&stage).map_err(|_| Error::Io)?;
-                }
+                self.clean_stage(&path, &stage)?;
                 return Ok(path);
             }
             self.run(
@@ -330,8 +324,19 @@ impl Worktrees {
                 path.as_os_str(),
             ],
         )?;
-        fs::remove_file(stage.join(".git")).map_err(|_| Error::Io)?;
-        fs::remove_dir(stage).map_err(|_| Error::Io)?;
+        self.clean_stage(path, stage)
+    }
+
+    fn clean_stage(&self, path: &Path, stage: &Path) -> Result<(), Error> {
+        if stage.join(".git").is_file()
+            && fs::read(stage.join(".git")).map_err(|_| Error::Io)?
+                == fs::read(path.join(".git")).map_err(|_| Error::Io)?
+        {
+            fs::remove_file(stage.join(".git")).map_err(|_| Error::Io)?;
+        }
+        if stage.is_dir() && fs::read_dir(stage).map_err(|_| Error::Io)?.next().is_none() {
+            fs::remove_dir(stage).map_err(|_| Error::Io)?;
+        }
         Ok(())
     }
 
@@ -837,6 +842,11 @@ impl Worktrees {
         }
         #[cfg(test)]
         let argv = command.get_args().map(OsStr::to_os_string).collect();
+        #[cfg(test)]
+        let environment = command
+            .get_envs()
+            .map(|(k, v)| (k.to_os_string(), v.map(OsStr::to_os_string)))
+            .collect();
         let mut child = command.spawn().map_err(|_| Error::Spawn)?;
         if let Some(input) = input {
             let written = child.stdin.take().ok_or(Error::Io)?.write_all(input);
@@ -849,6 +859,7 @@ impl Worktrees {
         #[cfg(test)]
         self.invocations.borrow_mut().push(Invocation {
             argv,
+            environment,
             stdout: output.stdout.clone(),
             stderr: output.stderr.clone(),
         });
@@ -930,6 +941,7 @@ fn absolute_destination(path: &Path) -> Result<PathBuf, Error> {
 #[cfg(test)]
 struct Invocation {
     argv: Vec<OsString>,
+    environment: Vec<(OsString, Option<OsString>)>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
