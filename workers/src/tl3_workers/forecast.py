@@ -88,18 +88,24 @@ def _file_tokens(worktree, path, encoding):
     return len(encoding.encode_ordinary(content))
 
 
-def measure(brief, paths, config):
-    if config["fit_tokens"] >= config["context_tokens"]:
-        raise ValueError("fit limit must be smaller than context size")
-    encoding = _encoding()
-    brief_tokens = len(encoding.encode_ordinary(brief))
-    with Worktree(".") as worktree:
-        file_tokens = {path: _file_tokens(worktree, path, encoding) for path in sorted(set(paths))}
-    overhead_tokens = sum(config["overhead_tokens"].values())
-    tokens = brief_tokens + sum(file_tokens.values()) + overhead_tokens
-    return {
-        "tokenizer": "o200k_base", "brief_tokens": brief_tokens,
-        "file_tokens": file_tokens, "overhead_tokens": overhead_tokens,
-        "tokens": tokens, "fit_tokens": config["fit_tokens"],
-        "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
-    }
+class Forecaster:
+    def __init__(self, config):
+        if config["fit_tokens"] >= config["context_tokens"]:
+            raise ValueError("fit limit must be smaller than context size")
+        self.config = config
+        self.encoding = _encoding()
+
+    def measure(self, brief, paths):
+        config = self.config
+        encoding = self.encoding
+        brief_tokens = len(encoding.encode_ordinary(brief))
+        with Worktree(".") as worktree:
+            file_tokens = {path: _file_tokens(worktree, path, encoding) for path in sorted(set(paths))}
+        overhead_tokens = sum(config["overhead_tokens"].values())
+        tokens = brief_tokens + sum(file_tokens.values()) + overhead_tokens
+        return {
+            "tokenizer": "o200k_base", "brief_tokens": brief_tokens,
+            "file_tokens": file_tokens, "overhead_tokens": overhead_tokens,
+            "tokens": tokens, "fit_tokens": config["fit_tokens"],
+            "context_tokens": config["context_tokens"], "fits": tokens < config["fit_tokens"],
+        }

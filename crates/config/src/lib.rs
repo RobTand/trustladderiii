@@ -356,6 +356,17 @@ impl Config {
                 "must be greater than zero and less than limits.context_tokens",
             ));
         }
+        let overhead = self
+            .planning
+            .overhead_tokens
+            .values()
+            .try_fold(0u32, |sum, value| sum.checked_add(*value));
+        if overhead.is_none_or(|sum| sum >= limits.fit_tokens) {
+            return Err(invalid(
+                "planning.overhead_tokens",
+                "sum must be less than limits.fit_tokens",
+            ));
+        }
         if limits.w != 1 {
             return Err(invalid("limits.w", "must be 1 in slice one (Q29)"));
         }
