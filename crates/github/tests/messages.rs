@@ -424,13 +424,11 @@ fn decorated_paths_and_line_suffixes_are_rejected() {
 #[test]
 fn references_follow_the_rendered_question_markdown() {
     let mut d = draft();
-    d.options[0].action = "```".into();
-    d.options[0].outcome = "Ask @octocat".into();
+    d.options[0].action = "Choose another image\n\n".into();
+    d.options[0].outcome = "    Ask @octocat".into();
     assert!(
         check(&d, &Policy::default())
-            .expect_err(
-                "a fence after a numbered list marker and before a colon is not a code block"
-            )
+            .expect_err("the rendered colon before the outcome prevents an indented code block")
             .contains(&Violation::Mention("@octocat".into()))
     );
 }
