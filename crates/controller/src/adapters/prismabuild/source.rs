@@ -142,21 +142,24 @@ impl Source {
                 Ok(Some(record))
                     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) =>
                 {
-                    let completion = match results::ending(&self.settings.result_tool, job, false).await {
-                        Ok(Some(completion)) => completion,
-                        Ok(None) => continue,
-                        Err(error) => {
-                            eprintln!("PrismaBuild result {key}: {error}");
-                            results::unknown(job)?
-                        }
-                    };
+                    let completion =
+                        match results::ending(&self.settings.result_tool, job, false).await {
+                            Ok(Some(completion)) => completion,
+                            Ok(None) => continue,
+                            Err(error) => {
+                                eprintln!("PrismaBuild result {key}: {error}");
+                                results::unknown(job)?
+                            }
+                        };
                     for observation in &completion.observations {
                         sender
                             .send(Input::Observation {
                                 key: format!("pb:{key}"),
                                 observation: observation.clone(),
                             })
-                            .map_err(|_| crate::Error::Invalid("PrismaBuild ingress receiver closed"))?;
+                            .map_err(|_| {
+                                crate::Error::Invalid("PrismaBuild ingress receiver closed")
+                            })?;
                     }
                     // Retain the completion for controller watches if it crashes before consuming Input.
                     write(&self.done(job), &completion)?;

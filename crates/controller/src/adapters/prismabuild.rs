@@ -59,8 +59,7 @@ use std::{
     time::Duration,
 };
 use tl3_prismabuild::{
-    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, SubmitAction,
-    Tool,
+    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, SubmitAction, Tool,
 };
 
 #[derive(Clone, Debug)]
@@ -156,7 +155,11 @@ impl Adapter {
     }
 
     pub fn source(&self) -> Source {
-        Source::new(self.client.clone(), self.settings.clone(), self.keys.subscribe())
+        Source::new(
+            self.client.clone(),
+            self.settings.clone(),
+            self.keys.subscribe(),
+        )
     }
 
     pub fn action_key(&self, effect_key: &str) -> Result<Option<ActionKey>> {
@@ -244,10 +247,13 @@ impl Adapter {
     }
 
     fn remove_input(&self, key: &str) -> Result<()> {
-        let input = self.settings.records.join(format!("{}.input", encoded(key)));
+        let input = self
+            .settings
+            .records
+            .join(format!("{}.input", encoded(key)));
         match fs::remove_dir_all(input) {
             Ok(()) => File::open(&self.settings.records)?.sync_all()?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
         Ok(())
@@ -264,10 +270,13 @@ impl Adapter {
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {
-        let done = self.settings.records.join(format!("{}.done", encoded(&job.delivery.key)));
+        let done = self
+            .settings
+            .records
+            .join(format!("{}.done", encoded(&job.delivery.key)));
         match fs::read(done) {
             Ok(bytes) => return Ok(Reconciliation::Found(serde_json::from_slice(&bytes)?)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
         let record = self
