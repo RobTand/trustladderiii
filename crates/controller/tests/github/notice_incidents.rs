@@ -101,7 +101,10 @@ fn open(
     registry.register(
         Upstream::GitHub,
         adapters::github::Adapter::new(
-            BTreeMap::from([(3, client(uri))]),
+            BTreeMap::from([(
+                3,
+                client_with_pem(uri, fs::read_to_string(root.join("mock-app.pem")).unwrap()),
+            )]),
             WriterFault(faults),
             0,
             Policy::default(),
@@ -179,6 +182,7 @@ pub(super) fn run(db: &mut support::Database) {
 }
 fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("mock-app.pem"), PEM.as_bytes()).unwrap();
     let api = Server::new();
     let kind = match name {
         "rejected_ask" | "question_403" => "question",
