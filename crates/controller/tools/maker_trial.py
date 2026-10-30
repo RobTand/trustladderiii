@@ -23,9 +23,15 @@ def main():
                                     ("test_greeting.py::test_hello",)),), container=image)
         assert results[0].verdict == Verdict.PASS
         assert trial["changed_paths"] == ["greeting.py"]
+        failures = run_checks(Path(trial["repository"]), trial["base"], trial["base"],
+                              (Check("hello", Kind.REGRESSION,
+                                     ("test_greeting.py::test_hello",)),), container=image)
+        assert failures[0].verdict == Verdict.FAIL
+        assert "goodbye" in failures[0].tests[0].message
         trial.pop("repository")
         trial.pop("remote")
         print(json.dumps({"maker_trial": trial, "report": json.loads(result_json(results)),
+                          "failure_report": json.loads(result_json(failures)),
                           "image": image.image, "verification": "passed"}), flush=True)
 
 

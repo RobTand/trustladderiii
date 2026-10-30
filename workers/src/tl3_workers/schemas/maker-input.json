@@ -47,7 +47,8 @@
           "report": {"$ref": "#/$defs/text", "maxLength": 16000},
           "goal_ids": {"$ref": "#/$defs/strings"},
           "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
-          "outside_paths": {"$ref": "#/$defs/strings"},
+          "outside_paths": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/text", "maxLength": 4096}},
+          "outside_paths_total": {"type": "integer", "minimum": 0},
           "ci_checks": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text", "maxLength": 1000}, "url": {"type": ["string", "null"], "maxLength": 4096}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
         },
         "required": ["kind", "report", "goal_ids"], "additionalProperties": false

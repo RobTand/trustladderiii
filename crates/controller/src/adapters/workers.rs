@@ -224,14 +224,19 @@ impl Supervisor {
                     .join(format!("plan-{}", u8::from(delivery.replanned)))
                     .join(format!("attempt-{}.json", delivery.attempt))
             );
-            let needs_files =
-                store
-                    .worker_document(&node, "maker_session")?
-                    .is_some_and(|session| {
-                        session["needs_files"] == true
-                            && session["attempt"] == delivery.attempt
-                            && session["replanned"] == delivery.replanned
-                    });
+            let session = store
+                .worker_document(&node, "maker_session")?
+                .filter(|session| {
+                    session["attempt"] == delivery.attempt
+                        && session["replanned"] == delivery.replanned
+                });
+            if let Some(generation) = session
+                .as_ref()
+                .and_then(|session| session["generation"].as_u64())
+            {
+                request["last_accepted_generation"] = json!(generation);
+            }
+            let needs_files = session.is_some_and(|session| session["needs_files"] == true);
             request["resume_session"] = json!(delivery.round == 1 || needs_files);
         }
         Ok(request)

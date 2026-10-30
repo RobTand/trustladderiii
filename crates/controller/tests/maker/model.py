@@ -9,6 +9,7 @@ from unittest.mock import patch
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from tl3_workers import runtime, recall, tools
+from tl3_workers.roles import maker
 
 mode = sys.argv[1]
 
@@ -29,6 +30,25 @@ def create_model(request):
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
+    if mode in ('killed-after-commit', 'session-save-fails'):
+        marker = record.parent / 'failure-injected'
+        if not marker.exists():
+            if mode == 'killed-after-commit':
+                commit = maker._commit
+                def kill_after_commit(*args):
+                    commit(*args)
+                    marker.touch()
+                    import os, signal
+                    os.kill(os.getpid(), signal.SIGKILL)
+                maker._commit = kill_after_commit
+            else:
+                save = maker._save
+                def fail_session_save(path, value):
+                    if path.suffix == '.json':
+                        marker.touch()
+                        raise OSError('injected session save failure')
+                    save(path, value)
+                maker._save = fail_session_save
     if mode == 'bad-schema':
         return Model(responses=[AIMessage(content='{"kind":"done"}')])
     if mode == 'blocked':

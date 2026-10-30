@@ -953,6 +953,7 @@ impl Controller {
         };
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
+        let mut outside_paths_total = 0;
         let event = match observation {
             Observation::Queue(fact) => {
                 let identity = fact.identity();
@@ -1073,7 +1074,10 @@ impl Controller {
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
                     if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
-                        outside_paths.push(path);
+                        outside_paths_total += 1;
+                        if outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
+                            outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
+                        }
                         in_footprint = false;
                     }
                 }
@@ -1177,16 +1181,6 @@ impl Controller {
                 commit
                     .rows
                     .push(put(document, node.0.to_string(), reply.clone()));
-                if role == "maker" {
-                    commit.rows.push(put(
-                        "maker_session",
-                        node.0.to_string(),
-                        json!({
-                            "attempt": n.attempt, "replanned": n.replanned,
-                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
-                        }),
-                    ));
-                }
                 if role == "ingest" {
                     commit.rows.push(put(
                         "goals",
@@ -1237,6 +1231,16 @@ impl Controller {
                         }
                     }
                 };
+                if role == "maker" && mapped != Reply::RunFailed {
+                    commit.rows.push(put(
+                        "maker_session",
+                        node.0.to_string(),
+                        json!({
+                            "attempt": n.attempt, "replanned": n.replanned, "generation": generation,
+                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
+                        }),
+                    ));
+                }
                 Event::Reply {
                     node,
                     generation,
@@ -1328,7 +1332,7 @@ impl Controller {
                 let report = match (n.phase, reply) {
                     (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
                         if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
-                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths))),
+                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
                     (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
                         findings::Kind::ReviewFinding,
                         "The independent reviewer requested changes. No detailed review report was supplied.".into(),
@@ -1396,6 +1400,7 @@ impl Controller {
                 goal_ids,
                 failed_tests,
                 outside_paths,
+                outside_paths_total,
                 ci_checks,
             };
             findings

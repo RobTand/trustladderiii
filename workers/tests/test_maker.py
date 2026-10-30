@@ -729,6 +729,7 @@ def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
         rebased = git(root, 'commit-tree', 'HEAD^{tree}', '-m', 'Rebased history')
         git(root, 'reset', '--hard', rebased)
     before = git(root, 'rev-parse', 'HEAD')
+    maker_request['last_accepted_generation'] = maker_request['operation']['generation']
     maker_request['operation']['generation'] += 1
     maker_request['resume_session'] = True
     turns = [write_turn(content="def greet(): return 'hello again'\n")] if new_edits else []

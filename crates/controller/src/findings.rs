@@ -29,6 +29,7 @@ pub(crate) struct Finding {
     pub failed_tests: Vec<FailedTest>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub outside_paths: Vec<String>,
+    pub outside_paths_total: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ci_checks: Vec<CiFailure>,
 }
@@ -53,6 +54,8 @@ pub(crate) fn ci_report(checks: &[CiFailure]) -> String {
 
 // Bound feedback persisted from external reports and sent back to the maker.
 pub const MAX_FAILED_TESTS: usize = 20;
+pub(crate) const MAX_OUTSIDE_PATHS: usize = 100;
+pub(crate) const MAX_PATH_CHARS: usize = 4096;
 pub const MAX_MESSAGE_CHARS: usize = 1000;
 pub(crate) const MAX_REPORT_CHARS: usize = 16000;
 
@@ -65,6 +68,7 @@ pub(crate) fn check_report(
     in_footprint: bool,
     tests: &[FailedTest],
     paths: &[String],
+    total_paths: usize,
 ) -> String {
     let mut lines = vec![];
     if !pass {
@@ -83,7 +87,11 @@ pub(crate) fn check_report(
             "The change includes files outside the plan. The upstream supplied no changed paths."
                 .into()
         } else {
-            format!("Files outside the plan: {}", paths.join(", "))
+            format!(
+                "Files outside the plan (showing {} of {total_paths}): {}",
+                paths.len(),
+                paths.join(", ")
+            )
         });
     }
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)

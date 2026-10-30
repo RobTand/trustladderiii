@@ -80,6 +80,10 @@
       "type": "string",
       "pattern": "^/"
     },
+    "last_accepted_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
     "resume_session": {
       "type": "boolean"
     }

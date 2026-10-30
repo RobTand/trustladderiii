@@ -299,6 +299,10 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     controller.intake(labelled()).unwrap();
     loop {
         let world = controller.world().unwrap();
+        assert!(
+            world.nodes.iter().all(|node| !node.waiting_incident),
+            "maker retry raised an incident"
+        );
         if let Some(node) = world.nodes.first()
             && (node.phase.is_closed()
                 || (node.replanned && matches!(node.phase, Phase::Planning { .. }))
@@ -413,6 +417,24 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         );
     }
     let runs = requests(&config);
+    if matches!(mode, "killed-after-commit" | "session-save-fails") {
+        assert_eq!(runs.len(), 2);
+        assert_ne!(
+            runs[0]["operation"]["generation"],
+            runs[1]["operation"]["generation"]
+        );
+        assert_eq!(
+            git(
+                &root.path().join("repo"),
+                &["rev-list", "--count", &format!("{base}..maker-fixture")]
+            ),
+            "1"
+        );
+        assert_eq!(
+            world.nodes[0].phase,
+            Phase::Closed(tl3_kernel::Outcome::Merged)
+        );
+    }
     if fail || mode == "outside" {
         assert!(world.nodes[0].replanned);
         assert_eq!(runs.len(), 6);
@@ -702,6 +724,8 @@ pub(super) fn run(database: &mut Database) {
     println!("test maker_recovery_invalid_output_and_stop ... ok");
     for (mode, fail) in [
         ("normal", false),
+        ("killed-after-commit", false),
+        ("session-save-fails", false),
         ("normal", true),
         ("outside", false),
         ("cant-meet", false),
