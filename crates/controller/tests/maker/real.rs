@@ -20,6 +20,17 @@ impl Flow {
 
     fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str, hold_queue: bool) -> Self {
         let (config, source, worktree, base) = repository_fixture(settings, root, mode);
+        if mode == "review-feedback" {
+            let mut store = Store::open(settings).unwrap();
+            let mut commit =
+                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+            commit.rows.push(tl3_store::RowChange::Put {
+                table: "goals".into(),
+                id: "0".into(),
+                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
+            });
+            store.commit(&commit).unwrap();
+        }
         let remote = root.join("remote.git");
         let repository = root.join("served.git");
         git(
@@ -449,4 +460,56 @@ pub(super) fn recorded_failure_feedback(settings: &tl3_config::Store) {
         runs.last().unwrap()["inputs"]["feedback"][0]["failed_tests"][0]["message"],
         message
     );
+}
+
+pub(super) fn review_feedback(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start_mode(settings, root.path(), "review-feedback", false);
+    flow.until(|phase| phase == Phase::Making);
+    flow.until(|phase| phase == Phase::Checking);
+    let runs = requests(&flow.config);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[1]["inputs"]["round"], 1);
+    let feedback = &runs[1]["inputs"]["feedback"];
+    let report = feedback[0]["report"].as_str().unwrap();
+    for text in [
+        "The greeting lacks context.",
+        "greeting.py returns only hello.",
+        "The report stream is overwritten.",
+        "The reporter replaces stdout.",
+        "Problem 0",
+        "Evidence 0",
+    ] {
+        assert!(
+            report.contains(text),
+            "maker feedback missing {text}: {report}"
+        );
+    }
+    assert_eq!(feedback[0]["kind"], "review_finding");
+    assert_eq!(feedback[0]["goal_ids"], json!(["greeting"]));
+    assert!(!report.contains("Optional style note"));
+    assert!(!report.contains(&"é".repeat(1001)));
+    assert!(!report.contains(&"界".repeat(1001)));
+    assert!(report.chars().count() <= 16000);
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .worker_document("0", "findings")
+            .unwrap()
+            .is_none()
+    );
+
+    flow.until(|phase| matches!(phase, Phase::Planning { .. }));
+    assert!(flow.controller.world().unwrap().nodes[0].replanned);
+    let findings = Store::open(settings)
+        .unwrap()
+        .worker_document("0", "findings")
+        .unwrap()
+        .unwrap();
+    assert!(findings.as_array().unwrap().iter().any(|finding| {
+        finding.as_str().is_some_and(|text| {
+            text.contains("The greeting lacks context.")
+                && text.contains("greeting.py returns only hello.")
+        })
+    }));
 }

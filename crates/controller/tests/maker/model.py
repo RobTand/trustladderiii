@@ -17,7 +17,8 @@ mode = sys.argv[1]
 class Model(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         from tl3_workers.roles import ROLES
-        assert {tool.name: tool.description for tool in tools} == dict(ROLES['maker'].tools)
+        role = 'reviewer' if mode == 'review-feedback' and all(tool.name != 'write' for tool in tools) else 'maker'
+        assert {tool.name: tool.description for tool in tools} == dict(ROLES[role].tools)
         return self
 
 
@@ -27,6 +28,20 @@ def call(name, args):
 
 def create_model(request):
     inputs = request['inputs']
+    if request['role'] == 'reviewer':
+        blockers = [
+            {'citation': {'kind': 'goal', 'id': 'greeting'},
+             'problem': 'The greeting lacks context.', 'evidence': 'greeting.py returns only hello.'},
+            {'citation': {'kind': 'standing_rule', 'id': 'test-report-integrity'},
+             'problem': 'The report stream is overwritten.', 'evidence': 'The reporter replaces stdout.'},
+        ]
+        blockers.extend({'citation': {'kind': 'goal', 'id': 'greeting'},
+                         'problem': f'Problem {i} ' + 'é' * 2000,
+                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(30))
+        return Model(responses=[AIMessage(content=json.dumps({
+            'verdict': 'changes', 'blocking_findings': blockers,
+            'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],
+        }))])
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
