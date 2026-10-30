@@ -1,6 +1,7 @@
 """Run the kernel's tests, or Kani proofs, as one PrismaBuild action.
 
-    run.py tests             run the tests
+    run.py manifest [NAME...]  print a PrismaBuild campaign manifest
+    run.py tests             build the workspace, then run the tests
     run.py prove NAME...     prove only the named harnesses
     run.py prove             prove every harness
 
@@ -9,6 +10,7 @@ can run them all in parallel. Output streams, so a killed run still shows how
 far it got.
 """
 import os
+import json
 import re
 import pathlib
 import subprocess
@@ -27,7 +29,29 @@ def step(label, argv):
 
 
 mode, names = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
+if mode == "manifest":
+    env = {
+        "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        "RUSTUP_HOME": "/home/rob/.rustup", "CARGO_HOME": "/home/rob/.cargo",
+        "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "1",
+        "KANI_JOBS": "1", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
+    }
+    proofs = re.findall(r"^proof!\((\w+),", (HERE / "src/proofs.rs").read_text(), re.M)
+    selected = names or ["tests", *proofs]
+    if set(selected) - {"tests", *proofs}:
+        sys.exit("unknown proof name")
+    rows = []
+    for name in selected:
+        memory = 32 if name in {"apply_new_request", "progress_from_queued"} else 20 if name.startswith("progress_from_") else 10
+        rows.append({"cwd": str(HERE), "argv": ["/usr/bin/python3", "run.py", *(["tests"] if name == "tests" else ["prove", name])],
+                     "cpus": 1, "demand": {"mem_gb": 4 if name == "tests" else memory},
+                     "anywhere": True, "env": env, "priority": -10, "timeout_s": 3600})
+    print(json.dumps(rows, indent=2))
+    sys.exit(0)
 if mode == "tests":
+    code = step("workspace build (no_std)", ["cargo", "build", "--workspace", "--release"])
+    if code:
+        sys.exit(code)
     sys.exit(step("tests", ["cargo", "test", "--release", "--no-fail-fast", "--", "--nocapture"]))
 if mode == "prove":
     # KANI_OUTPUT=regular shows CBMC's progress, which tells where a run that

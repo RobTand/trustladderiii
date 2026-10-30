@@ -1,11 +1,11 @@
-//! TL3's slice-one kernel, built from `docs/state-table.md` version 4.
+//! TL3's slice-one kernel, built from `docs/state-table.md` version 5.
 //!
 //! The kernel is one pure function, `step(world, event) -> (world, outputs)`.
 //! After applying the event, `settle` takes every internal transition the
 //! facts allow until none is left. Ordinary builds have no standard library,
 //! so the kernel can't reach files, sockets, clocks or processes.
 //!
-//! Deliberate simplifications for the spike:
+//! Slice-one simplifications:
 //! - Each request is a single root leaf, so its credit lives on its node.
 //! - Rob owns every pause, as in slice one.
 //! - Notices are outbox entries that no node waits on: questions to Rob,
@@ -21,6 +21,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+mod ids;
+mod footprint;
+pub use ids::{FileId, HeadId, NodeId, RepoId};
+pub use footprint::Footprint;
+
 #[cfg(kani)]
 mod proofs;
 
@@ -28,8 +33,6 @@ mod proofs;
 pub const RESERVE: u32 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
 pub const FREE_RECHECKS: u8 = 3;
-/// Heads are abstract commit ids below this bound, so one byte holds a set of them.
-pub const MAX_HEADS: u8 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
@@ -278,15 +281,15 @@ impl Credit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Node {
     pub phase: Phase,
     /// Position in the phase's agenda.
     pub pos: u8,
-    pub repo: u8,
-    /// Declared files, as a bitmask.
-    pub footprint: u8,
+    pub repo: RepoId,
+    /// The files this leaf may change.
+    pub footprint: Footprint,
     /// Operation generation. Every phase change and retry takes a new one.
     pub generation: u64,
     pub next_seq: u64,
@@ -316,12 +319,12 @@ pub struct Node {
     pub fx_incidents: u8,
     pub waiting_incident: bool,
     pub incident_needs_rob: bool,
-    pub head: Option<u8>,
+    pub head: Option<HeadId>,
     /// The head that passed its checks.
-    pub checked: Option<u8>,
-    /// Heads that passed checks and review, as a bitmask.
-    pub approved: u8,
-    pub merged: Option<u8>,
+    pub checked: Option<HeadId>,
+    /// The exact head that passed checks and review.
+    pub approved: Option<HeadId>,
+    pub merged: Option<HeadId>,
     pub pr_open: bool,
     pub had_pr: bool,
     /// The branch and worktree may exist.
@@ -331,12 +334,12 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(repo: u8) -> Node {
+    pub fn new(repo: RepoId) -> Node {
         Node {
             phase: Phase::Ingesting,
             pos: 0,
             repo,
-            footprint: 0,
+            footprint: Footprint::default(),
             generation: 0,
             next_seq: 0,
             effect: None,
@@ -362,7 +365,7 @@ impl Node {
             incident_needs_rob: false,
             head: None,
             checked: None,
-            approved: 0,
+            approved: None,
             merged: None,
             pr_open: false,
             had_pr: false,
@@ -486,24 +489,24 @@ pub struct World {
     pub next_question: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
     IngestDone { size: u8 },
     IngestEarlyEnd(EarlyEnd),
     AuditAgrees,
     AuditDisagrees,
-    PlanLeaf { footprint: u8, fits: bool },
+    PlanLeaf { footprint: Footprint, fits: bool },
     PlanSplit,
     PlanCantMeet,
-    MakerDone { head: u8 },
-    MakerNeedsFiles { files: u8, fits: bool },
+    MakerDone { head: HeadId },
+    MakerNeedsFiles { files: Footprint, fits: bool },
     MakerCantMeet,
     MakerOutOfRoom,
     ChecksDone { report: bool, pass: bool, in_footprint: bool },
-    Approved { head: u8 },
+    Approved { head: HeadId },
     ChangesRequested,
-    RebaseClean { head: u8 },
+    RebaseClean { head: HeadId },
     RebaseNeedsChanges,
     /// A crash, setup error, lost worker or stall.
     RunFailed,
@@ -520,10 +523,10 @@ pub enum Ack {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
-    PrMerged { head: u8, checks_passed: bool },
+    PrMerged { head: HeadId, checks_passed: bool },
     PrClosedByPerson,
     PrDequeuedByPerson,
-    PushByOther { head: u8 },
+    PushByOther { head: HeadId },
     CiFailed { infra: bool },
     Conflict,
     IncidentCleared { by_rob: bool },
@@ -552,19 +555,20 @@ pub enum Command {
     Answer { question: u64, answer: Answer },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Event {
-    NewRequest { repo: u8 },
-    Reply { node: u32, generation: u64, reply: Reply },
-    Ack { node: u32, seq: u64, ack: Ack },
-    Fact { node: u32, fact: Fact },
-    Command { node: u32, id: u64, command: Command },
+    NewRequest { repo: RepoId },
+    Reply { node: NodeId, generation: u64, reply: Reply },
+    Ack { node: NodeId, seq: u64, ack: Ack },
+    Fact { node: NodeId, fact: Fact },
+    Command { node: NodeId, id: u64, command: Command },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
     UnapprovedMerge,
+    Replanned,
     PrClosed,
     PrDequeued,
     OutsidePush,
@@ -583,8 +587,8 @@ pub enum Notice {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Out {
-    Effect { node: usize, seq: u64, kind: EffectKind, head: Option<u8> },
-    Notice { node: usize, notice: Notice },
+    Effect { node: NodeId, seq: u64, kind: EffectKind, head: Option<HeadId> },
+    Notice { node: NodeId, notice: Notice },
 }
 
 /// Most outputs one transition emits. A late merge with an unapproved head
@@ -732,12 +736,8 @@ fn cont_rank(cont: Cont) -> u64 {
     }
 }
 
-fn has(bits: u8, head: u8) -> bool {
-    head < MAX_HEADS && bits & (1u8 << head) != 0
-}
-
 fn notice(out: &mut Outbox, node: usize, notice: Notice) {
-    out.push(Out::Notice { node, notice });
+    out.push(Out::Notice { node: NodeId(node as u64), notice });
 }
 
 impl World {
@@ -751,8 +751,8 @@ impl World {
         }
     }
 
-    fn index(&self, node: u32) -> Option<usize> {
-        let i = node as usize;
+    fn index(&self, node: NodeId) -> Option<usize> {
+        let i = node.index()?;
         if i < self.nodes.len() { Some(i) } else { None }
     }
 
@@ -787,7 +787,7 @@ impl World {
             if n.phase.is_closed() {
                 continue;
             }
-            let node = i as u32;
+            let node = NodeId(i as u64);
             if n.paused && !n.phase.is_stopping() {
                 return Some(Event::Command { node, id: n.last_cmd + 1, command: Command::Resume });
             }
@@ -816,23 +816,23 @@ impl World {
                         Phase::Auditing => Reply::AuditAgrees,
                         Phase::Planning { must_split: true } => Reply::PlanSplit,
                         Phase::Planning { must_split: false } => Reply::PlanLeaf {
-                            footprint: if n.footprint != 0 { n.footprint } else { 1 },
+                            footprint: if !n.footprint.is_empty() { n.footprint.clone() } else { Footprint::new([FileId(0)]) },
                             fits: true,
                         },
                         Phase::Making => Reply::MakerDone {
-                            head: n.head.map_or(0, |h| (h + 1) % MAX_HEADS),
+                            head: n.head.unwrap_or(HeadId(0)),
                         },
                         Phase::Checking => {
                             Reply::ChecksDone { report: true, pass: true, in_footprint: true }
                         }
-                        Phase::Reviewing => Reply::Approved { head: n.head.unwrap_or(0) },
-                        Phase::Rebasing => Reply::RebaseClean { head: n.head.unwrap_or(0) },
+                        Phase::Reviewing => Reply::Approved { head: n.head.unwrap_or(HeadId(0)) },
+                        Phase::Rebasing => Reply::RebaseClean { head: n.head.unwrap_or(HeadId(0)) },
                         _ => continue,
                     };
                     return Some(Event::Reply { node, generation, reply });
                 }
                 Some(Item::Merge) => {
-                    let head = n.head.unwrap_or(0);
+                    let head = n.head.unwrap_or(HeadId(0));
                     let fact = Fact::PrMerged { head, checks_passed: true };
                     return Some(Event::Fact { node, fact });
                 }
@@ -869,24 +869,22 @@ impl World {
             self.check_node(&self.nodes[i])?;
             i += 1;
         }
-        // A gate grants at most W slots and never gives two holders the same file.
-        let mut r = 0;
-        while r < self.gates.len() {
-            let mut count = 0u32;
-            let mut files = 0u8;
-            for n in &self.nodes {
-                if n.holds && n.repo as usize == r {
-                    if files & n.footprint != 0 {
-                        return Err(Broken::Gate);
-                    }
-                    files |= n.footprint;
+        // Locks are the footprints of holders; compare holders without growing a temporary set.
+        for (r, gate) in self.gates.iter().enumerate() {
+            let mut count = 0usize;
+            for (i, n) in self.nodes.iter().enumerate() {
+                if n.holds && n.repo == RepoId(r as u64) {
                     count += 1;
+                    for other in &self.nodes[..i] {
+                        if other.holds && other.repo == n.repo && !other.footprint.is_disjoint(&n.footprint) {
+                            return Err(Broken::Gate);
+                        }
+                    }
                 }
             }
-            if count > self.gates[r].w as u32 {
+            if count > gate.w as usize {
                 return Err(Broken::Gate);
             }
-            r += 1;
         }
         let mut runs = 0u32;
         for n in &self.nodes {
@@ -909,7 +907,7 @@ impl World {
 
     fn check_node(&self, n: &Node) -> Result<(), Broken> {
         let items = agenda(n.phase);
-        if n.repo as usize >= self.gates.len() {
+        if n.repo.index().is_none_or(|r| r >= self.gates.len()) {
             return Err(Broken::Config);
         }
         if n.phase.is_closed() {
@@ -924,11 +922,6 @@ impl World {
             return Err(Broken::Agenda);
         }
         let current = n.current();
-        for h in [n.head, n.checked, n.merged].into_iter().flatten() {
-            if h >= MAX_HEADS {
-                return Err(Broken::Head);
-            }
-        }
 
         // One effect in flight, with a fresh key, belonging to the current step
         // unless the node has moved on.
@@ -1164,7 +1157,7 @@ impl World {
 
     /// What a leaf needs before it may resume into a holding phase.
     fn check_ready(&self, n: &Node, r: Resume) -> Result<(), Broken> {
-        if n.attempt == 0 || n.attempt > 3 || n.round > 1 || n.footprint == 0 || !n.credit.ready {
+        if n.attempt == 0 || n.attempt > 3 || n.round > 1 || n.footprint.is_empty() || !n.credit.ready {
             return Err(Broken::Leaf);
         }
         let ok = match r {
@@ -1172,7 +1165,7 @@ impl World {
             Resume::Checking | Resume::Rebasing => n.head.is_some(),
             Resume::Reviewing => n.head.is_some() && n.checked == n.head,
             Resume::Publishing => match n.head {
-                Some(h) => has(n.approved, h) && n.checked == Some(h),
+                Some(h) => n.approved == Some(h) && n.checked == Some(h),
                 None => false,
             },
         };
@@ -1317,7 +1310,7 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
         Event::NewRequest { repo } => {
-            if (repo as usize) < w.gates.len() {
+            if repo.index().is_some_and(|r| r < w.gates.len()) {
                 w.nodes.push(Node::new(repo));
             }
         }
@@ -1457,12 +1450,12 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
         }
         _ => None,
     };
-    out.push(Out::Effect { node: i, seq, kind, head });
+    out.push(Out::Effect { node: NodeId(i as u64), seq, kind, head });
 }
 
 // ---------------------------------------------------------------- replies
 
-fn accepts(n: &Node, reply: Reply) -> bool {
+fn accepts(n: &Node, reply: &Reply) -> bool {
     match (n.phase, reply) {
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
@@ -1470,25 +1463,25 @@ fn accepts(n: &Node, reply: Reply) -> bool {
             Phase::Planning { .. },
             Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet,
         ) => true,
-        (Phase::Making, Reply::MakerDone { head }) => head < MAX_HEADS,
+        (Phase::Making, Reply::MakerDone { .. }) => true,
         (
             Phase::Making,
             Reply::MakerNeedsFiles { .. } | Reply::MakerCantMeet | Reply::MakerOutOfRoom,
         ) => true,
         // No report means the tests never ran: an infrastructure failure.
-        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
+        (Phase::Checking, Reply::ChecksDone { report, .. }) => *report,
         (Phase::Reviewing, Reply::Approved { head }) => {
-            head < MAX_HEADS && n.head == Some(head) && n.checked == Some(head)
+            n.head == Some(*head) && n.checked == Some(*head)
         }
         (Phase::Reviewing, Reply::ChangesRequested) => true,
-        (Phase::Rebasing, Reply::RebaseClean { head }) => head < MAX_HEADS,
+        (Phase::Rebasing, Reply::RebaseClean { .. }) => true,
         (Phase::Rebasing, Reply::RebaseNeedsChanges) => true,
         _ => false,
     }
 }
 
 fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
-    let n = w.nodes[i];
+    let n = w.nodes[i].clone();
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
@@ -1505,7 +1498,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    if !accepts(&n, reply) {
+    if !accepts(&n, &reply) {
         run_failed(w, i, out);
         return;
     }
@@ -1553,7 +1546,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         Reply::PlanLeaf { footprint, fits } => {
             let m = &mut w.nodes[i];
             let must_split = matches!(m.phase, Phase::Planning { must_split: true });
-            if fits && footprint != 0 && !must_split {
+            if fits && !footprint.is_empty() && !must_split {
                 m.footprint = footprint;
                 m.attempt = 1;
                 m.round = 0;
@@ -1573,9 +1566,9 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::MakerNeedsFiles { files, fits } => {
             let m = &mut w.nodes[i];
-            if fits && files != 0 && m.credit.can_spend(1) {
+            if fits && !files.is_empty() && m.credit.can_spend(1) {
                 m.credit.spend(1);
-                m.footprint |= files;
+                m.footprint.extend(files);
                 m.holds = false;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
@@ -1595,7 +1588,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::Approved { head } => {
             let m = &mut w.nodes[i];
-            m.approved |= 1u8 << head;
+            m.approved = Some(head);
             set_phase(m, Phase::Publishing);
         }
         Reply::ChangesRequested => failed_round(w, i, out),
@@ -1664,6 +1657,7 @@ fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
             m.credit.spend(1);
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split: false });
+            notice(out, i, Notice::Note(NoteKind::Replanned));
         } else {
             ask_rob(w, i, QKind::OutOfCredit, Cont::Planning { must_split: false }, 1, out);
         }
@@ -1835,7 +1829,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
-            if head >= MAX_HEADS || !m.had_pr {
+            if !m.had_pr {
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -1885,12 +1879,12 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     }
 }
 
-fn pr_merged(w: &mut World, i: usize, head: u8, checks_passed: bool, out: &mut Outbox) {
+fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool, out: &mut Outbox) {
     let m = &mut w.nodes[i];
-    if !m.had_pr || head >= MAX_HEADS || m.merged.is_some() {
+    if !m.had_pr || m.merged.is_some() {
         return;
     }
-    let approved = has(m.approved, head) && checks_passed;
+    let approved = m.approved == Some(head) && checks_passed;
     match m.phase {
         Phase::Closed(o) => {
             if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
@@ -1978,17 +1972,17 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                 return;
             }
             match answer {
-                Answer::Continue => go_on(w, i, q),
+                Answer::Continue => go_on(w, i, q, out),
                 Answer::TryAgain => {
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
                     m.round = 0;
                     m.replanned = false;
-                    go_on(w, i, Question { cost: q.cost.max(1), ..q });
+                    go_on(w, i, Question { cost: q.cost.max(1), ..q }, out);
                 }
                 Answer::AddCredit(k) => {
                     w.nodes[i].credit.added += k as u32;
-                    go_on(w, i, q);
+                    go_on(w, i, q, out);
                 }
                 Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
                 Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
@@ -2000,7 +1994,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
 }
 
 /// Carry on to the question's continuation, paying what it costs.
-fn go_on(w: &mut World, i: usize, q: Question) {
+fn go_on(w: &mut World, i: usize, q: Question, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.credit.pay(q.cost as u32);
     m.question = None;
@@ -2011,6 +2005,9 @@ fn go_on(w: &mut World, i: usize, q: Question) {
         Cont::Planning { must_split } => {
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split });
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                notice(out, i, Notice::Note(NoteKind::Replanned));
+            }
         }
         Cont::Ready(r) => set_phase(m, Phase::Ready(r)),
         Cont::Stop(o) => enter_stopping(m, o),
@@ -2065,7 +2062,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
 
 /// One internal transition for node `i`, if the facts allow one.
 fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
-    let n = w.nodes[i];
+    let n = w.nodes[i].clone();
     if n.phase.is_closed() {
         return false;
     }
@@ -2234,8 +2231,8 @@ fn pool_free(w: &World) -> bool {
 }
 
 /// Planning is admitted while fewer than W leaves wait for a slot in the repo.
-fn admits(w: &World, repo: u8) -> bool {
-    let Some(gate) = w.gates.get(repo as usize) else { return false };
+fn admits(w: &World, repo: RepoId) -> bool {
+    let Some(gate) = repo.index().and_then(|r| w.gates.get(r)) else { return false };
     let mut waiting = 0u32;
     for n in &w.nodes {
         if n.repo == repo && matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some() {
@@ -2246,12 +2243,12 @@ fn admits(w: &World, repo: u8) -> bool {
 }
 
 fn slot_free(w: &World, i: usize) -> bool {
-    let me = w.nodes[i];
-    let Some(gate) = w.gates.get(me.repo as usize) else { return false };
+    let me = &w.nodes[i];
+    let Some(gate) = me.repo.index().and_then(|r| w.gates.get(r)) else { return false };
     let mut holders = 0u32;
     for (j, n) in w.nodes.iter().enumerate() {
         if j != i && n.holds && n.repo == me.repo {
-            if n.footprint & me.footprint != 0 {
+            if !n.footprint.is_disjoint(&me.footprint) {
                 return false;
             }
             holders += 1;
@@ -2262,7 +2259,7 @@ fn slot_free(w: &World, i: usize) -> bool {
 
 /// First come, first served: no one waiting in the same line holds an older ticket.
 fn first_in_line(w: &World, i: usize) -> bool {
-    let me = w.nodes[i];
+    let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     let for_slot = matches!(me.phase, Phase::Ready(_));
     for (j, n) in w.nodes.iter().enumerate() {

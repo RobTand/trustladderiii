@@ -4,7 +4,7 @@
 //! and settled, and every witnessed event must lower the progress measure.
 
 use std::collections::BTreeSet;
-use tl3_slice_one_kernel::*;
+use tl3_kernel::*;
 
 struct Rng(u64);
 
@@ -22,14 +22,18 @@ impl Rng {
     }
 }
 
+fn footprint(bits: u64) -> Footprint {
+    (0..4).filter(|i| bits & (1 << i) != 0).map(FileId).collect()
+}
+
 fn random_event(w: &World, rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
-        return Event::NewRequest { repo: rng.below(3) as u8 };
+        return Event::NewRequest { repo: RepoId(rng.below(3)) };
     }
     let i = rng.below(w.nodes.len() as u64) as usize;
-    let n = w.nodes[i];
-    let node = if rng.below(50) == 0 { 9 } else { i as u32 };
-    let head = rng.below(MAX_HEADS as u64 + 1) as u8; // one past the range, on purpose
+    let n = w.nodes[i].clone();
+    let node = NodeId(if rng.below(50) == 0 { 9 } else { i as u64 });
+    let head = HeadId(rng.next());
     match rng.below(12) {
         0..=3 => match n.effect {
             Some(e) => {
@@ -49,11 +53,11 @@ fn random_event(w: &World, rng: &mut Rng) -> Event {
                 1 => Reply::IngestEarlyEnd(EarlyEnd::Duplicate),
                 2 => Reply::AuditAgrees,
                 3 => Reply::AuditDisagrees,
-                4 => Reply::PlanLeaf { footprint: rng.below(16) as u8, fits: rng.below(5) != 0 },
+                4 => Reply::PlanLeaf { footprint: footprint(rng.below(16)), fits: rng.below(5) != 0 },
                 5 => Reply::PlanSplit,
                 6 => Reply::PlanCantMeet,
                 7 => Reply::MakerDone { head },
-                8 => Reply::MakerNeedsFiles { files: rng.below(16) as u8, fits: rng.below(2) == 0 },
+                8 => Reply::MakerNeedsFiles { files: footprint(rng.below(16)), fits: rng.below(2) == 0 },
                 9 => Reply::MakerCantMeet,
                 10 => Reply::MakerOutOfRoom,
                 11 => Reply::ChecksDone {
@@ -128,18 +132,18 @@ fn random_walks_keep_every_rule() {
         let mut w = World::new(&gates, 1 + rng.below(2) as u8);
         for _ in 0..500 {
             let event = if rng.below(4) == 0 {
-                w.witness().unwrap_or(Event::NewRequest { repo: 0 })
+                w.witness().unwrap_or(Event::NewRequest { repo: RepoId(0) })
             } else {
                 random_event(&w, &mut rng)
             };
-            let witnessed = w.witness() == Some(event);
+            let witnessed = w.witness() == Some(event.clone());
             let before = w.measure();
-            let (next, out, passes) = step_with_passes(w.clone(), event);
+            let (next, out, passes) = step_with_passes(w.clone(), event.clone());
             let size = next.nodes.len().min(4);
             passes_by_size[size] = passes_by_size[size].max(passes);
             // Every intermediate world is consistent, and each internal
             // transition lowers its node's settle rank.
-            let (_, _, trace) = step_traced(w.clone(), event);
+            let (_, _, trace) = step_traced(w.clone(), event.clone());
             for (k, mid) in trace.iter().enumerate() {
                 assert!(mid.consistent(), "seed {seed}: {:?} after transition {k} of {event:?}\nfrom {w:#?}\nto {mid:#?}\ntrace before: {:#?}", mid.check(), if k > 0 { Some(&trace[k - 1]) } else { None });
             }
@@ -156,9 +160,9 @@ fn random_walks_keep_every_rule() {
             }
             for o in &out {
                 if let Out::Effect { node, kind: EffectKind::Enqueue, head, .. } = *o {
-                    let n = next.nodes[node];
+                    let n = &next.nodes[node.index().unwrap()];
                     let h = head.expect("an enqueue names its head");
-                    assert!(n.approved & (1 << h) != 0 && n.checked == Some(h), "seed {seed}: unapproved enqueue");
+                    assert!(n.approved == Some(h) && n.checked == Some(h), "seed {seed}: unapproved enqueue");
                 }
             }
             for n in &next.nodes {

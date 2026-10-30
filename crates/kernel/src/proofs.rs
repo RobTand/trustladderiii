@@ -33,7 +33,8 @@ fn small(n: &Node) -> bool {
     n.generation < LIMIT
         && n.next_seq < LIMIT
         && n.last_cmd < LIMIT
-        && n.footprint < 16
+        && n.repo.0 < 2
+        && [n.head, n.checked, n.approved, n.merged].into_iter().flatten().all(|h| h.0 < 8)
         && n.credit.start < CREDIT_LIMIT
         && n.credit.earned < CREDIT_LIMIT
         && n.credit.added < CREDIT_LIMIT
@@ -138,13 +139,13 @@ fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usi
     let mut slot = 0;
     while slot < OUTBOX {
         if let Some(Out::Effect { node, seq, kind, head }) = out.get(slot) {
-            assert!(node < after.nodes.len());
+            assert!(node.index().is_some_and(|i| i < after.nodes.len()));
             // Look the node up by a concrete index. A read at a symbolic index
             // into nodes the event just rewrote made the merge proofs need
             // more than 48 GB; this way they need a few.
             let mut i = 0;
             while i < after.nodes.len() {
-                if i == node {
+                if NodeId(i as u64) == node {
                     check_effect(before.nodes.get(i), &after.nodes[i], seq, kind, head, exempt == Some(i));
                 }
                 i += 1;
@@ -153,7 +154,7 @@ fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usi
         slot += 1;
     }
 }
-fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, head: Option<u8>, exempt: bool) {
+fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, head: Option<HeadId>, exempt: bool) {
     assert!(seq < n.next_seq);
     if let Some(b) = before {
         // Every effect gets a key no earlier effect of its node had.
@@ -165,7 +166,7 @@ fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, hea
     }
     // TL3 enqueues a head only after that exact head passed its checks and review.
     if kind == EffectKind::Enqueue {
-        assert!(matches!(head, Some(h) if has(n.approved, h) && n.checked == Some(h)));
+        assert!(matches!(head, Some(h) if n.approved == Some(h) && n.checked == Some(h)));
     }
 }
 
@@ -174,21 +175,21 @@ fn check_apply(event: Event) {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event, &mut out);
+    apply(&mut after, event.clone(), &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
     let exempt = match event {
-        Event::Ack { node, .. } => Some(node as usize),
-        Event::Command { node, command: Command::Resume, .. } => Some(node as usize),
+        Event::Ack { node, .. } => node.index(),
+        Event::Command { node, command: Command::Resume, .. } => node.index(),
         _ => None,
     };
     check_outputs(&before, &after, &out, exempt);
     // Each of Rob's answers applies only to the question it names, and only
     // once: anything it changes closes that question.
     if let Event::Command { command: Command::Answer { question, .. }, .. } = event {
-        let mut unchanged = before.nodes[0];
+        let mut unchanged = before.nodes[0].clone();
         unchanged.last_cmd = after.nodes[0].last_cmd;
         if after.nodes[0] != unchanged {
             assert!(before.nodes[0].question.is_some_and(|q| q.id == question));
@@ -234,25 +235,30 @@ fn check_witness(phase: Phase) {
     if let Some(event) = event {
         let mut after = world;
         let mut out = Outbox::new();
-        apply(&mut after, event, &mut out);
+        apply(&mut after, event.clone(), &mut out);
         assert!(after.measure() < before);
     }
 }
 
 fn reply(reply: Reply) -> Event {
-    Event::Reply { node: 0, generation: kani::any(), reply }
+    match &reply {
+        Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head } => kani::assume(head.0 < 8),
+        _ => {}
+    }
+    Event::Reply { node: NodeId(0), generation: kani::any(), reply }
 }
 
 fn ack(ack: Ack) -> Event {
-    Event::Ack { node: 0, seq: kani::any(), ack }
+    Event::Ack { node: NodeId(0), seq: kani::any(), ack }
 }
 
 fn fact(fact: Fact) -> Event {
-    Event::Fact { node: 0, fact }
+    if let Fact::PushByOther { head } = fact { kani::assume(head.0 < 8); }
+    Event::Fact { node: NodeId(0), fact }
 }
 
 fn command(command: Command) -> Event {
-    Event::Command { node: 0, id: kani::any(), command }
+    Event::Command { node: NodeId(0), id: kani::any(), command }
 }
 
 fn answer(answer: Answer) -> Event {
@@ -347,23 +353,24 @@ proof!(progress_from_closed, check_witness(Phase::Closed(kani::any())));
 /// are the heaviest event to prove, so they get one proof per phase.
 fn check_pr_merged(phase: Phase) {
     let before = any_settled_world(Some(phase));
-    let n = before.nodes[0];
-    let head: u8 = kani::any();
+    let n = &before.nodes[0];
+    let head: HeadId = kani::any();
+    kani::assume(head.0 < 8);
     let checks_passed: bool = kani::any();
     let event = fact(Fact::PrMerged { head, checks_passed });
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event, &mut out);
+    apply(&mut after, event.clone(), &mut out);
     kani::cover!(after != before, "the merge changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
     check_outputs(&before, &after, &out, None);
-    if n.had_pr && n.merged.is_none() && !n.phase.is_closed() && head < MAX_HEADS {
-        let m = after.nodes[0];
+    if n.had_pr && n.merged.is_none() && !n.phase.is_closed() {
+        let m = &after.nodes[0];
         assert!(m.merged == Some(head));
         assert!(m.phase == Phase::Stopping(Outcome::Merged));
-        if !(has(n.approved, head) && checks_passed) {
-            assert!(out.contains(Out::Notice { node: 0, notice: Notice::Note(NoteKind::UnapprovedMerge) }));
+        if !(n.approved == Some(head) && checks_passed) {
+            assert!(out.contains(Out::Notice { node: NodeId(0), notice: Notice::Note(NoteKind::UnapprovedMerge) }));
         }
     }
 }
