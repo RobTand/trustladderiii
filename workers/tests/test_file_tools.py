@@ -360,3 +360,22 @@ def test_new_tool_needs_only_a_factory_entry(tree, monkeypatch):
     with Worktree(root) as worktree:
         tool = build_tools(worktree, {"pbtest_fixture": "Fixture admitted test tool."})[0]
         assert tool.invoke({"target": "suite"}) == "fixture suite"
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r", "\r\n"])
+def test_read_preserves_line_offsets_and_crlf_at_byte_boundary(tree, ending):
+    root, _ = tree
+    body = "a" * (OUTPUT_LIMITS["line_bytes"] - 1)
+    (root / "endings").write_bytes((body + ending + "next" + ending).encode("utf-8"))
+    with Worktree(root) as worktree:
+        assert worktree.read("endings", offset=1) == "next" + ending
+        first = worktree.read("endings", limit=1)
+        if ending == "\r\n":
+            preview, notice = first.split("\n[Truncated.")
+            assert preview == body
+            assert f"offset=0, column={len(body)}" in notice
+            assert worktree.read("endings", column=len(body), limit=1) == (
+                ending + "\n[Truncated. Continue with offset=1, column=0.]"
+            )
+        else:
+            assert first == body + ending + "\n[Truncated. Continue with offset=1, column=0.]"

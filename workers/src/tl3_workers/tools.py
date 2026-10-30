@@ -162,6 +162,11 @@ class Worktree:
                 while chunk := stream.readline(OUTPUT_LIMITS["line_bytes"]):
                     if chunk.endswith("\n"):
                         break
+                    if chunk.endswith("\r"):
+                        position = stream.tell()
+                        if stream.read(1) != "\n":
+                            stream.seek(position)
+                        break
                 if not chunk:
                     return ""
             # Skip a column without allocating an unbounded line.
@@ -169,7 +174,7 @@ class Worktree:
             while remaining:
                 chunk = stream.readline(min(remaining, OUTPUT_LIMITS["line_bytes"]))
                 remaining -= len(chunk)
-                if not chunk or chunk.endswith("\n"):
+                if not chunk or chunk.endswith(("\r", "\n")):
                     raise ValueError("Column exceeds line length")
             for number in range(min(limit, OUTPUT_LIMITS["read_lines"])):
                 chunk = stream.readline(OUTPUT_LIMITS["line_bytes"] + 1)
@@ -177,12 +182,14 @@ class Worktree:
                     return "".join(chunks)
                 budget = min(OUTPUT_LIMITS["line_bytes"], OUTPUT_LIMITS["bytes"] - 256 - used)
                 text = _clip(chunk, budget)
+                if text.endswith("\r") and chunk[len(text):].startswith("\n"):
+                    text = text[:-1]
                 if not text:
                     next_line, next_column = offset + number, column if number == 0 else 0
                     break
                 chunks.append(text)
                 used += len(text.encode("utf-8"))
-                if len(text) < len(chunk) or not text.endswith("\n"):
+                if len(text) < len(chunk) or not text.endswith(("\r", "\n")):
                     # A short final line needs no continuation notice.
                     if text == chunk and not stream.read(1):
                         return "".join(chunks)
