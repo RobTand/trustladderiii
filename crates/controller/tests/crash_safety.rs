@@ -340,6 +340,69 @@ fn run(
     panic!("seed={seed} scenario={scenario} point={selected}: too many crashes");
 }
 
+fn emission_coverage(
+    controller: &mut Controller,
+    settings: &tl3_config::Store,
+) -> BTreeMap<String, (String, String)> {
+    let final_world = controller.world().unwrap();
+    let mut world = tl3_kernel::World::new(&[1], 1);
+    // The audit oracle supplies the dictionary-backed footprints before replay.
+    // Production recovery only loads snapshots and never runs this code.
+    for files in final_world.file_sets() {
+        world.intern_footprint(files.iter().copied());
+    }
+    let mut store = Store::open_read_only(settings).unwrap();
+    let mut coverage = BTreeMap::new();
+    for record in store.events_after(Revision::ZERO, u32::MAX).unwrap() {
+        let Some(value) = record.receipt.result.get("kernel_event") else {
+            continue;
+        };
+        let event: Event = serde_json::from_value(value.clone()).unwrap();
+        let (next, outputs) = tl3_kernel::step(world, event);
+        world = next;
+        for (index, output) in outputs.into_iter().enumerate() {
+            let (key, node, kind) = match output {
+                Out::Effect {
+                    node, seq, kind, ..
+                } => (
+                    format!("effect:{}:{seq}", node.0),
+                    node,
+                    format!("{kind:?}"),
+                ),
+                Out::Notice { node, notice } => (
+                    format!("notice:{}:{index}", record.receipt.revision.get()),
+                    node,
+                    format!("Notice({notice:?})"),
+                ),
+            };
+            assert!(
+                coverage
+                    .insert(
+                        key,
+                        (kind, world.nodes[node.0 as usize].phase.name().into())
+                    )
+                    .is_none()
+            );
+        }
+    }
+    assert_eq!(
+        serde_json::to_value(world).unwrap(),
+        serde_json::to_value(final_world).unwrap(),
+        "snapshot differs from the audit oracle"
+    );
+    assert_eq!(
+        coverage.keys().cloned().collect::<BTreeSet<_>>(),
+        store
+            .effects()
+            .unwrap()
+            .iter()
+            .map(|e| e.key.clone())
+            .collect(),
+        "kernel outputs and durable outbox differ"
+    );
+    coverage
+}
+
 fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Value {
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
@@ -391,6 +454,7 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
             );
         }
     }
+    let coverage = emission_coverage(&mut controller, settings);
     let effects = Store::open_read_only(settings).unwrap().effects().unwrap();
     let mut outputs = vec![];
     let mut observed = BTreeSet::new();
@@ -423,6 +487,7 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
         };
         outputs.push(json!([
             label,
+            coverage[&effect.key].1,
             format!("{:?}", effect.state),
             effect.epoch.get()
         ]));
@@ -450,8 +515,10 @@ fn main() {
         eprintln!("crash simulation failed; replay with TL3_SIM_SEED={seed}\n{info}")
     }));
     let started = Instant::now();
+    upstreams::verify_contracts();
     let mut database = support::Database::start();
     let mut total = 0;
+    let mut kinds = BTreeSet::new();
     let filter = env::var("TL3_SIM_SCENARIO").ok();
     let point_filter = env::var("TL3_SIM_POINT").ok();
     for scenario in SCENARIOS
@@ -470,6 +537,12 @@ fn main() {
             seed,
         );
         let baseline = normalized(&baseline_settings, baseline_root.path(), scenario);
+        for output in baseline["outputs"].as_array().unwrap() {
+            kinds.insert((
+                output[0].as_str().unwrap().to_owned(),
+                output[1].as_str().unwrap().to_owned(),
+            ));
+        }
         for (index, point) in POINTS
             .iter()
             .enumerate()
@@ -492,6 +565,32 @@ fn main() {
         }
     }
     assert!(total > 0, "filter selected no crash points");
+    if filter.is_none() {
+        for (kind, phase) in [
+            ("StartRun(Ingest)", "Ingesting"),
+            ("StartRun(Audit)", "Auditing"),
+            ("StartRun(Plan)", "Planning"),
+            ("StartRun(Make)", "Making"),
+            ("StartRun(Review)", "Reviewing"),
+            ("SubmitChecks", "Checking"),
+            ("StartRebase", "Rebasing"),
+            ("PrepareWorktree", "Making"),
+            ("Push", "Publishing"),
+            ("PostApproval", "Publishing"),
+            ("OpenPr", "Publishing"),
+            ("Enqueue", "Publishing"),
+            ("StopRun", "Stopping"),
+            ("WithdrawJob", "Stopping"),
+            ("ClosePr", "Stopping"),
+            ("RemoveWorktree", "Stopping"),
+        ] {
+            assert!(
+                kinds.contains(&(kind.into(), phase.into())),
+                "missing effect/phase coverage: {kind} in {phase}"
+            );
+        }
+    }
+    println!("effect/phase coverage: {kinds:?}");
     database.stop();
     println!(
         "{total} real SIGKILL cuts passed in {:.2}s; seed={seed}; no skips",

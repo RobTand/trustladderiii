@@ -66,6 +66,24 @@ pub fn asynchronous(output: Out) -> bool {
     )
 }
 
+fn converges(output: Out) -> bool {
+    matches!(
+        output,
+        Out::Effect {
+            kind: EffectKind::PrepareWorktree
+                | EffectKind::RemoveWorktree
+                | EffectKind::Push
+                | EffectKind::OpenPr
+                | EffectKind::ClosePr
+                | EffectKind::Enqueue
+                | EffectKind::WithdrawJob
+                | EffectKind::StopRun
+                | EffectKind::PostApproval,
+            ..
+        }
+    )
+}
+
 fn desired(delivery: &Delivery) -> Option<(String, Value)> {
     let node = delivery.node().0;
     let (name, value) = match delivery.output {
@@ -145,6 +163,11 @@ impl Executor for Fake {
         } else {
             self.inner.execute(delivery)?
         };
+        if let [Observation::Plan { paths, .. }] = completion.observations.as_mut_slice() {
+            *paths = (0..3 + self.seed % 3)
+                .map(|i| format!("src/seed_{}_file_{i}.rs", self.seed))
+                .collect();
+        }
         if self.scenario == "rebase"
             && matches!(
                 delivery.output,
@@ -193,8 +216,25 @@ impl Executor for Fake {
             completion.observations.clear();
         }
         let applied = completion.ack == Ack::Confirmed;
+        let mut applications = usize::from(applied);
         if applied && let Some((key, value)) = desired(delivery) {
+            if converges(delivery.output) && state.resources.get(&key) == Some(&value) {
+                applications = 0;
+            }
             state.resources.insert(key, value);
+        }
+        if applied
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::RemoveWorktree,
+                    ..
+                }
+            )
+        {
+            state
+                .resources
+                .insert(format!("branch:{}", delivery.node().0), Value::Null);
         }
         let notice = matches!(delivery.output, Out::Notice { .. });
         state.records.insert(
@@ -202,7 +242,7 @@ impl Executor for Fake {
             Record {
                 delivery: delivery.clone(),
                 completion: completion.clone(),
-                applications: usize::from(applied),
+                applications,
                 copies: if notice { 2 } else { usize::from(applied) },
                 probes: 0,
             },
@@ -211,6 +251,7 @@ impl Executor for Fake {
         // All messages lose their answer so their next authoritative read must
         // remove the rare duplicate. Other lost answers are seed-selected.
         if notice
+            || !asynchronous(delivery.output)
             || (self.scenario == "stop-sent"
                 && matches!(
                     delivery.output,
@@ -264,28 +305,114 @@ pub fn path(root: &Path, upstream: Upstream) -> PathBuf {
     root.join(format!("{upstream:?}.json"))
 }
 
-pub fn registry(root: &Path, scenario: &str, seed: u64) -> Registry {
+fn fake(root: &Path, scenario: &str, seed: u64, upstream: Upstream) -> Fake {
     fs::create_dir_all(root).unwrap();
+    let receipts = root.join(format!("{upstream:?}"));
+    fs::create_dir_all(&receipts).unwrap();
+    let inner: Box<dyn Executor> = match upstream {
+        Upstream::GitHub => Box::new(adapters::github::Fake::new(&receipts)),
+        Upstream::Mergify => Box::new(adapters::mergify::Fake::new(&receipts)),
+        Upstream::PrismaBuild => Box::new(adapters::prismabuild::Fake::new(&receipts)),
+        Upstream::Workers => Box::new(adapters::workers::Fake::new(&receipts)),
+        Upstream::Worktrees => Box::new(adapters::worktrees::Fake::new(&receipts)),
+    };
+    Fake {
+        inner,
+        path: path(root, upstream),
+        scenario: scenario.into(),
+        seed,
+    }
+}
+
+pub fn registry(root: &Path, scenario: &str, seed: u64) -> Registry {
     let mut registry = Registry::default();
     for upstream in UPSTREAMS {
-        let receipts = root.join(format!("{upstream:?}"));
-        fs::create_dir_all(&receipts).unwrap();
-        let inner: Box<dyn Executor> = match upstream {
-            Upstream::GitHub => Box::new(adapters::github::Fake::new(&receipts)),
-            Upstream::Mergify => Box::new(adapters::mergify::Fake::new(&receipts)),
-            Upstream::PrismaBuild => Box::new(adapters::prismabuild::Fake::new(&receipts)),
-            Upstream::Workers => Box::new(adapters::workers::Fake::new(&receipts)),
-            Upstream::Worktrees => Box::new(adapters::worktrees::Fake::new(&receipts)),
-        };
-        registry.register(
-            upstream,
-            Fake {
-                inner,
-                path: path(root, upstream),
-                scenario: scenario.into(),
-                seed,
-            },
-        );
+        registry.register(upstream, fake(root, scenario, seed, upstream));
     }
     registry
+}
+
+pub fn verify_contracts() {
+    use tl3_kernel::{EffectKind::*, NodeId, Role};
+    let mut outputs: Vec<_> = [
+        StartRun(Role::Ingest),
+        StartRun(Role::Audit),
+        StartRun(Role::Plan),
+        StartRun(Role::Make),
+        StartRun(Role::Review),
+        SubmitChecks,
+        StartRebase,
+        PrepareWorktree,
+        Push,
+        PostApproval,
+        OpenPr,
+        Enqueue,
+        StopRun,
+        WithdrawJob,
+        ClosePr,
+        RemoveWorktree,
+    ]
+    .into_iter()
+    .map(|kind| Out::Effect {
+        node: NodeId(0),
+        seq: 0,
+        kind,
+        head: None,
+    })
+    .collect();
+    outputs.push(Out::Notice {
+        node: NodeId(0),
+        notice: tl3_kernel::Notice::MeasuresPosted,
+    });
+    for output in outputs {
+        let root = tempfile::tempdir().unwrap();
+        let upstream = tl3_controller::executor::upstream(output);
+        let mut delivery = Delivery {
+            key: "original".into(),
+            epoch: 0,
+            output,
+            generation: 1,
+            head_sha: Some(format!("{:040x}", 123)),
+            repository: crate::bootstrap().repos.remove(0),
+            issue: 42,
+            pull_request: Some(100),
+            paths: vec![],
+            attempt: 1,
+            round: 1,
+        };
+        let mut executor = fake(root.path(), "merge", 1, upstream);
+        let _ = executor.execute(&delivery);
+        executor.execute(&delivery).unwrap();
+        delivery.key = "new-epoch".into();
+        delivery.epoch = 1;
+        let _ = executor.execute(&delivery);
+        drop(executor);
+        let mut executor = fake(root.path(), "merge", 1, upstream);
+        delivery.key = "stale-refused".into();
+        delivery.epoch = 0;
+        assert!(
+            executor.execute(&delivery).is_err(),
+            "{output:?}: stale write accepted after restart"
+        );
+        delivery.key = "original".into();
+        let _ = executor.reconcile(&delivery).unwrap();
+        assert!(
+            matches!(
+                executor.reconcile(&delivery).unwrap(),
+                Reconciliation::Found(_)
+            ),
+            "{output:?}: old record unreadable"
+        );
+        let state = load(&path(root.path(), upstream));
+        assert!(!state.records.contains_key("stale-refused"));
+        assert_eq!(state.records["original"].applications, 1);
+        assert_eq!(state.records["original"].copies, 1);
+        if converges(output) {
+            assert_eq!(
+                state.records["new-epoch"].applications, 0,
+                "{output:?}: desired state applied twice"
+            );
+        }
+    }
+    println!("17 upstream delivery contracts and restart epoch fences passed");
 }

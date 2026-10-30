@@ -66,12 +66,12 @@ fn sources_publish_evidence_before_one_owner_consumes_it() {
 
 #[test]
 fn disconnected_controller_is_reported_to_each_source() {
-    loom::model(|| {
-        let (sender, receiver) = mpsc::channel::<Input>();
-        drop(receiver);
-        let other = sender.clone();
-        let worker = thread::spawn(move || assert!(other.send(Input::WorkerReply).is_err()));
-        assert!(sender.send(Input::Webhook).is_err());
-        worker.join().unwrap();
-    });
+    // loom 0.7 does not model receiver disconnection. Exercise the actual
+    // standard channel here instead of asserting an unsupported loom behavior.
+    let (sender, receiver) = std::sync::mpsc::channel::<Input>();
+    drop(receiver);
+    let other = sender.clone();
+    let worker = std::thread::spawn(move || assert!(other.send(Input::WorkerReply).is_err()));
+    assert!(sender.send(Input::Webhook).is_err());
+    worker.join().unwrap();
 }
