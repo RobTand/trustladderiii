@@ -813,7 +813,9 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             &[&expected, &future],
         )
         .unwrap();
-    client.batch_execute("DROP TABLE tl3_world").unwrap();
+    client
+        .batch_execute("DROP TABLE tl3_world CASCADE")
+        .unwrap();
     assert_eq!(
         Reader::open(settings).err().unwrap().to_string(),
         "database not initialized"
