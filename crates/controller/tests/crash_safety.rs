@@ -23,14 +23,14 @@ use tl3_kernel::{Command as Control, Event, NodeId, Out, Outcome, Phase};
 use tl3_store::{Commit, EffectState, Epoch, InternKind, Revision, Store};
 
 const POINTS: &[&str] = &[
+    "InternBeforeCommit",
+    "AfterCommit",
     "EventWritten",
     "RowsWritten",
     "EffectsWritten",
     "TransitionsWritten",
     "CreditWritten",
     "BeforeCommit",
-    "AfterCommit",
-    "InternBeforeCommit",
     "InternAfterCommit",
     "BeforeDispatch",
     "AfterDispatch",
@@ -500,8 +500,27 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     };
     assert_eq!(world.nodes[0].phase, expected);
     let mut value = serde_json::to_value(&world).unwrap();
-    for node in value["nodes"].as_array_mut().unwrap() {
-        for field in ["head", "approved", "merged"] {
+    for (index, node) in value["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        let files: Vec<_> = world
+            .files(world.nodes[index].footprint)
+            .unwrap()
+            .map(|file| {
+                snapshot
+                    .interned
+                    .iter()
+                    .find(|entry| entry.kind == InternKind::Path && entry.id == file.0 as i64)
+                    .unwrap()
+                    .value
+                    .clone()
+            })
+            .collect();
+        node["footprint"] = json!(files);
+        for field in ["head", "approved", "merged", "checked"] {
             if let Some(id) = node[field].as_i64() {
                 node[field] = json!(
                     snapshot
@@ -582,6 +601,28 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
     json!({"world":value, "outputs": outputs, "credit":credit, "resources":resources, "epoch":snapshot.epoch.get()})
 }
 
+fn assert_equivalent(actual: &Value, expected: &Value, path: &str) {
+    match (actual, expected) {
+        (Value::Object(actual), Value::Object(expected)) => {
+            assert_eq!(
+                actual.keys().collect::<Vec<_>>(),
+                expected.keys().collect::<Vec<_>>(),
+                "{path}: fields differ"
+            );
+            for (key, value) in actual {
+                assert_equivalent(value, &expected[key], &format!("{path}/{key}"));
+            }
+        }
+        (Value::Array(actual), Value::Array(expected)) => {
+            assert_eq!(actual.len(), expected.len(), "{path}: lengths differ");
+            for (index, (a, e)) in actual.iter().zip(expected).enumerate() {
+                assert_equivalent(a, e, &format!("{path}/{index}"));
+            }
+        }
+        _ => assert_eq!(actual, expected, "{path}"),
+    }
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--child") {
@@ -634,9 +675,10 @@ fn main() {
             let kills = run(&settings, root.path(), scenario, point, seed);
             let actual = normalized(&settings, root.path(), scenario);
             verify_cuts(&settings, root.path(), point, &kills);
-            assert_eq!(
-                actual, baseline,
-                "seed={seed} scenario={scenario} point={point}: recovery differs from uninterrupted run"
+            assert_equivalent(
+                &actual,
+                &baseline,
+                &format!("seed={seed} scenario={scenario} point={point}"),
             );
             total += kills.len();
             println!(
