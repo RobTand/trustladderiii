@@ -49,6 +49,10 @@ struct Database {
 
 impl Database {
     fn start() -> Self {
+        Self::start_with_fsync(true)
+    }
+
+    fn start_with_fsync(fsync: bool) -> Self {
         // Every archive, executable, cluster and fixture credential belongs to this job.
         let scratch = tempfile::Builder::new()
             .prefix("tl3-store-pg-")
@@ -70,12 +74,16 @@ impl Database {
                 ("shared_buffers".into(), "16MB".into()),
                 ("max_parallel_workers".into(), "0".into()),
                 ("max_worker_processes".into(), "0".into()),
+                // postgresql_embedded supplies -F; override it for every recovery test.
+                ("fsync".into(), if fsync { "on" } else { "off" }.into()),
+                ("synchronous_commit".into(), "on".into()),
             ]),
             ..Settings::default()
         };
         let mut postgres = PostgreSQL::new(settings);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
+            .max_blocking_threads(2)
             .build()
             .unwrap();
         let started = Instant::now();
@@ -83,7 +91,7 @@ impl Database {
             .block_on(postgres.setup())
             .expect("download and initialize embedded Postgres");
         println!(
-            "embedded Postgres cold setup: {:.2}s",
+            "embedded Postgres cold setup (fsync={fsync}): {:.2}s",
             started.elapsed().as_secs_f64()
         );
         runtime
@@ -553,31 +561,13 @@ fn durability_settings(settings: &tl3_config::Store) {
         .commit(&Commit::new("durable", json!(null), &snapshot))
         .unwrap();
     drop(durable);
-    client
-        .batch_execute("ALTER SYSTEM SET fsync = 'off'")
-        .unwrap();
-    client.query_one("SELECT pg_reload_conf()", &[]).unwrap();
-    until(|| {
-        client
-            .query_one("SHOW fsync", &[])
-            .unwrap()
-            .get::<_, &str>(0)
-            == "off"
-    });
+    let mut unsafe_database = Database::start_with_fsync(false);
+    let unsafe_settings = unsafe_database.create("unsafe_durability");
     assert!(matches!(
-        Store::open(settings),
+        Store::open(&unsafe_settings),
         Err(Error::Invalid("store requires Postgres fsync = on"))
     ));
-    client.batch_execute("ALTER SYSTEM RESET fsync").unwrap();
-    client.query_one("SELECT pg_reload_conf()", &[]).unwrap();
-    until(|| {
-        client
-            .query_one("SHOW fsync", &[])
-            .unwrap()
-            .get::<_, &str>(0)
-            == "on"
-    });
-    Store::open(settings).unwrap();
+    unsafe_database.stop();
 }
 
 struct KillOnDrop(Child);

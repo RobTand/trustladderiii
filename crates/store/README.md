@@ -106,8 +106,10 @@ this crate, with no workflow changes and no ignored database tests.
 The integration executable starts Postgres 17.4 through `postgresql_embedded`
 on an ephemeral port, using a current-thread runtime. The downloaded binaries,
 database and fixture password files live in its unique job temporary directory.
-Nothing uses Docker or deployment credentials. Postgres keeps fsync and
-synchronous_commit enabled. Tests run sequentially against separate databases
+Nothing uses Docker or deployment credentials. The recovery fixture explicitly
+overrides the embedded crate's `-F` flag to keep fsync enabled. Store connections
+enable synchronous_commit. A separate disposable server with fsync off tests
+the refusal to open. Tests run sequentially against separate databases
 on that child server. Both Linux x86_64 and aarch64 archives come from Zonky;
 Ubuntu hosted runners use the same fixture. Initial setup time is printed in
 the job log. The first run also compiles the Rust dependencies.
