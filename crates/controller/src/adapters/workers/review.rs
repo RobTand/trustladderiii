@@ -82,7 +82,7 @@ pub(super) fn inputs(
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let inputs = json!({"goals": criteria["goals"], "base_sha": base, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let inputs = json!({"goals": criteria["goals"], "base_sha": base, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "check_base_sha": run.base_sha, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

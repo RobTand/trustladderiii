@@ -915,9 +915,30 @@ and pytest internals while permitting ordinary program output. Review blockers
 must cite a supplied goal or rule. Approvals must name the exact reviewed head.
 The controller carries blocking findings into planning.
 
-Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
-covers resuming the round-0 session with the session store from #12. It is blocked
-by #12 and #13 and must land before the live tracer, #20.
+Each reviewer attempt uses the maker's session directory and atomic writer,
+with a distinct file named `reviewer-attempt-N.json`. The re-plan directory keeps
+attempt 1 of a new plan separate from attempt 1 of the old plan. Round 1 resumes
+its own conversation, including model reasoning and tool results. Its new `diff`
+starts at the last reviewed head in `base_sha`. `check_base_sha` separately names
+the commit used for the new check results' base outcomes. If round 0 failed checks
+and never reached review, round 1 starts a fresh conversation.
+
+The controller records each accepted review's generation, attempt, re-plan flag
+and head in the existing worker document store. A retry before acceptance keeps
+the same visit across generations. The worker checkpoints model turns and tool
+results before emitting progress. Recovery executes pending reads without another
+model turn. It validates and saves its final reply before emitting completion.
+A read interrupted before its result was saved may be repeated. A completed visit returns
+its saved reply without appending the input or calling the model again. A later
+accepted recheck is a new visit, even if its evidence is unchanged. New attempts
+start fresh. Closing the node deletes reviewer files with the maker sessions
+through the existing retirement path.
+
+To reproduce #88's checks, generate a manifest with
+`python3 crates/controller/tools/reviewer_resume_manifest.py hosts` or `workspace`,
+then submit it with `pbcampaign.py`. The host rows run the Python workers,
+publishing and workers scenarios on each named host. The workers scenarios include
+the maker scenarios. The workspace row runs `crates/controller/tools/verify.sh`.
 
 `github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
 client. The check is named `TL3 approval`. Its external ID contains the effect key

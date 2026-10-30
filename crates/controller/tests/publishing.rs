@@ -693,7 +693,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     for review in &reviews {
         assert_eq!(
             review["inputs"]["check_base_sha"],
-            json!(base(&f, &d)),
+            if review["resume_session"] == true {
+                reviews[0]["inputs"]["base_sha"].clone()
+            } else {
+                review["inputs"]["base_sha"].clone()
+            },
             "check outcomes must name their own comparison base"
         );
         assert_ne!(review["model"]["name"], config.models.maker[0].name);
