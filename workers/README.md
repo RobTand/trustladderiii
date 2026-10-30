@@ -146,8 +146,10 @@ before the controller acts on an early end.
 The brief has a schema limit of 80,000 Unicode characters, an approximation of
 20,000 tokens at four characters per token. Actual counts vary by tokenizer
 and language. The prompt also requests at most about 20,000 tokens. This is a
-brief limit, not request sizing. The reply contains no request size, forecast
-or credit. The controller's forecaster in #11 computes those later.
+brief limit, not request sizing. The model supplies no request size, forecast or credit. When the controller
+supplies forecast settings, worker code appends a measured forecast before
+emitting the reply. The controller converts it to request size; the kernel
+initializes credit.
 
 Audit receives the original issue and repository material plus either ingest
 reply as `inputs.ingest`. It returns one of these objects:
@@ -343,3 +345,13 @@ The first run downloads dependencies from PyPI before the tests start.
 schemas and prompts.
 Use the published `pbwait.py` to wait for the action key, then inspect its
 terminal record, logs and CAS receipt. An acknowledgement is not a pass.
+
+Planning and sized ingest replies append a code-generated `forecast`. With
+forecast settings in ingest inputs, ingest must declare `files` for the root's
+scope. The shared forecaster counts those files and the brief with the pinned
+o200k_base tokenizer. A model-supplied forecast is rejected.
+
+Planner replies also append code-generated `violations`. Leaf and split rule
+violations are successful evidence reports, so the controller can preserve the
+reason for the kernel's next planner run. Transport errors, malformed replies
+and unsafe file reads still fail the process. Models cannot supply `violations`.

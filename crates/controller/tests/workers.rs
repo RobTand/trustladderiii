@@ -1,4 +1,6 @@
 mod maker;
+#[path = "workers/planning.rs"]
+mod planning;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use serde_json::{Value, json};
@@ -62,12 +64,23 @@ fn prepare_workers() {
         status.success(),
         "worker venv sync failed; uv must provide Python 3.14 and the locked worker dependencies"
     );
+    assert!(
+        Command::new(worker_package().join(".venv/bin/python"))
+            .args(["-c", "import tiktoken; tiktoken.get_encoding('o200k_base')"])
+            .env(
+                "TIKTOKEN_CACHE_DIR",
+                std::env::temp_dir().join("data-gym-cache")
+            )
+            .status()
+            .unwrap()
+            .success()
+    );
 }
 
 fn materials(store: &mut Store) {
     store.put_worker_materials("0", &json!({
         "issue": {"number": 42, "title": "Fix greeting", "body": "Return hello.", "author": "requester", "comments": []},
-        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"]},
+        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]},
     })).unwrap();
 }
 
@@ -106,6 +119,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        question_context: None,
     }
 }
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
@@ -225,6 +239,16 @@ fn main() {
     println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
     event_source(&database.create("workers_events"));
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
+    for mode in [
+        "normal",
+        "plan-split",
+        "plan-invalid",
+        "plan-cant-meet",
+        "plan-bad-split",
+    ] {
+        planning::planning(&database.create(&mode.replace('-', "_")), mode);
+    }
+    println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     maker::run(&mut database);
     database.stop();
     println!("22 required worker supervisor and maker scenarios passed; no skips");
@@ -245,7 +269,7 @@ fn ingest_audit_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Plan),
                     ..
                 }
             ) {
@@ -258,7 +282,7 @@ fn ingest_audit_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Plan),
                     ..
                 }
             ) {
@@ -355,7 +379,7 @@ fn simulation(settings: &tl3_config::Store) {
         ["- Return hello."]
     );
     let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 2);
+    assert_eq!(progress.len(), 3);
     assert!(
         progress
             .iter()
@@ -468,7 +492,7 @@ fn killed_controller(settings: &tl3_config::Store) {
         .map(|e| e.unwrap().path())
         .filter(|p| p.is_dir())
         .collect();
-    assert_eq!(records.len(), 2, "one ingest and one audit");
+    assert_eq!(records.len(), 3, "ingest, audit and planner");
     assert!(records.iter().all(|p| attempts(p) == 1));
     let ingest = records
         .iter()
@@ -627,8 +651,8 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
         .collect();
     assert_eq!(
         runs.len(),
-        3,
-        "one failed ingest, its kernel-directed retry, and audit"
+        4,
+        "one failed ingest, its kernel-directed retry, audit and planner"
     );
     assert!(runs.iter().all(|p| attempts(p) == 1));
 }
@@ -838,7 +862,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     run.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
-        kind: EffectKind::StartRun(Role::Plan),
+        kind: EffectKind::StartRun(Role::Make | Role::Plan),
         head: None,
     };
     supervisor.execute(&run).unwrap();

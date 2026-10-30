@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -59,23 +59,13 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    stat_matches(
-        fs::read_to_string(format!("/proc/{}/stat", identity.pid)),
-        identity.start,
-    )
-}
-
-fn stat_matches(stat: std::io::Result<String>, start: u64) -> Result<bool> {
-    let stat = match stat {
-        Ok(s) => s,
-        // A proc stat read can race process exit and return ESRCH.
-        Err(e)
-            if e.kind() == std::io::ErrorKind::NotFound
-                || e.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
-        {
-            return Ok(false);
-        }
+    let mut file = match File::open(format!("/proc/{}/stat", identity.pid)) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.into()),
+    };
+    let Some(stat) = read_stat(&mut file)? else {
+        return Ok(false);
     };
     let fields: Vec<_> = stat
         .rsplit_once(')')
@@ -83,11 +73,11 @@ fn stat_matches(stat: std::io::Result<String>, start: u64) -> Result<bool> {
         .1
         .split_whitespace()
         .collect();
-    let actual_start = fields
+    let start = fields
         .get(19)
         .and_then(|s| s.parse::<u64>().ok())
         .ok_or(Error::Invalid("invalid process start time"))?;
-    Ok(actual_start == start && !matches!(fields.first(), Some(&"Z" | &"X")))
+    Ok(start == identity.start && !matches!(fields.first(), Some(&"Z" | &"X")))
 }
 
 pub(super) fn alive(path: &Path) -> Result<bool> {
@@ -152,15 +142,33 @@ fn temporary(path: &Path) -> PathBuf {
     ))
 }
 
+fn read_stat(file: &mut File) -> Result<Option<String>> {
+    let mut stat = String::new();
+    match file.read_to_string(&mut stat) {
+        Ok(_) => Ok(Some(stat)),
+        // An open proc stat file returns ESRCH if the process exits before read.
+        Err(error) if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) => {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::stat_matches;
+    use super::*;
+    use std::process::{Command, Stdio};
 
     #[test]
-    fn exited_process_during_stat_read_is_not_alive() {
-        for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
-            assert!(!stat_matches(Err(std::io::Error::from(error)), 0).unwrap());
-        }
-        assert!(stat_matches(Err(std::io::ErrorKind::PermissionDenied.into()), 0).is_err());
+    fn process_exit_between_stat_open_and_read_is_absence() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        assert_eq!(read_stat(&mut stat).unwrap(), None);
     }
 }

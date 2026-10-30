@@ -14,12 +14,14 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
         Role::Ingest => Some("ingest"),
         Role::Audit => Some("audit"),
         Role::Make => Some("maker"),
+        Role::Plan => Some("planner"),
         _ => None,
     }
 }
 
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
     static INGEST: OnceLock<jsonschema::Validator> = OnceLock::new();
+    static PLANNER: OnceLock<jsonschema::Validator> = OnceLock::new();
     static AUDIT: OnceLock<jsonschema::Validator> = OnceLock::new();
     static MAKER: OnceLock<jsonschema::Validator> = OnceLock::new();
     let (cell, schema) = match role {
@@ -34,6 +36,10 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         "maker" => (
             &MAKER,
             include_str!("../../../../../workers/src/tl3_workers/schemas/maker-reply.json"),
+        ),
+        "planner" => (
+            &PLANNER,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/planner-reply.json"),
         ),
         _ => return Err(Error::Invalid("unsupported worker role")),
     };
@@ -77,8 +83,16 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         });
     }
     Ok(MappedReply::Kernel(match role {
-        // The forecaster owns sizing in #11. Protocol v1 has no size field.
-        "ingest" if reply["kind"] == "brief" => Reply::IngestDone { size: 1 },
+        "ingest" if reply["kind"] == "brief" => {
+            let forecast = forecast(reply)?;
+            let size = forecast
+                .0
+                .div_ceil(forecast.1)
+                .max(1)
+                .try_into()
+                .map_err(|_| Error::Invalid("request size exceeds kernel range"))?;
+            Reply::IngestDone { size }
+        }
         "ingest" => Reply::IngestEarlyEnd(match reply["outcome"].as_str() {
             Some("duplicate") => EarlyEnd::Duplicate,
             Some("already_done") => EarlyEnd::AlreadyDone,
@@ -87,6 +101,22 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         }),
         "audit" if reply["verdict"] == "agree" => Reply::AuditAgrees,
         "audit" => Reply::AuditDisagrees,
+        "planner" => {
+            forecast(reply)?;
+            let violations = reply["violations"]
+                .as_array()
+                .ok_or(Error::Invalid("planner violations missing"))?;
+            if !violations.is_empty() || reply["kind"] == "cant_meet" {
+                Reply::PlanCantMeet
+            } else if reply["kind"] == "split" {
+                Reply::PlanSplit
+            } else {
+                Reply::PlanLeaf {
+                    footprint: tl3_kernel::Footprint::default(),
+                    fits: reply["forecast"]["fits"] == true,
+                }
+            }
+        }
         _ => unreachable!(),
     }))
 }
@@ -116,7 +146,11 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
             Err(Error::Invalid("maker inputs break role schema"))
         };
     }
-    static VALIDATORS: OnceLock<(jsonschema::Validator, jsonschema::Validator)> = OnceLock::new();
+    static VALIDATORS: OnceLock<(
+        jsonschema::Validator,
+        jsonschema::Validator,
+        jsonschema::Validator,
+    )> = OnceLock::new();
     let validators = VALIDATORS.get_or_init(|| {
         let ingest: Value = serde_json::from_str(include_str!(
             "../../../../../workers/src/tl3_workers/schemas/ingest-input.json"
@@ -130,8 +164,12 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
             "../../../../../workers/src/tl3_workers/schemas/ingest-reply.json"
         ))
         .unwrap();
+        let planner: Value = serde_json::from_str(include_str!(
+            "../../../../../workers/src/tl3_workers/schemas/planner-input.json"
+        ))
+        .unwrap();
         let mut registry = jsonschema::Registry::new();
-        for schema in [&ingest, &audit, &reply] {
+        for schema in [&ingest, &audit, &reply, &planner] {
             registry = registry
                 .add(schema["$id"].as_str().unwrap(), schema.clone())
                 .unwrap();
@@ -146,16 +184,50 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
                 .with_registry(&registry)
                 .build(&audit)
                 .unwrap(),
+            jsonschema::options()
+                .with_registry(&registry)
+                .build(&planner)
+                .unwrap(),
         )
     });
     let validator = if role == "ingest" {
         &validators.0
-    } else {
+    } else if role == "audit" {
         &validators.1
+    } else if role == "planner" {
+        &validators.2
+    } else {
+        return Err(Error::Invalid("unsupported worker role"));
     };
     if validator.is_valid(inputs) {
         Ok(())
     } else {
         Err(Error::Invalid("worker inputs break role schema"))
     }
+}
+
+fn forecast(reply: &Value) -> Result<(u64, u64)> {
+    let f = &reply["forecast"];
+    let tokens = f["tokens"]
+        .as_u64()
+        .ok_or(Error::Invalid("forecast missing"))?;
+    let fit = f["fit_tokens"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or(Error::Invalid("forecast limit missing"))?;
+    let context = f["context_tokens"]
+        .as_u64()
+        .ok_or(Error::Invalid("forecast context missing"))?;
+    let files = f["file_tokens"]
+        .as_object()
+        .ok_or(Error::Invalid("forecast files missing"))?;
+    let sum = files
+        .values()
+        .try_fold(0u64, |sum, v| sum.checked_add(v.as_u64()?))
+        .and_then(|n| n.checked_add(f["brief_tokens"].as_u64()?))
+        .and_then(|n| n.checked_add(f["overhead_tokens"].as_u64()?));
+    if sum != Some(tokens) || fit >= context || f["fits"].as_bool() != Some(tokens < fit) {
+        return Err(Error::Invalid("inconsistent forecast evidence"));
+    }
+    Ok((tokens, fit))
 }

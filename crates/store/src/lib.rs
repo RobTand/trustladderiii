@@ -255,7 +255,7 @@ impl Store {
     ) -> Result<Option<serde_json::Value>> {
         if !matches!(
             document,
-            "briefs" | "goals" | "audits" | "maker_replies" | "maker_findings"
+            "briefs" | "goals" | "audits" | "maker_replies" | "maker_findings" | "plans" | "findings"
         ) {
             return Err(Error::Invalid("unknown worker document"));
         }
@@ -266,6 +266,17 @@ impl Store {
                 &[&document, &node],
             )?
             .map(|r| r.get(0)))
+    }
+
+    /// Context committed with the kernel question and its notice delivery.
+    pub fn question_context(&mut self, question: u64) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT value FROM tl3_world WHERE table_name = 'question_context' AND row_id = $1",
+                &[&question.to_string()],
+            )?
+            .map(|row| row.get(0)))
     }
 
     /// Claim time exists even if the worker never emits progress.
