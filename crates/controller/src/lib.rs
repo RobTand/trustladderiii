@@ -979,9 +979,27 @@ impl Controller {
                     Evidence::Conflict { .. } => Fact::Conflict,
                     Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
                     Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
-                    Evidence::PushByOther { head } => Fact::PushByOther {
-                        head: self.head(node, &head)?,
-                    },
+                    Evidence::PushByOther { head } => {
+                        let previous_sha = current.head.and_then(|head| {
+                            snapshot
+                                .interned
+                                .iter()
+                                .find(|i| {
+                                    i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                                })
+                                .map(|i| i.value.as_str())
+                        });
+                        if let Some(run) = check_run(snapshot, node, previous_sha)? {
+                            commit.rows.push(put(
+                                "check_plans",
+                                format!("{}:{head}", node.0),
+                                json!(run),
+                            ));
+                        }
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }

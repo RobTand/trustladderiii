@@ -566,7 +566,6 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &checkout,
             &["commit", "--allow-empty", "-m", "outside commit"],
         );
-        let new = git(&checkout, &["rev-parse", "HEAD"]);
         git(
             &checkout,
             &[
@@ -575,8 +574,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
             ],
         );
-        c.observe("pushed-plan", check_observation(&f, &d, new))
-            .unwrap();
+
         webhook(&mut c, &server, "synchronize");
         drain(&mut c, &mut source, &mut store, Phase::Queued);
     } else if mode == "rebase" {
@@ -589,15 +587,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             if n.phase == Phase::Checking {
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
-                c.observe(
-                    "rebased-plan",
-                    Observation::CheckPlan {
-                        node: NodeId(0),
-                        sha: head,
-                        run: check_plan(&f, new_target),
-                    },
-                )
-                .unwrap();
+                let plan = c
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .into_iter()
+                    .find(|row| row.table == "check_plans" && row.id == format!("0:{head}"))
+                    .unwrap();
+                assert_eq!(plan.value["base_sha"], new_target);
                 break;
             }
         }

@@ -736,7 +736,8 @@ merged PR confirms without another write. Transport failures remain unknown.
 
 The kernel sequences push, approval, PR opening and queueing. Mergify adds the
 queue label only after those steps. A new commit or clean catch-up receives fresh
-checks and review. The existing worktree adapter performs rebases and removes
+checks and review. Outside pushes retain the request's check plan. Clean rebases
+carry that plan onto the reported new base. The worktree adapter performs rebases and removes
 the worktree and branch during teardown. The GitHub message pipeline posts the
 closing summary and closes the issue.
 
