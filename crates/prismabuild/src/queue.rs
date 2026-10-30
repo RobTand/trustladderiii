@@ -464,4 +464,31 @@ mod tests {
             "in-flight handoff read as absent"
         );
     }
+
+    #[tokio::test]
+    async fn lookup_keeps_retry_live_when_finishing_marker_retires() {
+        let (root, client, key) = fixture();
+        let claimed = root.path().join(format!("claimed/{key}.json"));
+        let marker = root
+            .path()
+            .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
+        std::fs::rename(&claimed, &marker).unwrap();
+        let mut claimed_reads = 0;
+        let record = client
+            .read_with(&key, |state| {
+                if state == "claimed" {
+                    claimed_reads += 1;
+                    if claimed_reads == 2 {
+                        std::fs::hard_link(&marker, root.path().join(format!("ready/{key}.json")))
+                            .unwrap();
+                        std::fs::remove_file(&marker).unwrap();
+                    }
+                }
+            })
+            .await;
+        assert!(
+            !matches!(record, Ok(None)),
+            "retiring retry marker read as absent"
+        );
+    }
 }
