@@ -270,22 +270,44 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
     );
     assert_ne!(revisit.generation, first.generation);
     while flow.controller.drive_once().unwrap() {}
-    let Input::Observation { key, observation } = flow.receiver.recv().unwrap() else {
-        panic!("worker observation")
+    let (key, observation) = loop {
+        let Input::Observation { key, observation } = flow.receiver.recv().unwrap() else {
+            panic!("worker observation")
+        };
+        if matches!(
+            &observation,
+            Observation::WorkerReply { generation, .. }
+                | Observation::Kernel(Event::Reply { generation, .. })
+                if *generation == revisit.generation
+        ) {
+            break (key, observation);
+        }
+        observe(
+            &mut flow.controller,
+            &key,
+            observation,
+            &flow.worktree,
+            &flow.base,
+        );
+        while flow.controller.drive_once().unwrap() {}
     };
     if new_edits {
         assert!(
-            matches!(&observation, Observation::WorkerReply { reply, .. } if reply["kind"] == "done")
+            matches!(&observation, Observation::WorkerReply { reply, .. } if reply["kind"] == "done"),
+            "{observation:?}"
         );
         assert_ne!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
     } else {
-        assert!(matches!(
-            &observation,
-            Observation::Kernel(Event::Reply {
-                reply: Reply::RunFailed,
-                ..
-            })
-        ));
+        assert!(
+            matches!(
+                &observation,
+                Observation::Kernel(Event::Reply {
+                    reply: Reply::RunFailed,
+                    ..
+                })
+            ),
+            "{observation:?}"
+        );
         assert_eq!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
         let runs = requests(&flow.config);
         let run = &runs[1];
