@@ -372,9 +372,6 @@ pub(super) fn replacement(settings: &tl3_config::Store) {
     d.wait(|s| s.node()["phase"] == "Auditing");
     d.send(12001, "Change the request to return goodbye");
     d.classified(12001);
-    d.wait(|s| s.node()["phase"] == "Auditing");
-    d.send(12001, "Change the request to return goodbye");
-    d.classified(12001);
     replacement_assertions(&mut d);
     println!("test steering_replacement_reuses_issue_and_latest_binding ... ok");
 }
@@ -631,6 +628,16 @@ pub(super) fn linked_reconciliation() {
     drop(state);
     correction.epoch = -1;
     assert!(adapter.execute(&correction).is_err());
+    for request in api
+        .requests()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET" && r.url.path() == "/repos/owner/sandbox/issues")
+    {
+        let query: std::collections::BTreeMap<_, _> = request.url.query_pairs().collect();
+        assert_eq!(query.get("since").unwrap(), "2026-10-30T00:59:59+00:00");
+        assert_eq!(query.get("sort").unwrap(), "created");
+        assert_eq!(query.get("direction").unwrap(), "desc");
+    }
     println!("test steering_linked_issue_uncertain_post_reconciles_without_duplicate ... ok");
 }
 

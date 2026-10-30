@@ -452,7 +452,7 @@ fn receiver_is_durable(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     assert!(api.state.lock().unwrap().closed);
     assert_eq!(api.state.lock().unwrap().posts, 2);
@@ -514,7 +514,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
@@ -528,7 +528,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     let before = store.ingress_cursor("github-catch-up").unwrap();
     api.state.lock().unwrap().fail_reads = true;
@@ -1223,8 +1223,16 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 2);
-    assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert!(comments.is_empty());
+    for id in [9, 903] {
+        assert!(
+            store
+                .comment_retired(&format!("owner/sandbox/3/{id}"))
+                .unwrap()
+        );
+    }
+    assert!(calls.lock().unwrap().iter().any(|delivery| matches!(delivery,
+        GitHubDelivery::Webhook(delivery) if matches!(&delivery.event, Some(tl3_github::webhook::Event::CommentCreated { issue, .. }) if issue.number == 25))));
     assert!(store.pending_ingress().unwrap().is_empty());
     let later = Arc::new(Mutex::new(vec![]));
     controller.register_github_translator("later", RecordingTranslator(later.clone()));
@@ -1268,7 +1276,7 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        2
+        0
     );
 }
 fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
@@ -1324,8 +1332,14 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 3);
-    assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert!(comments.is_empty());
+    for id in [9, 901, 903] {
+        assert!(
+            store
+                .comment_retired(&format!("owner/sandbox/3/{id}"))
+                .unwrap()
+        );
+    }
     assert_eq!(calls.lock().unwrap().len(), 1, "older shapes were skipped");
     assert!(
         store.ingress_after(0).unwrap().is_empty(),

@@ -443,10 +443,10 @@ Submit each generated manifest with `pbcampaign.py --detach`.
 
 `steering.rs` queues each stored comment from the configured actor once. Startup
 queues comments stored before steering was installed too. A durable `comment_jobs`
-row owns one classification per request at a time. The job stores the phase and open question
-shown to the classifier. A reply keeps that question's ID even if the question
+row owns one classification per request at a time. The job stores the phase and
+open question shown to the classifier. A reply keeps that question's ID even if the question
 changes while the worker runs. Completed classifications leave the watch set and
-the pending queue. Their stored comments retain the result while the request is open.
+the pending queue. Stored comments retain the result while the request is open.
 After closure and delivery of any reply or correction, the controller deletes the
 comment row. Its retirement event keeps the comment ID for indexed deduplication.
 No timer scans comment history.
@@ -461,18 +461,18 @@ An unsure comment gets one short question through the writer's `clarification`
 message kind, checker and marker reconciliation. A failed classification retries
 twice with distinct attempt keys. After that, a checked question quotes a short
 excerpt and asks Rob to rephrase. Rejected writer drafts receive their violations
-for up to two reruns. Exhaustion posts a fixed, checked request to rephrase. `comment_questions` tracks the conversation by the
-original comment key. The next comment is classified with that conversation as
+for up to two reruns. Exhaustion posts a fixed, checked request to rephrase.
+`comment_questions` tracks the conversation by the original comment key. The next comment is classified with that conversation as
 context. Completed conversations leave the pending set. An explicit unclear
 answer to a kernel question becomes its existing `Answer::Unclear`; the kernel
 allows one clarification. Comment uncertainty never changes a kernel question.
 
 The existing `FileReplacement` notice starts a replacement on the same issue
 after closing as Replaced. Its source is Rob's new text. The issue stays open,
-and intake, status and comment routing use its latest request. A complaint on a closed request files a correction directly from the
-comment pipeline, keyed by comment ID. The closed node receives no event.
-Only corrections create a new issue. The GitHub adapter uses a stable marker, the `tl3` label and a
-link to Rob's authorizing comment. A correction records his request for a revert.
+and intake, status and comment routing use its latest request. A complaint on a
+closed request files a correction directly from the comment pipeline, keyed by comment ID. The closed node receives no event.
+Only corrections create a new issue. The GitHub adapter uses a stable marker, the
+`tl3` label and a link to Rob's authorizing comment. A correction records his request for a revert.
 Marker reconciliation recovers an issue created before an acknowledgement.
 Its issue query is bounded by the authorizing comment's timestamp and sorts by
 creation time. The same timestamp remains attached through retries and recovery.
