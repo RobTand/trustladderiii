@@ -91,7 +91,9 @@ its event is durable.
 ## Outage recovery
 
 `catch_up(served_repos, since)` returns current snapshots and a new cursor captured
-before the pass starts. It includes open and closed issues updated since the cursor,
+before the pass starts and rounded down to a whole second. Queries look back one
+additional second because GitHub timestamps have second precision and its since
+filters exclude the boundary. It includes open and closed issues updated since the cursor,
 repository comments, label changes with their original actors, and PRs updated since the cursor. PR listing is independent of issue timestamps. It rereads checks on every supplied `tracked_heads`
 entry and every changed PR head, since a check can finish without updating an issue.
 

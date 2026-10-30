@@ -481,10 +481,10 @@ async fn all_slice_one_rest_operations_use_the_documented_routes() {
         .close_pull_request("owner/sandbox", 13)
         .await
         .unwrap();
-    // Wiremock path() compares decoded URL paths.
+    // GitHub branch names occupy one encoded path segment.
     get(
         &server,
-        "/repos/owner/sandbox/branches/tl3/change",
+        "/repos/owner/sandbox/branches/tl3%2Fchange",
         json!({"name":"tl3/change","commit":{"sha":"abc1234"}}),
     )
     .await;
@@ -499,7 +499,7 @@ async fn all_slice_one_rest_operations_use_the_documented_routes() {
         "abc1234"
     );
     Mock::given(method("DELETE"))
-        .and(path("/repos/owner/sandbox/git/refs/heads/tl3/change"))
+        .and(path("/repos/owner/sandbox/git/refs/heads/tl3%2Fchange"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&server)
@@ -573,7 +573,7 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     Mock::given(method("GET"))
         .and(path("/repos/owner/sandbox/issues"))
         .and(query_param("state", "all"))
-        .and(query_param("since", "2026-10-29T00:00:00+00:00"))
+        .and(query_param("since", "2026-10-28T23:59:59+00:00"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([fixture("issue")])))
         .expect(1)
         .mount(&server)

@@ -1,5 +1,5 @@
 use crate::models::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use reqwest::{Method, StatusCode, Url, header::HeaderMap};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -599,14 +599,18 @@ impl GitHub {
         served: &[ServedRepo],
         since: DateTime<Utc>,
     ) -> Result<CatchUp, Error> {
-        let next_cursor = Utc::now();
-        if since > next_cursor {
+        let started_at = Utc::now();
+        let next_cursor = started_at.with_nanosecond(0).ok_or(Error::Response)?;
+        if since > started_at {
             return Err(Error::Config("catch-up cursor is in the future"));
         }
+        let lookback = since
+            .checked_sub_signed(chrono::Duration::seconds(1))
+            .ok_or(Error::Config("catch-up cursor is out of range"))?;
         let mut repositories = Vec::new();
         for repo in served {
             let path = repo_path(&repo.full_name)?;
-            let query = vec![("since".into(), since.to_rfc3339())];
+            let query = vec![("since".into(), lookback.to_rfc3339())];
             let mut issues_query = query.clone();
             issues_query.push(("state".into(), "all".into()));
             let issues: Vec<Issue> = self
