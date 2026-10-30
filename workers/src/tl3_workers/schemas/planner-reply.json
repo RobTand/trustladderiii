@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-reply.json",
+  "$defs": {
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "tokenizer": {
+          "const": "o200k_base"
+        },
+        "brief_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_tokens": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "overhead_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fits": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tokenizer",
+        "brief_tokens",
+        "file_tokens",
+        "overhead_tokens",
+        "tokens",
+        "fit_tokens",
+        "context_tokens",
+        "fits"
+      ],
+      "additionalProperties": false,
+      "description": "Appended by the reply check. The model must omit this field."
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "leaf"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "demonstrating",
+                  "regression",
+                  "behavior-preserving"
+                ]
+              },
+              "node_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "goal_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "Zero-based positions in inputs.ingest.goals."
+              }
+            },
+            "required": [
+              "kind",
+              "node_ids",
+              "goal_ids"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "no_design_questions": {
+          "const": true
+        },
+        "lands_on_its_own": {
+          "const": true
+        },
+        "forecast": {
+          "$ref": "#/$defs/forecast"
+        }
+      },
+      "required": [
+        "kind",
+        "files",
+        "checks",
+        "no_design_questions",
+        "lands_on_its_own"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "split"
+        },
+        "reason": {
+          "enum": [
+            "does_not_fit",
+            "multiple_repos",
+            "out_of_room"
+          ]
+        },
+        "pieces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "brief": {
+                "type": "string",
+                "minLength": 1
+              },
+              "goal_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "Zero-based positions in inputs.ingest.goals."
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "brief",
+              "goal_ids",
+              "files"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2
+        },
+        "forecast": {
+          "$ref": "#/$defs/forecast"
+        }
+      },
+      "required": [
+        "kind",
+        "reason",
+        "pieces"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "cant_meet"
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "forecast": {
+          "$ref": "#/$defs/forecast"
+        }
+      },
+      "required": [
+        "kind",
+        "report",
+        "files"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
