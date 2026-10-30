@@ -1237,8 +1237,8 @@ fn retirement(settings: &tl3_config::Store) {
     restarted.retire(&mut store).unwrap();
     assert_retired(&config, &mut store);
 
-    // A source can attach before a launcher claims its attempt, with no pidfd to wake it.
-    fs::create_dir_all(run_root.join("attempt-00000000")).unwrap();
+    // A source can attach before an attempt exists, with no pidfd to wake it.
+    fs::create_dir_all(&run_root).unwrap();
     store.claim_worker(&run.key, "0", 0, 0).unwrap();
     save(
         &mut store,
