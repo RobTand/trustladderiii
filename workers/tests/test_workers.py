@@ -2,6 +2,7 @@ import copy
 from importlib.resources import files
 import json
 from pathlib import Path
+import socket
 import sys
 
 from jsonschema import Draft202012Validator, ValidationError
