@@ -59,7 +59,14 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    let stat = match fs::read_to_string(format!("/proc/{}/stat", identity.pid)) {
+    stat_matches(
+        fs::read_to_string(format!("/proc/{}/stat", identity.pid)),
+        identity.start,
+    )
+}
+
+fn stat_matches(stat: std::io::Result<String>, start: u64) -> Result<bool> {
+    let stat = match stat {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.into()),
@@ -70,11 +77,24 @@ fn matches(identity: &Identity) -> Result<bool> {
         .1
         .split_whitespace()
         .collect();
-    let start = fields
+    let actual_start = fields
         .get(19)
         .and_then(|s| s.parse::<u64>().ok())
         .ok_or(Error::Invalid("invalid process start time"))?;
-    Ok(start == identity.start && !matches!(fields.first(), Some(&"Z" | &"X")))
+    Ok(actual_start == start && !matches!(fields.first(), Some(&"Z" | &"X")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stat_matches;
+
+    #[test]
+    fn exited_process_during_stat_read_is_not_alive() {
+        for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
+            assert!(!stat_matches(Err(std::io::Error::from(error)), 0).unwrap());
+        }
+        assert!(stat_matches(Err(std::io::Error::from(rustix::io::Errno::ACCES)), 0).is_err());
+    }
 }
 
 pub(super) fn alive(path: &Path) -> Result<bool> {
