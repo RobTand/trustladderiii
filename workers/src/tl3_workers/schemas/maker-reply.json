@@ -31,6 +31,7 @@
       "type": "object",
       "properties": {
         "kind": {"const": "needs_files"},
+        "fits": {"type": "boolean", "description": "Added by worker code. The model must omit this field."},
         "files": {
           "type": "array", "minItems": 1, "uniqueItems": true,
           "items": {

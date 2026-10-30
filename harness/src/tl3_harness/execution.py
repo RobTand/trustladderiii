@@ -82,7 +82,8 @@ class Progress:
 
 
 def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: Path,
-             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset()) -> dict[str, Outcome]:
+             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
+             messages: dict[str, str] | None = None) -> dict[str, Outcome]:
     missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
     records = []
     invalid = False
@@ -112,7 +113,7 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     try:
         if invalid:
             raise InvalidReport("invalid report stream")
-        return parse(records, tests, missing, exit_code, additions)
+        return parse(records, tests, missing, exit_code, additions, messages=messages)
     except InvalidReport:
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
@@ -156,8 +157,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             demonstrated = run_tree(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions)
         else:
             demonstrated = {}
-        after = run_tree(new, container, tests, root / "head.jsonl", progress)
-        return tuple(judge(check, demonstrated if check.kind == Kind.DEMONSTRATING else before, after)
+        messages = {}
+        after = run_tree(new, container, tests, root / "head.jsonl", progress, messages=messages)
+        return tuple(judge(check, demonstrated if check.kind == Kind.DEMONSTRATING else before, after, messages=messages)
                      for check in plan)
 
 

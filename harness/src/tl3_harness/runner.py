@@ -38,7 +38,7 @@ class Reporter:
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
             else:
-                self.emit(event="collection-error")
+                self.emit(event="collection-error", message=str(report.longrepr)[:1000])
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):
@@ -60,7 +60,8 @@ class Reporter:
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
             return report
         self.emit(event="phase", test=item.nodeid, when=report.when,
-                  outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing)
+                  outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
+                  message=str(report.longrepr)[:1000] if report.failed else "")
         return report
 
     def pytest_runtest_logreport(self, report):

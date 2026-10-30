@@ -85,6 +85,16 @@ def create_model(request):
         reply = {"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."} if request["role"] == "ingest" else reply
     if mode in {"disagree", "steering-answers"} and request["role"] == "audit":
         reply = {"verdict": "disagree", "objections": ["Preserve punctuation."]}
+    if request["role"] == "maker":
+        return FakeMessagesListChatModel(responses=[
+            AIMessage(content="", tool_calls=[{"name": "write", "args": {
+                "path": "greeting.py", "content": "def greet(): return 'hello'\n",
+            }, "id": "greeting", "type": "tool_call"}]),
+            AIMessage(content=json.dumps({"kind": "done", "self_check": [
+                {"goal_id": goal["id"], "status": "met", "evidence": "greet returns hello with the original signature."}
+                for goal in request["inputs"]["goals"]
+            ]})),
+        ])
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 

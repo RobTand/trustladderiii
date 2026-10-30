@@ -290,3 +290,134 @@ pub(super) fn transient_io(settings: &tl3_config::Store) {
     supervisor.stop_run(&run.key, 0).unwrap();
     assert!(result.success());
 }
+
+pub(super) fn session_guard(settings: &tl3_config::Store, guard: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    save(
+        &mut store,
+        vec![RowChange::Put {
+            table: "nodes".into(),
+            id: "0".into(),
+            value: json!({"phase":{"Closed":"Stopped"}}),
+        }],
+        vec![],
+        vec![],
+    );
+    let session = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
+    fs::create_dir_all(session.parent().unwrap()).unwrap();
+    fs::write(&session, "saved conversation").unwrap();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    match guard {
+        "inbox" => save(
+            &mut store,
+            vec![RowChange::Put {
+                table: "inbox".into(),
+                id: "pending".into(),
+                value: json!({"pending":true}),
+            }],
+            vec![],
+            vec![],
+        ),
+        "effect" => save(
+            &mut store,
+            vec![],
+            vec![],
+            vec![NewEffect {
+                key: run.key.clone(),
+                kind: "Workers".into(),
+                payload: json!(run),
+            }],
+        ),
+        "progress" => {
+            seed(&mut store, &config, &run.key, EffectState::Confirmed);
+            store.block_worker_retirement(&run.key).unwrap();
+        }
+        _ => panic!("unknown session guard"),
+    }
+    assert!(!store.can_retire_worker_session("0").unwrap());
+    supervisor.retire(&mut store).unwrap();
+    assert!(
+        session.exists(),
+        "{guard} alone must retain a closed node's conversation"
+    );
+    match guard {
+        "inbox" => save(
+            &mut store,
+            vec![RowChange::Delete {
+                table: "inbox".into(),
+                id: "pending".into(),
+            }],
+            vec![],
+            vec![],
+        ),
+        "effect" => save(
+            &mut store,
+            vec![],
+            vec![
+                EffectTransition {
+                    key: run.key.clone(),
+                    from: EffectState::Intended,
+                    to: EffectState::Sent,
+                },
+                EffectTransition {
+                    key: run.key.clone(),
+                    from: EffectState::Sent,
+                    to: EffectState::Confirmed,
+                },
+            ],
+            vec![],
+        ),
+        "progress" => {
+            fs::remove_dir_all(root_for(&config, &run.key)).unwrap();
+            store.forget_worker(&run.key).unwrap();
+        }
+        _ => unreachable!(),
+    }
+    assert!(store.can_retire_worker_session("0").unwrap());
+    supervisor.retire(&mut store).unwrap();
+    assert!(!session.exists());
+}
+
+pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    for node in ["0", "1"] {
+        save(
+            &mut store,
+            vec![RowChange::Put {
+                table: "nodes".into(),
+                id: node.into(),
+                value: json!({"phase":{"Closed":"Stopped"}}),
+            }],
+            vec![],
+            vec![],
+        );
+        let session = config.workers.runs.join("sessions").join(node);
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("attempt.json"), "saved conversation").unwrap();
+    }
+    let retained = config.workers.runs.join("sessions/0");
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    fs::set_permissions(&retained, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = supervisor.retire(&mut store);
+    fs::set_permissions(&retained, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        result.is_ok(),
+        "an undeletable session must not fail idle drive_once"
+    );
+    assert!(retained.join("attempt.json").exists());
+    assert!(
+        !config.workers.runs.join("sessions/1").exists(),
+        "other nodes still retire"
+    );
+    supervisor.retire(&mut store).unwrap();
+    assert!(
+        !retained.exists(),
+        "a later idle pass retries retained sessions"
+    );
+}

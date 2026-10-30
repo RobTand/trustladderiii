@@ -134,6 +134,7 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.rob.login, "RobTand");
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
     assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
+    assert_eq!(config.hindsight.bank, "tl3");
     for (maker, expected) in
         config
             .models

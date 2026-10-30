@@ -25,7 +25,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         store.put_worker_materials("0", &inputs).unwrap();
     }
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -102,8 +102,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             1
         );
         drop(controller);
-        let (registry, _) =
-            adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        let (registry, _) = worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
         let mut reopened = Controller::open(
             Store::open(settings).unwrap(),
             registry,

@@ -55,6 +55,7 @@ class TestResult:
     head: Outcome
     pre_existing: bool
     passed: bool
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,8 @@ class Result:
     custody: Custody = field(default=Custody.IN_PROCESS, init=False)
 
 
-def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome]) -> Result:
+def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
+          messages: dict[str, str] | None = None) -> Result:
     tests = []
     infrastructure = False
     for test in check.tests:
@@ -83,7 +85,10 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome]) -> R
                                          pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR))
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
-        tests.append(TestResult(test, before, after, pre_existing, passed))
+        message = "" if passed else (messages or {}).get(test, "")
+        if not passed and not message:
+            message = f"Check {check.kind}: base {before}, head {after}."
+        tests.append(TestResult(test, before, after, pre_existing, passed, message[:1000]))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
     return Result(check.name, check.kind, verdict, tuple(tests))
