@@ -85,7 +85,7 @@ def _stage(worktree, root):
         # PB's snapshot parent proves this action belongs to the maker's checkout.
         # Keep the private harness input dirty so PB seals it above that parent.
         commands.extend([
-            ("fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--", str(checkout), "HEAD"),
+            ("fetch", "--no-tags", "--no-recurse-submodules", "--", str(checkout), "HEAD"),
             ("update-ref", "HEAD", "FETCH_HEAD"),
         ])
     commands.append(("add", "--force", "--all"))
