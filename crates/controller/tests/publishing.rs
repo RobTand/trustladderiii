@@ -1,0 +1,694 @@
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
+mod worktree_fixture;
+
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{Arc, Mutex, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
+use tl3_controller::{
+    Bootstrap, Controller, LabelledIssue, Repository,
+    adapters::{
+        self,
+        github::APPROVAL_CHECK,
+        prismabuild::{Check, CheckRun, Kind},
+        workers::{Supervisor, WorkerOutputSource, writer::FakeWriter},
+        worktrees::Real,
+    },
+    cli::Input,
+    executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
+};
+use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
+use tl3_kernel::{EffectKind, NodeId, Out, Outcome, Phase, Role};
+use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
+use tl3_store::{Commit, RowChange, Store};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+use worktree_fixture::{Fixture, commit, git};
+
+fn repo() -> Repository {
+    worktree_fixture::identity()
+}
+fn bootstrap() -> Bootstrap {
+    Bootstrap {
+        repos: vec![repo()],
+        rob: 1,
+        slots: 1,
+        pool: 1,
+    }
+}
+fn check_plan(f: &Fixture, base: String) -> CheckRun {
+    CheckRun {
+        repository: f.repo.clone(),
+        base_sha: base,
+        plan: vec![Check {
+            name: "value".into(),
+            kind: Kind::Demonstrating,
+            tests: vec!["test_value.py::test_value".into()],
+        }],
+    }
+}
+fn base(f: &Fixture, d: &Delivery) -> String {
+    git(
+        &f.repo,
+        &[
+            "rev-parse",
+            &format!("refs/tl3/bases/{}", Real::branch(d).unwrap().as_str()),
+        ],
+    )
+}
+fn check_observation(f: &Fixture, d: &Delivery, head: String) -> Observation {
+    Observation::CheckPlan {
+        node: d.node(),
+        sha: head,
+        run: check_plan(f, base(f, d)),
+    }
+}
+struct Workers {
+    real: Supervisor,
+    fake: adapters::workers::Fake,
+    fixture: Arc<Fixture>,
+}
+impl Executor for Workers {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Review) | EffectKind::StopRun,
+                ..
+            }
+        ) {
+            return self.real.execute(d);
+        }
+        let mut c = self.fake.execute(d)?;
+        for o in &mut c.observations {
+            match o {
+                Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                Observation::Made { sha, .. } => {
+                    let checkout = self.fixture.adapter().checkout(d);
+                    *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                }
+                _ => {}
+            }
+        }
+        if let Some(Observation::Made { sha, .. }) = c.observations.first() {
+            c.observations
+                .insert(0, check_observation(&self.fixture, d, sha.clone()));
+        }
+        Ok(c)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Review) | EffectKind::StopRun,
+                ..
+            }
+        ) {
+            self.real.reconcile(d)
+        } else {
+            self.fake.reconcile(d)
+        }
+    }
+    fn retire(&mut self, s: &mut Store) -> tl3_controller::Result<()> {
+        self.real.retire(s)
+    }
+}
+
+struct State {
+    pull: Option<Value>,
+    checks: Vec<Value>,
+    comments: Vec<Value>,
+    labels: bool,
+    closed: bool,
+    fail_reads: bool,
+    lose_response: Option<&'static str>,
+    opens: usize,
+    reopens: usize,
+    closes: usize,
+    operations: Vec<String>,
+    queue_fixture: &'static str,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            pull: None,
+            checks: vec![],
+            comments: vec![],
+            labels: false,
+            closed: false,
+            fail_reads: false,
+            lose_response: None,
+            opens: 0,
+            reopens: 0,
+            closes: 0,
+            operations: vec![],
+            queue_fixture: "waiting",
+        }
+    }
+}
+fn recorded_check(name: &str, head: &Value) -> Value {
+    let checks: Vec<Value> = serde_json::from_slice(
+        &fs::read(format!(
+            "{}/../mergify/tests/fixtures/{name}/checks.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut check = checks
+        .into_iter()
+        .find(|c| c["name"] == tl3_mergify::QUEUE_CHECK)
+        .unwrap();
+    check["head_sha"] = head.clone();
+    check
+}
+#[derive(Clone)]
+struct Api {
+    state: Arc<Mutex<State>>,
+    fixture: Arc<Fixture>,
+}
+impl Respond for Api {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let mut s = self.state.lock().unwrap();
+        let method = r.method.as_str();
+        let path = r.url.path();
+        if path == "/app/installations/1/access_tokens" {
+            return ResponseTemplate::new(201)
+                .set_body_json(json!({"token":"disposable", "expires_at":"2099-01-01T00:00:00Z"}));
+        }
+        if s.fail_reads && method == "GET" {
+            return ResponseTemplate::new(503);
+        }
+        let prefix = "/repos/RobTand/tl3-sandbox";
+        let path = path.strip_prefix(prefix).unwrap_or(path);
+        let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
+        let response = match (method, path) {
+            ("GET", "/pulls") => json!(s.pull.iter().collect::<Vec<_>>()),
+            ("POST", "/pulls") => {
+                s.opens += 1;
+                s.operations.push("open".into());
+                let head = git(
+                    &self.fixture.remote,
+                    &["rev-parse", body["head"].as_str().unwrap()],
+                );
+                let base = git(&self.fixture.remote, &["rev-parse", "main"]);
+                s.pull = Some(
+                    json!({"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
+                    "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
+                    "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
+                );
+                s.pull.clone().unwrap()
+            }
+            ("GET", "/pulls/100") => {
+                if let Some(pull) = &mut s.pull {
+                    if pull["state"] == "open" {
+                        pull["head"]["sha"] = json!(git(
+                            &self.fixture.remote,
+                            &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
+                        ));
+                    }
+                }
+                s.pull.clone().unwrap()
+            }
+            ("PATCH", "/pulls/100") => {
+                if body["state"] == "open" {
+                    s.reopens += 1;
+                } else {
+                    s.closes += 1;
+                }
+                s.pull.as_mut().unwrap()["state"] = body["state"].clone();
+                s.pull.clone().unwrap()
+            }
+            ("GET", "/issues/42" | "/issues/100") => {
+                json!({"number":42,"title":"Fix the value", "body":"Return two.","state":if s.closed {"closed"} else {"open"},"updated_at":"2026-10-30T00:00:00Z","labels":if s.labels {json!([{"name":"tl3-queue"}])} else {json!([])},"pull_request":null})
+            }
+            ("PATCH", "/issues/42") => {
+                s.closed = true;
+                s.operations.push("close-issue".into());
+                json!({"number":42,"title":"Fix the value","body":"Return two.","state":"closed","updated_at":"2026-10-30T00:00:00Z"})
+            }
+            ("GET", "/issues/42/comments") => json!(s.comments),
+            ("POST", "/issues/42/comments") => {
+                s.operations.push("comment".into());
+                let c = json!({"id":s.comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"});
+                s.comments.push(c.clone());
+                c
+            }
+            ("GET", "/issues/100/events") => json!([]),
+            ("POST", "/issues/100/labels") => {
+                let head = &s.pull.as_ref().unwrap()["head"]["sha"];
+                assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
+                    && c["head_sha"] == *head
+                    && c["app"]["id"] == 123));
+                s.operations.push("enqueue".into());
+                s.labels = true;
+                json!([{"name":"tl3-queue"}])
+            }
+            ("DELETE", "/issues/100/labels/tl3-queue") => {
+                s.labels = false;
+                json!([])
+            }
+            ("GET", path) if path.ends_with("/check-runs") => {
+                let sha = path.split('/').nth(2).unwrap();
+                let mut checks: Vec<_> = s
+                    .checks
+                    .iter()
+                    .filter(|c| c["head_sha"] == sha)
+                    .cloned()
+                    .collect();
+                if s.labels && s.pull.as_ref().is_some_and(|p| p["head"]["sha"] == sha) {
+                    checks.push(recorded_check(s.queue_fixture, &json!(sha)));
+                }
+                json!({"check_runs":checks})
+            }
+            ("POST", "/check-runs") => {
+                let mut c = body.clone();
+                c["id"] = json!(s.checks.len() + 1);
+                c["app"] = json!({"id":123,"slug":"factory"});
+                s.operations.push("approve".into());
+                s.checks.push(c.clone());
+                c
+            }
+            _ => panic!("unexpected mock request: {method} {path}"),
+        };
+        if s.lose_response == Some(path) {
+            s.lose_response = None;
+            return ResponseTemplate::new(503);
+        }
+        ResponseTemplate::new(200).set_body_json(response)
+    }
+}
+struct Server {
+    runtime: tokio::runtime::Runtime,
+    server: MockServer,
+    api: Api,
+}
+impl Server {
+    fn new(fixture: Arc<Fixture>) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let api = Api {
+            state: Arc::new(Mutex::new(State::default())),
+            fixture,
+        };
+        let server = runtime.block_on(async {
+            let server = MockServer::start().await;
+            Mock::given(|_: &Request| true)
+                .respond_with(api.clone())
+                .mount(&server)
+                .await;
+            server
+        });
+        Self {
+            runtime,
+            server,
+            api,
+        }
+    }
+    fn clients(&self) -> BTreeMap<u64, GitHub> {
+        BTreeMap::from([(
+            1,
+            GitHub::new(
+                AppConfig {
+                    id: 123,
+                    slug: "factory".into(),
+                    pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+                    webhook_secret: "fixture".into(),
+                },
+                1,
+                ClientOptions {
+                    api_url: format!("{}/", self.server.uri()).parse().unwrap(),
+                    max_retries: 0,
+                    mutation_interval: Duration::ZERO,
+                    max_wait: Duration::ZERO,
+                    ..ClientOptions::default()
+                },
+            )
+            .unwrap(),
+        )])
+    }
+    fn adapter(&self, root: &Path, epoch: i64) -> adapters::github::Adapter {
+        adapters::github::Adapter::new(self.clients(), FakeWriter, epoch, Policy::default(), root)
+            .unwrap()
+    }
+}
+fn pb(root: &Path) -> adapters::prismabuild::Adapter {
+    let queue = root.join("queue");
+    for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
+        fs::create_dir_all(queue.join(state)).unwrap();
+    }
+    fs::write(queue.join("mode"), "done").unwrap();
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let tool = Tool {
+        program: "python3".into(),
+        args: vec![
+            manifest.join("tests/fixtures/pb.py").into(),
+            queue.clone().into(),
+            manifest.join("../prismabuild/tests/fixtures/queue").into(),
+        ],
+    };
+    adapters::prismabuild::Adapter::new(
+        PrismaBuild::new(Options {
+            queue_root: queue,
+            tool: tool.clone(),
+            bell_url: "http://127.0.0.1:9/".into(),
+        })
+        .unwrap(),
+        adapters::prismabuild::Settings {
+            records: root.join("pb-records"),
+            harness: manifest.join("../../harness/src/tl3_harness"),
+            python: vec!["python3.14".into()],
+            image: format!("sha256:{}", "a".repeat(64)),
+            demand: Demand {
+                cpus: 1.try_into().unwrap(),
+                mem_gb: 2,
+                gpu: false,
+            },
+            quiet: Duration::from_secs(120),
+            priority: -10,
+            result_tool: tool,
+        },
+    )
+    .unwrap()
+}
+fn document(store: &mut Store, table: &str, value: Value) {
+    let snapshot = store.load().unwrap();
+    let mut c = Commit::new(
+        format!("fixture-{table}"),
+        json!({"fixture":table}),
+        &snapshot,
+    );
+    c.rows.push(RowChange::Put {
+        table: table.into(),
+        id: "0".into(),
+        value,
+    });
+    store.commit(&c).unwrap();
+}
+fn prepare_workers() -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        Command::new(env::var_os("TL3_TEST_UV").unwrap_or("/home/rob/.local/bin/uv".into()))
+            .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
+            .arg(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    root.join(".venv/bin/python")
+}
+fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store, expected: Phase) {
+    let (sender, receiver) = mpsc::channel();
+    let start = Instant::now();
+    loop {
+        let mut changed = false;
+        for _ in 0..500 {
+            if !c.drive_once().unwrap() {
+                break;
+            }
+            changed = true;
+        }
+        source.poll_once(store, &sender).unwrap();
+        for input in receiver.try_iter() {
+            if let Input::Observation { key, observation } = input {
+                c.observe(&key, observation).unwrap();
+                changed = true;
+            }
+        }
+        if !changed && c.world().unwrap().nodes[0].phase == expected {
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(90),
+            "publishing did not settle: {:?}",
+            c.world().unwrap().nodes[0]
+        );
+        if !changed {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+fn webhook(c: &mut Controller, server: &Server, action: &str) {
+    let mut body: Value = serde_json::from_str(include_str!(
+        "../../github/tests/fixtures/pull-request-merged.json"
+    ))
+    .unwrap();
+    body["action"] = json!(action);
+    body["repository"] = json!({"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}});
+    body["installation"] = json!({"id":1});
+    body["sender"] = json!({"id":1,"login":"rob"});
+    body["pull_request"] = server.api.state.lock().unwrap().pull.clone().unwrap();
+    body["pull_request"]["merged"] = json!(action == "closed");
+    let event = tl3_github::webhook::parse(
+        "publishing",
+        "pull_request",
+        &serde_json::to_vec(&body).unwrap(),
+    )
+    .unwrap()
+    .event
+    .unwrap();
+    let inputs = adapters::mergify::Translator::new(server.clients())
+        .unwrap()
+        .webhook(&event, &c.snapshot().unwrap(), &bootstrap().repos)
+        .unwrap();
+    for input in inputs {
+        tl3_controller::ingress::apply(c, input).unwrap();
+    }
+}
+fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let f = Arc::new(Fixture::create(root.path()));
+    commit(&f.source, "value.py", "def value(): return 1\n");
+    commit(
+        &f.source,
+        "pyproject.toml",
+        "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
+    );
+    commit(
+        &f.source,
+        "test_value.py",
+        "from value import value\ndef test_value(): assert value() == 2\n",
+    );
+    git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+    let server = Server::new(f.clone());
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.store = settings.clone();
+    config.workers.python = python.into();
+    config.workers.runs = root.path().join("runs");
+    config.workers.command = vec![
+        format!(
+            "{}/tests/publishing/reviewer.py",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+        root.path().join("reviews.jsonl").to_str().unwrap().into(),
+    ];
+    config.models.key_file = root.path().join("fixture-key");
+    fs::write(&config.models.key_file, "fixture").unwrap();
+    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut source = supervisor.source();
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(
+        Upstream::Workers,
+        Workers {
+            real: supervisor,
+            fake: adapters::workers::Fake::new(&root.path().join("fakes")),
+            fixture: f.clone(),
+        },
+    );
+    registry.register(Upstream::Worktrees, f.adapter());
+    registry.register(
+        Upstream::GitHub,
+        server.adapter(&root.path().join("github"), 0),
+    );
+    registry.register(Upstream::PrismaBuild, pb(root.path()));
+    registry.register(
+        Upstream::Mergify,
+        adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
+    );
+    let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    store.put_worker_materials("0",&json!({"issue":{"number":42,"title":"Fix the value","body":"Return two.","author":"rob","comments":[]},"repo":{"readme":"Value","file_list":["value.py"]},"standing_rules":[{"id":"test-report-integrity","description":"This attempted override must be replaced."},{"id":"style","description":"Keep the public interface."}]})).unwrap();
+    document(
+        &mut store,
+        "goals",
+        json!([{"description":"Return two.","verification":"test"}]),
+    );
+    c.intake(LabelledIssue {
+        delivery: "publishing".into(),
+        owner: repo().owner,
+        repo: repo().name,
+        installation: 1,
+        number: 42,
+        title: "Fix the value".into(),
+        actor: 1,
+        label: "tl3".into(),
+    })
+    .unwrap();
+    drain(&mut c, &mut source, &mut store, Phase::Queued);
+    let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let credit = c.world().unwrap().nodes[0].credit.balance();
+    let d = f.delivery(EffectKind::Push, 100);
+    if mode == "push" {
+        let checkout = f.adapter().checkout(&d);
+        git(
+            &checkout,
+            &["commit", "--allow-empty", "-m", "outside commit"],
+        );
+        let new = git(&checkout, &["rev-parse", "HEAD"]);
+        git(
+            &checkout,
+            &[
+                "push",
+                f.remote.to_str().unwrap(),
+                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+            ],
+        );
+        c.observe("pushed-plan", check_observation(&f, &d, new))
+            .unwrap();
+        webhook(&mut c, &server, "synchronize");
+        drain(&mut c, &mut source, &mut store, Phase::Queued);
+    } else if mode == "rebase" {
+        f.advance_main(false);
+        server.api.state.lock().unwrap().queue_fixture = "conflict";
+        let new_target = git(&f.remote, &["rev-parse", "main"]);
+        loop {
+            c.drive_once().unwrap();
+            let n = c.world().unwrap().nodes[0];
+            if n.phase == Phase::Checking {
+                let head = f.head(&d);
+                assert_ne!(head, first_head);
+                c.observe(
+                    "rebased-plan",
+                    Observation::CheckPlan {
+                        node: NodeId(0),
+                        sha: head,
+                        run: check_plan(&f, new_target),
+                    },
+                )
+                .unwrap();
+                break;
+            }
+        }
+        server.api.state.lock().unwrap().queue_fixture = "waiting";
+        drain(&mut c, &mut source, &mut store, Phase::Queued);
+    }
+    let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        reviews.len(),
+        if matches!(mode, "push" | "rebase") {
+            2
+        } else {
+            1
+        }
+    );
+    for review in &reviews {
+        assert_ne!(review["model"]["name"], config.models.maker[0].name);
+        assert!(
+            review["inputs"]["standing_rules"][1]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Protect test reports")
+        );
+    }
+    if mode == "push" || mode == "rebase" {
+        assert_ne!(
+            reviews[0]["inputs"]["head_sha"],
+            reviews[1]["inputs"]["head_sha"]
+        );
+        assert_eq!(c.world().unwrap().nodes[0].credit.balance(), credit);
+        assert_eq!(c.world().unwrap().nodes[0].rechecks, 1);
+    }
+    let mut state = server.api.state.lock().unwrap();
+    if mode == "unapproved" {
+        state.pull.as_mut().unwrap()["head"]["sha"] = json!("f".repeat(40));
+    }
+    state.pull.as_mut().unwrap()["state"] = json!("closed");
+    state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-30T01:00:00Z");
+    state.pull.as_mut().unwrap()["merge_commit_sha"] = json!("e".repeat(40));
+    state.queue_fixture = "merged";
+    drop(state);
+    webhook(&mut c, &server, "closed");
+    drain(
+        &mut c,
+        &mut source,
+        &mut store,
+        Phase::Closed(Outcome::Merged),
+    );
+    assert!(!f.adapter().checkout(&d).exists());
+    assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+    assert!(!root.path().join("pb-records/0").exists());
+    assert!(store.worker_progress(None).unwrap().is_empty());
+    let state = server.api.state.lock().unwrap();
+    assert!(state.closed);
+    assert_eq!(state.opens, 1);
+    assert_eq!(state.checks.len(), reviews.len());
+    assert!(state.comments.iter().any(|c| {
+        c["body"]
+            .as_str()
+            .unwrap()
+            .contains("Your change was merged.")
+    }));
+    if mode == "unapproved" {
+        assert!(state.comments.iter().any(|c| {
+            c["body"]
+                .as_str()
+                .unwrap()
+                .contains("without the required approval")
+        }));
+        assert!(store.effects().unwrap().iter().any(|e| {
+            serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
+                matches!(
+                    d.output,
+                    Out::Notice {
+                        notice: tl3_kernel::Notice::Incident { .. },
+                        ..
+                    }
+                )
+            })
+        }));
+    }
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.contains("--seal-only"))
+            .count(),
+        reviews.len()
+    );
+    drop(state);
+    drop(c);
+    drop(server.runtime);
+}
+fn main() {
+    let python = prepare_workers();
+    let mut database = support::Database::start();
+    for mode in ["merged", "push", "rebase", "unapproved"] {
+        lifecycle(
+            &database.create(&format!("publishing_{mode}")),
+            &python,
+            mode,
+        );
+        println!("test publishing_{mode} ... ok");
+    }
+    database.stop();
+    println!("4 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+}

@@ -68,3 +68,8 @@ harness = false
 name = "workers"
 path = "tests/workers.rs"
 harness = false
+
+[[test]]
+name = "publishing"
+path = "tests/publishing.rs"
+harness = false
