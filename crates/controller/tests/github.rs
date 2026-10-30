@@ -1442,6 +1442,14 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             })
     });
     wait(&mut || api.state.lock().unwrap().closed);
+    wait(&mut || {
+        !store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "watches")
+    });
     assert_eq!(
         store.worker_document("0", "audits").unwrap().unwrap()["verdict"],
         "agree"
