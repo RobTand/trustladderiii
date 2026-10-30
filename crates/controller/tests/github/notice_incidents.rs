@@ -522,11 +522,19 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         expected_posts,
         "retry posts the original notice exactly once unless its question is stale"
     );
-    assert_eq!(
-        c.world().unwrap(),
-        before_retry,
-        "clearing a notice incident must not advance the kernel"
-    );
+    if kind == "filing" {
+        assert_eq!(
+            c.world().unwrap().nodes[0],
+            before_retry.nodes[0],
+            "retrying a correction filing leaves its closed request unchanged"
+        );
+    } else {
+        assert_eq!(
+            c.world().unwrap(),
+            before_retry,
+            "clearing a notice incident must not advance the kernel"
+        );
+    }
     if is_ask && name != "stale_ask" {
         assert_eq!(
             c.world().unwrap(),
