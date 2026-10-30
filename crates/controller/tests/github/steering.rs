@@ -73,8 +73,8 @@ impl Daemon {
             .rows
             .into_iter()
             .find(|r| r.table == "nodes" && r.id == "0")
-            .unwrap()
-            .value
+            .map(|r| r.value)
+            .unwrap_or(Value::Null)
     }
     fn wait(&mut self, mut condition: impl FnMut(&mut Self) -> bool) {
         let start = Instant::now();
@@ -155,7 +155,11 @@ impl Drop for Daemon {
 
 pub(super) fn commands(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-commands");
-    d.wait(|s| s.node()["phase"] == "Auditing" && s.marker.exists());
+    d.wait(|s| {
+        s.node()["phase"] == "Auditing"
+            && s.node()["effect"].is_null()
+            && !s.node()["run"].is_null()
+    });
     let before = d.node();
     d.send(10001, "Thanks for the update");
     d.classified(10001);
