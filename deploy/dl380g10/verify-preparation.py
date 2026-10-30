@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run through PB on dl380g10 after deliberately applying model defaults."""
-import os
 from pathlib import Path
 import subprocess
 import sys
