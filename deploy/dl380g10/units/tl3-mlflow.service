@@ -1,0 +1,21 @@
+[Unit]
+Description=TL3 MLflow 3.17.2 tracking server
+Requires=tl3-postgres.service
+After=tl3-postgres.service
+
+[Service]
+Type=simple
+UMask=0077
+LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
+ExecStart=%h/.local/share/tl3/mlflow/.venv/bin/python %h/.local/share/tl3/deploy/mlflow-server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+Environment=MLFLOW_DISABLE_TELEMETRY=true
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+
+[Install]
+WantedBy=default.target
