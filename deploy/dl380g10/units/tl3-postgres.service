@@ -1,0 +1,22 @@
+[Unit]
+Description=TL3 dedicated Postgres 17.4
+Before=tl3d.service tl3-status.service
+
+[Service]
+Type=forking
+UMask=0077
+LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
+RuntimeDirectory=tl3-postgres
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py initdb
+ExecStart=%h/.local/share/tl3/postgresql-17.4.0/bin/pg_ctl -D %h/.local/share/tl3/postgres/data -l %h/.local/share/tl3/postgres/server.log -w start
+ExecStartPost=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service database
+ExecStop=%h/.local/share/tl3/postgresql-17.4.0/bin/pg_ctl -D %h/.local/share/tl3/postgres/data -m fast -w stop
+PIDFile=%h/.local/share/tl3/postgres/data/postmaster.pid
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

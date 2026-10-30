@@ -1,0 +1,23 @@
+[models]
+# Q22 defaults verified against CLIProxyAPI and provider limits, 2026-10-30.
+# Budgets are per-response output limits and must not exceed limits.context_tokens.
+# GPT-6.1 Sol: 1,050,000 context, 128,000 output. Claude: 1M context, 128K output.
+# See deploy/dl380g10/README.md for sources and the proxy smoke command.
+ingest = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 32000 }]
+audit = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 32000 }]
+planner = [{ name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 }]
+maker = [
+    { name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 },
+    { name = "gpt-6.1-sol", family = "openai", effort = "max", budget_tokens = 128000 },
+    { name = "claude-fable-5-1", family = "anthropic", effort = "high", budget_tokens = 128000 },
+]
+# The first reviewer from a different family is selected for each maker.
+reviewer = [
+    { name = "claude-opus-5-5", family = "anthropic", effort = "high", budget_tokens = 32000 },
+    { name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 },
+]
+# docs/state-table.md, "Rebasing": conflict repair runs an agent.
+rebaser = [{ name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 }]
+# Q15: an agent classifies Rob's issue comments.
+comment_classifier = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 8000 }]
+writer = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 8000 }]

@@ -8,8 +8,9 @@ All commands use the same TOML configuration as `tl3-config`. Controller executi
 supports explicit simulation only. Status commands read the configured store
 and do not load GitHub or model credentials.
 
-Both commands use `Config::load`, which checks secret-file metadata, including
-the optional store password. Only the store reads its password at runtime.
+The daemon uses `Config::load`, which checks all secret-file metadata. Status
+uses `Config::load_status`, which checks only the optional store password.
+Only the store reads its password at runtime.
 `tl3 status` uses `Reader::open`. It never migrates or writes and
 reports an uninitialized database clearly.
 
