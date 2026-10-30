@@ -40,10 +40,38 @@ pub struct Config {
     pub github: GitHub,
     pub models: Models,
     pub worktrees_root: PathBuf,
+    #[serde(default)]
+    pub workers: Workers,
     pub prismabuild: PrismaBuild,
     pub hindsight: Hindsight,
     pub status: Status,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Workers {
+    pub uv: PathBuf,
+    pub package: PathBuf,
+    pub runs: PathBuf,
+    /// Python argv after uv has selected the package environment.
+    pub command: Vec<String>,
+}
+
+impl Default for Workers {
+    fn default() -> Self {
+        Self {
+            uv: PathBuf::from("/home/rob/.local/bin/uv"),
+            package: PathBuf::from("/srv/tl3/workers"),
+            runs: PathBuf::from("/srv/tl3/worker-runs"),
+            command: vec![
+                "python".into(),
+                "-m".into(),
+                "tl3_workers".into(),
+                "run".into(),
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -316,6 +344,19 @@ impl Config {
                     "duplicate served repository; GitHub names ignore case",
                 ));
             }
+        }
+        for (field, path) in [
+            ("workers.uv", &self.workers.uv),
+            ("workers.package", &self.workers.package),
+            ("workers.runs", &self.workers.runs),
+        ] {
+            absolute(field, path)?;
+        }
+        if self.workers.command.is_empty() {
+            return Err(invalid("workers.command", "must contain a Python command"));
+        }
+        for arg in &self.workers.command {
+            nonempty("workers.command", arg)?;
         }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;

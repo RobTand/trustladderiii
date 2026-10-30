@@ -319,11 +319,26 @@ impl Controller {
                     .effect(&delivery.key)?
                     .ok_or(Error::Invalid("missing watched effect"))?;
                 delivery.epoch = effect.epoch.get();
-                if let Reconciliation::Found(completion) = self
+                let result = self
                     .adapters
                     .adapter(&delivery, snapshot.epoch.get())?
-                    .reconcile(&delivery)?
-                {
+                    .reconcile(&delivery)?;
+                let completion = match result {
+                    Reconciliation::Found(completion) => Some(completion),
+                    Reconciliation::Absent
+                        if executor::upstream(delivery.output) == executor::Upstream::Workers =>
+                    {
+                        Some(Completion::confirmed(vec![Observation::Kernel(
+                            Event::Reply {
+                                node: delivery.node(),
+                                generation: delivery.generation,
+                                reply: Reply::RunFailed,
+                            },
+                        )]))
+                    }
+                    _ => None,
+                };
+                if let Some(completion) = completion {
                     if completion.observations.is_empty() {
                         continue;
                     }
@@ -542,6 +557,7 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                note: None,
             };
             if matches!(
                 output,
@@ -596,6 +612,37 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::WorkerReply {
+                node,
+                generation,
+                role,
+                reply,
+            } => {
+                let n = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("worker node missing"))?;
+                if n.run != Some(generation) || n.generation != generation {
+                    return Ok(None);
+                }
+                let mapped = adapters::workers::protocol::map_reply(&role, &reply)?;
+                let document = if role == "ingest" { "briefs" } else { "audits" };
+                commit
+                    .rows
+                    .push(put(document, node.0.to_string(), reply.clone()));
+                if role == "ingest" {
+                    commit.rows.push(put(
+                        "goals",
+                        node.0.to_string(),
+                        reply.get("goals").cloned().unwrap_or(json!([])),
+                    ));
+                }
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: mapped,
+                }
+            }
             Observation::Plan {
                 node,
                 generation,
@@ -718,5 +765,25 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         .iter()
         .find(|r| r.table == "pull_requests" && r.id == delivery.node().0.to_string())
         .and_then(|r| r.value["number"].as_u64());
+    if matches!(
+        delivery.output,
+        Out::Notice {
+            notice: tl3_kernel::Notice::MeasuresPosted,
+            ..
+        }
+    ) {
+        let goals = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "goals" && r.id == delivery.node().0.to_string());
+        delivery.note = goals.and_then(|r| r.value.as_array()).map(|goals| {
+            goals
+                .iter()
+                .filter_map(|g| g["description"].as_str())
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+    }
     Ok(delivery)
 }

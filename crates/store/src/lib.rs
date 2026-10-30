@@ -41,7 +41,10 @@ pub struct Store {
     client: Client,
 }
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/0001_store.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0001_store.sql")),
+    (2, include_str!("../migrations/0002_workers.sql")),
+];
 
 impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
@@ -269,6 +272,52 @@ impl Store {
                 key: row.get(0), payload: row.get(1),
                 receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },
             })).collect()
+    }
+
+    /// Materials are supplied by ingress, never fetched or invented by the worker.
+    pub fn put_worker_materials(&mut self, node: &str, inputs: &serde_json::Value) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_worker_materials VALUES ($1, $2) ON CONFLICT (node_id) DO UPDATE SET inputs = EXCLUDED.inputs", &[&node, inputs])?;
+        Ok(())
+    }
+
+    pub fn worker_materials(&mut self, node: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT inputs FROM tl3_worker_materials WHERE node_id = $1",
+                &[&node],
+            )?
+            .map(|r| r.get(0)))
+    }
+
+    /// Read the accepted brief, goals, or audit without controller ownership.
+    pub fn worker_document(
+        &mut self,
+        node: &str,
+        document: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        if !matches!(document, "briefs" | "goals" | "audits") {
+            return Err(Error::Invalid("unknown worker document"));
+        }
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT value FROM tl3_world WHERE table_name = $1 AND row_id = $2",
+                &[&document, &node],
+            )?
+            .map(|r| r.get(0)))
+    }
+
+    /// Replaying an output prefix never refreshes its progress time.
+    pub fn record_worker_progress(&mut self, progress: &WorkerProgress) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_worker_progress SELECT $1, $2, $3, $4, $5, $6, (extract(epoch FROM clock_timestamp()) * 1000)::bigint FROM tl3_meta WHERE epoch = $3 ON CONFLICT (run_key) DO UPDATE SET attempt = EXCLUDED.attempt, output_offset = EXCLUDED.output_offset, unit = EXCLUDED.unit, last_progress_ms = EXCLUDED.last_progress_ms WHERE tl3_worker_progress.epoch = EXCLUDED.epoch AND (tl3_worker_progress.attempt, tl3_worker_progress.output_offset) < (EXCLUDED.attempt, EXCLUDED.output_offset)", &[&progress.key, &progress.node, &progress.epoch, &progress.attempt, &progress.output_offset, &progress.unit])?;
+        Ok(())
+    }
+
+    pub fn worker_progress(&mut self, node: Option<&str>) -> Result<Vec<WorkerProgress>> {
+        Ok(self.client.query("SELECT run_key, node_id, epoch, attempt, output_offset, unit, last_progress_ms FROM tl3_worker_progress WHERE ($1::text IS NULL OR node_id = $1) ORDER BY last_progress_ms DESC, run_key", &[&node])?.into_iter().map(|r| WorkerProgress {
+            key: r.get(0), node: r.get(1), epoch: r.get(2), attempt: r.get(3), output_offset: r.get(4), unit: r.get(5), last_progress_ms: r.get(6),
+        }).collect())
     }
 
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {

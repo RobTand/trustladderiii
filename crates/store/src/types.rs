@@ -287,3 +287,15 @@ impl Commit {
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkerProgress {
+    pub key: String,
+    pub node: String,
+    pub epoch: i64,
+    pub attempt: i64,
+    pub output_offset: i64,
+    pub unit: String,
+    /// Database observation time, in Unix milliseconds. None exists until progress arrives.
+    pub last_progress_ms: i64,
+}

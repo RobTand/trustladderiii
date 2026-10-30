@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+jsonschema = { version = "0.46", default-features = false }
+rustix = { version = "1", features = ["process", "event"] }
 thiserror = "2"
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
@@ -19,4 +21,9 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"
+harness = false
+
+[[test]]
+name = "workers"
+path = "tests/workers.rs"
 harness = false
