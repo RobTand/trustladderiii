@@ -1425,6 +1425,17 @@ impl Controller {
                         }
                     }
                 };
+                if role == "reviewer" {
+                    commit.rows.push(put(
+                        "reviewer_session",
+                        node.0.to_string(),
+                        json!({"attempt": n.attempt, "replanned": n.replanned,
+                            "generation": generation,
+                            "head_sha": n.head.and_then(|head| snapshot.interned.iter()
+                                .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+                                .map(|i| i.value.clone()))}),
+                    ));
+                }
                 if role == "maker" && mapped != Reply::RunFailed {
                     commit.rows.push(put(
                         "maker_session",

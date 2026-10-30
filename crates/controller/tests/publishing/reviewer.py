@@ -20,26 +20,48 @@ def model(request):
     assert any(rule["id"] == "test-report-integrity" for rule in inputs["standing_rules"])
     assert all(check["custody"] == "in-process" for check in inputs["checks"])
     assert Path(request["worktree"], "value.py").read_text() == "def value(): return 2\n"
-    first = not record.exists()
+    count = len(record.read_text().splitlines()) if record.exists() else 0
+    first = count == 0
     with record.open("a") as output:
         output.write(json.dumps(request) + "\n")
     reply = {"verdict": "approve", "head_sha": inputs["head_sha"],
              "blocking_findings": [], "findings": [{"problem": "Optional style concern", "evidence": "This does not break a goal or rule."}]}
-    if mode == "changes" and first:
+    if (mode in ("changes", "review-retry") and first) or (mode == "new-attempt" and count < 2):
         reply = {"verdict": "changes", "blocking_findings": [{
             "citation": {"kind": "goal", "id": inputs["goals"][0]["id"]},
             "problem": "Check the result once more.", "evidence": "A fixture requests one fix round."}], "findings": []}
     class Model(FakeMessagesListChatModel):
         def _generate(self, messages, **kwargs):
-            if mode == "changes" and not first:
+            if mode in ("changes", "new-attempt", "review-retry"):
+                humans = [m for m in messages if m.type == "human"]
+                assert len(humans) == (2 if request["resume_session"] else 1)
+            if mode in ("changes", "new-attempt", "review-retry") and request["resume_session"]:
                 previous = [m for m in messages if m.type == "ai"]
                 assert len(previous) == 1
                 assert json.loads(previous[0].content)["verdict"] == "changes"
                 assert previous[0].additional_kwargs["reasoning_content"] == "The goal needs another check."
+            if mode == "review-retry" and count == 2:
+                raise AssertionError("retry must use the saved reply without a model turn")
             return super()._generate(messages, **kwargs)
 
     return Model(responses=[AIMessage(content=json.dumps(reply), additional_kwargs={
         "reasoning_content": "The goal needs another check."})])
+
+
+run_worker = runtime.run
+
+
+def run(request, emit):
+    def output(event):
+        marker = record.with_suffix(".crashed")
+        if (mode == "review-retry" and request["resume_session"]
+                and event["event"] == "reply" and not marker.exists()):
+            marker.write_text("crashed after checkpoint before reply")
+            import os
+            import signal
+            os.kill(os.getpid(), signal.SIGKILL)
+        emit(event)
+    run_worker(request, output)
 
 
 def no_network(*args, **kwargs):
@@ -48,6 +70,7 @@ def no_network(*args, **kwargs):
 
 with patch.object(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self, create=True), \
      patch.object(runtime, "create_model", model), \
+     patch.object(runtime, "run", run), \
      patch.object(socket.socket, "connect", no_network), \
      patch.object(socket.socket, "connect_ex", no_network), \
      patch.object(socket, "getaddrinfo", no_network):

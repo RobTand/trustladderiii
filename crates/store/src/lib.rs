@@ -508,6 +508,7 @@ impl Store {
                 | "maker_replies"
                 | "maker_findings"
                 | "maker_session"
+                | "reviewer_session"
                 | "plans"
                 | "findings"
         ) {

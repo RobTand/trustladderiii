@@ -655,7 +655,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .collect();
     assert_eq!(
         reviews.len(),
-        if matches!(
+        if matches!(mode, "new-attempt" | "review-retry") {
+            3
+        } else if matches!(
             mode,
             "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest"
         ) {
@@ -664,13 +666,29 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             1
         }
     );
-    if mode == "changes" {
+    if matches!(mode, "changes" | "new-attempt" | "review-retry") {
         assert_eq!(reviews[0]["resume_session"], false);
         assert_eq!(reviews[1]["resume_session"], true);
         assert_eq!(reviews[0]["session_file"], reviews[1]["session_file"]);
-        assert_eq!(reviews[1]["inputs"]["base_sha"], reviews[0]["inputs"]["head_sha"]);
+        assert_eq!(
+            reviews[1]["inputs"]["base_sha"],
+            reviews[0]["inputs"]["head_sha"]
+        );
         assert_eq!(reviews[1]["inputs"]["diff"], "");
         assert!(Path::new(reviews[0]["session_file"].as_str().unwrap()).is_file());
+    }
+    if mode == "new-attempt" {
+        assert_eq!(reviews[2]["resume_session"], false);
+        assert_ne!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(c.world().unwrap().nodes[0].attempt, 2);
+    }
+    if mode == "review-retry" {
+        assert_eq!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(reviews[1]["inputs"], reviews[2]["inputs"]);
+        assert_ne!(
+            reviews[1]["operation"]["generation"],
+            reviews[2]["operation"]["generation"]
+        );
     }
     for review in &reviews {
         assert_ne!(review["model"]["name"], config.models.maker[0].name);
@@ -749,7 +767,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert_eq!(state.opens, 1);
     assert_eq!(
         state.checks.len(),
-        if mode == "changes" { 1 } else { reviews.len() }
+        if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+            1
+        } else {
+            reviews.len()
+        }
     );
     let at = |name: &str| state.operations.iter().position(|op| op == name).unwrap();
     assert!(at("approve") < at("open") && at("open") < at("enqueue"));
@@ -784,7 +806,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .lines()
             .filter(|line| line.contains("--seal-only"))
             .count(),
-        reviews.len()
+        if mode == "review-retry" {
+            2
+        } else {
+            reviews.len()
+        }
     );
     drop(state);
     drop(c);
@@ -913,6 +939,8 @@ fn main() {
         "rebase",
         "unapproved",
         "changes",
+        "new-attempt",
+        "review-retry",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -925,5 +953,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("9 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("11 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

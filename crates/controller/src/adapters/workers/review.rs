@@ -20,6 +20,14 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
+    Ok(store
+        .worker_document(&delivery.node().0.to_string(), "reviewer_session")?
+        .filter(|session| {
+            session["attempt"] == delivery.attempt && session["replanned"] == delivery.replanned
+        }))
+}
+
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
@@ -33,7 +41,21 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    for sha in [head, &run.base_sha] {
+    let session = session(delivery, store)?;
+    let base = if delivery.round == 1 {
+        session
+            .as_ref()
+            .map(|s| {
+                s["head_sha"]
+                    .as_str()
+                    .ok_or(Error::Invalid("reviewer session has no reviewed head"))
+            })
+            .transpose()?
+            .unwrap_or(&run.base_sha)
+    } else {
+        &run.base_sha
+    };
+    for sha in [head, base, &run.base_sha] {
         if !matches!(sha.len(), 40 | 64)
             || !sha
                 .bytes()
@@ -55,19 +77,12 @@ pub(super) fn inputs(
     let criteria = criteria(store, delivery.node())?;
     let diff = git(
         &run.repository,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            &run.base_sha,
-            head,
-            "--",
-        ],
+        &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
     )?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let inputs = json!({"goals": criteria["goals"], "base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let inputs = json!({"goals": criteria["goals"], "base_sha": base, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

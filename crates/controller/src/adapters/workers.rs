@@ -273,6 +273,22 @@ impl Supervisor {
             }
             let needs_files = session.is_some_and(|session| session["needs_files"] == true);
             request["resume_session"] = json!(delivery.round == 1 || needs_files);
+        } else if role == "reviewer" {
+            request["session_file"] = json!(
+                self.settings
+                    .runs
+                    .join("sessions")
+                    .join(&node)
+                    .join(format!("plan-{}", u8::from(delivery.replanned)))
+                    .join(format!("reviewer-attempt-{}.json", delivery.attempt))
+            );
+            let session = review::session(delivery, store)?;
+            if let Some(session) = &session {
+                request["last_accepted_generation"] = json!(session["generation"].as_u64().ok_or(
+                    Error::Invalid("reviewer session has no accepted generation")
+                )?);
+            }
+            request["resume_session"] = json!(delivery.round == 1 && session.is_some());
         }
         Ok(request)
     }
