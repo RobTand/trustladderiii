@@ -387,6 +387,18 @@ fn gap_catch_up(settings: &tl3_config::Store) {
     handle.join().unwrap().unwrap();
     let mut store = Store::open(settings).unwrap();
     assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
+    let pending = store.pending_ingress().unwrap();
+    assert!(
+        store
+            .receive_catch_up(
+                "rollback",
+                &[("one".into(), json!([])), ("".into(), json!([]))],
+                &json!("must not advance")
+            )
+            .is_err()
+    );
+    assert!(store.ingress_cursor("rollback").unwrap().is_none());
+    assert_eq!(store.pending_ingress().unwrap(), pending);
     let mut controller = controller(settings, root.path(), &api.uri());
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes.len(), 1);
@@ -499,7 +511,7 @@ fn crash_child(args: &[String]) {
 }
 fn delivery(notice: Notice) -> Delivery {
     Delivery {
-        key: "message-key".into(),
+        key: "notice:0:1".into(),
         epoch: 0,
         output: Out::Notice {
             node: NodeId(0),
@@ -554,11 +566,11 @@ fn message_reconciliation() {
     assert!(adapter.execute(&old).is_err());
     assert!(adapter.reconcile(&old).is_err());
     let mut summary = delivery(Notice::Summary(Outcome::Replaced));
-    summary.key = "replacement".into();
+    summary.key = "notice:0:2".into();
     adapter.execute(&summary).unwrap();
     assert!(!api.state.lock().unwrap().closed);
     let mut summary = delivery(Notice::Summary(Outcome::Stopped));
-    summary.key = "stopped".into();
+    summary.key = "notice:0:3".into();
     adapter.execute(&summary).unwrap();
     assert!(api.state.lock().unwrap().closed);
     api.state.lock().unwrap().closed = false;
@@ -568,7 +580,7 @@ fn message_reconciliation() {
     ));
     assert!(api.state.lock().unwrap().closed);
     let mut pr = note;
-    pr.key = "fake-pr".into();
+    pr.key = "effect:0:1".into();
     pr.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
