@@ -411,3 +411,31 @@ def test_split_requires_evidence_and_smaller_children(tmp_path, planner_request)
 def test_fit_failure_is_reported_to_kernel(tmp_path, planner_request):
     planner_request["inputs"]["forecast"]["fit_tokens"] = 65
     assert_rule_report(run_reply(tmp_path, planner_request, LEAF), "does not fit")
+
+
+@pytest.mark.parametrize("proposal", [LEAF, SPLIT, CANT_MEET])
+def test_one_verified_tokenizer_per_check(monkeypatch, planner_request, proposal):
+    from tl3_workers import forecast
+    from tl3_workers.roles.planner import check_reply
+
+    builds = []
+    original = forecast._encoding
+
+    def counted_encoding():
+        encoding = original()
+        builds.append(encoding)
+        return encoding
+
+    monkeypatch.setattr(forecast, "_encoding", counted_encoding)
+    monkeypatch.chdir(planner_request["worktree"])
+    reply = copy.deepcopy(proposal)
+    check_reply(planner_request["inputs"], reply)
+    assert len(builds) == 1
+    expected_files = {"greeting.py": 3, "new/api.py": 0} if proposal["kind"] == "split" else (
+        {"greeting.py": 3, "tests/test_greeting.py": 0} if proposal["kind"] == "leaf" else {})
+    assert reply["forecast"]["file_tokens"] == expected_files
+
+    # A later check must revalidate cache bytes, even in the same process.
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
+    with pytest.raises(ValueError, match="must be preloaded"):
+        check_reply(planner_request["inputs"], copy.deepcopy(proposal))

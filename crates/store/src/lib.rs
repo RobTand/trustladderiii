@@ -112,10 +112,14 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+// Ingress receipt, catch-up, consumer registration and cursor/retirement writes
+// are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
     pub fn reconnect(&mut self) -> Result<()> {
-        *self = Self::open(&self.settings)?;
+        let mut store = Self::open(&self.settings)?;
+        store.boundary_hook = self.boundary_hook.take();
+        *self = store;
         Ok(())
     }
 

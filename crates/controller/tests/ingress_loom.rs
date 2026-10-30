@@ -60,6 +60,7 @@ fn sources_publish_evidence_before_one_owner_consumes_it() {
         let mut seen = [false; 3];
         for _ in 0..3 {
             match receiver.recv().unwrap() {
+                Input::Wake => panic!("fixture sources do not send wake notifications"),
                 Input::LabelledIssue(_) => {
                     assert!(durable.load(Ordering::Acquire));
                     assert!(!seen[0]);
