@@ -36,8 +36,12 @@ modules under `src/adapters` each contain a fake. The controller owns interning
 and persistence. Executors own authoritative reconciliation and epoch fencing.
 `adapters::simulation` builds the fake registry. A test starts
 with it and replaces one entry with `register`. The `mixed_registry` scenario
-uses the real `tl3-worktrees` client in a temporary repository and delegates
-the remaining worktree effects to its fake. The other four upstreams stay fake.
+registers `worktrees::Real` for all four worktree effects against local bare
+repositories over `file://`. The other four upstreams stay fake. The worker
+fixture commits a real change and reports its head. Separate runs move main
+with a nonconflicting or conflicting commit. The conflict reply passes through
+the adapter and controller inbox to the kernel, which returns to Making and
+spends one credit in the same attempt and round.
 
 Each adapter ticket extends `Delivery` with the fields its real client needs.
 The tracer does not predefine issue text, branch text, or PR text fields.
@@ -369,6 +373,86 @@ The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`
 and `sparklina`. Controller targets include the status page and process tests.
 After they pass, submit the full workspace `tools/verify.sh` command shown above
 once with `--anywhere`. Record every action key and result in the PR body.
+
+
+## Worktree adapter
+
+`worktrees::Real::new(&config.worktrees_root, epoch)` uses the existing configurable
+root. Add each repository with `serve_github(identity, local_repository, github)`.
+The GitHub client must match the repository's installation. The client supplies
+cached installation tokens at runtime. For simulation, use `serve_local` with a
+local bare remote. Local operations never obtain or pass a token.
+
+Register the adapter once with `registry.register(Upstream::Worktrees, real)`.
+The daemon still requires explicit simulation; production ingress and startup
+registration belong to their adapter tickets.
+
+The adapter owns branches named `tl3/issue-N-node-M`. Checkout paths beneath the
+configured root separate repositories and requests. `Real::branch` and
+`Real::checkout` expose those names for worker registration. One controller
+process and its Git children own each repository. Stop the whole service process
+group before starting a replacement. Do not run another Git writer or maintenance
+process against an owned repository.
+
+Keep `<common-git-dir>/tl3-controller` across restarts. It binds the repository
+and worktree root, advances the epoch fence as soon as the repository opens, and journals immutable
+operation intents and terminal evidence. Changing that root requires an explicit
+migration of existing checkouts and records. Records use atomic replacement and
+sync both the file and its directory. No store migration is required.
+
+Prepare pins fetched main before creating missing resources. Git's administrative
+lock `<common-git-dir>/worktrees/<id>/locked`, with the exact reason `initializing\n`,
+is the evidence of interrupted checkout population. Any key may repair it only
+while the branch head equals the durable base ref. Repair runs
+`reset --hard <branch>` and unlocks after verifying the files, even if main has advanced.
+Without that lock, Prepare only verifies registration and the request branch.
+It preserves maker commits, edits and untracked files across fix rounds, new
+attempts and stale intent reconciliation. The next maker sees them in `git status`.
+Earlier intents remain readable. Their checkout ownership fields are ignored.
+Push pins the delivery's exact head and leases against the last head this adapter
+published. Rebase pins its target before execution, so recovery cannot silently
+use a newer main. A clean rebase reports `Observation::Rebased`; the controller
+interns its SHA before the kernel receives `RebaseClean`. A conflict reports
+`RebaseNeedsChanges` after aborting and verifying a clean checkout at the old
+head. The kernel alone selects the next phase.
+
+Teardown records that the checkout is clean before deletion begins. It also accepts
+Git's initializing lock plus head equal to the durable base, even when an
+interrupted checkout left tracked files. It reads this evidence directly without
+scanning the journal. Removal keeps the lock until Git deletes the checkout.
+A retry may finish removal if its only changes are deletions. Other edits and new
+files are refused.
+It leases deletion of the recorded remote head, then removes the local branch
+and base. A dirty checkout or changed remote
+ref returns an adapter error. Unknown outcomes keep their original effect key.
+Interrupted current-epoch operations reconcile against Git and finish their
+original intent. Older epochs may read terminal evidence, but cannot resume
+unfinished Git writes. Once fenced, an unfinished intent with no terminal Git
+evidence returns `Absent`, so a Cancelling delivery can settle. Git steps converge;
+transport errors remain unknown. No duration or silence establishes absence.
+
+The `worktrees` test executable kills adapter children with SIGKILL before and
+after Git applies each effect, including conflict and stale-epoch cases. The
+workspace verification script runs it, the mixed registry lifecycle, and the
+existing controller and store scenarios through PrismaBuild.
+
+Tickets #12 and #13 open `tl3_worktrees::Worktrees` for the served repository and
+call `branch_state(&Real::branch(delivery)?)` to read its recorded base and current
+head. The tuple is `(head, base)`. `changed_files(&base, &head)` returns the changed
+paths for the check harness and publication footprint. After a clean rebase,
+read both values again: the base and head move together. `Delivery::head_sha`
+remains the exact commit requested by an individual push effect.
+
+
+`tools/worktree_review_manifest.py worktrees` generates the three host-tagged
+PrismaBuild checks from a clean detached worktree at the final commit. Each runs
+all controller and worktrees targets, including the 50 SIGKILL boundaries and real
+killed-add recoveries. Submit its JSON with `pbcampaign.py --detach`. After those
+pass, submit `tools/worktree_review_manifest.py workspace` the same way to run
+`verify.sh` once with portable placement. Record every action key and result in
+the PR body. See the [worktrees recovery guide](../worktrees/README.md#recovery)
+for manual initialization locks and half-registered adds that need operator cleanup.
+
 
 ## Add a worker role
 
