@@ -269,6 +269,22 @@ fn no_credentials_or_tool_contents_are_sent() {
 }
 
 #[test]
+fn json_and_quoted_credentials_in_prose_are_not_sent() {
+    let f = Fixture::new();
+    let attempt = f.attempt(
+        "audit",
+        json!({"body": r#"Found {"api_key":"fixture-json-credential"} in a snippet."#}),
+        json!({"summary": "Found 'password': 'fixture-quoted-credential' in a snippet."}),
+    );
+    memory::queue_attempt(&mut f.store(), "run:quoted-credentials", &attempt).unwrap();
+    assert_eq!(f.flush(), 1);
+    let sent = serde_json::to_string(&*f.retain.documents.lock().unwrap()).unwrap();
+    for secret in ["fixture-json-credential", "fixture-quoted-credential"] {
+        assert!(!sent.contains(secret), "leaked quoted credential: {secret}");
+    }
+}
+
+#[test]
 fn failed_run_without_summary_is_retained_and_size_is_bounded() {
     let f = Fixture::new();
     let attempt = f.attempt(
