@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -198,3 +199,36 @@ def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatc
     assert waits == 2
     assert len(events) == 2
     assert events[0] == events[1]
+
+
+def test_maker_staged_submission_retains_checkout_parent(submission):
+    root, scripts = submission
+
+    def git(*args):
+        return subprocess.check_output([
+            "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args,
+        ], cwd=root, text=True).strip()
+
+    git("init", "--quiet", "--template=")
+    git("add", ".gitignore")
+    git("commit", "--quiet", "-m", "Maker base")
+    parent = git("rev-parse", "HEAD")
+    before = git("status", "--porcelain")
+    script = scripts / "pbrun.py"
+    script.write_text(script.read_text().replace(
+        '(here / "submitted.json").write_text(json.dumps(args))',
+        'import subprocess\n'
+        'parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()\n'
+        '(here / "parent").write_text(parent)\n'
+        '(here / "submitted.json").write_text(json.dumps(args))',
+    ))
+    (scripts / "response.json").write_text(json.dumps(Summary().result))
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+    assert result["status"] == "completed"
+    assert (scripts / "parent").read_text() == parent, "the action must belong to the maker checkout"
+    assert git("rev-parse", "HEAD") == parent
+    assert git("status", "--porcelain") == before
+    assert (root / "uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
