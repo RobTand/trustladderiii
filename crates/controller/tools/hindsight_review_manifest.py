@@ -22,7 +22,8 @@ checks = [
      "/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil python -m pytest -c harness/pyproject.toml harness/tests\n"
      "cargo build -p tl3-controller --example tl3-deploy --locked\n"
      'export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"\n'
-     "python3 -m unittest discover -s deploy/dl380g10 -p test_deploy.py\n"],
+     "python3 -m unittest discover -s deploy/dl380g10 -p test_deploy.py\n"
+     "python3 -m unittest discover -s deploy/ci-runners -p test_hardening.py\n"],
 ]
 rows = [{**common, "tags": [host], "argv": check}
         for host in ("dl380g10", "sparky", "sparklina") for check in checks]
