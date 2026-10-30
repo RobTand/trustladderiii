@@ -117,6 +117,7 @@ struct ApiState {
     linked: Vec<Value>,
     lose_issue_reply: bool,
     forbidden_question: bool,
+    forbidden_filing: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -236,6 +237,9 @@ impl Respond for Api {
                 | "/repos/owner/tl3/pulls",
             ) => ResponseTemplate::new(200).set_body_json(json!([])),
             ("POST", "/repos/owner/sandbox/issues") => {
+                if state.forbidden_filing {
+                    return ResponseTemplate::new(403);
+                }
                 let payload: Value = serde_json::from_slice(&request.body).unwrap();
                 let mut issue = fixture(false)["issue"].clone();
                 issue["number"] = json!(1000 + state.linked.len());
