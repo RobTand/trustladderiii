@@ -190,6 +190,12 @@ fn check_state(check: &CheckRun) -> QueueState {
     let Some(output) = &check.output else {
         return QueueState::Unknown;
     };
+    if output.summary.as_ref().is_some_and(|summary| {
+        summary.contains("<span itemprop=\"mergify.v")
+            && !summary.contains("<span itemprop=\"mergify.v1.")
+    }) {
+        return QueueState::Unknown;
+    }
     if let Some(summary) = &output.summary
         && let Some(encoded) = summary
             .split_once("<span itemprop=\"mergify.v1.")

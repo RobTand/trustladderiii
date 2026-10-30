@@ -463,3 +463,56 @@ async fn propagates_github_failures_without_inventing_facts() {
         Err(Error::GitHub(tl3_github::Error::Http { status: 403 }))
     ));
 }
+
+#[test]
+fn future_encoding_and_unrecognized_titles_stay_unknown() {
+    let (pr, checks, _) = recorded("running");
+    let mut check = checks
+        .into_iter()
+        .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
+        .unwrap();
+    check.output.as_mut().unwrap().summary =
+        Some("<span itemprop=\"mergify.v2.payload\"></span>".into());
+    assert_eq!(
+        observe(pr.clone(), &[check.clone()], &[]).state,
+        QueueState::Unknown
+    );
+    check.output.as_mut().unwrap().summary = None;
+    check.output.as_mut().unwrap().title = "A future queue state".into();
+    assert_eq!(observe(pr, &[check], &[]).state, QueueState::Unknown);
+}
+
+#[test]
+fn legacy_comment_reason_and_manual_dequeue_keep_their_meanings() {
+    let (pr, _, mut comments) = recorded("conflict");
+    let body = comments[0].body.clone();
+    let start = body.find("-*- Mergify Payload -*-\n").unwrap() + "-*- Mergify Payload -*-\n".len();
+    let end = body.find("\n-*- Mergify Payload End -*-").unwrap();
+    let mut payload: Value = serde_json::from_str(&body[start..end]).unwrap();
+    payload.as_object_mut().unwrap().remove("dequeue_reason");
+    comments[0].body = format!(
+        "{}{}{}\n## Reason\n\nThe pull request conflicts with the base branch\n",
+        &body[..start],
+        payload,
+        &body[end..]
+    );
+    assert_eq!(
+        observe(pr.clone(), &[], &comments).events[0].state,
+        QueueState::Conflict
+    );
+    comments[0].body = comments[0].body.replace(
+        "The pull request conflicts with the base branch",
+        "The merge conditions cannot be satisfied due to failing checks",
+    );
+    assert_eq!(
+        observe(pr, &[], &comments).events[0].state,
+        QueueState::FailedCi
+    );
+    let (pr, checks, comments) = recorded("failed");
+    let event = observe(pr, &checks, &comments)
+        .events
+        .into_iter()
+        .find(|e| e.comment.id == 6497929334)
+        .unwrap();
+    assert_eq!(event.state, QueueState::Dequeued);
+}
