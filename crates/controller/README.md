@@ -898,7 +898,8 @@ context and retry findings.
 
 Store migration 6 remains `0006_worker_wait.sql`, as deployed by the MVP.
 Migration 7, `0007_hindsight.sql`, adds the memory outbox. Migration 8,
-`0008_memory_parking.sql`, adds parking and key-rejection health. Upgrading
+`0008_memory_parking.sql`, adds parking and key-rejection health. Migration 9,
+`0009_memory_recovery.sql`, timestamps parking for retention. Upgrading
 a schema-6 database preserves its recorded SQL and existing worker waits.
 
 Every worker role uses the same runtime summary collector. Protocol v1 requests
@@ -913,8 +914,8 @@ Worker retirement queues one bounded item per physical attempt in
 `tl3_memory_outbox`, before removing the attempt's evidence. Missing summaries
 fall back to the request, structured reply and supervisor exit. Interrupted
 attempts are recorded as failures. Collection strips NUL bytes and checks the
-item's size using Postgres's JSONB text representation. A record that cannot be
-queued is logged and dropped so memory cannot block worker retirement.
+item's size using Postgres's JSONB text representation. Invalid JSON and oversized records are logged and dropped. Store errors keep
+the evidence and fail retirement so a later drain can retry.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
 `tl3`. The bank must be separate from the coordinator's bank. The thread wakes
@@ -942,12 +943,39 @@ recall reads it at runtime and sends the same header. The deployed service loads
 is included in retained items. Status readers do not need the file.
 
 A 401 or 403 stops the current pass and records one operations incident:
-"Hindsight rejected TL3's key". Other 4xx responses park the row with its status.
-Transport failures and 5xx responses leave rows pending for later wakes. The
-active retry set holds at most 10,000 rows; new records beyond that limit park
-the oldest pending rows. Parked payloads remain available for operations review
-and need archive retention management. The status page shows pending and parked
-counts and any key-rejection incident.
+"Hindsight rejected TL3's key". The first successful retain clears that incident.
+Another rejection can raise a new incident; repeated rejections update its HTTP
+status without raising duplicates. HTTP 408 and 429 stay pending for retry.
+Other 4xx responses park the row with its status for 30 days from parking.
+Every flush deletes expired HTTP rows, including a flush with no pending rows.
+Existing parked rows begin their retention period when migration 9 runs.
+Transport failures and 5xx responses end the pass and leave rows pending for the
+next wake. A hung endpoint costs one request timeout per pass.
+
+The active retry set holds at most 10,000 rows; new records beyond that limit
+park the oldest pending rows. After a successful retain drains the pending set,
+the same flush requeues capacity-parked rows oldest first, within the cap, and
+continues sending. Replay uses no timer. The status page shows pending, total
+parked and HTTP-parked counts, plus any key-rejection incident.
+
+After correcting a permanent HTTP error, operators can replay parked HTTP rows
+with this single SQL statement. It preserves the active cap and operation IDs:
+
+```sql
+DO $$
+BEGIN
+    LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE;
+    UPDATE tl3_memory_outbox SET parked_reason = NULL, http_status = NULL, parked_at = NULL
+    WHERE sequence IN (
+        SELECT sequence FROM tl3_memory_outbox WHERE parked_reason = 'http'
+        ORDER BY sequence
+        LIMIT (SELECT GREATEST(0, 10000 - count(*)) FROM tl3_memory_outbox WHERE parked_reason IS NULL)
+    );
+END $$;
+```
+
+Run it while the controller is stopped, then restart the controller to wake the
+feed. The statement does not contact Hindsight.
 
 Records have `repo:`, `request:` and `role:` tags. The controller selects summary
 fields, omits infrastructure and repository file contents, removes credential
@@ -955,7 +983,10 @@ fields, and redacts bearer tokens, common provider keys, private keys,
 credential assignments and passwords in URLs before enqueueing. Each item is
 at most 32 KiB. Oversized sections carry a truncation marker. Pending reads use
 64-row pages, and acknowledged items are deleted without a local receipt
-history. Public action IDs are preserved in structured test activity, while
+history. Redaction replaces matched spans and preserves surrounding prose. Bare hex
+strings of at least 32 characters stay redacted in prose. Public action IDs
+are preserved in structured test activity. A maker reply's known 40-character
+commit is retained as structured `head_sha`. No extra Git read is needed. Meanwhile,
 generic input fields ending in `_key`, `_token` or `_secret` are removed.
 Full transcripts remain the tracing system's responsibility.
 

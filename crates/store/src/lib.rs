@@ -90,6 +90,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (6, include_str!("../migrations/0006_worker_wait.sql")),
     (7, include_str!("../migrations/0007_hindsight.sql")),
     (8, include_str!("../migrations/0008_memory_parking.sql")),
+    (9, include_str!("../migrations/0009_memory_recovery.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,7 +125,7 @@ impl Store {
         let mut tx = self.client.transaction()?;
         tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
         tx.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
-        tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity' WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
+        tx.execute("UPDATE tl3_memory_outbox SET parked_reason = 'capacity', parked_at = CURRENT_TIMESTAMP WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason IS NULL ORDER BY sequence DESC OFFSET 10000)", &[])?;
         tx.commit()?;
         Ok(())
     }
@@ -146,12 +147,20 @@ impl Store {
     }
 
     pub fn park_memory(&mut self, operation_id: &str, status: u16) -> Result<()> {
-        self.client.execute("UPDATE tl3_memory_outbox SET parked_reason = 'http', http_status = $2 WHERE operation_id = $1", &[&operation_id, &(status as i32)])?;
+        self.client.execute("UPDATE tl3_memory_outbox SET parked_reason = 'http', http_status = $2, parked_at = CURRENT_TIMESTAMP WHERE operation_id = $1", &[&operation_id, &(status as i32)])?;
         Ok(())
     }
 
     pub fn reject_memory_key(&mut self, status: u16) -> Result<()> {
-        let raised = self.client.execute("INSERT INTO tl3_memory_health (singleton, rejected_status) VALUES (true, $1) ON CONFLICT (singleton) DO NOTHING", &[&(status as i32)])?;
+        let mut tx = self.client.transaction()?;
+        let raised = tx.execute("INSERT INTO tl3_memory_health (singleton, rejected_status) VALUES (true, $1) ON CONFLICT (singleton) DO NOTHING", &[&(status as i32)])?;
+        if raised == 0 {
+            tx.execute(
+                "UPDATE tl3_memory_health SET rejected_status = $1 WHERE singleton",
+                &[&(status as i32)],
+            )?;
+        }
+        tx.commit()?;
         if raised != 0 {
             eprintln!("Operations incident: Hindsight rejected TL3's key");
         }
@@ -159,11 +168,28 @@ impl Store {
     }
 
     pub fn forget_memory(&mut self, operation_id: &str) -> Result<()> {
-        self.client.execute(
+        let mut tx = self.client.transaction()?;
+        tx.execute(
             "DELETE FROM tl3_memory_outbox WHERE operation_id = $1",
             &[&operation_id],
         )?;
+        tx.execute("DELETE FROM tl3_memory_health WHERE singleton", &[])?;
+        tx.commit()?;
         Ok(())
+    }
+
+    pub fn expire_parked_memories(&mut self) -> Result<()> {
+        self.client.execute("DELETE FROM tl3_memory_outbox WHERE parked_reason = 'http' AND parked_at <= CURRENT_TIMESTAMP - INTERVAL '30 days'", &[])?;
+        Ok(())
+    }
+
+    /// Only a successful flush releases capacity. Share the enqueue lock so the cap holds.
+    pub fn replay_capacity_memories(&mut self) -> Result<u64> {
+        let mut tx = self.client.transaction()?;
+        tx.batch_execute("LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE")?;
+        let replayed = tx.execute("UPDATE tl3_memory_outbox SET parked_reason = NULL, parked_at = NULL WHERE sequence IN (SELECT sequence FROM tl3_memory_outbox WHERE parked_reason = 'capacity' ORDER BY sequence LIMIT (SELECT GREATEST(0, 10000 - count(*)) FROM tl3_memory_outbox WHERE parked_reason IS NULL))", &[])?;
+        tx.commit()?;
+        Ok(replayed)
     }
 
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.

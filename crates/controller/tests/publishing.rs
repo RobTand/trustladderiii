@@ -523,6 +523,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![

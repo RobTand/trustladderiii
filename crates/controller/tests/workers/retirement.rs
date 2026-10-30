@@ -423,7 +423,7 @@ pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
 }
 
 pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
-    for bad in ["request", "exit"] {
+    for bad in ["request", "exit", "size"] {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), "normal");
         let mut store = Store::open(settings).unwrap();
@@ -440,7 +440,15 @@ pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
             json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
         )
         .unwrap();
-        fs::write(attempt.join(format!("{bad}.json")), b"broken json").unwrap();
+        if bad == "size" {
+            fs::write(
+                attempt.join("request.json"),
+                vec![b' '; 16 * 1024 * 1024 + 1],
+            )
+            .unwrap();
+        } else {
+            fs::write(attempt.join(format!("{bad}.json")), b"broken json").unwrap();
+        }
         supervisor.retire(&mut store).unwrap();
         assert!(
             !root_for(&config, &run.key).exists(),
@@ -534,26 +542,56 @@ pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
     );
 }
 
-
 pub(super) fn memory_store_error_retries_retirement(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let config = config(settings, root.path(), "normal");
     let mut store = Store::open(settings).unwrap();
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
-    let run = seed(&mut store, &config, "memory-store-error", EffectState::Confirmed);
+    let run = seed(
+        &mut store,
+        &config,
+        "memory-store-error",
+        EffectState::Confirmed,
+    );
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
-    fs::write(attempt.join("request.json"), json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string()).unwrap();
-    let mut db = postgres::Config::new().host(&settings.host).port(settings.port)
-        .dbname(&settings.database).user(&settings.user).password("tl3-disposable-test-password")
-        .connect(postgres::NoTls).unwrap();
+    fs::write(
+        attempt.join("request.json"),
+        json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
+    )
+    .unwrap();
+    let mut db = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
     db.batch_execute("CREATE FUNCTION fail_memory_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture storage failure'; END $$; CREATE TRIGGER fail_memory BEFORE INSERT ON tl3_memory_outbox FOR EACH ROW EXECUTE FUNCTION fail_memory_insert()").unwrap();
-    assert!(matches!(supervisor.retire(&mut store), Err(tl3_controller::Error::Store(_))), "Postgres memory error must propagate so retirement retries");
-    assert!(attempt.join("request.json").exists(), "failed storage keeps evidence");
-    assert!(store.worker_reconcilable(&run.key).unwrap());
-    db.batch_execute("DROP TRIGGER fail_memory ON tl3_memory_outbox").unwrap();
+    assert!(
+        matches!(
+            supervisor.retire(&mut store),
+            Err(tl3_controller::Error::Store(_))
+        ),
+        "Postgres memory error must propagate so retirement retries"
+    );
+    assert!(
+        attempt.join("request.json").exists(),
+        "failed storage keeps evidence"
+    );
+    assert!(
+        store.retired_workers().unwrap().contains(&run.key),
+        "failed storage keeps the durable retirement retry queued"
+    );
+    db.batch_execute("DROP TRIGGER fail_memory ON tl3_memory_outbox")
+        .unwrap();
     supervisor.retire(&mut store).unwrap();
     assert!(!attempt.exists());
     assert_eq!(store.pending_memories(0).unwrap().len(), 1);
     supervisor.retire(&mut store).unwrap();
-    assert_eq!(store.pending_memories(0).unwrap().len(), 1, "retry queues exactly one record");
+    assert_eq!(
+        store.pending_memories(0).unwrap().len(),
+        1,
+        "retry queues exactly one record"
+    );
 }

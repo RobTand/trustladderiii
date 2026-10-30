@@ -472,11 +472,16 @@ impl Supervisor {
                     .file_name()
                     .to_str()
                     .is_some_and(|name| name.starts_with("attempt-"))
-                    && crate::memory::queue_attempt(store, key, &entry.path()).is_err()
                 {
-                    eprintln!(
-                        "Hindsight memory record dropped for worker {key}; retirement continues"
-                    );
+                    match crate::memory::queue_attempt(store, key, &entry.path()) {
+                        Ok(()) => {}
+                        Err(Error::Invalid(_) | Error::Json(_)) => {
+                            eprintln!(
+                                "Hindsight memory record dropped for worker {key}; retirement continues"
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
             }
         }
@@ -721,6 +726,7 @@ impl Executor for Supervisor {
     }
 
     fn retire(&mut self, store: &mut Store) -> Result<()> {
+        let mut failure = None;
         for key in store.retired_workers()? {
             if let Err(error) = self.retire_run(&key, store) {
                 if matches!(
@@ -731,10 +737,17 @@ impl Executor for Supervisor {
                     self.active.remove_key(&key);
                 }
                 eprintln!("worker retirement retained {key}: {error}");
+                if matches!(error, Error::Store(_)) && failure.is_none() {
+                    failure = Some(error);
+                }
             }
         }
         self.memory.wake();
-        self.retire_sessions(store)
+        self.retire_sessions(store)?;
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {

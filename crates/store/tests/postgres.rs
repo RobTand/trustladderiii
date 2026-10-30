@@ -607,7 +607,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [

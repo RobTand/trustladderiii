@@ -23,14 +23,15 @@ pub struct Status {
 pub struct MemoryStatus {
     pub pending: i64,
     pub parked: i64,
+    pub http_parked: i64,
     pub rejected_status: Option<i32>,
 }
 
 impl MemoryStatus {
     fn summary(&self) -> String {
         let mut text = format!(
-            "Hindsight memory. Pending: {}. Parked: {}.",
-            self.pending, self.parked
+            "Hindsight memory. Pending: {}. Parked: {}. HTTP parked: {}.",
+            self.pending, self.parked, self.http_parked
         );
         if let Some(status) = self.rejected_status {
             write!(
@@ -171,7 +172,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             });
         }
     }
-    let counts = tx.query_one("SELECT count(*) FILTER (WHERE parked_reason IS NULL), count(*) FILTER (WHERE parked_reason IS NOT NULL) FROM tl3_memory_outbox", &[]).map_err(tl3_store::Error::from)?;
+    let counts = tx.query_one("SELECT count(*) FILTER (WHERE parked_reason IS NULL), count(*) FILTER (WHERE parked_reason IS NOT NULL), count(*) FILTER (WHERE parked_reason = 'http') FROM tl3_memory_outbox", &[]).map_err(tl3_store::Error::from)?;
     let health = tx
         .query_opt(
             "SELECT rejected_status FROM tl3_memory_health WHERE singleton",
@@ -181,6 +182,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
     let memory = MemoryStatus {
         pending: counts.get(0),
         parked: counts.get(1),
+        http_parked: counts.get(2),
         rejected_status: health.map(|row| row.get(0)),
     };
     tx.commit().map_err(tl3_store::Error::from)?;

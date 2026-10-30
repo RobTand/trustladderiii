@@ -199,6 +199,13 @@ no summary. These side-table writes do not change the kernel revision.
 Migration 6 is `0006_worker_wait.sql`. Its deployed SQL remains unchanged.
 Migration 7, `0007_hindsight.sql`, adds `tl3_memory_outbox`. Migration 8,
 `0008_memory_parking.sql`, adds parked records and `tl3_memory_health`.
+Migration 9, `0009_memory_recovery.sql`, adds parking timestamps and an HTTP
+expiry index. Existing parked rows receive the migration time. Flushes expire
+HTTP parking after 30 days and replay capacity parking after successful delivery.
 `mvp_schema_6_upgrades_to_hindsight` recreates the MVP schema, upgrades it,
 and checks the Hindsight tables, parking and preservation of an existing wait.
-Readers require schema version 8 after this upgrade.
+Readers require schema version 9 after this upgrade.
+A successful retain deletes its outbox row and clears key-rejection health in
+one transaction. Repeated rejections update the status without duplicating the
+incident. Queue and replay writers share a table lock to preserve the 10,000
+pending-row cap.

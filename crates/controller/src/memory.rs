@@ -54,17 +54,15 @@ fn sensitive_key(key: &str) -> bool {
 fn safe_text(text: &str) -> String {
     static SECRET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-        r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY|(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|token|authorization|cookie)["']?\s*[=:]\s*\S+)"#
+        r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY-----.*?(?:-----END[^\r\n]*PRIVATE KEY-----|$)|\b(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|authorization|cookie)["']?\s*[=:]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*=\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*:\s*(?:["'][^"']+["']|[a-zA-Z0-9_-]*[0-9_-][a-zA-Z0-9_-]*))"#
     ).expect("memory secret pattern")
     });
     let text = text.replace('\0', "");
-    let text = text.as_str();
-    if SECRET.is_match(text) {
-        "[redacted]".into()
-    } else if text.len() > 2048 {
-        format!("{} [truncated]", clip(text, 2048))
+    let text = SECRET.replace_all(&text, "[redacted]");
+    if text.len() > 2048 {
+        format!("{} [truncated]", clip(&text, 2048))
     } else {
-        text.into()
+        text.into_owned()
     }
 }
 
@@ -243,6 +241,13 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
         "reply": section(&reply), "outcome": if succeeded { "succeeded" } else { "failed" },
         "reason": section(&reason),
     });
+    if request["role"] == "maker"
+        && let Some(head) = reply["head"].as_str()
+        && head.len() == 40
+        && head.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        record["head_sha"] = json!(head);
+    }
     let mut item = json!({"content": record.to_string(), "document_id": format!("tl3-run-{id}"),
         "context": "TL3 Deep Agents run summary", "tags": [format!("repo:{repo}"), format!("request:{request_id}"), format!("role:{role}")],
         "metadata": {"source": "tl3", "run": id}});
@@ -264,6 +269,7 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
 /// Hindsight owns the durable async operation after acknowledgement. Retrying
 /// after any ambiguous response reuses its UUID and cannot enqueue new work.
 pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> {
+    store.expire_parked_memories()?;
     let mut pending = store.pending_memories(0)?;
     if pending.is_empty() {
         return Ok(0);
@@ -282,7 +288,6 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
         .extend(["v1", "default", "banks", &settings.bank, "memories"]);
     let mut after = 0;
     let mut count = 0;
-    let mut failure = None;
     loop {
         for (sequence, id, item) in pending {
             after = sequence;
@@ -323,23 +328,23 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
                     store.reject_memory_key(status)?;
                     return Err(Error::HindsightStatus(status));
                 }
+                Err(error @ Error::HindsightStatus(408 | 429)) => return Err(error),
                 Err(Error::HindsightStatus(status @ 400..=499)) => {
                     store.park_memory(&id, status)?;
                 }
-                Err(error) => {
-                    failure = Some(error);
-                }
+                Err(error) => return Err(error),
             }
         }
         pending = store.pending_memories(after)?;
         if pending.is_empty() {
-            break;
+            if count == 0 || store.replay_capacity_memories()? == 0 {
+                break;
+            }
+            after = 0;
+            pending = store.pending_memories(after)?;
         }
     }
-    match failure {
-        Some(error) => Err(error),
-        None => Ok(count),
-    }
+    Ok(count)
 }
 
 #[derive(Clone)]
@@ -420,10 +425,13 @@ mod review_tests {
     secret_case!(gitlab_token, "glpat-fixture1234567890");
     secret_case!(model_token, "sk-fixture1234567890");
     secret_case!(hex_token, "f9c83a01b647de2390abc81456fed279");
-    secret_case!(
-        postgres_credentials,
-        "postgres://user:fixture-pass@db.invalid/tl3"
-    );
+    #[test]
+    fn postgres_credentials() {
+        assert_eq!(
+            safe_text("postgres://user:fixture-pass@db.invalid/tl3"),
+            "[redacted]db.invalid/tl3"
+        );
+    }
     secret_case!(prefixed_api_key, "SERVICE_API_KEY=fixture-value");
     secret_case!(prefixed_secret, "SERVICE_SECRET_VALUE=fixture-value");
     secret_case!(prefixed_token, "SERVICE_TOKEN=fixture-value");
