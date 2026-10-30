@@ -1501,15 +1501,17 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
         "the waiting maker has a durable subscription"
     );
     match case {
-        "progress" => c
-            .observe(
+        "progress" => {
+            c.observe(
                 "own-progress",
                 Observation::Progress {
                     key: delivery.key.clone(),
                     checkpoint: "own-work".into(),
                 },
             )
-            .unwrap(),
+            .unwrap();
+            drain(&mut c);
+        }
         "look" => {
             resumed.set(true);
             c.look_now().unwrap();
