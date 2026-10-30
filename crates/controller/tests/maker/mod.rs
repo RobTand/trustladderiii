@@ -122,8 +122,17 @@ impl Workers {
     }
 }
 impl Executor for Workers {
-    fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Look> {
-        if matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(Role::Make), .. }) {
+    fn look(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Look> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Make),
+                ..
+            }
+        ) {
             self.real.look(delivery)
         } else {
             self.fake.look(delivery)
@@ -900,9 +909,12 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
         let (mut registry, source, _) = registry(&config, &root.path().join("fakes"), false);
         registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
         let mut controller = Controller::open_with_clock(
-            Store::open(settings).unwrap(), registry,
-            Bootstrap::from_config(&config).unwrap(), clock.clone(),
-        ).unwrap();
+            Store::open(settings).unwrap(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
         let mut allowances = config.allowances.clone();
         allowances.agent_worker.silence_secs = 1;
         allowances.agent_worker.no_progress_secs = 3;
@@ -919,19 +931,29 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
     for failure_count in 0..2 {
         wait(|| {
             drive(&mut controller, &mut source, &mut store);
-            store.worker_progress(None).unwrap().iter().any(|row| {
-                row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref()
-            })
+            store
+                .worker_progress(None)
+                .unwrap()
+                .iter()
+                .any(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
         });
-        let run = store.worker_progress(None).unwrap().into_iter().find(|row| {
-            row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref()
-        }).unwrap();
+        let run = store
+            .worker_progress(None)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
+            .unwrap();
         let attempt = root_for(&config, &run.key).join(format!("attempt-{:08}", run.attempt));
-        let request: Value = serde_json::from_slice(&fs::read(attempt.join("request.json")).unwrap()).unwrap();
-        let head_path = PathBuf::from(request["session_file"].as_str().unwrap()).with_extension("head");
+        let request: Value =
+            serde_json::from_slice(&fs::read(attempt.join("request.json")).unwrap()).unwrap();
+        let head_path =
+            PathBuf::from(request["session_file"].as_str().unwrap()).with_extension("head");
         let saved = fs::read(&head_path).unwrap();
         if let Some(checkpoint) = &checkpoint {
-            assert_eq!(&saved, checkpoint, "RunFailed must retain the visit checkpoint");
+            assert_eq!(
+                &saved, checkpoint,
+                "RunFailed must retain the visit checkpoint"
+            );
         }
         checkpoint = Some(saved);
         controller.look_now().unwrap();
@@ -942,9 +964,15 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
         clock.0.set(clock.0.get() + 1_000_000);
         controller.look_due().unwrap();
         while controller.drive_once().unwrap() {}
-        assert_eq!(controller.world().unwrap().nodes[0].run_failures, failure_count,
-                   "a maker waiting on a claimed action must survive recovery and retry");
-        assert!(!attempt.join("exit.json").exists(), "a live wait must not stop its maker");
+        assert_eq!(
+            controller.world().unwrap().nodes[0].run_failures,
+            failure_count,
+            "a maker waiting on a claimed action must survive recovery and retry"
+        );
+        assert!(
+            !attempt.join("exit.json").exists(),
+            "a live wait must not stop its maker"
+        );
         if failure_count == 0 {
             kill_record_and_wait(&attempt.join("process.json"));
             wait(|| {
@@ -954,8 +982,15 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
             previous_key = Some(run.key);
         }
     }
-    controller.observe("stop-wait-fixture", Observation::Kernel(Event::Command {
-        node: NodeId(0), command: tl3_kernel::Command::Stop,
-    })).unwrap();
+    controller
+        .observe(
+            "stop-wait-fixture",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
     while controller.drive_once().unwrap() {}
 }

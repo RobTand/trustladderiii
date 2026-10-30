@@ -1842,7 +1842,9 @@ fn observation_upstream(
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
         Observation::Rebased { .. } => Some(Upstream::Worktrees),
-        Observation::Merged { .. } | Observation::Queue(_) => Some(Upstream::Mergify),
+        Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
+            Some(Upstream::Mergify)
+        }
         Observation::Kernel(Event::Reply {
             node, generation, ..
         }) => snapshot
