@@ -1,3 +1,4 @@
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::LazyLock};
@@ -24,6 +25,7 @@ pub struct Draft {
 /// Add current internal identifiers and names, including request and operation ids.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
+    /// Only these request-local issue and PR references may appear in prose.
     pub own_issue: Option<u64>,
     pub own_pull_request: Option<u64>,
     pub internal_terms: Vec<String>,
@@ -47,6 +49,8 @@ pub enum Violation {
     InternalNameOrId,
     FilePath,
     Log,
+    Mention(String),
+    ForeignReference(String),
 }
 
 #[derive(Clone, Debug)]
@@ -65,13 +69,13 @@ static HEX_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b[0-9a-f]{7,
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
     // CamelCase alone also describes product names. Actual internal names belong in Policy.
     Regex::new(
-        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\#[0-9]+|<!--)",
+        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|<!--)",
     )
     .unwrap()
 });
 static LOG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-    r"(?ix)(?:```|\b(?:traceback|stack\s+trace|panic(?:ked)?|stdout|stderr)\b|\b(?:error|warn|info|debug|trace)\s*[:\[]|\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}|\bat\s+\S+:\d+)"
+    r"(?ix)(?:\b(?:traceback|stack\s+trace|panic(?:ked)?|stdout|stderr)\b|\b(?:error|warn|info|debug|trace)\s*[:\[]|\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}|\bat\s+\S+:\d+)"
 ).unwrap()
 });
 
@@ -168,7 +172,7 @@ pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Vi
 
 fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     let normalized = normalize(text);
-    let mut errors = Vec::new();
+    let mut errors = reference_errors(text, policy);
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }
@@ -214,6 +218,54 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     }
     if LOG.is_match(&normalized) {
         errors.push(Violation::Log);
+    }
+    errors
+}
+
+static MENTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^a-zA-Z0-9_])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)").unwrap()
+});
+static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#(?P<number>[0-9]+)").unwrap()
+});
+
+/// Mask code using CommonMark ranges so nested blocks and multi-backtick spans
+/// have the same meaning to this rule as they do to the Markdown renderer.
+fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
+    let mut prose = text.as_bytes().to_vec();
+    let mut in_code_block = false;
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => {
+                in_code_block = true;
+                prose[range].fill(b' ');
+            }
+            Event::End(TagEnd::CodeBlock) => in_code_block = false,
+            Event::Code(_) => prose[range].fill(b' '),
+            _ if in_code_block => prose[range].fill(b' '),
+            _ => {}
+        }
+    }
+    // Complete UTF-8 ranges were replaced with ASCII spaces.
+    let prose = normalize(&String::from_utf8(prose).unwrap());
+    let mut errors = Vec::new();
+    for capture in MENTION.captures_iter(&prose) {
+        let violation = Violation::Mention(capture["mention"].to_owned());
+        if !errors.contains(&violation) {
+            errors.push(violation);
+        }
+    }
+    for capture in REFERENCE.captures_iter(&prose) {
+        let number = capture["number"].parse::<u64>().ok();
+        if capture.name("repo").is_some()
+            || number.is_none()
+            || ![policy.own_issue, policy.own_pull_request].contains(&number)
+        {
+            let violation = Violation::ForeignReference(capture[0].to_owned());
+            if !errors.contains(&violation) {
+                errors.push(violation);
+            }
+        }
     }
     errors
 }

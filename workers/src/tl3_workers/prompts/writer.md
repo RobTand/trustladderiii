@@ -11,6 +11,10 @@ Every message must make sense to Rob with no previous conversation or technical
 context. Write in plain language. Leave out internal names, IDs, file paths,
 logs and TL3's vocabulary, including leaf, lineage, replan and measure. Explain
 what a problem means for his request instead of copying technical details.
+Do not mention users or teams. Do not reference another repository or another
+request. A numbered issue or pull request reference is allowed only for this
+request's own issue or pull request. Code spans and code blocks are exempt from
+this reference rule. Remove each mention or foreign reference named in violations.
 Preserve the supplied issue title exactly when quoting what he asked for.
 
 For kind "question", return exactly these fields, with no wrapper or kind tag:

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("hosts", "workers", "workspace", "steering", "writer"))
+parser.add_argument("suite", choices=("hosts", "workers", "workspace", "steering", "writer", "references"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -17,7 +17,10 @@ env = {
     "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
-if args.suite == "steering":
+if args.suite == "references":
+    rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "writer_references", "--test", "writer_quote", "--test", "github", "--locked"]}
+            for host in ("dl380g10", "sparky", "sparklina")]
+elif args.suite == "steering":
     rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "github", "--locked"]}
             for host in ("dl380g10", "sparky", "sparklina")]
 elif args.suite == "writer":

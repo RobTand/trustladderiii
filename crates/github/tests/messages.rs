@@ -130,7 +130,6 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         "b5862850-8ed7-47f7-8fdf-887a96ba872c",
         "id: 12",
         "request_id",
-        "#123",
         "<!-- hidden -->",
     ] {
         rejects(
@@ -138,6 +137,10 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
             Violation::InternalNameOrId,
         );
     }
+    rejects(
+        |d| d.options[0].outcome = "#123".into(),
+        Violation::ForeignReference("#123".into()),
+    );
     for path in [
         "/home/rob/work",
         "src/main.rs",
@@ -151,7 +154,7 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         );
     }
     for log in [
-        "```text\nraw\n```",
+        "```text\nTraceback\n```",
         "Traceback",
         "thread panicked",
         "stderr",

@@ -241,6 +241,12 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                     )
                 });
             let problem = match violation {
+                Violation::Mention(token) => {
+                    return format!("Remove the user or team mention '{token}'.");
+                }
+                Violation::ForeignReference(token) => {
+                    return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
+                }
                 Violation::InternalVocabulary => "uses an internal word",
                 Violation::InternalNameOrId => "contains an internal name or identifier",
                 Violation::FilePath => "contains a file path",

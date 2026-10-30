@@ -202,6 +202,8 @@ impl Executor for Adapter {
                 issue.body.as_deref().unwrap_or(""),
             )?;
             let mut policy = self.policy.clone();
+            policy.own_issue = Some(delivery.issue);
+            policy.own_pull_request = delivery.pull_request;
             policy
                 .internal_terms
                 .extend([delivery.key.clone(), "TL3".into()]);
