@@ -5,7 +5,7 @@ use tl3_controller::{
         FakeWriter, MessageKind, WriteRequest, Writer, WriterReply, checked_draft,
     },
 };
-use tl3_github::message::{Policy, check_prose};
+use tl3_github::message::{Policy, Violation, check_prose};
 
 fn policy() -> Policy {
     Policy {
@@ -155,15 +155,22 @@ fn code_blocks_are_allowed_but_surrounding_prose_is_checked() {
         "> Example:\n>\n> ```\n> @octocat #56\n> ```\n",
     ] {
         let errors = check_prose(text, &policy()).err().unwrap_or_default();
-        assert!(
-            errors
-                .iter()
-                .all(|error| *error == tl3_github::message::Violation::Log),
-            "{text}: {errors:?}"
-        );
+        let expected = if text.contains("```") {
+            vec![Violation::Log]
+        } else {
+            vec![]
+        };
+        assert_eq!(errors, expected, "{text}");
         for token in ["@octocat", "owner/repo#56", "#56"] {
+            let expected = if token.starts_with('@') {
+                Violation::Mention(token.into())
+            } else {
+                Violation::ForeignReference(token.into())
+            };
             assert!(
-                check_prose(&format!("{text}\nOutside {token}"), &policy()).is_err(),
+                check_prose(&format!("{text}\nOutside {token}"), &policy())
+                    .expect_err("surrounding prose must still be checked")
+                    .contains(&expected),
                 "{text}: {token}"
             );
         }

@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::LazyLock};
@@ -27,6 +27,7 @@ pub struct Draft {
 pub struct Policy {
     /// Only these request-local issue and PR references may appear in prose.
     pub own_issue: Option<u64>,
+    /// Owner/repository of the request, for checking absolute GitHub links.
     pub own_repository: Option<String>,
     pub own_pull_request: Option<u64>,
     pub internal_terms: Vec<String>,
@@ -52,6 +53,7 @@ pub enum Violation {
     Log,
     Mention(String),
     ForeignReference(String),
+    HtmlEntity(String),
 }
 
 #[derive(Clone, Debug)]
@@ -76,7 +78,7 @@ static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
 });
 static LOG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-    r"(?ix)(?:\b(?:traceback|stack\s+trace|panic(?:ked)?|stdout|stderr)\b|\b(?:error|warn|info|debug|trace)\s*[:\[]|\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}|\bat\s+\S+:\d+)"
+    r"(?ix)(?:```|\b(?:traceback|stack\s+trace|panic(?:ked)?|stdout|stderr)\b|\b(?:error|warn|info|debug|trace)\s*[:\[]|\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}|\bat\s+\S+:\d+)"
 ).unwrap()
 });
 
@@ -149,6 +151,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         draft.how_to_answer.as_str(),
     ]);
     errors.extend(content_errors(&written.join("\n"), policy));
+    // The quoted title is exempt by design: it is the issue's text, not TL3's prose.
     errors.extend(reference_errors(&rendered[request_prefix.len()..], policy));
     if errors.is_empty() {
         Ok(CheckedMessage(rendered))
@@ -227,15 +230,26 @@ static MENTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[^a-zA-Z0-9_])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)").unwrap()
 });
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#(?P<number>[0-9]+)").unwrap()
+    Regex::new(r"(?:(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#|\bGH-)(?P<number>[0-9]+)").unwrap()
 });
 
-/// Mask code using CommonMark ranges so nested blocks and multi-backtick spans
+static REFERENCE_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:https?://)?github\.com/(?P<repo>[a-z0-9_.-]+/[a-z0-9_.-]+)/(?:issues|pull)/(?P<number>[0-9]+)\b").unwrap()
+});
+static HTML_ENTITY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);").unwrap());
+
+/// Mask code using GFM ranges so tables, nested blocks and multi-backtick spans
 /// have the same meaning to this rule as they do to the Markdown renderer.
 fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     let mut prose = text.as_bytes().to_vec();
     let mut in_code_block = false;
-    for (event, range) in Parser::new(text).into_offset_iter() {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_GFM;
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         match event {
             Event::Start(Tag::CodeBlock(_)) => {
                 in_code_block = true;
@@ -250,6 +264,14 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     // Complete UTF-8 ranges were replaced with ASCII spaces.
     let prose = normalize(&String::from_utf8(prose).unwrap());
     let mut errors = Vec::new();
+    for entity in HTML_ENTITY.find_iter(&prose) {
+        let violation = Violation::HtmlEntity(entity.as_str().to_owned());
+        if !errors.contains(&violation) {
+            errors.push(violation);
+        }
+    }
+    // Entity syntax has its own feedback; its numeric payload is not an issue reference.
+    let prose = HTML_ENTITY.replace_all(&prose, " ");
     for capture in MENTION.captures_iter(&prose) {
         let violation = Violation::Mention(capture["mention"].to_owned());
         if !errors.contains(&violation) {
@@ -259,6 +281,21 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     for capture in REFERENCE.captures_iter(&prose) {
         let number = capture["number"].parse::<u64>().ok();
         if capture.name("repo").is_some()
+            || number.is_none()
+            || ![policy.own_issue, policy.own_pull_request].contains(&number)
+        {
+            let violation = Violation::ForeignReference(capture[0].to_owned());
+            if !errors.contains(&violation) {
+                errors.push(violation);
+            }
+        }
+    }
+    for capture in REFERENCE_URL.captures_iter(&prose) {
+        let number = capture["number"].parse::<u64>().ok();
+        if !policy
+            .own_repository
+            .as_deref()
+            .is_some_and(|repo| repo.eq_ignore_ascii_case(&capture["repo"]))
             || number.is_none()
             || ![policy.own_issue, policy.own_pull_request].contains(&number)
         {
