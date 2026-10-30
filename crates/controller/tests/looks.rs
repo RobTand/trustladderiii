@@ -835,6 +835,7 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
     assert_eq!(allowance["progress_ms"], progressed_at);
     assert_eq!(allowance["due_ms"], progressed_at + 3000);
     assert!(allowance["progress"].is_null() && allowance["found"].is_null());
+    assert!(!c.drive_once().unwrap());
     let stable = c.snapshot().unwrap();
     assert!(!c.drive_once().unwrap());
     assert_eq!(
@@ -946,7 +947,7 @@ fn main() {
     look_adapter_errors_survive(&db.create("stop_eperm"), false);
     look_adapter_errors_survive(&db.create("resume_eperm"), true);
     settled_looks_are_quiet(&db.create("quiet_timer"));
-    db.stop();
     token_only_queue_progress(&db.create("token_only_queue"));
+    db.stop();
     println!("16 allowance and incident scenarios passed; no skips");
 }
