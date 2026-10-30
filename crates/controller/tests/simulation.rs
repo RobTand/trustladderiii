@@ -235,6 +235,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
             .any(|e| e.receipt.result.get("kernel_event").is_some())
     );
     drop(controller);
+    controller_lock_barrier(settings);
     let mut restored = open(settings, &records);
     assert_eq!(restored.snapshot().unwrap(), before);
     assert!(!restored.drive_once().unwrap());
@@ -332,6 +333,7 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
             .any(|e| e.payload.get("to") == Some(&serde_json::json!("Uncertain")))
     );
     drop(controller);
+    controller_lock_barrier(settings);
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_tl3d"))
         .args(["--config"])
         .arg(&config)
@@ -408,14 +410,7 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(9));
     }
-    // Synchronize on Postgres releasing the dead session, not a delay after SIGKILL.
-    let mut client = raw(&settings);
-    client
-        .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
-        .unwrap();
-    client
-        .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
-        .unwrap();
+    controller_lock_barrier(&settings);
     let after = Store::open_read_only(&settings).unwrap().load().unwrap();
     assert_eq!(after, before, "SIGKILL must preserve every stored row");
     assert_eq!(
@@ -552,7 +547,12 @@ fn write_outage_goes_idle(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let calls = std::rc::Rc::new(std::cell::Cell::new(0));
     let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(Upstream::Workers, WriteDown { calls: calls.clone() });
+    registry.register(
+        Upstream::Workers,
+        WriteDown {
+            calls: calls.clone(),
+        },
+    );
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(labelled()).unwrap();
@@ -563,16 +563,30 @@ fn write_outage_goes_idle(settings: &tl3_config::Store) {
     }
     let snapshot = controller.snapshot().unwrap();
     let revisions = snapshot.revision.get() - before;
-    println!("write outage: drive_once_true={progressed}/60 revisions_added={revisions} attempts={} deliveries={:?}",
-        calls.get(), adapters::delivery_counts(root.path()).unwrap());
-    assert_eq!(progressed, 2, "write outage must go idle after Sent and Uncertain");
+    println!(
+        "write outage: drive_once_true={progressed}/60 revisions_added={revisions} attempts={} deliveries={:?}",
+        calls.get(),
+        adapters::delivery_counts(root.path()).unwrap()
+    );
+    assert_eq!(
+        progressed, 2,
+        "write outage must go idle after Sent and Uncertain"
+    );
     assert_eq!(revisions, 2);
     assert_eq!(calls.get(), 1);
     assert!(adapters::delivery_counts(root.path()).unwrap().is_empty());
     assert!(!controller.drive_once().unwrap());
     assert_eq!(controller.snapshot().unwrap(), snapshot);
 
-    controller.observe("new-input", Observation::PullRequest { node: NodeId(0), number: 100 }).unwrap();
+    controller
+        .observe(
+            "new-input",
+            Observation::PullRequest {
+                node: NodeId(0),
+                number: 100,
+            },
+        )
+        .unwrap();
     drain(&mut controller);
     assert_eq!(calls.get(), 2, "the next observation retries exactly once");
     let mut next = labelled();
@@ -580,6 +594,22 @@ fn write_outage_goes_idle(settings: &tl3_config::Store) {
     controller.intake(next).unwrap();
     drain(&mut controller);
     assert_eq!(calls.get(), 3, "the next intake retries exactly once");
+    controller.retry_held_effects();
+    drain(&mut controller);
+    assert_eq!(calls.get(), 4, "a look retries exactly once");
+    drop(controller);
+    controller_lock_barrier(settings);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        WriteDown {
+            calls: calls.clone(),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    drain(&mut controller);
+    assert_eq!(calls.get(), 5, "a restart retries exactly once");
 }
 
 struct DeferredWorker(adapters::workers::Fake);
@@ -613,6 +643,7 @@ fn acknowledged_operation_look(settings: &tl3_config::Store) {
     assert!(controller.snapshot().unwrap().pending_effects.is_empty());
     assert!(controller.world().unwrap().nodes[0].run.is_some());
     drop(controller);
+    controller_lock_barrier(settings);
     let mut controller = open(settings, root.path());
     drain(&mut controller);
     assert_finished(&mut controller, root.path(), settings);
@@ -670,6 +701,17 @@ fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
         EffectState::Cancelled
     );
     assert!(calls.borrow().values().all(|count| *count == 1));
+}
+
+fn controller_lock_barrier(settings: &tl3_config::Store) {
+    // Client drop and SIGKILL can precede Postgres releasing the session lock.
+    let mut client = raw(settings);
+    client
+        .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+    client
+        .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
 }
 
 fn raw(settings: &tl3_config::Store) -> postgres::Client {
@@ -772,6 +814,7 @@ fn adapter_errors_are_isolated(settings: &tl3_config::Store) {
         "an adapter outage must not spin the daemon"
     );
     fault.set(Fault::Healthy);
+    controller.retry_held_effects();
     drain(&mut controller);
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
@@ -841,6 +884,7 @@ fn inbox_arrival_order(settings: &tl3_config::Store) {
     );
     assert!(inbox[0].arrival < inbox[1].arrival);
     drop(controller);
+    controller_lock_barrier(settings);
     let mut controller = open(settings, root.path());
     controller.drive_once().unwrap();
     assert!(controller.world().unwrap().nodes[0].paused);
@@ -1296,16 +1340,25 @@ fn invalid_footprints(settings: &tl3_config::Store) {
                 "stored footprint must be sorted and deduplicated"
             ))
         ));
-        assert!(status::render(&mut Store::open_read_only(settings).unwrap()).is_err());
+        assert_eq!(
+            status::render(&mut Store::open_read_only(settings).unwrap())
+                .unwrap_err()
+                .to_string(),
+            "stored footprint must be sorted and deduplicated"
+        );
     }
     drop(controller);
-    assert!(
-        Controller::open(
-            Store::open(settings).unwrap(),
-            Registry::default(),
-            bootstrap()
-        )
-        .is_err()
+    controller_lock_barrier(settings);
+    let error = Controller::open(
+        Store::open(settings).unwrap(),
+        Registry::default(),
+        bootstrap(),
+    )
+    .err()
+    .expect("invalid footprint must reject controller recovery");
+    assert_eq!(
+        error.to_string(),
+        "stored footprint must be sorted and deduplicated"
     );
 }
 

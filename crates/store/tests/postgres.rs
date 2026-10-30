@@ -18,7 +18,7 @@ fn main() {
         return;
     }
     let mut database = Database::start();
-    for (name, test) in [
+    let cases = [
         (
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
@@ -31,13 +31,17 @@ fn main() {
         ("killed_writer_recovers", killed_writer_recovers),
         ("durability_settings", durability_settings),
         ("arrival_within_transaction", arrival_within_transaction),
-    ] {
+    ];
+    for (name, test) in &cases {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
     database.stop();
-    println!("9 Postgres integration scenarios passed; no skips");
+    println!(
+        "{} Postgres integration scenarios passed; no skips",
+        cases.len()
+    );
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {

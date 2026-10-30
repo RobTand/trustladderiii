@@ -9,6 +9,7 @@ pub mod status;
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
     Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
@@ -96,6 +97,7 @@ pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
+    held_effects: BTreeSet<String>,
 }
 impl Controller {
     pub fn open(mut store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -122,6 +124,7 @@ impl Controller {
             store,
             adapters,
             bootstrap,
+            held_effects: BTreeSet::new(),
         })
     }
 
@@ -202,6 +205,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
+        self.retry_held_effects();
         Ok(true)
     }
 
@@ -213,7 +217,14 @@ impl Controller {
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
         self.store.commit(&commit)?;
+        self.retry_held_effects();
         Ok(())
+    }
+
+    /// Allow one new attempt after input or an authoritative look (ticket #15).
+    /// Holds are in memory, so reopening the controller also allows a retry.
+    pub fn retry_held_effects(&mut self) {
+        self.held_effects.clear();
     }
 
     pub fn drive_once(&mut self) -> Result<bool> {
@@ -278,6 +289,7 @@ impl Controller {
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
+                            self.held_effects.insert(effect.key.clone());
                             progressed = true;
                             continue;
                         }
@@ -305,8 +317,10 @@ impl Controller {
                                 self.cancel_absent(effect, &delivery)?;
                                 return Ok(true);
                             }
-                            self.transition(effect, EffectState::Intended)?;
-                            progressed = true;
+                            if !self.held_effects.contains(&effect.key) {
+                                self.transition(effect, EffectState::Intended)?;
+                                progressed = true;
+                            }
                         }
                         Reconciliation::Pending => {}
                     }
@@ -345,21 +359,26 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
-                if let Ok(Reconciliation::Found(completion)) =
-                    self.adapters.adapter(&delivery)?.reconcile(&delivery)
-                {
-                    if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
+                let completion = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                    Ok(Reconciliation::Found(completion)) => completion,
+                    Ok(Reconciliation::Absent | Reconciliation::Pending) => continue,
+                    Err(error) => {
+                        eprintln!(
+                            "adapter reconciliation failed for {}: {error}",
+                            delivery.key
+                        );
                         continue;
                     }
-                    for (index, observation) in completion.observations.iter().enumerate() {
-                        commit.rows.push(put(
-                            "inbox",
-                            format!("{}:{index:08}", delivery.key),
-                            json!(observation),
-                        ));
-                    }
-                } else {
+                };
+                if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                     continue;
+                }
+                for (index, observation) in completion.observations.iter().enumerate() {
+                    commit.rows.push(put(
+                        "inbox",
+                        format!("{}:{index:08}", delivery.key),
+                        json!(observation),
+                    ));
                 }
             }
             commit.rows.push(RowChange::Delete {
@@ -413,6 +432,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
+        self.held_effects.remove(&effect.key);
         Ok(())
     }
 
@@ -496,6 +516,7 @@ impl Controller {
             }
         }
         self.store.commit(&commit)?;
+        self.held_effects.remove(key);
         Ok(())
     }
 

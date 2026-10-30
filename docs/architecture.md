@@ -74,7 +74,12 @@ silence alone declares work lost.
 An `execute` error means the response is unknown. The effect remains Sent and
 then becomes Uncertain. A reconciliation error or Pending result changes no
 acknowledgement or kernel state. Errors are isolated to their delivery, so other
-requests continue. The controller never converts a lost response into Retryable:
+requests continue. After an execute error, authoritative absence holds the effect
+Uncertain instead of redispatching it. The hold lasts until the next accepted
+`intake` or `observe` input, a call to `Controller::retry_held_effects` for a look,
+or a restart. Holds live only in memory. Repeated drives with only held effects
+return false without adding revisions. Found results and cancellation still
+settle held effects. The controller never converts a lost response into Retryable:
 the kernel would issue a new key and could duplicate the outside write.
 
 The tracer reconciles unresolved effects and watches when `drive_once` runs,
@@ -91,7 +96,9 @@ Sent or Uncertain effect becomes Cancelling and is reconciled by its original
 key and epoch. A moved-on node's cancelled delivery uses the same paths.
 Authoritative absence makes it Cancelled and reports Retryable to the kernel,
 never a fabricated confirmation. The kernel ignores that acknowledgement when
-its in-flight effect is cancelling. A found cancelling attempt becomes final
+its in-flight effect is cancelling. In stale-epoch recovery, when the kernel
+still awaits that effect, Retryable counts as a delivery failure toward its
+incident rule. A found cancelling attempt becomes final
 Confirmed in the delivery table, passes through its actual acknowledgement and
 observations, and leaves cleanup to the kernel.
 
