@@ -777,6 +777,21 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
         let mut body = webhook_fixture();
         body["action"] = json!("completed");
         body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+        let inputs = Translator::new(api.clients())
+            .unwrap()
+            .webhook(
+                &parsed("check_run", body.clone()),
+                &controller.snapshot().unwrap(),
+                &bootstrap().repos,
+            )
+            .unwrap();
+        assert_eq!(
+            inputs.len(),
+            1,
+            "closed unmerged node must translate the final check; node={:?}; check={}",
+            controller.world().unwrap().nodes[0],
+            body["check_run"]
+        );
         deliver(settings, &api, "check_run", &body);
         drain(&mut controller);
     } else {
@@ -784,7 +799,8 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
     }
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
-        Phase::Closed(Outcome::Merged)
+        Phase::Closed(Outcome::Merged),
+        "late merge path webhook={webhook}"
     );
     assert!(queue_facts(&mut controller).is_empty());
     assert_kernel_facts(settings, 1);
