@@ -113,6 +113,8 @@ pub struct Limits {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHub {
+    #[serde(default)]
+    pub webhook_listen: Option<SocketAddr>,
     pub app_credentials_file: PathBuf,
     pub rob: Identity,
     pub repos: Vec<Repository>,

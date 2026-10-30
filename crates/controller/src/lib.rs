@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod cli;
 pub mod executor;
+pub mod ingress;
 mod snapshot;
 pub mod status;
 
@@ -28,6 +29,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("{0}")]
+    GitHub(#[from] tl3_github::Error),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -206,6 +209,26 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::GitHubComment {
+            repository,
+            comment,
+            ..
+        } = &observation
+        {
+            let id = format!(
+                "{}/{}/{}/{}",
+                repository.owner.to_ascii_lowercase(),
+                repository.name.to_ascii_lowercase(),
+                repository.installation,
+                comment.id
+            );
+            if snapshot.rows.iter().any(|row| {
+                (row.table == "github_comments" && row.id == id)
+                    || (row.table == "inbox" && row.id == format!("external:{key}"))
+            }) {
+                return Ok(());
+            }
+        }
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         commit
             .rows
@@ -542,6 +565,7 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                question: n.question,
             };
             if matches!(
                 output,
@@ -590,6 +614,35 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
+            Observation::GitHubComment {
+                repository,
+                issue,
+                comment,
+            } => {
+                if comment.user.id == self.bootstrap.rob
+                    && self.bootstrap.repos.contains(&repository)
+                {
+                    let id = format!(
+                        "{}/{}/{}/{}",
+                        repository.owner.to_ascii_lowercase(),
+                        repository.name.to_ascii_lowercase(),
+                        repository.installation,
+                        comment.id
+                    );
+                    if !snapshot
+                        .rows
+                        .iter()
+                        .any(|row| row.table == "github_comments" && row.id == id)
+                    {
+                        commit.rows.push(put(
+                            "github_comments",
+                            id,
+                            json!({"repository": repository, "issue": issue, "comment": comment}),
+                        ));
+                    }
+                }
+                return Ok(None);
+            }
             Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
                 return Err(Error::Invalid(
                     "acknowledgements require an effect key; requests require authorized intake",

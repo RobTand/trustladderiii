@@ -1,3 +1,6 @@
+pub mod writer;
+pub use writer::{FakeWriter, Writer};
+
 use super::record::Records;
 use crate::{
     Result,

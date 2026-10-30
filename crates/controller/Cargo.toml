@@ -10,13 +10,27 @@ thiserror = "2"
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
+tl3-github = { path = "../github" }
+chrono = { version = "0.4", features = ["serde"] }
+tiny_http = "0.12"
+tokio = { version = "1", features = ["rt", "time", "net"] }
 
 [dev-dependencies]
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
 tempfile = "3"
-tokio = { version = "1", features = ["rt", "time", "net"] }
+wiremock = "0.6"
+rand = "0.8"
+rsa = { version = "0.9", features = ["pem"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"
+harness = false
+
+[[test]]
+name = "github"
+path = "tests/github.rs"
 harness = false

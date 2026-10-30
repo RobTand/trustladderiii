@@ -16,6 +16,8 @@ pub struct Delivery {
     pub paths: Vec<String>,
     pub attempt: u8,
     pub round: u8,
+    #[serde(default)]
+    pub question: Option<tl3_kernel::Question>,
 }
 
 impl Delivery {
@@ -29,6 +31,11 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    GitHubComment {
+        repository: crate::Repository,
+        issue: u64,
+        comment: tl3_github::Comment,
+    },
     Kernel(Event),
     Plan {
         node: NodeId,

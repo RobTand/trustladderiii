@@ -41,9 +41,71 @@ pub struct Store {
     client: Client,
 }
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/0001_store.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0001_store.sql")),
+    (2, include_str!("../migrations/0002_ingress.sql")),
+];
 
 impl Store {
+    /// Sources have separate connections and never change the controller revision.
+    /// The unique delivery key and its complete payload become durable together.
+    pub fn receive_ingress(
+        &mut self,
+        source: &str,
+        key: &str,
+        payload: &serde_json::Value,
+    ) -> Result<bool> {
+        Ok(self.client.execute(
+            "INSERT INTO tl3_ingress (source, delivery_key, payload) VALUES ($1, $2, $3) ON CONFLICT (source, delivery_key) DO NOTHING",
+            &[&source, &key, payload],
+        )? == 1)
+    }
+
+    pub fn pending_ingress(&mut self) -> Result<Vec<(i64, serde_json::Value)>> {
+        Ok(self.client.query(
+            "SELECT sequence, payload FROM tl3_ingress WHERE NOT consumed ORDER BY sequence LIMIT 100",
+            &[],
+        )?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
+    /// Call only after every input in the delivery has reached the controller store.
+    pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
+        self.client.execute(
+            "UPDATE tl3_ingress SET consumed = true WHERE sequence = $1",
+            &[&sequence],
+        )?;
+        Ok(())
+    }
+
+    pub fn ingress_cursor(&mut self, source: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT cursor FROM tl3_ingress_cursors WHERE source = $1",
+                &[&source],
+            )?
+            .map(|row| row.get(0)))
+    }
+
+    /// Persist a catch-up pass and its cursor atomically. A partial pass advances neither.
+    pub fn receive_catch_up(
+        &mut self,
+        source: &str,
+        deliveries: &[(String, serde_json::Value)],
+        cursor: &serde_json::Value,
+    ) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        for (key, payload) in deliveries {
+            tx.execute(
+                "INSERT INTO tl3_ingress (source, delivery_key, payload) VALUES ($1, $2, $3) ON CONFLICT (source, delivery_key) DO NOTHING",
+                &[&source, key, payload],
+            )?;
+        }
+        tx.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
