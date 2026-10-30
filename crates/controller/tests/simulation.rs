@@ -16,7 +16,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Registry, Upstream},
     status,
 };
-use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Phase, come};
+use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase};
 use tl3_store::{Commit, EffectState, EffectTransition, Epoch, Reader, RowChange, Snapshot, Store};
 
 fn bootstrap() -> Bootstrap {

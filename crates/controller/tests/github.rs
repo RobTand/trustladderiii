@@ -33,7 +33,7 @@ use tl3_controller::{
     ingress::{self, CatchUp, GitHubDelivery, GitHubTranslator, Source, Sources, Webhooks},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
-use tl3_kernel::{NodeId, Notice, Out, Phase, come};
+use tl3_kernel::{NodeId, Notice, Out, Outcome, Phase};
 use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
