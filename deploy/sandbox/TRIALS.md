@@ -46,6 +46,16 @@ The supplementary jobs recorder failed once because shell quoting removed a
 JSON key's quotes. The corrected recorder passed; both actions remain recorded.
 This was a recording error, not a sandbox CI failure.
 
+Cleanup was verified through REST: only `main` remains, at the merged trial
+commit, and no sandbox PR is open. The App also deleted the old setup branches
+`t4-seed-sandbox-issues`, `tl3/issue-17-node-220` and `tl3/mergify-merge-account`.
+
+Formatting, 38 Mergify adapter scenarios and both replay tests passed on
+dl380g10, sparky and sparklina. The final offline audit passed all 28 sandbox
+Python tests, the queue verifier, runner labels, closure actor, final cleanup,
+refusal payload and recorder field allowlists. No tests were skipped and no
+required tools were missing.
+
 This phase covers the requested success and refusal trials. The separate
 main-advancement trial remains unrun, so #114 remains **Part of #17**. The App's
 delivery history still contains only the old ping with HTTP 502. Actual
