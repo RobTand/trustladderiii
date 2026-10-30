@@ -44,14 +44,19 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
   --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
   --env XDG_RUNTIME_DIR=/run/user/1000 \
   --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --detach -- bash -c 'python3 deploy/dl380g10/deploy.py model-defaults && python3 deploy/dl380g10/deploy.py install --binaries "$1"' bash "$TL3_RELEASE"
+  --detach -- bash -c 'python3 deploy/dl380g10/deploy.py model-defaults && python3 deploy/dl380g10/deploy.py install --binaries "$1" && "$HOME/.local/share/tl3/bin/tl3-deploy" database "$HOME/.config/tl3/tl3.toml" && systemctl --user try-restart tl3-status.service' bash "$TL3_RELEASE"
 ```
 
-Save this action key and verify it with `pbwait.py --endings`. Installation does
-not enable or start any unit. It copies the release binaries, Python packages,
+Save this action key and verify it with `pbwait.py --endings`. `deploy.py install`
+does not enable or start any unit. It copies the release binaries, Python packages,
 unit files and the wrapper. It also adds the operations issue identity expected
 by the looks adapter and fills a missing Hindsight bank, preserving its endpoint.
 No credential values enter the checkout or build snapshot.
+The database helper applies missing migrations to the prepared, running Postgres
+instance. It refuses historical SQL mismatches. This release adds schema 6's
+nullable worker-wait column. `try-restart` refreshes an already-running status
+service so its reader matches the new schema; it does not start an inactive one.
+The controller remains stopped and the readiness marker stays absent.
 
 ## Preflight
 
