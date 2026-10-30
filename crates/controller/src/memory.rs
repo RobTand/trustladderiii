@@ -104,13 +104,40 @@ fn sanitize(value: &Value, depth: usize, budget: &mut usize) -> Value {
 }
 
 fn section(value: &Value) -> Value {
-    let value = sanitize(value, 8, &mut 256);
+    bound_section(sanitize(value, 8, &mut 256))
+}
+
+fn bound_section(value: Value) -> Value {
     let encoded = value.to_string();
     if encoded.len() <= SECTION_BYTES {
         value
     } else {
         json!({"summary": clip(&encoded, SECTION_BYTES / 2), "truncated": true})
     }
+}
+
+fn activity_section(activity: &Value) -> Value {
+    let mut value = sanitize(activity, 8, &mut 256);
+    if let (Some(source), Some(tests)) = (
+        activity["tests"].as_array(),
+        value.get_mut("tests").and_then(Value::as_array_mut),
+    ) {
+        for (source, test) in source.iter().zip(tests) {
+            if let (Some(action), Some(test)) =
+                (source["action_key"].as_str(), test.as_object_mut())
+            {
+                // Structured PrismaBuild action IDs are public identifiers, unlike input keys.
+                let action = if action.len() == 64 && action.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    action.to_owned()
+                } else {
+                    safe_text(action)
+                };
+                test.insert("action_key".into(), json!(action));
+            }
+        }
+    }
+    bound_section(value)
 }
 
 fn read(path: &Path, limit: u64) -> Result<Option<Value>> {
@@ -212,7 +239,7 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
     let mut record = json!({
         "role": role, "model": section(&request["model"]["name"]), "repo": repo,
         "issue": context["issue"], "request": request_id, "run": id,
-        "inputs": section(&inputs), "activity": section(&summary["activity"]),
+        "inputs": section(&inputs), "activity": activity_section(&summary["activity"]),
         "reply": section(&reply), "outcome": if succeeded { "succeeded" } else { "failed" },
         "reason": section(&reason),
     });
