@@ -125,33 +125,33 @@ impl Watcher {
         let reply: Reply =
             serde_json::from_slice(&bytes).map_err(|e| Error::Bell(e.to_string()))?;
         reply.cursor.validate()?;
-        if let Some(cursor) = &self.cursor {
-            if !reply.reset {
-                let Some(events) = &reply.events else {
-                    return Err(Error::Bell("missing events".into()));
-                };
-                if reply.cursor.epoch != cursor.epoch
-                    || reply.cursor.seq < cursor.seq
-                    || events.iter().any(|hint| {
-                        hint.seq <= cursor.seq
-                            || hint.seq > reply.cursor.seq
-                            || hint.key.as_str().is_empty()
-                            || ![
-                                "ready",
-                                "claimed",
-                                "done",
-                                "failed",
-                                "withdrawn",
-                                "deferred",
-                                "intent",
-                                "attempts",
-                                "publication-endings",
-                            ]
-                            .contains(&hint.dir.as_str())
-                    })
-                {
-                    return Err(Error::Bell("invalid cursor or event".into()));
-                }
+        if let Some(cursor) = &self.cursor
+            && !reply.reset
+        {
+            let Some(events) = &reply.events else {
+                return Err(Error::Bell("missing events".into()));
+            };
+            if reply.cursor.epoch != cursor.epoch
+                || reply.cursor.seq < cursor.seq
+                || events.iter().any(|hint| {
+                    hint.seq <= cursor.seq
+                        || hint.seq > reply.cursor.seq
+                        || hint.key.as_str().is_empty()
+                        || ![
+                            "ready",
+                            "claimed",
+                            "done",
+                            "failed",
+                            "withdrawn",
+                            "deferred",
+                            "intent",
+                            "attempts",
+                            "publication-endings",
+                        ]
+                        .contains(&hint.dir.as_str())
+                })
+            {
+                return Err(Error::Bell("invalid cursor or event".into()));
             }
         }
         Ok(reply)

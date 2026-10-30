@@ -208,6 +208,7 @@ async fn invalid_submission_never_launches_the_tool() {
 #[tokio::test]
 async fn withdraw_is_repeatable_but_is_not_cleanup_confirmation() {
     let f = Fixture::new("http://127.0.0.1:9/");
+    f.record("claimed", 3, None, None, 100.0);
     f.response(
         json!({"schema":"prismabuild.withdrawal.v1", "action_key":key(3),
         "state_before":"claimed", "withdrawn":true, "reason":"stopping"}),
@@ -242,6 +243,21 @@ async fn withdraw_is_repeatable_but_is_not_cleanup_confirmation() {
         f.client.withdraw(&key(3), "stopping").await,
         Err(Error::ToolResponse(_))
     ));
+}
+
+#[tokio::test]
+async fn withdrawal_of_finished_unknown_or_withdrawn_work_confirms_without_a_tool_call() {
+    let f = Fixture::new("http://127.0.0.1:9/");
+    f.record("done", 1, Some("executed"), Some(0), 100.0);
+    f.record("failed", 2, Some("failed"), Some(5), 100.0);
+    f.record("failed", 3, Some("lease_lost_max_attempts"), None, 100.0);
+    f.record("withdrawn", 4, Some("withdrawn"), None, 100.0);
+    for n in 1..=5 {
+        let result = f.client.withdraw(&key(n), "stopping").await.unwrap();
+        assert_eq!(result.withdrawn, n == 4);
+        assert_eq!(result.key, key(n));
+    }
+    assert!(!f.dir.path().join("calls.jsonl").exists());
 }
 
 #[tokio::test]

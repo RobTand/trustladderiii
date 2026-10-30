@@ -25,7 +25,10 @@ tool adapter as well as a different bell endpoint.
   status in `done` is an error. A cache-hit record in `done` finishes with zero.
 - `withdraw(&ActionKey, reason)` invokes `pbrun --withdraw --json`. The response
   records the cancellation decision. It does not prove that the process or
-  its cleanup has finished. Nonzero tool exits remain errors, including exit 2.
+  its cleanup has finished. Finished, failed, lost or unknown work confirms
+  immediately without invoking the tool, as the state table requires.
+  Exit 2 triggers another authoritative read. It confirms only if that read
+  finds the job absent or terminal. Other nonzero tool exits remain errors.
 - `reconcile(&BTreeSet<ActionKey>)` rereads every awaited key after a restart,
   including keys that currently have no queue record. It never submits work.
 - `watcher().next(awaited, patience)` captures `/v1/now` before the initial

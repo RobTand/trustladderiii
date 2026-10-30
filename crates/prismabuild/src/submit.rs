@@ -1,4 +1,4 @@
-use crate::{ActionKey, Error, PrismaBuild};
+use crate::{ActionKey, ActionState, Error, PrismaBuild};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -241,6 +241,9 @@ impl PrismaBuild {
     }
 
     pub async fn withdraw(&self, key: &ActionKey, reason: &str) -> Result<Withdrawal, Error> {
+        if let Some(confirmation) = self.withdrawal_confirmation(key).await? {
+            return Ok(confirmation);
+        }
         let output = self
             .tool()
             .args([
@@ -258,8 +261,13 @@ impl PrismaBuild {
                 path: self.options.tool.program.clone(),
                 source,
             })?;
-        // Exit 2 can mean absent or ambiguous. Never turn it into successful cancellation.
+        // Exit 2 can mean absent or ambiguous. Only an authoritative reread confirms absence.
         if !output.status.success() {
+            if output.status.code() == Some(2)
+                && let Some(confirmation) = self.withdrawal_confirmation(key).await?
+            {
+                return Ok(confirmation);
+            }
             return Err(Error::Tool {
                 code: output.status.code(),
             });
@@ -276,5 +284,21 @@ impl PrismaBuild {
             state_before: wire.state_before,
             withdrawn: wire.withdrawn,
         })
+    }
+
+    async fn withdrawal_confirmation(&self, key: &ActionKey) -> Result<Option<Withdrawal>, Error> {
+        let state = match self.read(key).await?.map(|record| record.state) {
+            None => None,
+            Some(ActionState::Queued | ActionState::Claimed) => return Ok(None),
+            Some(ActionState::Finished { .. }) => Some("finished"),
+            Some(ActionState::Failed { .. }) => Some("failed"),
+            Some(ActionState::LeaseLost) => Some("lease_lost"),
+            Some(ActionState::Withdrawn) => Some("withdrawn"),
+        };
+        Ok(Some(Withdrawal {
+            key: key.clone(),
+            state_before: state.map(str::to_owned),
+            withdrawn: state == Some("withdrawn"),
+        }))
     }
 }
