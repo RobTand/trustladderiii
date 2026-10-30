@@ -39,8 +39,11 @@ GitHub keeps job logs, while local diagnostics disappear with the container.
 The Containerfile pins the official Actions runner base by manifest digest.
 It adds build tools, a checksum-pinned rustup installer, Rust 1.99.1 with clippy
 and rustfmt, ShellCheck, `systemd-analyze`, and shared libraries for embedded Postgres.
-The existing workflow installs Python 3.14 and uv. Job names, steps, tests, and
-timeouts stay unchanged; only both `runs-on` values change.
+The existing workflow installs Python 3.14 and uv. Job names, steps, and tests
+stay unchanged. Both `runs-on` values change. Rust's overall job budget rises
+from 20 to 30 minutes: the cold canary on two CPUs was still passing worker
+integration tests when GitHub canceled it at 20 minutes. Test deadlines and
+assertions stay intact. Python keeps its 20-minute job budget.
 
 ## Capacity
 
