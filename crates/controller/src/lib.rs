@@ -440,7 +440,21 @@ impl Controller {
         // An acknowledged start can outlive its dispatch. Its authoritative
         // record must also be read after a restart or a missed notification.
         let snapshot = self.store.load()?;
-        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+        let watch_keys: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "watches")
+            .map(|row| row.id.clone())
+            .collect();
+        for key in watch_keys {
+            let snapshot = self.store.load()?;
+            let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "watches" && row.id == key)
+            else {
+                continue;
+            };
             let mut delivery: Delivery = serde_json::from_value(row.value.clone())?;
             let world = snapshot::decode(&snapshot)?;
             let node = &world.nodes[delivery
@@ -497,8 +511,8 @@ impl Controller {
                         completion.progress.as_ref(),
                     )?;
                     if progress_changed {
+                        // Recording a look must not schedule another look by itself.
                         self.store.commit(&commit)?;
-                        return Ok(true);
                     }
                     continue;
                 }

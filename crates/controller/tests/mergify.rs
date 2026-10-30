@@ -781,6 +781,24 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
     );
     assert!(queue_facts(&mut controller).is_empty());
     assert_kernel_facts(settings, 1);
+    let credit = controller.world().unwrap().nodes[0].credit;
+    assert!(credit.merge_credited);
+    let effects = Store::open(settings).unwrap().effects().unwrap();
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| effect.payload["output"]["Notice"]["notice"]["Note"] == "LateMerge")
+            .count(),
+        1
+    );
+    assert!(effects.iter().any(|effect| {
+        effect.payload["output"]["Notice"]["notice"]
+            .get("Incident")
+            .is_some()
+    }));
+    catch_up(settings, &api, &mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].credit, credit);
+    assert_kernel_facts(settings, 1);
 }
 
 fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
@@ -1050,7 +1068,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
     drain(&mut controller);
     let before = progress(&mut controller).current;
     api.state.lock().unwrap().merged(false);
-    assert!(controller.drive_once().unwrap());
+    assert!(!controller.drive_once().unwrap());
     let changed = progress(&mut controller);
     assert!(changed.changed());
     assert_eq!(changed.previous, Some(before));
@@ -1084,7 +1102,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     assert_eq!(progress(&mut controller), changed);
-    assert!(controller.drive_once().unwrap());
+    assert!(!controller.drive_once().unwrap());
     let unchanged = progress(&mut controller);
     assert!(!unchanged.changed());
     assert_eq!(unchanged.previous.as_ref(), Some(&unchanged.current));
@@ -1107,7 +1125,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
                 _ => unreachable!(),
             }
         }
-        assert!(controller.drive_once().unwrap());
+        assert!(!controller.drive_once().unwrap());
         let read: WatchProgress = progress(&mut controller);
         assert!(read.changed());
         assert_eq!(read.previous, Some(previous));

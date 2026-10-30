@@ -506,18 +506,16 @@ fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
         })
 }
 
-fn approved_head(snapshot: &Snapshot, node: NodeId) -> Result<String> {
-    let world: World = crate::snapshot::decode(snapshot)?;
-    Ok(world.nodes[node.0 as usize]
-        .approved
-        .and_then(|head| {
-            snapshot
-                .interned
-                .iter()
-                .find(|entry| entry.kind == InternKind::Commit && entry.id == head.0 as i64)
-                .map(|entry| entry.value.clone())
-        })
-        .unwrap_or_default())
+fn approved_head(snapshot: &Snapshot, approved: Option<tl3_kernel::HeadId>) -> Result<String> {
+    let Some(head) = approved else {
+        return Ok(String::new());
+    };
+    snapshot
+        .interned
+        .iter()
+        .find(|entry| entry.kind == InternKind::Commit && entry.id == head.0 as i64)
+        .map(|entry| entry.value.clone())
+        .ok_or(Error::Invalid("approved head is not interned"))
 }
 
 struct Tracked {
@@ -567,7 +565,7 @@ fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Resu
                 .as_u64()
                 .ok_or(Error::Invalid("invalid PR number"))?,
             head,
-            approved: approved_head(snapshot, node)?,
+            approved: approved_head(snapshot, n.approved)?,
             known_heads,
         });
     }
@@ -616,6 +614,7 @@ impl Translator {
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let open = tracked(snapshot, repo, false)?;
+        let world: World = crate::snapshot::decode(snapshot)?;
         let mut facts = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
@@ -628,15 +627,13 @@ impl Translator {
                     },
                 };
                 if let Some(node) = binding.node(snapshot)?
-                    && crate::snapshot::decode(snapshot)?.nodes[node.0 as usize]
-                        .merged
-                        .is_none()
+                    && world.nodes[node.0 as usize].merged.is_none()
                     && !is_merge_queue_pr(pull_request)
                 {
                     let checks = self
                         .runtime
                         .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
-                    let head = approved_head(snapshot, node)?;
+                    let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                     let state = tl3_mergify::observe(pull_request.clone(), &checks, &head);
                     facts.extend(
                         self.runtime
@@ -762,7 +759,7 @@ impl Translator {
                 )
                 && world.nodes[node.0 as usize].merged.is_none()
             {
-                let head = approved_head(snapshot, node)?;
+                let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                 let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
                 facts.extend(
                     self.runtime
