@@ -24,6 +24,8 @@ pub struct Draft {
 /// Add current internal identifiers and names, including request and operation ids.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
+    pub own_issue: Option<u64>,
+    pub own_pull_request: Option<u64>,
     pub internal_terms: Vec<String>,
     /// Repo-relative files and directories from the request delivery.
     pub known_paths: BTreeSet<String>,
