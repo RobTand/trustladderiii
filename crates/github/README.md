@@ -20,6 +20,10 @@ expires them nine minutes ahead. It exchanges them for installation tokens and
 caches each token until one minute before expiry. Clones share the cache and serialize
 HTTP requests. A 401 invalidates that token for the next call.
 
+`installation_token()` exposes the cached installation credential to the Git
+worktree adapter. `installation_id()` binds that client to a served repository.
+Never log or persist the returned token.
+
 Every call pins `X-GitHub-Api-Version: 2022-11-28`. Slice one needs no newer endpoint
 behavior, so the older supported version avoids adopting unrelated breaking changes.
 The API URL defaults to GitHub. A different HTTPS API root must end in a slash.
