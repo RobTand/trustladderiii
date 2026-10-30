@@ -93,6 +93,7 @@ impl Daemon {
     fn wait(&mut self, mut condition: impl FnMut(&mut Self) -> bool) {
         let start = Instant::now();
         while !condition(self) {
+            self.approve_simulated_checks();
             assert!(self.child.try_wait().unwrap().is_none(), "daemon exited");
             assert!(
                 start.elapsed() < Duration::from_secs(90),
@@ -100,6 +101,37 @@ impl Daemon {
                 self.node()
             );
             thread::sleep(Duration::from_millis(10));
+        }
+    }
+    // These steering scenarios simulate checks; publishing owns real review evidence.
+    fn approve_simulated_checks(&mut self) {
+        let snapshot = self.store.load().unwrap();
+        for row in snapshot.rows.iter().filter(|r| r.table == "nodes") {
+            if row.value["phase"] != "Reviewing" {
+                continue;
+            }
+            let node = row.id.parse::<u64>().unwrap();
+            let generation = row.value["generation"].as_u64().unwrap();
+            let head = row.value["head"].as_i64().unwrap();
+            let sha = snapshot
+                .interned
+                .iter()
+                .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head)
+                .unwrap()
+                .value
+                .clone();
+            let input = Input::Observation {
+                key: format!("steering-fixture-review:{node}:{generation}"),
+                observation: Observation::Reviewed {
+                    node: NodeId(node),
+                    generation,
+                    sha,
+                },
+            };
+            let stdin = self.child.stdin.as_mut().unwrap();
+            serde_json::to_writer(&mut *stdin, &input).unwrap();
+            writeln!(stdin).unwrap();
+            stdin.flush().unwrap();
         }
     }
     fn send(&mut self, id: u64, body: &str) {

@@ -7,6 +7,9 @@ use crate::{
 use std::path::Path;
 use tl3_kernel::EffectKind;
 
+mod publishing;
+pub use publishing::APPROVAL_CHECK;
+
 pub struct Fake(Records);
 impl Fake {
     pub fn new(root: &Path) -> Self {
@@ -50,14 +53,13 @@ use tl3_github::{
 use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
-/// PR effects stay on the tracer fake until ticket 13 replaces them here.
 pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
     writer: Box<dyn Writer>,
     epoch: i64,
     policy: Policy,
     runtime: &'static tokio::runtime::Runtime,
-    fake: Fake,
+    records: Records,
     operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
@@ -74,13 +76,14 @@ impl Adapter {
                 "real GitHub adapter requires [github.operations]",
             ));
         }
+        std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
             writer: Box::new(writer),
             epoch,
             policy,
             runtime: crate::executor::runtime()?,
-            fake: Fake::new(simulation),
+            records: Records::new(simulation),
             operations,
         })
     }
@@ -88,7 +91,7 @@ impl Adapter {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
         }
-        self.fake.0.fence(delivery.epoch)?;
+        self.records.fence(delivery.epoch)?;
         self.epoch = delivery.epoch;
         Ok(())
     }
@@ -280,7 +283,12 @@ impl Executor for Adapter {
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
-        self.fake.0.fence(self.epoch)?;
+        self.records.fence(self.epoch)?;
+        if publishing::handles(delivery) {
+            return Ok(self
+                .reconcile_publication(delivery)
+                .unwrap_or(Reconciliation::Pending));
+        }
         if let Some(crate::steering::Task::FileRequest {
             correction: true,
             since,
@@ -310,7 +318,7 @@ impl Executor for Adapter {
                 }
             )
         {
-            return self.fake.reconcile(delivery);
+            return self.records.reconcile(delivery);
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -486,7 +494,7 @@ fn writer_input(
             MessageKind::Summary,
             json!({"issue_title": title, "request": request,
             "outcome": match outcome {
-                Outcome::Merged => "Your change was merged after its checks and review passed.",
+                Outcome::Merged => "Your change was merged.",
                 Outcome::AlreadyDone => "The requested work was already done.",
                 Outcome::Duplicate => "This request duplicates work already tracked elsewhere.",
                 Outcome::NotActionable => "This request could not be acted on.",
@@ -518,6 +526,9 @@ fn writer_input(
 impl Adapter {
     fn execute_delivery(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
+        if publishing::handles(delivery) {
+            return self.publish(delivery);
+        }
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             return self.file_request(delivery);
         }
@@ -531,7 +542,9 @@ impl Adapter {
                 }
             )
         {
-            return self.fake.execute(delivery);
+            return self
+                .records
+                .deliver(delivery, Completion::confirmed(vec![]));
         }
         if matches!(notice, Some(Notice::Incident { .. }))
             && !self.operations.as_ref().is_some_and(|o| {

@@ -361,6 +361,11 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--review-feedback") {
+        maker::review_trial(&database.create("review_feedback"));
+        database.stop();
+        return;
+    }
     quota_resumes_same_operation(&database.create("workers_quota"));
     println!("test announced_quota_resumes_same_operation_without_failure ... ok");
     clock_stops_stalled_worker(&database.create("workers_stall"));
@@ -466,7 +471,7 @@ fn worker_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Review),
                     ..
                 }
             ) || (self.2
@@ -487,7 +492,7 @@ fn worker_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Review),
                     ..
                 }
             ) || (self.2
@@ -1060,18 +1065,19 @@ fn killed_supervisor(settings: &tl3_config::Store) {
 
 fn fake_stop(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "normal");
+    let config = config(settings, root.path(), "blocked");
     let fakes = root.path().join("fakes");
     let mut supervisor = Supervisor::new(&config, &fakes).unwrap();
+    materials(&mut Store::open(settings).unwrap());
     let mut run = delivery();
-    run.output = Out::Effect {
-        node: NodeId(0),
-        seq: 1,
-        kind: EffectKind::StartRun(Role::Review),
-        head: None,
-    };
-    run.head_sha = Some("a".repeat(40));
     supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let process: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    let pid = rustix::process::Pid::from_raw(process["pid"].as_i64().unwrap().try_into().unwrap())
+        .unwrap();
+    let fd = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
@@ -1088,6 +1094,21 @@ fn fake_stop(settings: &tl3_config::Store) {
         head: None,
     };
     supervisor.execute(&run).unwrap();
+    let mut descriptors = [rustix::event::PollFd::new(
+        &fd,
+        rustix::event::PollFlags::IN,
+    )];
+    assert_eq!(
+        rustix::event::poll(
+            &mut descriptors,
+            Some(&rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 0
+            })
+        )
+        .unwrap(),
+        1
+    );
     assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),

@@ -46,6 +46,88 @@ pub trait Writer {
     fn draft(&mut self, key: &str, input: &WriteRequest) -> Result<WriterReply>;
 }
 
+pub struct ProcessWriter {
+    config: tl3_config::Config,
+    root: std::path::PathBuf,
+}
+impl ProcessWriter {
+    pub fn new(config: &tl3_config::Config, root: &std::path::Path) -> Result<Self> {
+        std::fs::create_dir_all(root)?;
+        Ok(Self {
+            config: config.clone(),
+            root: root.to_owned(),
+        })
+    }
+}
+impl Writer for ProcessWriter {
+    fn draft(&mut self, key: &str, input: &WriteRequest) -> Result<WriterReply> {
+        use serde_json::json;
+        use std::{
+            fs::{self, File},
+            io::Write,
+            process::{Command, Stdio},
+        };
+        let root = super::run_root(&self.root, key);
+        fs::create_dir_all(&root)?;
+        let reply = root.join("reply.json");
+        if let Some(value) = super::process::read(&reply)? {
+            return Ok(serde_json::from_value(value)?);
+        }
+        let model = self
+            .config
+            .models
+            .writer
+            .first()
+            .ok_or(Error::Invalid("writer ladder is empty"))?;
+        let mut request = json!({"protocol":1,"operation":{"node":0,"generation":0,"kind":"writer"},
+            "role":"writer","model":self.config.models.worker_model(model), "key_file":self.config.models.key_file,
+            "inputs":input,"worktree":root});
+        let credentials = root.join("credentials");
+        if credentials.exists() {
+            fs::remove_dir_all(&credentials)?;
+        }
+        let mut command = Command::new(&self.config.workers.python);
+        super::isolate_credentials(&root, &mut request, &mut command)?;
+        let mut child = command
+            .args(&self.config.workers.command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let written = child
+            .stdin
+            .take()
+            .ok_or(Error::Invalid("writer stdin missing"))?
+            .write_all(&serde_json::to_vec(&request)?);
+        let output = child.wait_with_output()?;
+        fs::remove_dir_all(credentials)?;
+        written?;
+        if !output.status.success() {
+            return Err(Error::Invalid("writer process failed"));
+        }
+        let mut result = None;
+        for line in output
+            .stdout
+            .split(|b| *b == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let event = super::json::parse(line)?;
+            if event["event"] == "reply" {
+                if event["role"] != "writer" || result.is_some() {
+                    return Err(Error::Invalid("invalid writer reply stream"));
+                }
+                result = Some(serde_json::from_value::<WriterReply>(
+                    event["reply"].clone(),
+                )?);
+            }
+        }
+        let result = result.ok_or(Error::Invalid("writer returned no reply"))?;
+        super::process::write(&reply, &result)?;
+        File::open(&root)?.sync_all()?;
+        Ok(result)
+    }
+}
+
 /// Fixed, deterministic simulation of the writer role. It executes no model.
 pub struct FakeWriter;
 impl Writer for FakeWriter {

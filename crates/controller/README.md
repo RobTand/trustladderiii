@@ -4,8 +4,8 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. Controller execution
-supports explicit simulation only. Status commands read the configured store
+All commands use the same TOML configuration as `tl3-config`. The daemon runs
+production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
 The daemon uses `Config::load`, which checks all secret-file metadata. Status
@@ -17,10 +17,11 @@ reports an uninitialized database clearly.
 ```text
 tl3 status --config /absolute/path/to/config.toml
 tl3 status-serve --config /absolute/path/to/config.toml
+tl3d --config /absolute/path/to/config.toml
 tl3d --config /absolute/path/to/config.toml --simulate /absolute/path/to/fake-records
 ```
 
-The daemon reads one JSON `cli::Input` per line on stdin. For example:
+In simulation, the daemon reads one JSON `cli::Input` per line on stdin. For example:
 
 ```json
 {"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"title":"Fix the sandbox build","actor":24923402,"label":"tl3"}}
@@ -99,9 +100,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
-`adapters::simulation_with_workers` replaces ingest, audit, planning and maker with Python
-worker processes and returns a `WorkerOutputSource`. Review remains on
-the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Review needs
+committed Git and check evidence. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
@@ -168,17 +169,17 @@ language. `Observation::CiFailed` persists named CI evidence in the same
 transaction as its kernel fact. A bare non-infrastructure CI fact still records
 feedback, explicitly stating when the upstream supplied no check details.
 Infrastructure failures and stale replies do not add maker findings.
+Reviewer blockers supply their problem, evidence and cited goal IDs to the next
+maker run, with up to 20 blockers per review. Each problem and evidence is
+capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's
+`findings` only when the request re-plans.
 
-Production integration still requires:
-
-1. The controller's production material assembler must write the `maker` object
-   with `Store::put_worker_materials` before dispatch. There is no production
-   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
-   and planner check plan to this store API. The supervisor supplies kernel fields
-   and deployment settings; it does not invent a brief or checks.
-2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
-   feedback with the failed check's name and link or summary remains pending.
-   Its current bare fact is supported but lacks details.
+Production registration supplies committed repository materials. Before maker
+dispatch, the supervisor translates the accepted brief and planner checks into
+the stored `maker` object, with stable goal IDs. It also stores the initial
+check plan. The supervisor adds kernel fields and deployment settings.
+Mergify's current queue CI fact supplies no check text. Maker feedback records
+that details are unavailable when it receives a bare fact.
 
 The merged PrismaBuild checks observation supplies changed paths and up to 20
 failing test IDs with messages capped at 1,000 characters each. The trusted
@@ -225,9 +226,9 @@ To exercise the receiver against a local GitHub mock server, supply
 address. With `--github-api` and no explicit listen address, the receiver defaults
 to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
 on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
-The API must be loopback HTTP in this simulation release. Ordinary stdin
-simulation still needs no App credentials. Live startup and tunnel deployment
-remain tickets #20 and #19.
+The mock API must be loopback HTTP. Ordinary stdin simulation needs no App
+credentials. Without `--simulate`, the daemon uses the configured App and real
+adapters. Follow [GO-LIVE.md](../../deploy/dl380g10/GO-LIVE.md) for deployment.
 
 POST deliveries to `/github/events`, matching the App manifest, with GitHub's
 delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
@@ -274,8 +275,8 @@ The controller's separate connection advances cursors and retires rows.
 
 ### Register a delivery translator
 
-PR #69 registers its Mergify translator, and #13 registers its PR translator,
-on the controller before `Sources::run` or `ingress::drain`:
+Register the Mergify translator on the controller before `Sources::run` or
+`ingress::drain`. It handles PR updates as well as queue facts:
 
 ```rust
 controller.register_github_translator("mergify", mergify_translator);
@@ -309,7 +310,7 @@ writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13. Incident notices use
+PR effects use the same adapter's publishing implementation. Incident notices use
 the operations issue. Replacements start a new request on the same issue from
 Rob's text. Corrections create linked issues with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
@@ -321,9 +322,14 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Supply issue and
+repository text through `Store::put_worker_materials` before dispatch. Review also
+needs committed Git and check evidence.
+
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
-ingest, audit, planning and maker, with the remaining roles and upstreams simulated. Add
+ingest, audit, planning, maker and review, with other upstreams simulated. Add
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
 sources against a local GitHub mock. Without `--workers`, workers stay simulated.
 Worker replies enter the same controller channel as webhook notifications. A
@@ -338,9 +344,10 @@ records its identity before exec. Atomic claims also let recovery cancel a
 launcher that has not started. No file locks are used. Machine ID, PID, process start time
 and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
 Keep these runs on the controller's host, including after a restart.
-For #19, workers and their supervisors must live outside the controller's kill
-scope. Use systemd `KillMode=process` for the controller or put workers in their
-own scope. Otherwise stopping the controller kills the workers too.
+The deployed unit uses `KillMode=control-group`: a service restart stops workers,
+supervisors and other local children. Recovery reconciles durable records before
+retrying. A process-only controller crash can still reattach to a live supervisor.
+See [the startup procedure](../../deploy/dl380g10/GO-LIVE.md) for restart checks.
 
 Sync the worker environment once at deployment with
 `uv sync --locked --project /srv/tl3/workers --python 3.14+gil`.
@@ -427,8 +434,10 @@ registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, recor
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
 check baselines and receipts by effect key. A label write alone leaves enqueue
 uncertain. Mergify must report queue membership or the attempt's terminal result.
-The kernel has no dequeue effect, so this adapter adds none. GitHub PR effects
-remain on the fake until ticket #13.
+An outside commit between Mergify's head check and adding `tl3-queue` can leave
+a stale label; the new head has no approval check, so it cannot merge.
+The kernel has no dequeue effect, so this adapter adds none. The GitHub adapter
+owns approval checks and opening and closing PRs.
 
 Register queue translation on the controller before draining ingress:
 
@@ -508,8 +517,8 @@ the daemon supervisor, which must stop the ingress loop and exit on failure.
 The source sends existing `cli::Input` values.
 It also implements `ingress::Source`, so the shared ingress supervisor registers
 it with `sources.register(adapter.source())` and propagates its errors.
-The production registry remains with #20. The default simulation registry still
-uses the fake.
+Production registers this adapter and its bell source from config.
+The default simulation registry still uses the fake.
 
 Before `SubmitChecks`, a maker/worktree caller supplies
 `Observation::CheckPlan { node, sha, run: CheckRun { repository, base_sha, plan } }`.
@@ -602,7 +611,7 @@ Supersession and withdrawal list only that node's files.
 `action_key(&Delivery)` locates the binding directly. Startup moves flat bindings
 into node directories while preserving their completion markers.
 The last pair stays until that node delivers a newer ending. After the request
-closes and every effect and watch for that node has settled, ticket #13 teardown
+closes and every effect and watch for that node has settled, the adapter retirement hook
 calls `prismabuild::Adapter::retire_node(node)`. The call is idempotent and removes
 the final records and source watches. Neither age nor a timer permits deletion.
 
@@ -1020,3 +1029,75 @@ The host actions also run looks. The `workspace` selection runs `tools/verify.sh
 Use `all` to generate both sets. These commands run through PrismaBuild.
 There is no kernel or state-table change beyond the approved #80 tree, so this
 controller change needs no Kani campaign.
+## Review and publishing
+
+The supervisor maps `Role::Review` to the `reviewer` worker. It selects the first
+model returned by `models.reviewer_for` for the current maker attempt's family.
+A missing independent family blocks dispatch. Review runs in its own process and
+reads a private clone at the exact checked commit. Dirty maker files never enter
+that clone.
+
+The controller retains each check's tests, outcomes and `custody: in-process` in
+`check_reports`. Each node keeps only its latest head's report, and closure deletes
+it. A review needs the matching check plan, base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
+identifiers when ingest did not supply IDs. Optional `standing_rules` in worker
+materials supplement the controller's rules. The reserved `test-report-integrity`
+rule always replaces any supplied rule with the same ID. It protects test output
+and pytest internals while permitting ordinary program output. Review blockers
+must cite a supplied goal or rule. Approvals must name the exact reviewed head.
+The controller carries blocking findings into planning.
+
+Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
+covers resuming the round-0 session with the session store from #12. That follow-up
+is outside the first live tracer run, as recorded in #20.
+
+`github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
+client. The check is named `TL3 approval`. Its external ID contains the effect key
+and exact SHA. Recovery requires a successful completed check from that App on
+that SHA. PR recovery reads all open and closed PRs for the request's owned branch.
+Opening an existing unmerged closed PR reopens it. Closing an absent, closed or
+merged PR confirms without another write. Transport failures remain unknown.
+
+The kernel sequences push, approval, PR opening and queueing. Mergify adds the
+queue label only after those steps. A new commit or clean catch-up receives fresh
+checks and review. Outside pushes retain the request's check plan. Clean rebases
+carry that plan onto the reported new base. The worktree adapter performs rebases and removes
+the worktree and branch during teardown. The GitHub message pipeline posts the
+closing summary and closes the issue.
+
+After closure, PrismaBuild retirement requires every check effect and watch to
+be terminal. `retire_node` also reads each unfinished binding and refuses a
+Queued or Claimed upstream row. Corrupt bindings and failed reads retain records.
+Retirement continues with other closed nodes after a failure, then returns the
+first error. Successful retirement removes the request's directory and notifies the source.
+The configured submission tool must be `pbrun` itself or a wrapper that `exec`s it,
+so the controller's death signal reaches the publisher.
+
+To add a supervisor role, update these points together:
+
+1. Map the existing kernel role in `workers/protocol.rs`.
+2. Register its packaged input and reply schemas there.
+3. Assemble its input, model and committed worktree in `Supervisor`.
+4. Validate input-dependent evidence in `workers/source.rs`.
+5. Translate and persist the reply in `Controller::translate`.
+6. Exercise the process and its retirement on all three fleet hosts.
+
+Generate the development campaign from a clean commit:
+
+```bash
+python3 crates/controller/tools/publishing_review_manifest.py hosts > /tmp/tl3-publishing.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-publishing.json
+```
+
+This runs the publishing, GitHub and PrismaBuild adapter scenarios once per host
+on dl380g10, sparky and sparklina. It also runs the affected Rust suites,
+including process recovery scenarios, and the worker package's offline tests. The
+`publishing` target combines local repositories, mock GitHub HTTP, recorded
+PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
+entry point with an offline model. Publishing scenarios use the fake maker to
+control commit and check evidence while exercising review, publication and cleanup.
+The maker scenarios separately run the real maker process. Publishing covers
+merge and cleanup, an outside commit, a free catch-up recheck,
+an unapproved merge, and lost-response recovery for GitHub writes. No test submits
+nested fleet work. After the host runs pass, generate the `workspace` campaign
+and submit it for formatting, Clippy and full workspace verification.

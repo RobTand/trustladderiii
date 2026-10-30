@@ -5,7 +5,7 @@ use crate::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::EffectKind;
+use tl3_kernel::{Ack, EffectKind};
 
 pub struct Fake {
     records: Records,
@@ -248,6 +248,14 @@ impl Adapter {
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
         let baseline = self.baseline(delivery)?;
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
+        if !current_head && state.state != QueueState::Merged && !previously_confirmed {
+            return Ok(Reconciliation::Found(Completion {
+                ack: Ack::Retryable,
+                failure_class: None,
+                observations,
+                progress: None,
+            }));
+        }
         let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
         let terminal = matches!(
             state.state,
@@ -331,7 +339,9 @@ impl Executor for Adapter {
         self.fence(delivery)?;
         match self.completion(delivery)? {
             Reconciliation::Found(completion) => {
-                if !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_)) {
+                if completion.ack == Ack::Confirmed
+                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
+                {
                     self.records
                         .deliver(delivery, Completion::confirmed(vec![]))?;
                 }
@@ -381,9 +391,16 @@ impl Executor for Adapter {
                     .map_err(adapter_error)?;
                 self.fence(delivery)?;
             }
-            self.runtime
-                .block_on(mergify.queue(&repo, number, head))
-                .map_err(adapter_error)?;
+            match self.runtime.block_on(mergify.queue(&repo, number, head)) {
+                Ok(()) => {}
+                Err(tl3_mergify::Error::HeadChanged) => {
+                    return match self.completion(delivery)? {
+                        Reconciliation::Found(completion) => Ok(completion),
+                        _ => Err(Error::Invalid("PR changed during enqueue")),
+                    };
+                }
+                Err(error) => return Err(adapter_error(error)),
+            }
             self.records.write(
                 &self.records.path(&delivery.key).with_extension("applied"),
                 b"true",
@@ -404,7 +421,9 @@ impl Executor for Adapter {
         // Reads retain the original effect's epoch, including after a controller upgrade.
         match self.completion(delivery) {
             Ok(Reconciliation::Found(completion)) => {
-                if !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_)) {
+                if completion.ack == Ack::Confirmed
+                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
+                {
                     // This receipt writes no upstream state and may name an older epoch.
                     self.records
                         .remember(delivery, Completion::confirmed(vec![]))?;
@@ -450,10 +469,17 @@ async fn queue_facts(
     expected_head: &str,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
-    if is_merge_queue_pr(pull)
-        || (state.state != QueueState::Merged && pull.head.sha != expected_head)
-    {
+    if is_merge_queue_pr(pull) {
         return Ok(vec![]);
+    }
+    if state.state != QueueState::Merged && pull.head.sha != expected_head {
+        return Ok(vec![QueueFact {
+            repository: repo.clone(),
+            number: pull.number,
+            evidence: Evidence::PushByOther {
+                head: pull.head.sha.clone(),
+            },
+        }]);
     }
     let evidence =
         match state.state {
