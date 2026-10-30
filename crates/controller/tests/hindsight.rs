@@ -509,3 +509,43 @@ fn record_limit_uses_postgres_jsonb_text_size() {
         .get(0);
     assert!(size <= 32768);
 }
+
+#[test]
+fn public_action_ids_survive_only_in_structured_test_activity() {
+    let f = Fixture::new();
+    let public_id = "9d3e8f1c4a6b02d57e90c183ab64f27018d4ce39a6025b78f3d91ac04e67b258";
+    let bare_secret = "f9c83a01b647de2390abc81456fed279";
+    let attempt = f.attempt(
+        "audit",
+        json!({"action_key": "fixture-input-secret",
+        "service_key": "fixture-service-secret", "body": bare_secret}),
+        json!({"ok": true}),
+    );
+    let path = attempt.join("memory.json");
+    let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    summary["activity"]["tests"][0]["action_key"] = json!(public_id);
+    fs::write(path, summary.to_string()).unwrap();
+    memory::queue_attempt(&mut f.store(), "public-action-id", &attempt).unwrap();
+    assert_eq!(f.flush(), 1);
+    let documents = f.retain.documents.lock().unwrap();
+    let record: Value = serde_json::from_str(
+        documents.values().next().unwrap()["content"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        record["activity"]["tests"][0]["action_key"], public_id,
+        "PrismaBuild action IDs are public identifiers in structured test results"
+    );
+    for secret in [
+        bare_secret,
+        "fixture-input-secret",
+        "fixture-service-secret",
+    ] {
+        assert!(
+            !record.to_string().contains(secret),
+            "input credentials must remain redacted"
+        );
+    }
+}
