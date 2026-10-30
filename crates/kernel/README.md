@@ -21,24 +21,23 @@ Unknown node and repo IDs are ignored without truncation to the machine's index 
 `Node::approved` is one `Option<HeadId>`, the exact head that passed checks and review.
 A later approval replaces it. A merge naming any other head raises the unapproved-merge incident and note.
 
-`Footprint::new(files)` sorts and deduplicates controller-interned `FileId`s.
-`iter()` returns the IDs in ascending order, and `len()` returns the file count. Plans carry a footprint, and `MakerNeedsFiles` carries the additional files.
-The kernel unions extensions and derives file locks from the footprints of slot holders.
+`World::intern_footprint(files)` sorts and deduplicates controller-interned `FileId`s and returns a copyable `Footprint`.
+Plans carry that handle, and `MakerNeedsFiles` carries a handle for the additional files.
+`World::files(footprint)` returns the files in ascending order. The kernel unions extensions and derives locks from slot holders.
 There is no file-count ceiling.
 
-Footprints hold IDs 0 through 63 in a `u64` bitset and higher IDs in a sorted `Vec<FileId>`.
-This keeps the four-file proof worlds off the heap without limiting production footprints.
-`Node`, `Reply` and `Event` implement `Clone` instead of `Copy`. Transitions borrow nodes where possible.
-An interned-set table would keep `Node` copyable, but would add another persistent identity and table lookup to each set operation.
-The fixed `Outbox` remains in place. Proof assumptions bound file IDs below 4, so the overflow list is empty in those worlds.
-Scenarios exercise 300-file sets, high IDs, extensions and file locking across repositories.
+A footprint containing only IDs below 64 is an inline bitset. Larger sets live in the world's append-only `file_sets` table.
+Their handles stay stable, and equal sets reuse a handle. Nodes keep only handles, so `Node`, `Reply` and `Event` stay `Copy`.
+The controller persists `World::file_sets()` in order and restores the sets with `intern_footprint` before loading nodes and pending events.
+Use handles only with their own world. Unknown table indices in replies count as schema failures.
 
-The first implementation used a sorted vector for every footprint. Both `advance_ready` and `pr_merged_queued` exhausted a 10 GiB reservation.
-The hybrid set removes those file allocations from the bounded proofs. `Node` still loses `Copy`, so cloning the world also costs Kani more.
-Both hybrid probes also exhausted 10 GiB.
-The proof fixtures now clone their two nodes through a fixed array. They probe settle with that clone, using the same `advance` function.
-This avoids `Vec<Node>::clone`'s element-by-element construction while preserving the same arbitrary starting worlds and assertions.
-The PR records completed measurements and the action keys for the probes.
+Proof assumptions bound file IDs below 4, so the footprint table is empty in those worlds.
+Large sets use the same transition code and are covered by scenarios with 300 files, high IDs, extensions and file locks across repositories.
+The fixed `Outbox` remains in place.
+
+Owning a vector in each node proved too costly, even with small file sets held inline.
+A minimized probe checked the arbitrary starting world in 2.9 GiB, but cloning it exhausted 20 GiB before taking a transition.
+Interning large sets preserves `Node: Copy` and avoids that clone path. The PR records the before and after action keys and memory peaks.
 
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
@@ -144,7 +143,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
 Most proofs reserve 20 GiB, `progress_from_*` reserves 40 GiB, and `progress_from_queued` and `apply_new_request` reserve 64 GiB.
-These budgets allow for the wider IDs and the loss of `Node: Copy`. Compare each ending's cgroup memory peak with the historical spike table above.
+These budgets allow headroom for the wider IDs. Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
 
 To generate a smaller campaign, name `tests` or the proof harnesses:

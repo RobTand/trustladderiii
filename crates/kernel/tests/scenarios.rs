@@ -453,3 +453,39 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
     assert!(w.nodes[1].holds && w.nodes[2].holds);
     assert!(w.valid());
 }
+
+#[test]
+fn interned_footprints_keep_their_handles_across_growth_and_restore() {
+    let mut run = Run::new();
+    run.reply(Reply::IngestDone { size: 1 });
+    run.reply(Reply::AuditAgrees);
+    run.plan([FileId(0), FileId(63)]);
+    let inline = run.node().footprint;
+    run.needs_files([FileId(64), FileId(65), FileId(u64::MAX)]);
+    let expanded = run.node().footprint;
+    let expected = vec![FileId(0), FileId(63), FileId(64), FileId(65), FileId(u64::MAX)];
+    assert_eq!(run.w.files(expanded).unwrap().collect::<Vec<_>>(), expected);
+    assert_eq!(run.w.files(inline).unwrap().collect::<Vec<_>>(), vec![FileId(0), FileId(63)]);
+    let count = run.w.file_sets().len();
+    assert_eq!(run.w.intern_footprint(expected.iter().copied().rev()), expanded);
+    assert_eq!(run.w.file_sets().len(), count);
+    let mut restored = World::new(&[1, 1], 1);
+    for files in run.w.file_sets() {
+        restored.intern_footprint(files.iter().copied());
+    }
+    assert_eq!(restored.files(expanded).unwrap().collect::<Vec<_>>(), expected);
+    assert_eq!(restored.files(inline).unwrap().collect::<Vec<_>>(), vec![FileId(0), FileId(63)]);
+}
+
+#[test]
+fn an_unknown_footprint_handle_is_a_failed_reply() {
+    let mut run = Run::new();
+    run.reply(Reply::IngestDone { size: 1 });
+    run.reply(Reply::AuditAgrees);
+    let mut other = World::new(&[1], 1);
+    let foreign = other.intern_footprint([FileId(1000)]);
+    assert!(run.w.files(foreign).is_none());
+    run.reply(Reply::PlanLeaf { footprint: foreign, fits: true });
+    assert_eq!(run.phase(), Phase::Planning { must_split: false });
+    assert_eq!(run.node().run_failures, 1);
+}
