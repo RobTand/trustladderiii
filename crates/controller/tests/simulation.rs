@@ -1903,6 +1903,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     let mut original = None;
     let mut needs_changes = false;
     let mut queued_credit = 0;
+    let mut queued_attempt_round = (0, 0);
     let mut maker_contents = String::new();
     let mut returned_to_maker = false;
     for _ in 0..300 {
@@ -1913,6 +1914,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
         if world.nodes[0].phase == Phase::Queued && !pushed {
             original = Some(fixture.head(&prepare));
             queued_credit = world.nodes[0].credit.balance();
+            queued_attempt_round = (world.nodes[0].attempt, world.nodes[0].round);
             maker_contents =
                 fs::read_to_string(checkout.join(if conflict { "shared.txt" } else { "leaf.txt" }))
                     .unwrap();
@@ -1956,8 +1958,10 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
         }
         if needs_changes && world.nodes[0].phase == Phase::Making {
             returned_to_maker = true;
-            assert_eq!(world.nodes[0].attempt, 1);
-            assert_eq!(world.nodes[0].round, 1);
+            assert_eq!(
+                (world.nodes[0].attempt, world.nodes[0].round),
+                queued_attempt_round
+            );
             assert_eq!(world.nodes[0].credit.balance(), queued_credit - 1);
         }
         if pushed && world.nodes[0].phase == Phase::Checking && !conflict {

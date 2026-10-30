@@ -1007,7 +1007,13 @@ impl Worktrees {
         let output = self.run(
             path,
             "worktree status",
-            ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            [
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
         )?;
         Ok(output.stdout)
     }

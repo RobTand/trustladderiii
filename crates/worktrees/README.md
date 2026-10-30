@@ -32,11 +32,11 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-`create_branch` reads local main. For recorded effects, `fetch_main` fetches into the private
-`refs/tl3/upstream-main` ref, then `create_branch_at` and `rebase_onto` use the
-exact recorded commit without changing a checked-out main.
-The controller chooses effect identities. This client does not persist controller state, retry network failures, or mark
-a new head approved. Every new head still needs checks and review.
+`create_branch` reads local main. For recorded effects, `fetch_main` fetches into
+`refs/tl3/upstream-main`. `create_branch_at` and `rebase_onto` use the exact
+recorded commit without changing a checked-out main.
+The controller chooses effect identities. This client does not persist controller
+state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
 
 `BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
 `CommitId` accepts full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
@@ -62,12 +62,18 @@ whose directory disappeared is removed from Git's registry and recreated. A stal
 directory disappeared. Recovery creates a temporary registration under
 `<common-git-dir>/tl3-worktree-staging/<branch>`, initializes its index, and replaces
 the orphan's gitlink before repairing the registration. It preserves working files.
+An unfinished Prepare separately verifies the checkout against its branch head.
+If population was interrupted, `finish_prepare` resets it only while the head
+and recorded base still match. It also clears an interrupted index lock after
+the owning process and Git children have ended.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
 The controller records a clean preflight in its Remove intent. Only that record
 authorizes `resume_removal`, which also accepts deletion-only interrupted removals.
+If deletion removed `.git` first, recovery restores that link from a registration
+whose path and branch both match before checking the remaining files.
 It recovers a missing registration before removing a checkout. Repeating removal or branch
 deletion after success has no effect.
 
