@@ -73,7 +73,9 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome]) -> R
             case Kind.DEMONSTRATING:
                 passed = before in (Outcome.ASSERTION, Outcome.ADDED_NAME) and after == Outcome.PASSED
             case Kind.REGRESSION:
-                passed = after == Outcome.PASSED or (pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR))
+                available = before not in (Outcome.SKIPPED, Outcome.MISSING, Outcome.UNCOLLECTED, Outcome.NO_REPORT)
+                passed = available and (after == Outcome.PASSED or
+                                         pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR))
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
         tests.append(TestResult(test, before, after, pre_existing, passed))

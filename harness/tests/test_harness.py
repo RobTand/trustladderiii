@@ -112,6 +112,15 @@ def test_progress_is_atomic_cumulative_and_contains_no_test_secrets(tmp_path, mo
     assert record["schema"] == "prismabuild.action_progress.v1"
     assert record["units_completed"] == 2
     assert record["phase"] == "tests"
+    resumed = Progress()
+    resumed.commit("third")
+    assert json.loads(target.read_text())["units_completed"] == 3
+
+
+@pytest.mark.parametrize("base", [Outcome.MISSING, Outcome.SKIPPED, Outcome.UNCOLLECTED])
+def test_regression_cannot_excuse_an_unavailable_base_test(base):
+    check = Check("unavailable", Kind.REGRESSION, ("test.py::test_x",))
+    assert judge(check, {check.tests[0]: base}, {check.tests[0]: Outcome.PASSED}).verdict == Verdict.FAIL
 
 
 def test_container_has_only_explicit_read_only_mounts_and_no_host_environment(tmp_path):

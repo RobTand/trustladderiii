@@ -13,6 +13,9 @@ from .report import InvalidReport, decode, parse
 from .trees import added_names, commit, configuration, export, is_test, test_edits, validate_configuration
 
 
+_BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
+
+
 @dataclass(frozen=True)
 class Container:
     image: str
@@ -43,6 +46,9 @@ def require_admission():
                 "PRISMABUILD_ACTION_PROGRESS_PATH", "PRISMABUILD_ACTION_PROGRESS_TOKEN")
     if not all(os.environ.get(name) for name in required):
         raise RuntimeError("checks require an admitted PrismaBuild action with a progress contract")
+    phases = json.loads(os.environ.get("PRISMABUILD_ACTION_PROGRESS_ALLOWANCES", "{}"))
+    if "tests" not in phases:
+        raise RuntimeError("declare the PrismaBuild progress phase 'tests'")
     docker = shutil.which("docker")
     if not docker or "Docker CLI shim" not in Path(docker).read_text(errors="replace")[:200]:
         raise RuntimeError("PrismaBuild's managed Docker shim must be first on PATH")
@@ -51,6 +57,13 @@ def require_admission():
 class Progress:
     def __init__(self):
         self.units = 0
+        path = os.environ.get("PRISMABUILD_ACTION_PROGRESS_PATH")
+        if path and Path(path).exists():
+            record = json.loads(Path(path).read_text())
+            if (record.get("token") != os.environ.get("PRISMABUILD_ACTION_PROGRESS_TOKEN")
+                    or type(record.get("units_completed")) is not int or record["units_completed"] < 0):
+                raise RuntimeError("invalid existing PrismaBuild progress record")
+            self.units = record["units_completed"]
 
     def commit(self, test: str):
         self.units += 1
@@ -130,7 +143,12 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
         progress = Progress()
-        before = run_tree(old, container, ordinary, root / "base.jsonl", progress) if ordinary else {}
+        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container.image, ordinary)
+        if ordinary and cache_key not in _BASE_RESULTS:
+            observed = run_tree(old, container, ordinary, root / "base.jsonl", progress)
+            if Outcome.NO_REPORT not in observed.values():
+                _BASE_RESULTS[cache_key] = observed
+        before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
         if demonstrating:
             shutil.copytree(old, demo)
             test_edits(old, new, demo, config["test-files"])
