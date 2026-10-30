@@ -82,8 +82,8 @@ MUTANTS.update({
     ),
     "stop-after-wake": (
         "crates/controller/src/http.rs",
-        "        self.stopped.store(true, Ordering::Release);\n        wake();",
-        "        wake();\n        self.stopped.store(true, Ordering::Release);",
+        "        self.stopped.store(true, Ordering::Release);\n        self.wake();",
+        "        self.wake();\n        self.stopped.store(true, Ordering::Release);",
         "loom_http_stop_", "accept slept again after stop wake",
     ),
     "stop-relaxed": (

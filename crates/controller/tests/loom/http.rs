@@ -4,19 +4,20 @@ use loom::sync::atomic::{AtomicBool as ModelBool, AtomicUsize as ModelUsize};
 #[test]
 fn loom_http_stop_publishes_before_accept_wake() {
     crate::loom_tests::bounded(2, || {
+        let wake = Arc::new(ModelBool::new(false));
+        let signal = wake.clone();
         let control = Control {
             address: "127.0.0.1:9".parse().unwrap(),
             stopped: Arc::new(AtomicBool::new(false)),
+            model_wake: Some(Arc::new(move || signal.store(true, Ordering::Relaxed))),
         };
         let published = Arc::new(ModelUsize::new(0));
-        let wake = Arc::new(ModelBool::new(false));
         let producer = {
             let control = control.clone();
             let published = published.clone();
-            let wake = wake.clone();
             crate::loom_tests::spawn(move || {
                 published.store(42, Ordering::Relaxed);
-                control.stop_with(|| wake.store(true, Ordering::Relaxed));
+                control.stop();
             })
         };
         let mut accepts = 0;

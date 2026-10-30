@@ -126,7 +126,7 @@ The models call real code:
   `receive_ingress`, then wake `Sources::run`. The model checks application
   before consumption, duplicate delivery suppression, and an empty pending queue.
 - `WebhookControl::gap` and `stop` preserve queue order. An HTTP model also calls
-  `Control::stop_with` and `accept_connections` with accept errors and a simulated
+  `Control::stop` and `accept_connections` with accept errors and a simulated
   wake. It checks that stop precedes the wake and publishes earlier state through
   release/acquire. The model opens no sockets.
 - `WorkerOutputSource::poll_once` reads actual partial JSONL output, persists

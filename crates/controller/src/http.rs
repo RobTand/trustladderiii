@@ -24,17 +24,22 @@ pub(crate) struct Server {
 pub(crate) struct Control {
     address: SocketAddr,
     stopped: Arc<AtomicBool>,
+    #[cfg(all(test, loom))]
+    model_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl Control {
     pub(crate) fn stop(&self) {
-        self.stop_with(|| {
-            // Wake blocking accept without polling when an owner shuts the server down.
-            let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
-        });
-    }
-    fn stop_with(&self, wake: impl FnOnce()) {
         self.stopped.store(true, Ordering::Release);
-        wake();
+        self.wake();
+    }
+    fn wake(&self) {
+        #[cfg(all(test, loom))]
+        if let Some(wake) = &self.model_wake {
+            wake();
+            return;
+        }
+        // Wake blocking accept without polling when an owner shuts the server down.
+        let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
     }
 }
 impl Server {
@@ -44,6 +49,8 @@ impl Server {
             control: Control {
                 address: listener.local_addr()?,
                 stopped: Arc::new(AtomicBool::new(false)),
+                #[cfg(all(test, loom))]
+                model_wake: None,
             },
             listener,
         })
