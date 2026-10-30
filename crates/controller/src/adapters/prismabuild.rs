@@ -307,8 +307,14 @@ impl Executor for Adapter {
                 kind: EffectKind::SubmitChecks,
                 ..
             } => {
-                let Some(job) = self.job(&delivery.key)? else {
-                    return Ok(Reconciliation::Absent);
+                let job = match self.job(&delivery.key)? {
+                    Some(job) => job,
+                    None => {
+                        // No runnable work can exist before this binding. Reassert the same effect;
+                        // unavailable input stays uncertain instead of spinning through Absent.
+                        self.fence(delivery.epoch)?;
+                        self.submit(delivery)?
+                    }
                 };
                 if self
                     .runtime

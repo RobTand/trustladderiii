@@ -427,6 +427,12 @@ fn through_controller(settings: &tl3_config::Store, outside: bool) {
             label: "tl3".into(),
         })
         .unwrap();
+    for _ in 0..100 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Checking);
     controller
         .observe(
             "check-plan",
@@ -441,7 +447,6 @@ fn through_controller(settings: &tl3_config::Store, outside: bool) {
             break;
         }
     }
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Checking);
     let key = fs::read_to_string(root.path().join("queue/publications"))
         .unwrap()
         .trim()
