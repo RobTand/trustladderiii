@@ -118,6 +118,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        question: None,
         question_context: None,
     }
 }

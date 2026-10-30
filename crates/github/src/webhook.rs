@@ -40,6 +40,17 @@ pub enum Event {
         after: String,
         actor: Actor,
     },
+    PullRequestUpdated {
+        context: Context,
+        action: String,
+        pull_request: PullRequest,
+        actor: Actor,
+    },
+    MergeGroup {
+        context: Context,
+        action: String,
+        merge_group: MergeGroup,
+    },
     CheckRunCompleted {
         context: Context,
         check_run: CheckRun,
@@ -62,6 +73,8 @@ impl Event {
 pub struct Delivery {
     pub id: String,
     pub event: Option<Event>,
+    pub event_name: String,
+    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -127,6 +140,12 @@ pub fn verify_and_parse(
     {
         return Err(WebhookError::DeliveryId);
     }
+    parse(delivery_id, event_name, body)
+}
+
+/// Parse verified evidence on replay using the current event types.
+/// Callers must authenticate live bytes before persisting or using them.
+pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Delivery, WebhookError> {
     let value: serde_json::Value =
         serde_json::from_slice(body).map_err(|_| WebhookError::Payload)?;
     if !value.is_object() {
@@ -137,13 +156,15 @@ pub fn verify_and_parse(
         (event_name, action),
         ("issues", "labeled")
             | ("issue_comment", "created")
-            | ("pull_request", "closed" | "synchronize")
+            | ("pull_request" | "merge_group", _)
             | ("check_run" | "check_suite", "completed")
     );
     if !relevant {
         return Ok(Delivery {
             id: delivery_id.into(),
             event: None,
+            event_name: event_name.into(),
+            payload: value,
         });
     }
     #[derive(Deserialize)]
@@ -208,6 +229,17 @@ pub fn verify_and_parse(
             after: field(&value, "after")?,
             actor: field(&value, "sender")?,
         },
+        ("pull_request", _) => Event::PullRequestUpdated {
+            context,
+            action: action.into(),
+            pull_request: field(&value, "pull_request")?,
+            actor: field(&value, "sender")?,
+        },
+        ("merge_group", _) => Event::MergeGroup {
+            context,
+            action: action.into(),
+            merge_group: field(&value, "merge_group")?,
+        },
         ("check_run", "completed") => Event::CheckRunCompleted {
             context,
             check_run: field(&value, "check_run")?,
@@ -221,5 +253,7 @@ pub fn verify_and_parse(
     Ok(Delivery {
         id: delivery_id.into(),
         event: Some(event),
+        event_name: event_name.into(),
+        payload: value,
     })
 }

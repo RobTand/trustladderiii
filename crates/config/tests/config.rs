@@ -716,6 +716,32 @@ fn status_listen_requires_a_specific_unicast_address_and_fixed_port() {
 }
 
 #[test]
+fn webhooks_require_a_loopback_address_and_fixed_port() {
+    for address in [
+        "0.0.0.0:8081",
+        "[::]:8081",
+        "192.168.1.2:8081",
+        "127.0.0.1:0",
+    ] {
+        assert!(
+            Config::parse(&changed(
+                &["github", "webhook_listen"],
+                Value::String(address.into())
+            ))
+            .is_err(),
+            "{address}"
+        );
+    }
+    for address in ["127.0.0.1:8081", "[::1]:8081"] {
+        Config::parse(&changed(
+            &["github", "webhook_listen"],
+            Value::String(address.into()),
+        ))
+        .unwrap();
+    }
+}
+
+#[test]
 fn planning_cannot_remove_protection_or_overhead_evidence() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(
