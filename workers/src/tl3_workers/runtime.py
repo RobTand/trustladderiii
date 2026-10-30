@@ -114,4 +114,8 @@ def run(request, emit: Callable[[dict], None]):
         raise ValueError("missing final model reply")
     reply = read_json(last_message.text)
     validate(role + "-reply", reply)
+    if role == "ingest" and reply["kind"] == "brief":
+        supplied = {memory["id"] for memory in request["inputs"].get("memories", [])}
+        if not set(reply["memory_ids"]) <= supplied:
+            raise ValueError("reply cites a memory it was not given")
     emit({"event": "reply", "role": role, "reply": reply})

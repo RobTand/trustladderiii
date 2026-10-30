@@ -244,19 +244,48 @@ def test_tool_dispatch_rejects_excluded_read(request_doc, monkeypatch):
     assert tool_result.text == "Error: read_file is not available."
 
 
-def test_provider_error_does_not_print_secrets(request_doc, monkeypatch, capsys):
-    from tl3_workers.__main__ import main
-    import io
+def test_provider_error_does_not_print_secrets(tmp_path, request_doc):
+    result = start_worker(tmp_path, request_doc, [], mode="fail-with-secret")
+    assert result.exit_code == 1
+    assert result.events == []
+    assert "tl3_workers: run failed" in result.stderr
+    assert "fixture-secret-value" not in result.stderr
 
-    def fail(request):
-        raise RuntimeError("fixture-secret-value " + request["key_file"])
 
-    monkeypatch.setattr(runtime, "create_model", fail)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(request_doc)))
-    monkeypatch.setattr(sys, "argv", ["tl3_workers", "run"])
-    monkeypatch.chdir(request_doc["worktree"])
-    assert main() == 1
-    assert capsys.readouterr() == ("", "tl3_workers: run failed\n")
+def test_stray_stdout_never_reaches_the_protocol_stream(tmp_path, request_doc):
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(BRIEF)}], mode="noisy")
+    assert result.exit_code == 0, result.stderr
+    assert result.events == [
+        {"event": "progress", "unit": "model_turn"},
+        {"event": "reply", "role": "ingest", "reply": BRIEF},
+    ]
+    for stray in ("stray fd write", "stray print", "stray dunder write", "stray child"):
+        assert stray in result.stderr
+
+
+def test_protocol_is_utf8_whatever_the_locale(tmp_path, request_doc):
+    reply = {**BRIEF, "brief": "Fix the greeting: café, naïve, ✓."}
+    request_doc["inputs"]["issue"]["body"] = "Return «hello» ✓."
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}],
+                          env_overrides={"LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0",
+                                         "PYTHONIOENCODING": "ascii"})
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {"event": "reply", "role": "ingest", "reply": reply}
+
+
+def test_reply_that_is_not_valid_utf8_is_a_failed_run(tmp_path, request_doc):
+    content = json.dumps({**BRIEF, "brief": "\ud800"})
+    result = start_worker(tmp_path, request_doc, [{"content": content}])
+    assert result.exit_code == 1
+    assert all(event["event"] != "reply" for event in result.events)
+
+
+def test_ingest_cannot_cite_memories_it_was_not_given(tmp_path, request_doc):
+    request_doc["inputs"]["memories"] = [{"id": "memory-1", "content": "The API is greet()."}]
+    result = start_worker(tmp_path, request_doc,
+                          [{"content": json.dumps({**BRIEF, "memory_ids": ["memory-404"]})}])
+    assert result.exit_code == 1
+    assert all(event["event"] != "reply" for event in result.events)
 
 
 def test_schema_files_are_packaged_and_refs_resolve(request_doc):

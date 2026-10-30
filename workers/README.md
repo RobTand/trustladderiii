@@ -67,7 +67,11 @@ provider supports it. It is not a total run budget. The proxy decides supported
 model names and effort values. Calls stream tokens. Provider retries are off,
 so failures return to the supervisor rather than replaying a model call here.
 
-The worker writes only flushed newline-delimited JSON to stdout. A completed
+The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
+the locale. At startup it moves its own fd 1 to stderr, so prints, C
+extensions and child processes can't write to the protocol stream. A reply
+that can't be encoded as UTF-8 fails the run. LangSmith tracing is forced off,
+so issue text and model output stay on the host. A completed
 model turn produces `model_turn`, and a tool result produces `tool_result`.
 An excluded tool's rejection also counts as a tool result. Token chunks,
 startup, middleware hooks and elapsed time do not produce progress events.
@@ -82,7 +86,7 @@ a failed run, even if progress was emitted. Schema failures never emit a reply.
 Malformed JSON, duplicate keys, non-finite numbers, invalid requests, missing
 keys, provider errors and invalid replies exit 1. Diagnostics go to stderr as a
 fixed request or run failure, without provider exception text or tracebacks that
-might contain a secret or model content. Library stdout is redirected to stderr.
+might contain a secret or model content.
 A failure does not produce an error event. CLI argument errors use argparse's
 exit 2. The supervisor owns start, stop, liveness, checkpoints, reconciliation
 and retries. This package does not implement #9.
@@ -168,7 +172,9 @@ are locked in `uv.lock`.
 Each role has a TL3-written system prompt in `src/tl3_workers/prompts/`.
 `HarnessProfile` uses an empty base prompt and suffix, disables the default
 general-purpose sub-agent, overrides built-in tool descriptions, and excludes
-all built-in tools. Both roles declare an empty tool set. No sub-agents, skills,
+all built-in tools. Both roles declare an empty tool set, so the overridden
+descriptions only matter once a later role enables a tool. Ingest may cite only
+memory ids it was given. No sub-agents, skills,
 external memory middleware or host filesystem backend are installed.
 Summarization, tool-call patching, provider prompt caching and unsupported
 content middleware are removed. The internal parent notifier remains inert
