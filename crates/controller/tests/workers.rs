@@ -1783,5 +1783,6 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     c.look_now().unwrap();
     clock.0.set(1_003_000);
     c.look_due().unwrap();
+    assert!(c.drive_once().unwrap());
     assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
 }

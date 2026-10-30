@@ -95,7 +95,7 @@ optional `checkpoint` string, capped at 2048 UTF-8 bytes. The current published
 `pbwait` returns only an ending document when its wait finishes.
 Declarations and relayed checkpoints do not count as agent work. The next
 `model_turn` or `tool_result` clears the declaration. Owner names contain up to
-64 lowercase letters or underscores. Keys contain up to 256 characters and no
+64 lowercase letters or underscores. Keys contain up to 256 UTF-8 bytes and no
 control characters. PrismaBuild keys require 64 lowercase hexadecimal digits.
 The shape also supports other outside owners, including future token grants.
 An owner without a record reader stays unknown and cannot authorize a stop.

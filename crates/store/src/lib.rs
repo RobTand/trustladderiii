@@ -535,7 +535,7 @@ impl Store {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|_| Error::Invalid("invalid external wait"))?;
-        self.client.execute("UPDATE tl3_worker_progress SET output_offset = $3, unit = $4, external_wait = $5, last_progress_ms = CASE WHEN $5::jsonb IS NULL THEN (extract(epoch FROM clock_timestamp()) * 1000)::bigint ELSE last_progress_ms END WHERE run_key = $1 AND attempt = $2 AND output_offset < $3 AND epoch = (SELECT epoch FROM tl3_meta)", &[&key, &attempt, &offset, &unit, &wait])?;
+        self.client.execute("UPDATE tl3_worker_progress SET output_offset = $3, unit = CASE WHEN $5::jsonb IS NULL THEN $4 ELSE unit END, external_wait = $5, last_progress_ms = CASE WHEN $5::jsonb IS NULL THEN (extract(epoch FROM clock_timestamp()) * 1000)::bigint ELSE last_progress_ms END WHERE run_key = $1 AND attempt = $2 AND output_offset < $3 AND epoch = (SELECT epoch FROM tl3_meta)", &[&key, &attempt, &offset, &unit, &wait])?;
         Ok(())
     }
 
