@@ -6,7 +6,6 @@ import socket
 import sys
 
 from jsonschema import Draft202012Validator, ValidationError
-from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 import pytest
@@ -173,20 +172,17 @@ def test_model_settings_and_key_are_forwarded_without_network(tmp_path, request_
 def test_only_tl3_prompt_and_no_tools_reach_model(request_doc, role, monkeypatch):
     observed = []
 
-    class InspectRequest(AgentMiddleware):
-        def wrap_model_call(self, request, handler):
-            observed.append(request)
-            return handler(request)
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            assert tools == []
+            return self
 
-    create = runtime.create_deep_agent
+        def _generate(self, messages, **kwargs):
+            observed.append((messages, kwargs))
+            return super()._generate(messages, **kwargs)
 
-    def inspect(**kwargs):
-        kwargs["middleware"].append(InspectRequest())
-        return create(**kwargs)
-
-    monkeypatch.setattr(runtime, "create_deep_agent", inspect)
     reply = BRIEF if role == "ingest" else AGREE
-    fake = FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
+    fake = InspectModel(responses=[AIMessage(content=json.dumps(reply))])
     monkeypatch.setattr(runtime, "create_model", lambda request: fake)
     request_doc["role"] = role
     if role == "audit":
@@ -195,14 +191,15 @@ def test_only_tl3_prompt_and_no_tools_reach_model(request_doc, role, monkeypatch
     events = []
     runtime.run(request_doc, events.append)
     assert len(observed) == 1
-    call = observed[0]
-    assert call.tools == []
-    system = call.system_message.text
+    messages, options = observed[0]
+    assert not options.get("tools")
+    assert [message.type for message in messages] == ["system", "human"]
+    system = messages[0].text
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
     assert system == expected + "\n\nReply with one JSON object matching this schema:\n" + json.dumps(schema(role + "-reply"), ensure_ascii=False)
     assert request_doc["key_file"] not in system
-    assert "key_file" not in call.messages[0].text.replace(request_doc["inputs"]["issue"]["body"], "")
-    assert json.loads(call.messages[0].text) == request_doc["inputs"]
+    assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
+    assert json.loads(messages[1].text) == request_doc["inputs"]
 
 
 def test_excluded_tool_is_rejected_and_progress_is_streamed(tmp_path, request_doc):
