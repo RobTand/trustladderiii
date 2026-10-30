@@ -49,6 +49,11 @@ SQL file and its exact text is recorded in `tl3_schema_migrations`, in the
 same transaction as the schema change. A changed or newer migration refuses
 to open. Add a new migration rather than editing an applied one.
 
+`Store::open_read_only` never migrates. It requires the exact current schema
+and sets Postgres's default transactions to read-only before connecting.
+An empty database returns an uninitialized-store error. Status callers use
+this constructor. `load` also uses an explicit read-only transaction.
+
 ## Commit and recovery
 
 `commit` locks the singleton world revision before checking the event key.
@@ -63,6 +68,11 @@ The transaction inserts the append-only event, upserts or deletes only the
 changed rows, inserts new Intended effects, applies delivery transitions,
 and adds credit entries. Row versions are the global revision of their last
 change. SQL table names and row ids are values, never SQL identifiers.
+Each row also has an immutable monotonic `arrival` sequence assigned on insert.
+`load` returns rows by table and arrival, so inbox consumption follows insertion
+order across commits and within one commit. Sequence gaps from rollbacks are harmless.
+Migration 2 backfills old rows by revision, table and key. Old versions did not
+record order within one transaction, so drain their inbox before migrating.
 An effect key cannot be reused, even after it becomes final. The SQL trigger
 and Rust API both enforce the state table's effect transitions. A transition
 also checks the expected delivery state. The controller supplies the evidence
@@ -79,7 +89,7 @@ schema DDL privileges after deployment migrations.
 `load` uses a read-only repeatable-read transaction. It returns the current
 rows, all Intended/Sent/Uncertain/Cancelling effects, the credit ledger and
 intern dictionary from one database snapshot. Final effects remain available
-through `effect(key)`. `events_after` is a paginated audit reader. Recovery
+through `effect(key)` or the complete `effects()` audit reader. `events_after` is a paginated audit reader. Recovery
 loads the world; it never replays old events into a newer kernel.
 
 An upgrade sets `next_epoch` to the current epoch plus one and supplies its
@@ -90,7 +100,7 @@ check effect epochs before outside actions, as the state table requires.
 
 ## Interning
 
-The get-or-create methods return typed 32-bit ids. Repos ignore ASCII case;
+The get-or-create methods return typed 64-bit ids. Repos ignore ASCII case;
 commit SHAs ignore hexadecimal case and are scoped by node. Paths preserve
 their exact Git spelling and are scoped by repo. Issue and PR numbers are
 separate namespaces scoped by repo. Concurrent inserts return the same id.

@@ -81,10 +81,12 @@ impl Adapter {
             fake: Fake::new(simulation),
         })
     }
-    fn fence(&self, delivery: &Delivery) -> Result<()> {
-        if delivery.epoch != self.epoch {
+    fn fence(&mut self, delivery: &Delivery) -> Result<()> {
+        if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
         }
+        self.fake.0.fence(delivery.epoch)?;
+        self.epoch = delivery.epoch;
         Ok(())
     }
     fn client(&self, delivery: &Delivery) -> Result<GitHub> {
@@ -175,7 +177,8 @@ impl Executor for Adapter {
         Ok(Completion::confirmed(vec![]))
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        self.fence(delivery)?;
+        // The current owner fences mutations while reading the original effect epoch.
+        self.fake.0.fence(self.epoch)?;
         if Self::request_notice(delivery).is_none() {
             return self.fake.reconcile(delivery);
         }

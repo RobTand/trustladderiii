@@ -23,8 +23,10 @@ use alloc::vec::Vec;
 
 mod footprint;
 mod ids;
+mod queries;
 pub use footprint::Footprint;
 pub use ids::{FileId, HeadId, NodeId, RepoId};
+pub use queries::Wait;
 
 #[cfg(kani)]
 mod proofs;

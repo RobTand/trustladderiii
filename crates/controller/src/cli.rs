@@ -50,7 +50,7 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         }
     }
     let path = path.ok_or(Error::Invalid("--config FILE is required"))?;
-    let config = tl3_config::Config::parse(&fs::read_to_string(path)?)?;
+    let config = tl3_config::Config::load(path)?;
     Ok(Arguments {
         config,
         simulation,
@@ -62,7 +62,10 @@ fn arguments(daemon: bool) -> Result<Arguments> {
 
 pub fn status() -> Result<()> {
     let config = arguments(false)?.config;
-    print!("{}", status::render(&mut Store::open(&config.store)?)?);
+    print!(
+        "{}",
+        status::render(&mut Store::open_read_only(&config.store)?)?
+    );
     Ok(())
 }
 

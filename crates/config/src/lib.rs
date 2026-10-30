@@ -108,6 +108,12 @@ pub struct Limits {
     pub credit_reserve: u32,
     pub free_rechecks: u32,
     pub w: u32,
+    #[serde(default = "default_agent_pool")]
+    pub agent_pool: u8,
+}
+
+fn default_agent_pool() -> u8 {
+    1
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -277,6 +283,9 @@ impl Config {
         }
         if limits.w != 1 {
             return Err(invalid("limits.w", "must be 1 in slice one (Q29)"));
+        }
+        if limits.agent_pool == 0 {
+            return Err(invalid("limits.agent_pool", "must be greater than zero"));
         }
         absolute("worktrees_root", &self.worktrees_root)?;
         absolute(

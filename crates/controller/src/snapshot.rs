@@ -31,7 +31,9 @@ pub(crate) fn decode(snapshot: &Snapshot) -> Result<World> {
         .rows
         .iter()
         .find(|r| r.table == "kernel" && r.id == "meta")
-        .ok_or(Error::Invalid("missing kernel snapshot"))?;
+        .ok_or(Error::Invalid(
+            "controller database is uninitialized; start tl3d first",
+        ))?;
     if meta.value["format"] != 1 {
         return Err(Error::Invalid("unsupported snapshot format"));
     }
@@ -57,6 +59,15 @@ pub(crate) fn decode(snapshot: &Snapshot) -> Result<World> {
         value[table] = Value::Array(values);
     }
     let world: World = serde_json::from_value(value)?;
+    if world
+        .file_sets()
+        .iter()
+        .any(|set| set.windows(2).any(|pair| pair[0] >= pair[1]))
+    {
+        return Err(Error::Invalid(
+            "stored footprint must be sorted and deduplicated",
+        ));
+    }
     if !world.valid() || !world.is_settled() {
         return Err(Error::Invalid("invalid stored kernel world"));
     }

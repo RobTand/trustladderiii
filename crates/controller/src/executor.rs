@@ -4,6 +4,7 @@ use tl3_kernel::{Ack, Event, NodeId, Out};
 use crate::Result;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Adapter tickets add the payload fields their clients need here.
 pub struct Delivery {
     pub key: String,
     pub epoch: i64,
@@ -94,7 +95,9 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
+    /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
 }
 
@@ -129,14 +132,7 @@ impl Registry {
         self.0.insert(upstream, Box::new(executor));
     }
 
-    pub(crate) fn adapter(
-        &mut self,
-        delivery: &Delivery,
-        epoch: i64,
-    ) -> Result<&mut (dyn Executor + '_)> {
-        if delivery.epoch != epoch {
-            return Err(crate::Error::Invalid("effect epoch is fenced"));
-        }
+    pub(crate) fn adapter(&mut self, delivery: &Delivery) -> Result<&mut (dyn Executor + '_)> {
         match self.0.get_mut(&upstream(delivery.output)) {
             Some(adapter) => Ok(adapter.as_mut()),
             None => Err(crate::Error::Invalid("missing upstream adapter")),

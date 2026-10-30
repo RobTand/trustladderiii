@@ -566,15 +566,39 @@ fn message_reconciliation() {
         Reconciliation::Pending
     ));
     api.state.lock().unwrap().fail_reads = false;
-    let mut old = note.clone();
-    old.epoch = 1;
-    assert!(adapter.execute(&old).is_err());
-    assert!(adapter.reconcile(&old).is_err());
+    let mut newer = note.clone();
+    newer.epoch = 1;
+    let mut current = adapters::github::Adapter::new(
+        BTreeMap::from([(3, client(&api.uri()))]),
+        FakeWriter,
+        1,
+        Policy::default(),
+        root.path(),
+    )
+    .unwrap();
+    current.execute(&newer).unwrap();
+    assert!(matches!(
+        current.reconcile(&note).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert!(adapter.execute(&note).is_err());
+    let mut restarted = adapters::github::Adapter::new(
+        BTreeMap::from([(3, client(&api.uri()))]),
+        FakeWriter,
+        0,
+        Policy::default(),
+        root.path(),
+    )
+    .unwrap();
+    assert!(restarted.execute(&note).is_err());
+    adapter = current;
     let mut summary = delivery(Notice::Summary(Outcome::Replaced));
+    summary.epoch = 1;
     summary.key = "notice:0:2".into();
     adapter.execute(&summary).unwrap();
     assert!(!api.state.lock().unwrap().closed);
     let mut summary = delivery(Notice::Summary(Outcome::Stopped));
+    summary.epoch = 1;
     summary.key = "notice:0:3".into();
     adapter.execute(&summary).unwrap();
     assert!(api.state.lock().unwrap().closed);
@@ -584,7 +608,7 @@ fn message_reconciliation() {
         Reconciliation::Found(_)
     ));
     assert!(api.state.lock().unwrap().closed);
-    let mut pr = note;
+    let mut pr = newer;
     pr.key = "effect:0:1".into();
     pr.output = Out::Effect {
         node: NodeId(0),
@@ -599,6 +623,7 @@ fn message_reconciliation() {
     ));
     let before = api.state.lock().unwrap().posts;
     let mut incident = delivery(Notice::Incident { needs_rob: false });
+    incident.epoch = 1;
     incident.key = "notice:0:4".into();
     adapter.execute(&incident).unwrap();
     assert!(matches!(

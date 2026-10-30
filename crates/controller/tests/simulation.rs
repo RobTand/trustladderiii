@@ -10,11 +10,11 @@ use std::{
 use support::Database;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
-    executor::{Registry, Upstream},
+    executor::{Completion, Delivery, Executor, Observation, Reconciliation, Registry, Upstream},
     status,
 };
-use tl3_kernel::{Outcome, Phase};
-use tl3_store::{EffectState, Store};
+use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase};
+use tl3_store::{Commit, EffectState, EffectTransition, Epoch, RowChange, Snapshot, Store};
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
@@ -55,15 +55,41 @@ fn main() {
         return;
     }
     let mut database = Database::start();
-    labelled_issue_closes(&database.create("clean"));
-    println!("test labelled_issue_closes ... ok");
-    restart_without_duplicate_deliveries(&database.create("restart"));
-    sent_but_absent(&database.create("absent"));
-    acknowledged_operation_look(&database.create("look"));
-    retry_uses_the_kernels_new_key(&database.create("retry"));
-    println!("test restart_without_duplicate_deliveries ... ok");
+    type Scenario = (&'static str, fn(&tl3_config::Store));
+    let cases: &[Scenario] = &[
+        ("labelled_issue_closes", labelled_issue_closes),
+        (
+            "restart_without_duplicate_deliveries",
+            restart_without_duplicate_deliveries,
+        ),
+        ("sent_but_absent", sent_but_absent),
+        ("acknowledged_operation_look", acknowledged_operation_look),
+        (
+            "retry_uses_the_kernels_new_key",
+            retry_uses_the_kernels_new_key,
+        ),
+        ("adapter_errors_are_isolated", adapter_errors_are_isolated),
+        ("lost_response_keeps_the_key", lost_response_keeps_the_key),
+        ("inbox_arrival_order", inbox_arrival_order),
+        ("watches_and_pending", watches_and_pending),
+        ("reconciled_failure", reconciled_failure),
+        (
+            "upgrade_with_inflight_effects",
+            upgrade_with_inflight_effects,
+        ),
+        ("cancelled_absence", cancelled_absence),
+        ("stale_epoch_effects", stale_epoch_effects),
+        ("invalid_footprints", invalid_footprints),
+        ("status_is_read_only", status_is_read_only),
+        ("config_permissions_and_pool", config_permissions_and_pool),
+        ("mixed_registry", mixed_registry),
+    ];
+    for (name, test) in cases {
+        test(&database.create(name));
+        println!("test {name} ... ok");
+    }
     database.stop();
-    println!("2 required controller scenarios and 3 recovery edge cases passed; no skips");
+    println!("{} controller scenarios passed; no skips", cases.len());
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {
@@ -81,6 +107,24 @@ fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {
                 settings.password_file.as_ref().unwrap()
             ),
         );
+    let config = config
+        .replace(
+            "/home/rob/.config/tl3/github-app.json",
+            &root.join("github-fixture").display().to_string(),
+        )
+        .replace(
+            "/run/tl3/model-key",
+            &root.join("model-fixture").display().to_string(),
+        );
+    for name in ["github-fixture", "model-fixture"] {
+        let path = root.join(name);
+        fs::write(&path, "disposable fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
     let path = root.join("config.toml");
     fs::write(&path, config).unwrap();
     path
@@ -137,7 +181,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
         let world = controller.world().unwrap();
         assert!(world.valid() && world.is_settled());
         seen.insert(world.nodes[0].phase.name());
-        let mut reader = Store::open(settings).unwrap();
+        let mut reader = Store::open_read_only(settings).unwrap();
         let rendered = status::render(&mut reader).unwrap();
         assert!(rendered.contains(&format!("\t{}\n", world.nodes[0].credit.balance())));
         if !controller.drive_once().unwrap() {
@@ -159,7 +203,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     ] {
         assert!(seen.contains(phase), "missing {phase}: {seen:?}");
     }
-    assert_finished(&mut controller, &records);
+    assert_finished(&mut controller, &records, settings);
     let final_status = cli_status(&config);
     assert!(
         final_status.contains("RobTand/tl3-sandbox#42\tClosed(Merged)\tnone\t5"),
@@ -195,7 +239,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     assert!(!restored.drive_once().unwrap());
 }
 
-fn assert_finished(controller: &mut Controller, root: &Path) {
+fn assert_finished(controller: &mut Controller, root: &Path, settings: &tl3_config::Store) {
     let world = controller.world().unwrap();
     assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Merged));
     assert_eq!(world.nodes[0].credit.balance(), 5);
@@ -209,6 +253,17 @@ fn assert_finished(controller: &mut Controller, root: &Path) {
         5
     );
     let counts = adapters::delivery_counts(root).unwrap();
+    let effects = Store::open_read_only(settings).unwrap().effects().unwrap();
+    let expected: BTreeSet<_> = effects
+        .iter()
+        .filter(|e| e.state != EffectState::Cancelled)
+        .map(|e| e.key.clone())
+        .collect();
+    assert_eq!(
+        counts.keys().cloned().collect::<BTreeSet<_>>(),
+        expected,
+        "missing or unexpected delivery"
+    );
     assert!(counts.len() > 10);
     assert!(
         counts.values().all(|n| *n == 1),
@@ -246,8 +301,7 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
     let snapshot = Store::open(settings).unwrap().load().unwrap();
     assert_eq!(snapshot.pending_effects[0].state, EffectState::Intended);
     assert!(adapters::delivery_counts(&records).unwrap().is_empty());
-    kill_at(&config, &records, "dispatched");
-    let snapshot = Store::open(settings).unwrap().load().unwrap();
+    let snapshot = kill_at(&config, &records, "dispatched");
     assert_eq!(snapshot.pending_effects[0].state, EffectState::Sent);
     assert_eq!(
         adapters::delivery_counts(&records)
@@ -256,6 +310,9 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
             .sum::<u64>(),
         1
     );
+    for boundary in ["plan", "pr", "enqueue"] {
+        kill_at(&config, &records, boundary);
+    }
     let mut controller = open(settings, &records);
     for iteration in 0..200 {
         if !controller.drive_once().unwrap() {
@@ -263,7 +320,7 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
         }
         assert!(iteration < 199);
     }
-    assert_finished(&mut controller, &records);
+    assert_finished(&mut controller, &records, settings);
     let events = Store::open(settings)
         .unwrap()
         .events_after(tl3_store::Revision::ZERO, 1000)
@@ -292,11 +349,11 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_finished(&mut open(settings, &records), &records);
+    assert_finished(&mut open(settings, &records), &records, settings);
     assert!(cli_status(&config).contains("Closed(Merged)\tnone\t5"));
 }
 
-fn kill_at(config: &Path, records: &Path, boundary: &str) {
+fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
     let mut child = Command::new(env::current_exe().unwrap())
         .arg("--child")
         .arg(config)
@@ -310,6 +367,38 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) {
         .read_line(&mut ready)
         .unwrap();
     assert_eq!(ready.trim(), "READY");
+    let settings = tl3_config::Config::load(config).unwrap().store;
+    let mut reader = Store::open_read_only(&settings).unwrap();
+    let before = reader.load().unwrap();
+    let before_effects = reader.effects().unwrap();
+    let before_events = reader
+        .events_after(tl3_store::Revision::ZERO, u32::MAX)
+        .unwrap();
+    if boundary == "plan" {
+        assert!(
+            before
+                .rows
+                .iter()
+                .any(|r| r.table == "file_sets" && r.value.as_array().unwrap().len() == 80)
+        );
+    }
+    if boundary == "pr" {
+        assert!(
+            before
+                .rows
+                .iter()
+                .any(|r| r.table == "pull_requests" && r.value["number"] == 100)
+        );
+    }
+    if boundary == "enqueue" {
+        assert!(
+            before
+                .pending_effects
+                .iter()
+                .any(|e| e.payload["output"]["Effect"]["kind"] == "Enqueue"
+                    && e.state == EffectState::Sent)
+        );
+    }
     child.kill().unwrap();
     let status = child.wait().unwrap();
     assert!(!status.success());
@@ -318,24 +407,94 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) {
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(9));
     }
+    // Synchronize on Postgres releasing the dead session, not a delay after SIGKILL.
+    let mut client = raw(&settings);
+    client
+        .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+    client
+        .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+    let after = Store::open_read_only(&settings).unwrap().load().unwrap();
+    assert_eq!(after, before, "SIGKILL must preserve every stored row");
+    assert_eq!(
+        reader.effects().unwrap(),
+        before_effects,
+        "terminal effects must survive too"
+    );
+    assert_eq!(
+        reader
+            .events_after(tl3_store::Revision::ZERO, u32::MAX)
+            .unwrap(),
+        before_events
+    );
+    let mut recovered = open(&settings, records);
+    assert_eq!(
+        recovered.snapshot().unwrap(),
+        before,
+        "opening must never replay or rewrite the snapshot"
+    );
+    if before
+        .pending_effects
+        .first()
+        .is_some_and(|e| e.state == EffectState::Sent)
+    {
+        assert!(recovered.drive_once().unwrap());
+        let mut expected = before.clone();
+        let actual = recovered.snapshot().unwrap();
+        expected.revision = actual.revision;
+        expected.pending_effects[0].state = EffectState::Uncertain;
+        expected.pending_effects[0].updated_revision = actual.revision;
+        assert_eq!(
+            actual, expected,
+            "recovery may only mark this Sent effect Uncertain"
+        );
+        let mut expected_effects = before_effects;
+        let changed = expected_effects
+            .iter_mut()
+            .find(|e| e.key == expected.pending_effects[0].key)
+            .unwrap();
+        changed.state = EffectState::Uncertain;
+        changed.updated_revision = actual.revision;
+        assert_eq!(reader.effects().unwrap(), expected_effects);
+        let mut events = reader
+            .events_after(tl3_store::Revision::ZERO, u32::MAX)
+            .unwrap();
+        let transition = events.pop().unwrap();
+        assert_eq!(events, before_events);
+        assert_eq!(transition.payload["from"], "Sent");
+        assert_eq!(transition.payload["to"], "Uncertain");
+        assert_eq!(transition.receipt.revision, actual.revision);
+    }
+    // Return the parked snapshot, leaving recovery's real transition persisted.
+    before
 }
 fn child(args: &[String]) {
-    let config = tl3_config::Config::parse(&fs::read_to_string(&args[2]).unwrap()).unwrap();
+    let config = tl3_config::Config::load(&args[2]).unwrap();
     let mut controller = open(&config.store, Path::new(&args[3]));
     if args[4] == "committed" {
         controller.intake(labelled()).unwrap();
         park();
     }
     loop {
+        let key = args[4].as_str();
+        let snapshot = controller.snapshot().unwrap();
+        if (key == "plan" && snapshot.rows.iter().any(|r| r.table == "file_sets"))
+            || (key == "pr" && snapshot.rows.iter().any(|r| r.table == "pull_requests"))
+        {
+            park();
+        }
         assert!(
             controller
-                .drive_once_with(|boundary, _| {
-                    if boundary
-                        == if args[4] == "picked_up" {
-                            Boundary::BeforeDispatch
-                        } else {
-                            Boundary::AfterDispatch
-                        }
+                .drive_once_with(|boundary, effect_key| {
+                    if (key == "picked_up" && boundary == Boundary::BeforeDispatch)
+                        || (key == "dispatched" && boundary == Boundary::AfterDispatch)
+                        || (key == "enqueue"
+                            && boundary == Boundary::AfterDispatch
+                            && snapshot.pending_effects.iter().any(|e| {
+                                e.key == effect_key
+                                    && e.payload["output"]["Effect"]["kind"] == "Enqueue"
+                            }))
                     {
                         park();
                     }
@@ -366,20 +525,12 @@ fn sent_but_absent(settings: &tl3_config::Store) {
     let config = config_file(settings, root.path());
     let records = root.path().join("upstreams");
     kill_at(&config, &records, "committed");
-    kill_at(&config, &records, "picked_up");
+    let parked = kill_at(&config, &records, "picked_up");
     assert!(adapters::delivery_counts(&records).unwrap().is_empty());
-    assert_eq!(
-        Store::open(settings)
-            .unwrap()
-            .load()
-            .unwrap()
-            .pending_effects[0]
-            .state,
-        EffectState::Sent
-    );
+    assert_eq!(parked.pending_effects[0].state, EffectState::Sent);
     let mut controller = open(settings, &records);
     drain(&mut controller);
-    assert_finished(&mut controller, &records);
+    assert_finished(&mut controller, &records, settings);
 }
 
 struct DeferredWorker(adapters::workers::Fake);
@@ -415,7 +566,7 @@ fn acknowledged_operation_look(settings: &tl3_config::Store) {
     drop(controller);
     let mut controller = open(settings, root.path());
     drain(&mut controller);
-    assert_finished(&mut controller, root.path());
+    assert_finished(&mut controller, root.path(), settings);
 }
 
 struct RetryWorker {
@@ -464,10 +615,842 @@ fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
-    assert_finished(&mut controller, root.path());
+    assert_finished(&mut controller, root.path(), settings);
     assert_eq!(
         controller.effect("effect:0:0").unwrap().unwrap().state,
         EffectState::Cancelled
     );
     assert!(calls.borrow().values().all(|count| *count == 1));
+}
+
+fn raw(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum Fault {
+    Healthy,
+    Unavailable,
+    Lost,
+    Pending,
+    Found(Ack),
+}
+
+struct FaultyWorker {
+    fake: adapters::workers::Fake,
+    fault: std::rc::Rc<std::cell::Cell<Fault>>,
+}
+impl Executor for FaultyWorker {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if delivery.node() != NodeId(0) || matches!(self.fault.get(), Fault::Healthy) {
+            return self.fake.execute(delivery);
+        }
+        if matches!(self.fault.get(), Fault::Lost) {
+            self.fake.execute(delivery)?;
+        }
+        Err(tl3_controller::Error::Adapter(Box::new(
+            std::io::Error::other("fixture transport error"),
+        )))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if delivery.node() == NodeId(0) {
+            match self.fault.get() {
+                Fault::Unavailable => {
+                    return Err(tl3_controller::Error::Adapter(Box::new(
+                        std::io::Error::other("fixture reconciliation error"),
+                    )));
+                }
+                Fault::Pending => return Ok(Reconciliation::Pending),
+                Fault::Found(ack) => {
+                    return Ok(Reconciliation::Found(Completion {
+                        ack,
+                        observations: vec![],
+                    }));
+                }
+                _ => {}
+            }
+        }
+        self.fake.reconcile(delivery)
+    }
+}
+fn faulty(
+    settings: &tl3_config::Store,
+    root: &Path,
+    fault: Fault,
+) -> (Controller, std::rc::Rc<std::cell::Cell<Fault>>) {
+    let fault = std::rc::Rc::new(std::cell::Cell::new(fault));
+    let mut registry = adapters::simulation(root).unwrap();
+    registry.register(
+        Upstream::Workers,
+        FaultyWorker {
+            fake: adapters::workers::Fake::new(root),
+            fault: fault.clone(),
+        },
+    );
+    let mut bootstrap = bootstrap();
+    bootstrap.pool = 2;
+    (
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap).unwrap(),
+        fault,
+    )
+}
+fn adapter_errors_are_isolated(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut controller, fault) = faulty(settings, root.path(), Fault::Unavailable);
+    controller.intake(labelled()).unwrap();
+    let mut second = labelled();
+    second.delivery = "other-request".into();
+    second.number += 1;
+    controller.intake(second).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[1].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert_eq!(
+        controller_effect(&mut controller, "effect:0:0").state,
+        EffectState::Uncertain
+    );
+    assert!(
+        !controller.drive_once().unwrap(),
+        "an adapter outage must not spin the daemon"
+    );
+    fault.set(Fault::Healthy);
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+}
+fn lost_response_keeps_the_key(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut controller, fault) = faulty(settings, root.path(), Fault::Lost);
+    controller.intake(labelled()).unwrap();
+    assert!(controller.drive_once().unwrap());
+    assert_eq!(
+        controller_effect(&mut controller, "effect:0:0").state,
+        EffectState::Sent
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .all(|r| r.table != "inbox")
+    );
+    assert!(controller.world().unwrap().nodes[0].effect.is_some());
+    fault.set(Fault::Pending);
+    assert!(controller.drive_once().unwrap());
+    let before = controller.snapshot().unwrap();
+    assert!(!controller.drive_once().unwrap());
+    assert_eq!(
+        controller.snapshot().unwrap(),
+        before,
+        "Pending proves nothing"
+    );
+    fault.set(Fault::Healthy);
+    drain(&mut controller);
+    assert_finished(&mut controller, root.path(), settings);
+    assert_eq!(
+        adapters::delivery_counts(root.path()).unwrap()["effect:0:0"],
+        1
+    );
+}
+fn inbox_arrival_order(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = open(settings, root.path());
+    controller.intake(labelled()).unwrap();
+    for (key, id, command) in [("2", 1, Control::Pause), ("12", 2, Control::Resume)] {
+        controller
+            .observe(
+                key,
+                Observation::Kernel(Event::Command {
+                    node: NodeId(0),
+                    id,
+                    command,
+                }),
+            )
+            .unwrap();
+    }
+    let snapshot = controller.snapshot().unwrap();
+    let inbox: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "inbox")
+        .collect();
+    assert_eq!(
+        inbox.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        ["external:2", "external:12"]
+    );
+    assert!(inbox[0].arrival < inbox[1].arrival);
+    drop(controller);
+    let mut controller = open(settings, root.path());
+    controller.drive_once().unwrap();
+    assert!(controller.world().unwrap().nodes[0].paused);
+    controller.drive_once().unwrap();
+    assert!(!controller.world().unwrap().nodes[0].paused);
+    drain(&mut controller);
+    assert_finished(&mut controller, root.path(), settings);
+}
+
+struct Deferred {
+    inner: Box<dyn Executor>,
+    kind: EffectKind,
+    ready: std::rc::Rc<std::cell::Cell<bool>>,
+}
+impl Executor for Deferred {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        let mut completion = self.inner.execute(delivery)?;
+        if matches!(delivery.output, Out::Effect { kind, .. } if kind == self.kind) {
+            completion.observations.clear();
+        }
+        Ok(completion)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if !self.ready.get()
+            && matches!(delivery.output, Out::Effect { kind, .. } if kind == self.kind)
+        {
+            return Ok(Reconciliation::Pending);
+        }
+        self.inner.reconcile(delivery)
+    }
+}
+fn watches_and_pending(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let ready = std::rc::Rc::new(std::cell::Cell::new(false));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    for (upstream, kind, inner) in [
+        (
+            Upstream::PrismaBuild,
+            EffectKind::SubmitChecks,
+            Box::new(adapters::prismabuild::Fake::new(root.path())) as Box<dyn Executor>,
+        ),
+        (
+            Upstream::Worktrees,
+            EffectKind::StartRebase,
+            Box::new(adapters::worktrees::Fake::new(root.path())) as Box<dyn Executor>,
+        ),
+        (
+            Upstream::Mergify,
+            EffectKind::Enqueue,
+            Box::new(adapters::mergify::Fake::new(root.path())) as Box<dyn Executor>,
+        ),
+    ] {
+        registry.register(
+            upstream,
+            Deferred {
+                inner,
+                kind,
+                ready: ready.clone(),
+            },
+        );
+    }
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    for kind in [
+        EffectKind::SubmitChecks,
+        EffectKind::StartRebase,
+        EffectKind::Enqueue,
+    ] {
+        drain(&mut controller);
+        let before = controller.snapshot().unwrap();
+        let world = controller.world().unwrap();
+        let watches: Vec<Delivery> = before
+            .rows
+            .iter()
+            .filter(|r| r.table == "watches")
+            .map(|r| serde_json::from_value(r.value.clone()).unwrap())
+            .collect();
+        assert!(
+            watches.iter().any(
+                |d| matches!(d.output, Out::Effect {kind: k, ..} if k == kind)
+                    && world.nodes[0].operation_pending(kind, d.generation)
+            ),
+            "missing live {kind:?} watch"
+        );
+        assert!(!controller.drive_once().unwrap());
+        assert_eq!(
+            controller.snapshot().unwrap(),
+            before,
+            "a pending watch changes no state"
+        );
+        ready.set(true);
+        assert!(
+            controller.drive_once().unwrap(),
+            "look must recover {kind:?}"
+        );
+        assert!(
+            controller.drive_once().unwrap(),
+            "consume recovered observation"
+        );
+        ready.set(false);
+        if kind == EffectKind::SubmitChecks {
+            // Reach the queue without delivering its merge fact, then require a rebase.
+            for _ in 0..100 {
+                if controller.world().unwrap().nodes[0].phase == Phase::Queued {
+                    break;
+                }
+                assert!(controller.drive_once().unwrap());
+            }
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            controller
+                .observe(
+                    "conflict",
+                    Observation::Kernel(Event::Fact {
+                        node: NodeId(0),
+                        fact: Fact::Conflict,
+                    }),
+                )
+                .unwrap();
+            controller.drive_once().unwrap();
+        } else if kind == EffectKind::StartRebase {
+            // The rebase requires fresh checks and review. Let those checks complete.
+            ready.set(true);
+            for _ in 0..100 {
+                let world = controller.world().unwrap();
+                if world.nodes[0].phase == Phase::Publishing {
+                    break;
+                }
+                assert!(controller.drive_once().unwrap());
+            }
+            ready.set(false);
+        }
+    }
+    ready.set(true);
+    drain(&mut controller);
+    // One clean rebase consumes a free recheck and keeps the merge credit once.
+    assert_finished(&mut controller, root.path(), settings);
+}
+fn reconciled_failure(settings: &tl3_config::Store) {
+    for ack in [Ack::Retryable, Ack::Permanent] {
+        let root = tempfile::tempdir().unwrap();
+        // Reset only this disposable schema between the two independent failure outcomes.
+        if ack == Ack::Permanent {
+            raw(settings)
+                .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+                .unwrap();
+        }
+        let (mut controller, fault) = faulty(settings, root.path(), Fault::Found(ack));
+        controller.intake(labelled()).unwrap();
+        controller.drive_once().unwrap();
+        controller.drive_once().unwrap();
+        assert_eq!(
+            controller_effect(&mut controller, "effect:0:0").state,
+            EffectState::Uncertain
+        );
+        assert!(controller.drive_once().unwrap());
+        let effect = controller_effect(&mut controller, "effect:0:0");
+        let world = controller.world().unwrap();
+        match ack {
+            Ack::Retryable => {
+                assert_eq!(effect.state, EffectState::Cancelled);
+                assert_eq!(world.nodes[0].effect.unwrap().seq, 1);
+                fault.set(Fault::Healthy);
+                drain(&mut controller);
+                assert_finished(&mut controller, root.path(), settings);
+            }
+            Ack::Permanent => {
+                assert_eq!(effect.state, EffectState::Failed);
+                assert_eq!(world.nodes[0].phase, Phase::AwaitingRob);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn upgrade_with_inflight_effects(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut controller, fault) = faulty(settings, root.path(), Fault::Lost);
+    controller.intake(labelled()).unwrap();
+    controller.drive_once().unwrap();
+    let mut store = Store::open(settings).unwrap();
+    for state in [EffectState::Sent, EffectState::Uncertain] {
+        let before = controller.snapshot().unwrap();
+        assert_eq!(before.pending_effects[0].state, state);
+        let mut upgrade = Commit::new("upgrade", serde_json::json!({"format": 1}), &before);
+        upgrade.next_epoch = Some(Epoch::try_from(1).unwrap());
+        assert!(matches!(
+            store.commit(&upgrade),
+            Err(tl3_store::Error::ActiveDeliveries)
+        ));
+        assert_eq!(store.load().unwrap(), before);
+        if state == EffectState::Sent {
+            controller.drive_once().unwrap();
+        }
+    }
+    fault.set(Fault::Healthy);
+    controller.drive_once().unwrap(); // Find the original start, including its reply.
+    controller.drive_once().unwrap(); // Its reply starts the audit, still Intended.
+    let before = controller.snapshot().unwrap();
+    assert!(
+        before
+            .pending_effects
+            .iter()
+            .all(|e| e.state == EffectState::Intended)
+    );
+    assert!(!before.pending_effects.is_empty());
+    let mut upgrade = Commit::new("upgrade", serde_json::json!({"format": 1}), &before);
+    upgrade.next_epoch = Some(Epoch::try_from(1).unwrap());
+    store.commit(&upgrade).unwrap();
+    let upgraded = store.load().unwrap();
+    assert_eq!(upgraded.epoch.get(), 1);
+    assert_eq!(upgraded.rows, before.rows);
+    assert_eq!(upgraded.credit, before.credit);
+    assert_eq!(upgraded.interned, before.interned);
+    for (old, new) in before.pending_effects.iter().zip(&upgraded.pending_effects) {
+        let mut expected = old.clone();
+        expected.epoch = upgraded.epoch;
+        expected.updated_revision = upgraded.revision;
+        assert_eq!(*new, expected, "upgrade preserves keys and payloads");
+    }
+    drain(&mut controller);
+    assert_finished(&mut controller, root.path(), settings);
+    let epochs = adapters::delivery_epochs(root.path()).unwrap();
+    assert_eq!(epochs["effect:0:0"], [0]);
+    for effect in upgraded.pending_effects {
+        assert_eq!(epochs[&effect.key], [1]);
+    }
+    let old_effect = controller_effect(&mut controller, "effect:0:0");
+    let mut stale: Delivery = serde_json::from_value(old_effect.payload).unwrap();
+    stale.key = "refused-old-epoch".into();
+    let mut restarted_fake = adapters::workers::Fake::new(root.path());
+    assert!(
+        restarted_fake.execute(&stale).is_err(),
+        "fence must survive adapter restart"
+    );
+    assert!(
+        !adapters::delivery_counts(root.path())
+            .unwrap()
+            .contains_key(&stale.key)
+    );
+    stale.key = "effect:0:0".into();
+    assert!(
+        matches!(
+            restarted_fake.reconcile(&stale).unwrap(),
+            Reconciliation::Found(_)
+        ),
+        "old epoch records remain readable"
+    );
+}
+
+fn cancelled_absence(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut controller, fault) = faulty(settings, root.path(), Fault::Pending);
+    controller.intake(labelled()).unwrap();
+    controller.drive_once().unwrap();
+    controller
+        .observe(
+            "stop",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: Control::Stop,
+            }),
+        )
+        .unwrap();
+    controller.drive_once().unwrap();
+    controller.drive_once().unwrap();
+    assert_eq!(
+        controller_effect(&mut controller, "effect:0:0").state,
+        EffectState::Cancelling
+    );
+    let before = controller.snapshot().unwrap();
+    let mut upgrade = Commit::new("upgrade", serde_json::json!(null), &before);
+    upgrade.next_epoch = Some(Epoch::try_from(1).unwrap());
+    assert!(matches!(
+        Store::open(settings).unwrap().commit(&upgrade),
+        Err(tl3_store::Error::ActiveDeliveries)
+    ));
+    assert!(
+        !controller.drive_once().unwrap(),
+        "Pending cancellation is not absence"
+    );
+    fault.set(Fault::Healthy);
+    controller.drive_once().unwrap();
+    assert_eq!(
+        controller_effect(&mut controller, "effect:0:0").state,
+        EffectState::Cancelled
+    );
+    let events = Store::open_read_only(settings)
+        .unwrap()
+        .events_after(before.revision, 10)
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| e.receipt.result["kernel_event"]["Ack"]["ack"] == "Retryable")
+    );
+    assert!(
+        !adapters::delivery_counts(root.path())
+            .unwrap()
+            .contains_key("effect:0:0")
+    );
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Stopped)
+    );
+
+    let mut next = labelled();
+    next.delivery = "stop-before-dispatch".into();
+    next.number += 1;
+    controller.intake(next).unwrap();
+    controller
+        .observe(
+            "stop-intended",
+            Observation::Kernel(Event::Command {
+                node: NodeId(1),
+                id: 1,
+                command: Control::Stop,
+            }),
+        )
+        .unwrap();
+    controller.drive_once().unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller_effect(&mut controller, "effect:1:0").state,
+        EffectState::Cancelled
+    );
+    assert!(
+        !adapters::delivery_counts(root.path())
+            .unwrap()
+            .contains_key("effect:1:0")
+    );
+    assert_eq!(
+        controller.world().unwrap().nodes[1].phase,
+        Phase::Closed(Outcome::Stopped)
+    );
+}
+
+fn stale_epoch_effects(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Workers, adapters::workers::Fake::new(root.path()));
+    let mut boot = bootstrap();
+    boot.pool = 3;
+    let mut controller = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    for i in 0..3 {
+        let mut issue = labelled();
+        issue.delivery = format!("stale-{i}");
+        issue.number += i;
+        controller.intake(issue).unwrap();
+    }
+    let mut store = Store::open(settings).unwrap();
+    for (key, states) in [
+        ("effect:1:0", vec![EffectState::Sent]),
+        (
+            "effect:2:0",
+            vec![EffectState::Sent, EffectState::Uncertain],
+        ),
+    ] {
+        let mut from = EffectState::Intended;
+        for to in states {
+            let before = store.load().unwrap();
+            let mut commit = Commit::new(
+                format!("seed:{key}:{to:?}"),
+                serde_json::json!(null),
+                &before,
+            );
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from,
+                to,
+            });
+            store.commit(&commit).unwrap();
+            from = to;
+        }
+    }
+    let found = store.effect("effect:2:0").unwrap().unwrap();
+    let delivery: Delivery = serde_json::from_value(found.payload).unwrap();
+    adapters::workers::Fake::new(root.path())
+        .execute(&delivery)
+        .unwrap();
+    // An inconsistent migration fixture exercises defensive recovery. Normal upgrades
+    // cannot do this: upgrade_with_inflight_effects proves the store's drain guard.
+    raw(settings)
+        .execute("UPDATE tl3_meta SET epoch = 1", &[])
+        .unwrap();
+    drain(&mut controller);
+    assert!(
+        controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|n| n.phase == Phase::Closed(Outcome::Merged))
+    );
+    for key in ["effect:0:0", "effect:1:0"] {
+        assert_eq!(
+            controller_effect(&mut controller, key).state,
+            EffectState::Cancelled
+        );
+        assert!(
+            !adapters::delivery_counts(root.path())
+                .unwrap()
+                .contains_key(key)
+        );
+    }
+    assert_eq!(
+        controller_effect(&mut controller, "effect:2:0").state,
+        EffectState::Confirmed
+    );
+    let epochs = adapters::delivery_epochs(root.path()).unwrap();
+    assert_eq!(epochs["effect:2:0"], [0]);
+    assert!(
+        epochs
+            .iter()
+            .filter(|(key, _)| key.as_str() != "effect:2:0")
+            .all(|(_, epochs)| *epochs == [1])
+    );
+    let expected: BTreeSet<_> = store
+        .effects()
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.state != EffectState::Cancelled)
+        .map(|e| e.key)
+        .collect();
+    assert_eq!(
+        adapters::delivery_counts(root.path())
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        expected
+    );
+}
+
+fn invalid_footprints(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = open(settings, root.path());
+    let mut store = Store::open(settings).unwrap();
+    for (key, files) in [("unsorted", vec![65, 64]), ("duplicate", vec![64, 64])] {
+        let before = store.load().unwrap();
+        let mut change = Commit::new(key, serde_json::json!(files), &before);
+        change.rows.push(RowChange::Put {
+            table: "file_sets".into(),
+            id: "0".into(),
+            value: serde_json::json!(files),
+        });
+        store.commit(&change).unwrap();
+        assert!(matches!(
+            controller.world(),
+            Err(tl3_controller::Error::Invalid(
+                "stored footprint must be sorted and deduplicated"
+            ))
+        ));
+        assert!(status::render(&mut Store::open_read_only(settings).unwrap()).is_err());
+    }
+    drop(controller);
+    assert!(
+        Controller::open(
+            Store::open(settings).unwrap(),
+            Registry::default(),
+            bootstrap()
+        )
+        .is_err()
+    );
+}
+
+fn status_is_read_only(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config_file(settings, root.path());
+    assert!(matches!(
+        Store::open_read_only(settings),
+        Err(tl3_store::Error::Invalid(
+            "store is uninitialized; start tl3d first"
+        ))
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_tl3"))
+        .args(["status", "--config"])
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("uninitialized"));
+    assert_eq!(
+        raw(settings)
+            .query_one(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "status must not migrate an empty database"
+    );
+    let mut writer = Store::open(settings).unwrap();
+    assert!(
+        status::render(&mut Store::open_read_only(settings).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("uninitialized")
+    );
+    let mut controller = open(settings, &root.path().join("upstreams"));
+    controller.intake(labelled()).unwrap();
+    let before = writer.load().unwrap();
+    assert!(cli_status(&config).contains("Ingesting"));
+    let mut reader = Store::open_read_only(settings).unwrap();
+    let attempted = Commit::new("reader-must-not-write", serde_json::json!(null), &before);
+    assert!(
+        reader.commit(&attempted).is_err(),
+        "the server must enforce read-only access"
+    );
+    assert!(reader.intern_repo("must", "not-write").is_err());
+    assert_eq!(writer.load().unwrap(), before);
+}
+
+fn config_permissions_and_pool(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config_file(settings, root.path());
+    let source = fs::read_to_string(&config)
+        .unwrap()
+        .replace("agent_pool = 1", "agent_pool = 3");
+    fs::write(&config, source).unwrap();
+    let loaded = tl3_config::Config::load(&config).unwrap();
+    assert_eq!(Bootstrap::from_config(&loaded).unwrap().pool, 3);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let password = settings.password_file.as_ref().unwrap();
+        fs::set_permissions(password, fs::Permissions::from_mode(0o644)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_tl3"))
+            .args(["status", "--config"])
+            .arg(&config)
+            .output()
+            .unwrap();
+        fs::set_permissions(password, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("store.password_file"));
+    }
+}
+
+// A test can wire a real client for part of one upstream, delegating its other
+// effects to that upstream's fake. Production adapters belong to their own tickets.
+struct LocalWorktrees {
+    git: tl3_worktrees::Worktrees,
+    checkout: PathBuf,
+    fake: adapters::worktrees::Fake,
+}
+impl Executor for LocalWorktrees {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        let branch = tl3_worktrees::BranchName::new("tl3/mixed-fixture").unwrap();
+        let map = |error| tl3_controller::Error::Adapter(Box::new(error));
+        match delivery.output {
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            } => {
+                self.git.create_branch(&branch).map_err(map)?;
+                self.git
+                    .create_worktree(&branch, &self.checkout)
+                    .map_err(map)?;
+            }
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            } => {
+                self.git
+                    .remove_worktree(&branch, &self.checkout)
+                    .map_err(map)?;
+                self.git.delete_local_branch(&branch).map_err(map)?;
+            }
+            _ => return self.fake.execute(delivery),
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        let found = match delivery.output {
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            } => self.checkout.join(".git").exists(),
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            } => !self.checkout.exists(),
+            _ => return self.fake.reconcile(delivery),
+        };
+        Ok(if found {
+            Reconciliation::Found(Completion::confirmed(vec![]))
+        } else {
+            Reconciliation::Absent
+        })
+    }
+}
+fn mixed_registry(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let repository = root.path().join("repo");
+    fs::create_dir(&repository).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&repository)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let worktrees = root.path().join("worktrees");
+    fs::create_dir(&worktrees).unwrap();
+    let checkout = worktrees.join("request");
+    let records = root.path().join("upstreams");
+    let mut registry = adapters::simulation(&records).unwrap();
+    registry.register(
+        Upstream::Worktrees,
+        LocalWorktrees {
+            git: tl3_worktrees::Worktrees::open(&repository, &worktrees).unwrap(),
+            checkout: checkout.clone(),
+            fake: adapters::worktrees::Fake::new(&records),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    for _ in 0..100 {
+        if checkout.join(".git").exists() {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    assert!(
+        checkout.join(".git").exists(),
+        "the registered real client must create the checkout"
+    );
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert!(
+        !checkout.exists(),
+        "the same real client must remove the checkout"
+    );
+    assert!(
+        adapters::delivery_counts(&records).unwrap().len() > 10,
+        "other upstreams use fakes"
+    );
 }

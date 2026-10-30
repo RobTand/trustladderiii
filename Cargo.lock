@@ -2594,6 +2594,7 @@ dependencies = [
  "chrono",
  "hex",
  "hmac 0.12.1",
+ "postgres",
  "postgresql_embedded",
  "rand 0.8.8",
  "rsa",
@@ -2607,6 +2608,7 @@ dependencies = [
  "tl3-github",
  "tl3-kernel",
  "tl3-store",
+ "tl3-worktrees",
  "tokio",
  "wiremock",
 ]

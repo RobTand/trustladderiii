@@ -1,6 +1,6 @@
 use crate::{Result, request, snapshot};
 use std::fmt::Write;
-use tl3_kernel::Phase;
+use tl3_kernel::Wait;
 use tl3_store::Store;
 
 pub fn render(store: &mut Store) -> Result<String> {
@@ -9,27 +9,18 @@ pub fn render(store: &mut Store) -> Result<String> {
     let mut output = String::from("REQUEST\tPHASE\tWAIT\tCREDIT\n");
     for (index, node) in world.nodes.iter().enumerate() {
         let request = request(&snapshot, tl3_kernel::NodeId(index as u64))?;
-        let wait = if node.waiting_incident {
-            "incident".into()
-        } else if node.question.is_some() {
-            "Rob's answer".into()
-        } else if node.paused {
-            "resume".into()
-        } else if let Some(effect) = node.effect {
-            format!("{:?}", effect.kind)
-        } else if node.run.is_some() {
-            "worker reply".into()
-        } else if node.job.is_some() {
-            "check results".into()
-        } else {
-            match node.phase {
-                Phase::Queued => "merge queue",
-                Phase::Ready(_) => "slot or files",
-                Phase::Planning { .. } => "agent pool",
-                Phase::Closed(_) => "none",
-                _ => "upstream event",
-            }
-            .into()
+        let wait = match node.waiting_on() {
+            Wait::Incident => "incident".into(),
+            Wait::Answer => "Rob's answer".into(),
+            Wait::Resume => "resume".into(),
+            Wait::Effect(kind) => format!("{kind:?}"),
+            Wait::WorkerReply => "worker reply".into(),
+            Wait::CheckResults => "check results".into(),
+            Wait::MergeQueue => "merge queue".into(),
+            Wait::SlotOrFiles => "slot or files".into(),
+            Wait::AgentPool => "agent pool".into(),
+            Wait::UpstreamEvent => "upstream event".into(),
+            Wait::None => "none".into(),
         };
         writeln!(
             output,
