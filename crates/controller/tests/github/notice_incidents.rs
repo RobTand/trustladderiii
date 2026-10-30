@@ -14,7 +14,7 @@ impl Writer for WriterFault {
     fn draft(&mut self, key: &str, input: &WriteRequest) -> tl3_controller::Result<WriterReply> {
         let f = self.0.lock().unwrap();
         let targeted = match f.kind.as_str() {
-            "question" => input.kind == MessageKind::Question,
+            "question" | "cleanup" => input.kind == MessageKind::Question,
             "summary" => input.kind == MessageKind::Summary,
             "note" => input.kind == MessageKind::Note && !key.starts_with("incident:"),
             "dropped" => input.facts["change_quote"].is_string(),
@@ -71,6 +71,29 @@ impl Executor for SplitPlan {
         self.0.reconcile(d)
     }
 }
+struct CleanupFailure {
+    fake: adapters::worktrees::Fake,
+    failed: std::path::PathBuf,
+}
+impl Executor for CleanupFailure {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            }
+        ) && !self.failed.exists()
+        {
+            fs::write(&self.failed, "failed once").unwrap();
+            return Ok(Completion::permanent("permission"));
+        }
+        self.fake.execute(d)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(d)
+    }
+}
 fn open(
     settings: &tl3_config::Store,
     root: &Path,
@@ -79,6 +102,15 @@ fn open(
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     let ask = faults.lock().unwrap().kind == "question";
+    if faults.lock().unwrap().kind == "cleanup" {
+        registry.register(
+            Upstream::Worktrees,
+            CleanupFailure {
+                fake: adapters::worktrees::Fake::new(root),
+                failed: root.join("cleanup-failed"),
+            },
+        );
+    }
     if faults.lock().unwrap().kind == "filing" {
         registry.register(
             Upstream::Workers,
@@ -131,6 +163,7 @@ pub(super) fn run(db: &mut support::Database) {
     let mut failures = 0;
     for name in [
         "rejected_ask",
+        "cleanup_ask",
         "question_403",
         "question_401",
         "question_404",
@@ -162,6 +195,7 @@ pub(super) fn run(db: &mut support::Database) {
     assert_eq!(failures, 0, "notice incident scenarios failed");
     for name in [
         "rejected_ask",
+        "cleanup_ask",
         "question_403",
         "incident_no_loop",
         "probe_ask",
@@ -205,6 +239,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         {
             "question"
         }
+        "cleanup_ask" => "cleanup",
         "dropped_change" => "dropped",
         "lost_note" => "note",
         "filing_403" => "filing",
@@ -243,7 +278,8 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     if name != "dropped_change" {
         c.intake(labelled()).unwrap();
     }
-    let question_world = if kind == "question" {
+    let is_ask = matches!(kind, "question" | "cleanup");
+    let question_world = if is_ask {
         for _ in 0..100 {
             if c.world().unwrap().nodes[0].question.is_some() {
                 break;
@@ -277,7 +313,11 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         .effects()
         .unwrap()
         .into_iter()
-        .find(|e| e.state == tl3_store::EffectState::Failed && !e.key.starts_with("incident:"));
+        .find(|e| {
+            e.state == tl3_store::EffectState::Failed
+                && e.payload["output"]["Effect"].is_null()
+                && !e.key.starts_with("incident:")
+        });
     assert!(
         failed.is_some(),
         "{name}: the rejected notice must finish Failed"
@@ -300,7 +340,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "question_422" => "invalid_request",
         _ => "message_rejected",
     }));
-    if kind == "question" {
+    if is_ask {
         let status =
             tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
         assert!(
@@ -487,7 +527,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         before_retry,
         "clearing a notice incident must not advance the kernel"
     );
-    if kind == "question" && name != "stale_ask" {
+    if is_ask && name != "stale_ask" {
         assert_eq!(
             c.world().unwrap(),
             question_world.unwrap(),
@@ -514,6 +554,29 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         "restart must not duplicate a retried notice"
     );
     assert!(c.world().unwrap().consistent());
+    if kind == "cleanup" {
+        let world = c.world().unwrap();
+        let question = world.nodes[0].question.unwrap();
+        assert_eq!(question.kind, tl3_kernel::QKind::CleanupFailed);
+        c.observe(
+            "retry-cleanup-step",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: world.nodes[0].last_cmd + 1,
+                command: tl3_kernel::Command::Answer {
+                    question: question.id,
+                    answer: tl3_kernel::Answer::Retry,
+                },
+            }),
+        )
+        .unwrap();
+        drain(&mut c);
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(Outcome::Merged),
+            "Retry must retry the cleanup step after its question has been posted"
+        );
+    }
     if kind == "dropped" {
         let delivery: Delivery = serde_json::from_value(failed.payload.clone()).unwrap();
         let Some(tl3_controller::steering::Task::ReplacementDropped { text, .. }) =
