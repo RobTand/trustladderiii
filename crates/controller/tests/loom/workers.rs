@@ -80,16 +80,35 @@ fn loom_worker_output_progress_wait_and_restart() {
         let active = ActiveRuns::default();
         let mut source = WorkerOutputSource::new(runs.clone(), settings.clone(), active.clone());
         let (sender, receiver) = mpsc::channel();
+        let reading = settings.clone();
+        let consumer = thread::spawn(move || {
+            let mut store = Store::open(&reading).unwrap();
+            let mut inputs = vec![];
+            for _ in 0..3 {
+                let input = receiver.recv().unwrap();
+                if let Input::Observation {
+                    observation: Observation::Progress { checkpoint, .. },
+                    ..
+                } = &input
+                {
+                    let offset: i64 = checkpoint.split_once(':').unwrap().1.parse().unwrap();
+                    assert!(
+                        store.worker_progress(None).unwrap()[0].output_offset >= offset,
+                        "progress published before persistence"
+                    );
+                }
+                inputs.push(input);
+            }
+            (inputs, receiver)
+        });
         for _ in 0..2 {
             let _guard = lock.lock().unwrap();
             source.poll_once(&mut store, &sender).unwrap();
         }
         producer.join().unwrap();
         source.poll_once(&mut store, &sender).unwrap();
-        let mut inputs = vec![];
-        while let Ok(input) = receiver.try_recv() {
-            inputs.push(input);
-        }
+        let (inputs, receiver) = consumer.join().unwrap();
+        assert!(receiver.try_recv().is_err(), "source doubled progress");
         assert_eq!(inputs.len(), 3, "lost or duplicated progress/wait event");
         assert!(matches!(
             &inputs[0],
