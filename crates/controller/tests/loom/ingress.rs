@@ -144,9 +144,10 @@ impl Source for DurableDelivery {
         use hmac::{Hmac, Mac};
         let body = serde_json::to_vec(&json!({
             "action": "labeled", "label": {"name": "tl3"},
-            "issue": {"number": self.number, "title": "Durable loom request"},
-            "repository": {"name": "sandbox", "owner": {"login": "owner"}},
-            "installation": {"id": 1}, "sender": {"id": 42}
+            "issue": {"number": self.number, "title": "Durable loom request",
+                "state": "open", "updated_at": "2026-10-30T00:00:00Z"},
+            "repository": {"id": 1, "name": "sandbox", "owner": {"id": 42, "login": "owner"}},
+            "installation": {"id": 1}, "sender": {"id": 42, "login": "owner"}
         })).unwrap();
         let secret = b"loom-fixture-secret";
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret).unwrap();
