@@ -1271,6 +1271,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tl3-harness"
+version = "0.1.0"
+source = { directory = "../harness" }
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'test'", specifier = "==9.0.2" }]
+provides-extras = ["test"]
+
+[[package]]
 name = "tl3-workers"
 version = "0.1.0"
 source = { editable = "." }
@@ -1278,6 +1287,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "jsonschema" },
     { name = "langchain-openai" },
+    { name = "tl3-harness" },
 ]
 
 [package.dev-dependencies]
@@ -1290,6 +1300,7 @@ requires-dist = [
     { name = "deepagents", specifier = "==0.7.32" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "langchain-openai", specifier = "==1.7.3" },
+    { name = "tl3-harness", directory = "../harness" },
 ]
 
 [package.metadata.requires-dev]

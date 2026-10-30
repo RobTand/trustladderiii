@@ -41,6 +41,11 @@ class Summary:
 def run_current(tree, container, tests):
     require_admission()
     summary = Summary()
+    missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
+    if missing:
+        for test in sorted(missing):
+            summary.add(test, "error", f"Selector not found: {test}")
+        return summary.result
     progress = Progress()
     command = container_command(tree, container, tests) + ["--summary"]
     started = finished = False
@@ -79,7 +84,7 @@ def run_current(tree, container, tests):
                     raise ValueError("unknown report event")
             code = child.wait()
             if (not finished or type(reported_exit) is not int or code != reported_exit
-                    or code not in (0, 1, 2, 5)
+                    or code not in (0, 1, 2, 4, 5)
                     or code == 2 and not collection_error
                     or code == 0 and (summary.result["totals"]["failed"] or summary.result["totals"]["error"])
                     or code == 1 and not (summary.result["totals"]["failed"] or summary.result["totals"]["error"])):
@@ -88,6 +93,9 @@ def run_current(tree, container, tests):
             child.terminate()
             child.wait()
             return infrastructure("Container or pytest report failed; no test verdict is available.")
+    if code == 4:
+        for test in tests:
+            summary.add(test, "error", f"Selector not found: {test}")
     if code == 5:
         summary.result["note"] = "No tests were collected."
     return summary.result
