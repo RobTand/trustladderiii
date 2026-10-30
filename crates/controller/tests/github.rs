@@ -1049,6 +1049,19 @@ impl GitHubTranslator for RecordingTranslator {
         }])
     }
 }
+struct FailsOnce(bool);
+impl GitHubTranslator for FailsOnce {
+    fn translate(
+        &mut self,
+        _delivery: &GitHubDelivery,
+        _snapshot: &tl3_store::Snapshot,
+    ) -> tl3_controller::Result<Vec<Input>> {
+        if std::mem::take(&mut self.0) {
+            return Err(tl3_controller::Error::Invalid("fixture translation error"));
+        }
+        Ok(vec![])
+    }
+}
 fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -1077,11 +1090,21 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     other["comment"]["id"] = json!(902);
     other["comment"]["user"]["id"] = json!(7);
     assert_eq!(post(address, "other-pr-comment", true, other, true), 202);
+    assert_eq!(
+        post_event(
+            address,
+            "ping",
+            "ping",
+            json!({"zen": "Keep the verified payload"}),
+            true
+        ),
+        202
+    );
     control.stop();
     handle.join().unwrap().unwrap();
     let mut store = Store::open(settings).unwrap();
     let pending = store.pending_ingress().unwrap();
-    assert_eq!(pending.len(), 6);
+    assert_eq!(pending.len(), 7);
     for (_, payload) in &pending[..4] {
         let GitHubDelivery::Webhook(delivery) = serde_json::from_value(payload.clone()).unwrap()
         else {
@@ -1100,20 +1123,35 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].value["issue"], 25);
     assert!(store.pending_ingress().unwrap().is_empty());
-    // Register after intake has consumed the deliveries. A new consumer still sees all six.
+    // Register after intake has consumed the deliveries. A new consumer still sees all seven.
     let calls = Arc::new(Mutex::new(vec![]));
     controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
     drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 6);
+    assert_eq!(calls.lock().unwrap().len(), 7);
     drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 6);
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    controller.register_github_translator("retry-test", FailsOnce(true));
+    assert!(ingress::drain(&mut controller).is_err());
+    assert!(
+        store
+            .ingress_cursor("github-translator:retry-test")
+            .unwrap()
+            .is_none()
+    );
+    drain(&mut controller);
+    assert!(
+        store
+            .ingress_cursor("github-translator:retry-test")
+            .unwrap()
+            .is_some()
+    );
     drop(controller);
     let mut restored = self::controller(settings, root.path(), &api.uri());
     restored.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
     drain(&mut restored);
     assert_eq!(
         calls.lock().unwrap().len(),
-        6,
+        7,
         "consumer cursor survives restart"
     );
     assert_eq!(

@@ -61,7 +61,7 @@ impl Store {
     }
 
     pub fn ingress_after(&mut self, sequence: i64) -> Result<Vec<(i64, serde_json::Value)>> {
-        Ok(self.client.query("SELECT sequence, payload FROM tl3_ingress WHERE sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
+        Ok(self.client.query("SELECT sequence, payload FROM tl3_ingress WHERE source IN ('github-webhook', 'github-catch-up') AND sequence > $1 ORDER BY sequence LIMIT 100", &[&sequence])?.into_iter().map(|row| (row.get(0), row.get(1))).collect())
     }
 
     pub fn set_ingress_cursor(&mut self, source: &str, cursor: &serde_json::Value) -> Result<()> {

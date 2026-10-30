@@ -109,10 +109,10 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
 /// Both paths preserve upstream evidence before translating it into controller inputs.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum GitHubDelivery {
-    Webhook(webhook::Delivery),
+    Webhook(Box<webhook::Delivery>),
     CatchUp {
         repository: Repository,
-        changes: tl3_github::RepoChanges,
+        changes: Box<tl3_github::RepoChanges>,
     },
 }
 
@@ -398,7 +398,7 @@ impl CatchUp {
                 }
                 let delivery = GitHubDelivery::CatchUp {
                     repository: repo.clone(),
-                    changes,
+                    changes: Box::new(changes),
                 };
                 let payload = serde_json::to_value(delivery)?;
                 let key = format!("{name}:{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
@@ -432,8 +432,8 @@ impl WebhookControl {
         let _ = self.0.sender.send(WebhookMessage::Gap);
     }
     pub fn stop(&self) {
-        self.0.server.stop();
         let _ = self.0.sender.send(WebhookMessage::Stop);
+        self.0.server.stop();
     }
 }
 
@@ -495,7 +495,7 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
         Err(_) => return 400,
     };
     let id = delivery.id.clone();
-    let payload = json!(GitHubDelivery::Webhook(delivery));
+    let payload = json!(GitHubDelivery::Webhook(Box::new(delivery)));
     match store.receive_ingress("github-webhook", &id, &payload) {
         Ok(_) => 202,
         Err(error) => {
