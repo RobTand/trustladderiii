@@ -447,6 +447,8 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
             .iter()
             .find(|r| r["inputs"]["head_sha"] == head)
             .unwrap();
+        assert_eq!(next["inputs"]["base_sha"], rebased_reviewed);
+        assert_eq!(next["inputs"]["check_base_sha"], plan.value["base_sha"]);
         assert_eq!(
             next["inputs"]["review_fixes"]["reviewed_sha"],
             rebased_reviewed
@@ -477,6 +479,8 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
         .iter()
         .find(|request| request["inputs"]["head_sha"] == fixed)
         .unwrap();
+    assert_eq!(next["inputs"]["base_sha"], reviewed);
+    assert_eq!(next["inputs"]["check_base_sha"], flow.base);
     assert_eq!(next["inputs"]["review_fixes"]["reviewed_sha"], reviewed);
     let fixes = next["inputs"]["review_fixes"]["findings"]
         .as_array()

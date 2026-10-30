@@ -33,7 +33,12 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    for sha in [head, &run.base_sha] {
+    let base = if delivery.round == 1 {
+        run.reviewed_sha.as_deref().unwrap_or(&run.base_sha)
+    } else {
+        &run.base_sha
+    };
+    for sha in [head, base, &run.base_sha] {
         if !matches!(sha.len(), 40 | 64)
             || !sha
                 .bytes()
@@ -55,19 +60,12 @@ pub(super) fn inputs(
     let criteria = criteria(store, delivery.node())?;
     let diff = git(
         &run.repository,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            &run.base_sha,
-            head,
-            "--",
-        ],
+        &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
     )?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let mut inputs = json!({"goals": criteria["goals"], "base_sha": run.base_sha, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
     {

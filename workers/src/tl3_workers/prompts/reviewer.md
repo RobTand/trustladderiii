@@ -21,6 +21,9 @@ reason blocks under that finding's supplied goal or standing rule; cite its id.
 After a clean rebase, the reviewed state is its rebased equivalent, including
 the new base's code and test configuration. A dropped reproducer's recorded
 reason needs the same judgment.
+On a fix round, base_sha can name the last reviewed state. After a clean
+rebase, it names that state's rebased equivalent. Re-judge every earlier
+finding against head_sha, every supplied goal and standing rule, and the checks.
 When supplied, check_base_sha names the base for the ordinary check results.
 It can differ from the review diff's base_sha. A reproducing check instead uses
 review_fixes.reviewed_sha with only the round's test changes as its before tree.
