@@ -121,7 +121,8 @@ Mergify queue recovery belongs to its own integration.
 ## Message checker
 
 `message::check(&Draft, &Policy)` is a pure function returning `CheckedMessage` or
-a list of `Violation` values. Only a successful check exposes rendered text.
+a list of `Violation` values. Only a successful check exposes rendered text. `check_prose` applies the same
+content rules to notes and summaries without question-only fields.
 The draft supplies the original issue title and an exact request quote, a one- or
 two-sentence obstacle, two or three actions with outcomes, a recommendation index
 and reason, and answer instructions. The original title comes from the issue,
@@ -140,10 +141,10 @@ Matching normalizes Unicode and strips invisible formatting characters. `Policy:
 internal names and ids known to the controller. It must include identifiers that
 have no recognizable code shape, including internal CamelCase names.
 The controller supplies `Policy::known_paths`, a set of repo-relative files and
-directories from both the served repo and TL3's own repo. A token is a path when
-it equals a known entry, starts with `/`, `~/`, `./` or `../` followed by at least
+directories from both the served repo and TL3's own repo. Known entries must contain a slash. Trailing slashes are normalized.
+A token is a path when it equals a known entry, starts with `/`, `~/`, `./` or `../` followed by at least
 one path segment, or contains a slash and its last segment ends with a dot and
-one to five lowercase letters or digits. Surrounding prose punctuation is ignored.
+one to five lowercase letters or digits. Surrounding prose punctuation, Markdown emphasis, curly quotes and trailing line numbers are ignored.
 There are no other path rules. Unknown names such as deploy/github-app and
 workers/src pass until the controller includes them in the set. Dates such as
 10/30/2026 and phrases such as pass/fail/skip, Mon/Tue/Wed, TCP/IP/UDP and approx./

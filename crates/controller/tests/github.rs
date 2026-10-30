@@ -306,12 +306,14 @@ fn receiver_is_durable(settings: &tl3_config::Store) {
     );
     let mut other = fixture(false);
     other["sender"]["id"] = json!(7);
+    other["issue"]["number"] = json!(13);
     assert_eq!(post(address, "other", false, other, true), 202);
     assert_eq!(post(address, "label", false, fixture(false), true), 202);
     assert_eq!(post(address, "label", false, fixture(false), true), 202);
     assert_eq!(post(address, "comment", true, fixture(true), true), 202);
     let mut changed = fixture(false);
     changed["installation"]["id"] = json!(4);
+    changed["issue"]["number"] = json!(14);
     assert_eq!(post(address, "wrong-install", false, changed, true), 202);
     // Every 2xx above has a persisted delivery even though no controller exists yet.
     assert_eq!(

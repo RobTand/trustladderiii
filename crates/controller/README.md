@@ -42,3 +42,45 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
+
+## GitHub ingress in simulation
+
+`ingress::Source` runs on its own thread and sends `cli::Input` values to one
+controller thread. Register a source with `Sources::register`. The stdin reader
+uses that same interface. `ingress::run` drains persisted deliveries before
+applying inputs and drives the controller until no work remains.
+
+To exercise the receiver against a local GitHub mock server, supply
+`--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:8082/` alongside
+`--simulate`. `github.webhook_listen` in the TOML file also sets the listen
+address. The mock App credentials come from `github.app_credentials_file`.
+The API must be loopback HTTP in this simulation release. Ordinary stdin
+simulation still needs no App credentials. Live startup and tunnel deployment
+remain tickets #20 and #19.
+
+POST deliveries to `/webhooks/github` with GitHub's delivery, event and signature
+headers. The library verifies the signature. The receiver inserts the complete
+translated delivery into `tl3_ingress` before returning 202. Its connection never
+changes kernel rows or the controller revision. Delivery ids remain unique after
+consumption. A crash between applying an input and marking its delivery consumed
+replays the same intake or observation key.
+
+`Webhooks` runs catch-up once at startup. A tunnel supervisor calls
+`WebhookControl::gap` after an outage. A failed persistence or response also marks
+a gap, and the next connection event retries catch-up. There is no polling timer.
+Catch-up uses the library's paging and original label actors. Its transaction
+persists every recovered input and the new cursor together. Overlapping webhook
+and catch-up inputs name one request per issue and one observation per comment.
+Rob's comments stay in `github_comments` for ticket #14 to classify.
+
+`adapters::github::Adapter` uses the REST client for kernel notices. It invokes
+`workers::writer::Writer`, checks every draft and allows two correction attempts.
+`FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
+role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
+options. Closing summaries close the issue, except when the request is replaced.
+PR effects still use this module's fake until ticket #13.
+
+The `github` integration target uses the recorded webhook fixtures, the actual
+HTTP receiver, a local REST server and embedded Postgres. It covers delivery
+persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
+rejections, epoch fencing and SIGKILL after posting before acknowledgement.

@@ -207,7 +207,15 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 Violation::MissingRecommendationReason => "has no recommendation reason",
                 Violation::MissingAnswerInstructions => "has no answer instructions",
             };
-            format!("The {field} {problem} in {text:?}.")
+            let offending = text
+                .split_whitespace()
+                .find(|token| {
+                    message::check_prose(token, policy)
+                        .is_err_and(|errors| errors.contains(violation))
+                })
+                .unwrap_or(&text)
+                .trim_matches(['.', '!', '?', '"', '\'']);
+            format!("The {field} {problem} '{offending}'.")
         })
         .collect()
 }

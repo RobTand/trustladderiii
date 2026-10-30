@@ -84,10 +84,12 @@ pub fn daemon() -> Result<()> {
         let api = github_api.ok_or(Error::Invalid(
             "simulation webhooks require --github-api with a loopback mock server",
         ))?;
-        let mut options = tl3_github::ClientOptions::default();
-        options.api_url = api
-            .parse()
-            .map_err(|_| Error::Invalid("invalid GitHub API URL"))?;
+        let options = tl3_github::ClientOptions {
+            api_url: api
+                .parse()
+                .map_err(|_| Error::Invalid("invalid GitHub API URL"))?,
+            ..tl3_github::ClientOptions::default()
+        };
         if options.api_url.scheme() != "http"
             || !matches!(
                 options.api_url.host_str(),
