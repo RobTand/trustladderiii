@@ -3,7 +3,7 @@ import json
 import pytest
 import tiktoken
 
-from test_workers import BRIEF, request_doc
+from test_workers import BRIEF, request_doc as request_doc
 from worker_process import start_worker
 
 
