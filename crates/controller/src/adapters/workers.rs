@@ -153,6 +153,11 @@ impl Supervisor {
                 self.materials(delivery, store, snapshot)?
             };
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
+        if matches!(role, "ingest" | "audit")
+            && let Some(issue) = materials.get("issue")
+        {
+            inputs["issue"] = issue.clone();
+        }
         let worktree = if role == "maker" {
             if !inputs.is_object() || !inputs["plan"].is_object() {
                 return Err(Error::Invalid("maker materials need a plan object"));
