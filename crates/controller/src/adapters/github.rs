@@ -132,6 +132,13 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        Ok(true)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
         let Some(notice) = Self::request_notice(delivery) else {

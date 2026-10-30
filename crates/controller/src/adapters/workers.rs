@@ -16,7 +16,7 @@ use crate::{
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -27,21 +27,25 @@ use tl3_kernel::{EffectKind, Event, Out, Reply};
 use tl3_store::{Snapshot, Store};
 
 #[derive(Clone, Default)]
-pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>);
+pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeMap<String, i64>>>>);
 impl ActiveRuns {
-    fn add(&self, delivery: &Delivery) {
+    fn add(&self, delivery: &Delivery, attempt: i64) {
         self.0
             .lock()
             .unwrap()
             .entry(delivery.node().0.to_string())
             .or_default()
-            .insert(delivery.key.clone());
+            .entry(delivery.key.clone())
+            .and_modify(|current| *current = (*current).max(attempt))
+            .or_insert(attempt);
     }
-    fn remove(&self, delivery: &Delivery) {
+    fn remove(&self, delivery: &Delivery, attempt: i64) {
         let mut nodes = self.0.lock().unwrap();
         let node = delivery.node().0.to_string();
         if let Some(keys) = nodes.get_mut(&node) {
-            keys.remove(&delivery.key);
+            if keys.get(&delivery.key) == Some(&attempt) {
+                keys.remove(&delivery.key);
+            }
             if keys.is_empty() {
                 nodes.remove(&node);
             }
@@ -52,7 +56,7 @@ impl ActiveRuns {
             .lock()
             .unwrap()
             .get(node)
-            .map(|keys| keys.iter().cloned().collect())
+            .map(|keys| keys.keys().cloned().collect())
             .unwrap_or_default()
     }
 }
@@ -82,7 +86,9 @@ impl Supervisor {
             if let Some(value) = read(&root.join("delivery.json"))? {
                 let delivery: Delivery = serde_json::from_value(value)?;
                 if matches!(inspect(&root, &delivery)?, Reconciliation::Pending) {
-                    active.add(&delivery);
+                    if let Some((number, _)) = latest(&root)? {
+                        active.add(&delivery, number);
+                    }
                 }
             }
         }
@@ -227,12 +233,16 @@ impl Supervisor {
                         [Observation::Quota { .. }]
                     )
                 {
-                    self.active.remove(delivery);
+                    if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+                        self.active.remove(delivery, number);
+                    }
                     return Ok(completion);
                 }
             }
             Reconciliation::Pending => {
-                self.active.add(delivery);
+                if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+                    self.active.add(delivery, number);
+                }
                 return Ok(Completion::confirmed(vec![]));
             }
             Reconciliation::Absent => {}
@@ -279,7 +289,7 @@ impl Supervisor {
                 "worker launcher did not claim the attempt; inspect launcher.log",
             ));
         }
-        self.active.add(delivery);
+        self.active.add(delivery, attempt_number);
         reap(child);
         let name = root.file_name().unwrap().to_string_lossy();
         write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
@@ -340,7 +350,9 @@ impl Executor for Supervisor {
             return Ok(c);
         }
         self.stop_run(&delivery.key, delivery.epoch)?;
-        self.active.remove(delivery);
+        if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+            self.active.remove(delivery, number);
+        }
         Ok(match inspect(&self.root(&delivery.key), delivery)? {
             Reconciliation::Found(c) => c,
             Reconciliation::Absent => failed(delivery),
@@ -356,7 +368,9 @@ impl Executor for Supervisor {
             } if protocol::role(role).is_some() => {
                 let result = inspect(&self.root(&delivery.key), delivery)?;
                 if !matches!(result, Reconciliation::Pending) {
-                    self.active.remove(delivery);
+                    if let Some((number, _)) = latest(&self.root(&delivery.key))? {
+                        self.active.remove(delivery, number);
+                    }
                 }
                 Ok(result)
             }
@@ -482,3 +496,7 @@ fn materialize(root: &Path, repo: &Value) -> Result<()> {
 #[cfg(test)]
 #[path = "workers/materialize_tests.rs"]
 mod materialize_tests;
+
+#[cfg(test)]
+#[path = "workers/active_tests.rs"]
+mod active_tests;

@@ -1588,6 +1588,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
             .into(),
     );
     let mut adapter = adapter(&api.uri(), root.path()).with_operations(Some(operations));
+    assert!(adapter.probe(&delivery).unwrap());
     adapter.execute(&delivery).unwrap();
     adapter.execute(&delivery).unwrap();
     assert!(matches!(

@@ -506,6 +506,10 @@ command uses #10's `github_comments` storage and leaves natural-language request
 classification to #14. A passing adapter probe clears a first incident; the
 kernel refuses probe clearance for a later one. `status::load_request_details`
 loads all open incident summaries with one batched query.
+The worker probe starts the configured Python and imports its worker package.
+The GitHub probe reads the target issue. A failed operation's old ending does
+not itself prove recovery. Rob can also close a permanent-failure incident
+record; its separate retry-or-handle question remains to be answered.
 
 A GitHub look also pages the App's delivery log with App JWT authentication.
 Failed deliveries above the durable watermark request redelivery. A pending
@@ -521,6 +525,8 @@ under the same operation key and generation at the announced reset. Malformed
 or absent reset information remains an ordinary failure. No provider text enters
 the protocol. Other adapters can return `Look::Quota` or `Observation::Quota` and
 implement `resume_after_quota` for acknowledged operations.
+The supervisor tracks the attempt as well as the key, so retirement of the quota
+ending cannot remove a resumed process from its active set.
 
 Generate the host runs, workspace checks, worker protocol tests and three Kani
 proofs with `python3 crates/controller/tools/looks_manifest.py`. Submit the

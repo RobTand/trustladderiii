@@ -103,8 +103,10 @@ impl WorkerOutputSource {
     }
 
     fn retire(&mut self, run: Run) -> Result<()> {
-        if let Some(delivery) = &run.delivery {
-            self.active.remove(delivery);
+        if let Some(delivery) = &run.delivery
+            && let Some((number, _)) = &run.attempt
+        {
+            self.active.remove(delivery, *number);
         }
         for wd in run.watches {
             self.watches.remove(&wd);
@@ -340,7 +342,7 @@ impl WorkerOutputSource {
             }
             Reconciliation::Absent => Ok(false),
             Reconciliation::Pending => {
-                self.active.add(delivery);
+                self.active.add(delivery, *number);
                 Ok(true)
             }
         }
