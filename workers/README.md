@@ -209,9 +209,11 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
   --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 \
   --env CARGO_BUILD_JOBS=2 \
   --env LANGSMITH_TRACING=false --env LANGCHAIN_TRACING_V2=false \
-  --detach -- /home/rob/.local/bin/uv run --locked --python 3.14+gil pytest -q
+  --detach -- /home/rob/.local/bin/uv run --locked --no-editable --python 3.14+gil pytest -q
 ```
 
 The first run downloads dependencies from PyPI before the tests start.
+`--no-editable` installs the worker wheel, so the tests also check its packaged
+schemas and prompts.
 Use the published `pbwait.py` to wait for the action key, then inspect its
 terminal record, logs and CAS receipt. An acknowledgement is not a pass.
