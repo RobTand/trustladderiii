@@ -87,6 +87,11 @@ def fake_recall(endpoint, bank, query):
 def recorded_tests(worktree):
     def run_tests(tests: list[str] | None = None) -> dict:
         assert tests == ['test_greeting.py::test_hello']
+        if mode == 'external-wait':
+            import threading
+            worktree.progress_emit({'event': 'progress', 'unit': 'external_wait',
+                                    'wait': {'upstream': 'prismabuild', 'key': 'a' * 64}})
+            threading.Event().wait()
         return {'status': 'completed', 'passed': 1, 'failed': 0, 'skipped': 0,
                 'action_key': 'a' * 64, 'custody': 'recorded-fixture'}
     return run_tests

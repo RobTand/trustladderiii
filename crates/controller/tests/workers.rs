@@ -308,6 +308,12 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--maker-wait") {
+        maker::declared_wait(&database.create("maker_declared_wait"));
+        println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--r3") {
         external_wait_survives_restart(&database.create("workers_r3_wait"));
         database.stop();
