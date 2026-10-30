@@ -13,6 +13,7 @@ from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import READ_TOOLS, TOOL_FACTORIES, WRITE_TOOLS
+import worker_process
 from worker_process import run_real_entrypoint, start_worker
 
 
@@ -23,6 +24,20 @@ DONE = {
         {"goal_id": "interface", "status": "met", "evidence": "The greet() signature is unchanged."},
     ],
 }
+
+
+@pytest.fixture(autouse=True)
+def tool_capable_process_model(monkeypatch):
+    launcher = worker_process.LAUNCH.replace(
+        "model = FakeMessagesListChatModel(",
+        """class MakerModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        from tl3_workers.roles import ROLES
+        assert {tool.name: tool.description for tool in tools} == dict(ROLES['maker'].tools)
+        return self
+model = MakerModel(""",
+    )
+    monkeypatch.setattr(worker_process, "LAUNCH", launcher)
 
 
 def turn(reply=None, *, calls=None, input_tokens=100, output_tokens=50):
