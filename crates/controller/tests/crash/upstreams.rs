@@ -383,6 +383,7 @@ pub fn verify_contracts() {
             paths: vec![],
             attempt: 1,
             round: 1,
+            note: None,
         };
         let mut executor = fake(root.path(), "merge", 1, upstream);
         let _ = executor.execute(&delivery);
