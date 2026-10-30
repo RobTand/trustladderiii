@@ -8,6 +8,7 @@ use loom::sync::{
 struct Labels {
     applied: channel::Receiver<()>,
     first: bool,
+    finished: channel::Sender<()>,
 }
 impl Source for Labels {
     fn run(self, sender: Sender<Input>) -> Result<()> {
@@ -28,6 +29,15 @@ impl Source for Labels {
             sender.send(Input::LabelledIssue(issue)).unwrap();
             self.applied.recv().unwrap();
         }
+        self.finished.send(()).unwrap();
+        Ok(())
+    }
+}
+struct Finished(channel::Receiver<()>);
+impl Source for Finished {
+    fn run(self, _: Sender<Input>) -> Result<()> {
+        self.0.recv().unwrap();
+        self.0.recv().unwrap();
         Err(Error::Invalid("model source finished"))
     }
 }
@@ -37,13 +47,19 @@ fn loom_sources_run_real_controller_once_per_request() {
     model(|settings| {
         let root = tempfile::tempdir().unwrap();
         let (ack, applied) = channel::channel();
+        let (other_ack, other_applied) = channel::channel();
+        let (finished, finish) = channel::channel();
         let count = Arc::new(AtomicUsize::new(0));
         let seen = count.clone();
         let mut store = Store::open(settings).unwrap();
         store.set_boundary_hook(move |point, key, _| {
             if point == tl3_store::SavePoint::AfterCommit && key.starts_with("github:loom-") {
                 seen.fetch_add(1, Ordering::Release);
-                ack.send(()).unwrap();
+                if key.starts_with("github:loom-true-") {
+                    ack.send(()).unwrap();
+                } else {
+                    other_ack.send(()).unwrap();
+                }
             }
         });
         let mut controller = Controller::open(
@@ -56,15 +72,22 @@ fn loom_sources_run_real_controller_once_per_request() {
         sources.register(Labels {
             applied,
             first: true,
+            finished: finished.clone(),
         });
+        sources.register(Labels {
+            applied: other_applied,
+            first: false,
+            finished,
+        });
+        sources.register(Finished(finish));
         assert!(matches!(
             sources.run(&mut controller),
             Err(Error::Invalid("model source finished"))
         ));
-        assert_eq!(count.load(Ordering::Acquire), 2, "lost ingress input");
+        assert_eq!(count.load(Ordering::Acquire), 4, "lost ingress input");
         assert_eq!(
             controller.world().unwrap().nodes.len(),
-            1,
+            2,
             "duplicate intake"
         );
         let events = tl3_store::Reader::open(settings)
@@ -76,7 +99,7 @@ fn loom_sources_run_real_controller_once_per_request() {
                 .iter()
                 .filter(|e| e.key.starts_with("github:loom-"))
                 .count(),
-            2
+            4
         );
     });
 }
