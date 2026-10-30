@@ -1217,7 +1217,19 @@ fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
         controller.world().unwrap().nodes[0].phase,
         Phase::Closed(Outcome::Merged)
     );
-    assert_kernel_facts(settings, 1);
+    assert_kernel_facts(settings, if path == "current_unapproved" { 2 } else { 1 });
+    let merges = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 2000)
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            event.receipt.result["kernel_event"]["Fact"]["fact"]
+                .get("PrMerged")
+                .is_some()
+        })
+        .count();
+    assert_eq!(merges, 1);
     let effects = Store::open(settings).unwrap().effects().unwrap();
     assert!(
         effects.iter().any(
