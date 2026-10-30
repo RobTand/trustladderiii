@@ -27,6 +27,7 @@ pub enum ActionState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActionRecord {
     pub key: ActionKey,
+    pub snapshot_parent: Option<String>,
     pub state: ActionState,
     pub published_unix: f64,
     pub attempts: Vec<Attempt>,
@@ -128,10 +129,16 @@ struct LeaseWire {
 }
 
 #[derive(Deserialize)]
+struct CheckoutSnapshot {
+    parent: String,
+}
+
+#[derive(Deserialize)]
 struct Record {
     schema: String,
     action_key: ActionKey,
     published_unix: f64,
+    checkout_snapshot: Option<CheckoutSnapshot>,
     status: Option<String>,
     #[serde(default)]
     detail: Detail,
@@ -323,6 +330,7 @@ impl PrismaBuild {
         };
         Ok(Some(ActionRecord {
             key: key.clone(),
+            snapshot_parent: record.checkout_snapshot.map(|s| s.parent),
             state,
             published_unix: record.published_unix,
             attempts,
