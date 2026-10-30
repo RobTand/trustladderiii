@@ -22,6 +22,8 @@ def no_network(*args, **kwargs):
 
 
 def create_model(request):
+    with marker.with_suffix(".requests").open("a") as output:
+        output.write(json.dumps({"pid": __import__("os").getpid(), "request": request}) + "\n")
     marker.write_text(str(__import__("os").getpid()))
     if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit"):
         while not marker.with_suffix(".release").exists():

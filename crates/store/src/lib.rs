@@ -289,6 +289,24 @@ impl Store {
         }).collect())
     }
 
+    /// Only watched worker deliveries, without loading historical world rows.
+    pub fn worker_watches(&mut self) -> Result<Vec<(String, serde_json::Value)>> {
+        Ok(self.client.query("SELECT w.row_id, w.value FROM tl3_world w JOIN tl3_effects e ON e.effect_key = w.row_id WHERE w.table_name = 'watches' AND e.kind = 'Workers'", &[])?
+            .into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
+    /// Terminal effects cannot be dispatched again. Watches retain their evidence.
+    pub fn retired_workers(&mut self) -> Result<Vec<String>> {
+        Ok(self.client.query("SELECT p.run_key FROM tl3_worker_progress p JOIN tl3_effects e ON e.effect_key = p.run_key WHERE e.state IN ('Confirmed', 'Failed', 'Cancelled') AND NOT EXISTS (SELECT 1 FROM tl3_world w WHERE w.table_name = 'watches' AND w.row_id = p.run_key)", &[])?
+            .into_iter().map(|row| row.get(0)).collect())
+    }
+
+    /// Call only after durable removal of the run directory.
+    pub fn forget_worker(&mut self, key: &str) -> Result<()> {
+        self.client.execute("DELETE FROM tl3_worker_progress p USING tl3_effects e WHERE p.run_key = $1 AND e.effect_key = p.run_key AND e.state IN ('Confirmed', 'Failed', 'Cancelled') AND NOT EXISTS (SELECT 1 FROM tl3_world w WHERE w.table_name = 'watches' AND w.row_id = p.run_key)", &[&key])?;
+        Ok(())
+    }
+
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {
         Ok(RepoId(self.intern(
             InternKind::Repo,
