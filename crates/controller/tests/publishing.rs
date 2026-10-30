@@ -213,13 +213,13 @@ impl Respond for Api {
                 s.pull.clone().unwrap()
             }
             ("GET", "/pulls/100") => {
-                if let Some(pull) = &mut s.pull {
-                    if pull["state"] == "open" {
-                        pull["head"]["sha"] = json!(git(
-                            &self.fixture.remote,
-                            &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
-                        ));
-                    }
+                if let Some(pull) = &mut s.pull
+                    && pull["state"] == "open"
+                {
+                    pull["head"]["sha"] = json!(git(
+                        &self.fixture.remote,
+                        &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
+                    ));
                 }
                 s.pull.clone().unwrap()
             }
