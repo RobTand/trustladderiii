@@ -31,10 +31,16 @@ fn retiring_quota_attempt_keeps_resumed_process_active() {
     active.add(&delivery, 0);
     active.add(&delivery, 1);
     active.remove(&delivery, 0);
-    assert_eq!(active.keys("0"), [delivery.key.clone()]);
+    assert_eq!(
+        active.keys("0").as_slice(),
+        std::slice::from_ref(&delivery.key)
+    );
     active.add(&delivery, 0);
     active.remove(&delivery, 0);
-    assert_eq!(active.keys("0"), [delivery.key.clone()]);
+    assert_eq!(
+        active.keys("0").as_slice(),
+        std::slice::from_ref(&delivery.key)
+    );
     active.remove(&delivery, 1);
     assert!(active.keys("0").is_empty());
     assert!(active.0.lock().unwrap().is_empty());
