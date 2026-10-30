@@ -221,6 +221,8 @@ def test_maker_staged_submission_retains_checkout_parent(submission):
         'import subprocess\n'
         'parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()\n'
         '(here / "parent").write_text(parent)\n'
+        'shallow = subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True).strip()\n'
+        '(here / "shallow").write_text(shallow)\n'
         '(here / "submitted.json").write_text(json.dumps(args))',
     ))
     (scripts / "response.json").write_text(json.dumps(Summary().result))
@@ -229,6 +231,7 @@ def test_maker_staged_submission_retains_checkout_parent(submission):
         result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
     assert result["status"] == "completed"
     assert (scripts / "parent").read_text() == parent, "the action must belong to the maker checkout"
+    assert (scripts / "shallow").read_text() == "false", "PrismaBuild requires complete snapshot history"
     assert git("rev-parse", "HEAD") == parent
     assert git("status", "--porcelain") == before
     assert (root / "uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
