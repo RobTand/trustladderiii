@@ -100,6 +100,13 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
 
 
 def run(request, emit: Callable[[dict], None]):
+    from tl3_workers.tracing import observe
+
+    with observe(request):
+        _run(request, emit)
+
+
+def _run(request, emit):
     role = ROLES[request["role"]]
     model = create_model(request)
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
