@@ -151,6 +151,9 @@ def run(model, request, worktree, emit):
     inputs = request["inputs"]
     _check_inputs(inputs)
     worktree.test_settings = TestSettings(**inputs["tests"])
+    worktree.test_checkout = Path(request["worktree"])
+    worktree.progress_emit = emit
+
     worktree.hindsight_endpoint = inputs.get("hindsight", {}).get("endpoint")
     worktree.hindsight_bank = inputs.get("hindsight", {}).get("bank")
     if isinstance(model, ChatOpenAI):

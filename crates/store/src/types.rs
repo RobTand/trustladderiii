@@ -290,6 +290,14 @@ impl Commit {
     }
 }
 
+/// An outside job's owner and durable key, independent of the worker's role.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalWait {
+    pub upstream: String,
+    pub key: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkerProgress {
     pub key: String,
@@ -298,6 +306,7 @@ pub struct WorkerProgress {
     pub attempt: i64,
     pub output_offset: i64,
     pub unit: String,
+    pub external_wait: Option<ExternalWait>,
     /// Database observation time of this attempt claim, in Unix milliseconds.
     pub started_ms: i64,
     pub last_progress_ms: Option<i64>,

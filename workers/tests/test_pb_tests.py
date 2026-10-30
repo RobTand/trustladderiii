@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -84,6 +85,13 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     assert json.loads((submission[1] / "waited.json").read_text()) == ["--endings", "--until", "cleaned", KEY]
 
 
+@pytest.mark.parametrize("schema", ["prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"])
+def test_published_submission_schemas(submission, schema):
+    script = submission[1] / "pbrun.py"
+    script.write_text(script.read_text().replace("prismabuild.submission.v1", schema))
+    assert call(submission, Summary().result)["status"] == "completed"
+
+
 def test_whole_suite(submission):
     assert call(submission, Summary().result)["status"] == "completed"
     args = json.loads((submission[1] / "submitted.json").read_text())
@@ -160,3 +168,70 @@ def test_malformed_prismabuild_response_is_infrastructure(submission, response, 
     result = call(submission, Summary().result)
     assert result["status"] == "infrastructure_error"
     assert sum(result["totals"].values()) == 0
+
+
+def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatch):
+    from tl3_workers import pb_tests
+
+    root, scripts = submission
+    (scripts / "response.json").write_text(json.dumps(Summary().result))
+    original = pb_tests._json_command
+    events = []
+    waits = 0
+
+    def command(args):
+        nonlocal waits
+        if args[1].endswith("pbwait.py"):
+            waits += 1
+            assert events[-1] == {"event": "progress", "unit": "external_wait",
+                                  "wait": {"upstream": "prismabuild", "key": KEY}}
+            if waits == 1:
+                return 124, {"schema": "prismabuild.endings.v1", "complete": False,
+                             "endings": [{"action_key": KEY, "status": "waiting",
+                                          "progress_observation": {"accepted_count": 7}}]}
+        return original(args)
+
+    monkeypatch.setattr(pb_tests, "_json_command", command)
+    with Worktree(root) as tree:
+        tree.progress_emit = events.append
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+    assert result["status"] == "completed"
+    assert waits == 2
+    assert len(events) == 2
+    assert events[0] == events[1]
+
+
+def test_maker_staged_submission_retains_checkout_parent(submission):
+    root, scripts = submission
+
+    def git(*args):
+        return subprocess.check_output([
+            "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args,
+        ], cwd=root, text=True).strip()
+
+    git("init", "--quiet", "--template=")
+    git("add", ".gitignore")
+    git("commit", "--quiet", "-m", "Maker base")
+    parent = git("rev-parse", "HEAD")
+    before = git("status", "--porcelain")
+    script = scripts / "pbrun.py"
+    script.write_text(script.read_text().replace(
+        '(here / "submitted.json").write_text(json.dumps(args))',
+        'import subprocess\n'
+        'parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()\n'
+        '(here / "parent").write_text(parent)\n'
+        'shallow = subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True).strip()\n'
+        '(here / "shallow").write_text(shallow)\n'
+        '(here / "submitted.json").write_text(json.dumps(args))',
+    ))
+    (scripts / "response.json").write_text(json.dumps(Summary().result))
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+    assert result["status"] == "completed"
+    assert (scripts / "parent").read_text() == parent, "the action must belong to the maker checkout"
+    assert (scripts / "shallow").read_text() == "false", "PrismaBuild requires complete snapshot history"
+    assert git("rev-parse", "HEAD") == parent
+    assert git("status", "--porcelain") == before
+    assert (root / "uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"

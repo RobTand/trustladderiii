@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 from tl3_workers.contracts import read_json, validate
 from tl3_workers.roles import ROLES
@@ -42,7 +43,12 @@ def main():
         from tl3_workers.runtime import run
         run(request, emit)
         return 0
-    except Exception:
+    except Exception as error:
+        from tl3_workers.quota import reset_ms
+        reset = reset_ms(error, time.time()) if phase == "run" else None
+        if reset is not None:
+            emit({"event": "quota", "role": request["role"], "reset_ms": reset})
+            return 0
         # Provider errors can contain credentials or model text. Keep them off the wire.
         print(f"tl3_workers: {phase} failed", file=sys.stderr)
         return 1
