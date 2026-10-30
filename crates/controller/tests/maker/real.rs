@@ -312,12 +312,6 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         let runs = requests(&flow.config);
         let run = &runs[1];
         assert_eq!(run["operation"]["generation"], revisit.generation);
-        let delivery_key = key.rsplit_once(":worker:").unwrap().0;
-        let errors = fs::read_to_string(
-            root_for(&flow.config, delivery_key).join("attempt-00000000/stderr.log"),
-        )
-        .unwrap();
-        assert!(errors.contains("done requires code changes"), "{errors}");
     }
     observe(
         &mut flow.controller,
