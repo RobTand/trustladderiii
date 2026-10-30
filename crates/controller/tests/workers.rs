@@ -1773,7 +1773,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
             .all(|input| matches!(input, Input::Look { .. })),
         "a declaration requests a look without claiming agent progress"
     );
-    let before = store.worker_progress(None).unwrap();
+    let mut before = store.worker_progress(None).unwrap();
     let run = &before[0];
     let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
     let record_path = root
@@ -1787,6 +1787,22 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     ));
     fs::write(record_path, record.to_string()).unwrap();
     c.look_now().unwrap();
+    let before_repeat = c.snapshot().unwrap();
+    fs::write(root.path().join("entered.repeat"), "repeat").unwrap();
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        store.worker_progress(None).unwrap()[0].output_offset > before[0].output_offset
+    });
+    assert!(
+        rx.try_recv().is_err(),
+        "reattaching the same wait must not request another PrismaBuild look"
+    );
+    assert_eq!(
+        c.snapshot().unwrap(),
+        before_repeat,
+        "reattachment does not commit allowance state"
+    );
+    before = store.worker_progress(None).unwrap();
     drop(c);
     drop(source);
     let mut source = supervisor.source();

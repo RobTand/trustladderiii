@@ -67,7 +67,13 @@ if mode == "external-wait":
     print(json.dumps({"event": "progress", "unit": "external_wait",
                       "wait": {"upstream": "prismabuild", "key": "a" * 64}}), flush=True)
     marker.write_text(str(os.getpid()))
+    repeated = False
     while not marker.with_suffix(".release").exists():
+        if marker.with_suffix(".repeat").exists() and not repeated:
+            print(json.dumps({"event": "progress", "unit": "external_wait",
+                              "wait": {"upstream": "prismabuild", "key": "a" * 64}}), flush=True)
+            marker.with_suffix(".repeated").write_text("declared")
+            repeated = True
         time.sleep(0.01)
     sys.exit(1)
 
