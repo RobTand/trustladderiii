@@ -58,6 +58,8 @@ pub struct PullRequest {
     pub user: Actor,
     pub state: String,
     pub merged_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub merge_commit_sha: Option<String>,
     pub head: PullHead,
     pub base: PullHead,
     pub updated_at: DateTime<Utc>,
@@ -175,6 +177,7 @@ pub struct RepoChanges {
     pub issues: Vec<Issue>,
     pub comments: Vec<Comment>,
     pub labels: Vec<(u64, LabelChange)>,
+    pub closed: Vec<(u64, PullClosed)>,
     pub pull_requests: Vec<PullRequest>,
     pub check_runs: Vec<CheckRun>,
     pub check_suites: Vec<CheckSuite>,
@@ -191,4 +194,18 @@ pub struct CatchUp {
 pub struct ServedRepo {
     pub full_name: String,
     pub tracked_heads: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PullClosed {
+    pub id: u64,
+    pub actor: Actor,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MergeGroup {
+    pub head_sha: String,
+    pub head_ref: String,
+    pub base_ref: String,
 }

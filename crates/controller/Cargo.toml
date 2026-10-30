@@ -11,6 +11,7 @@ tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 tl3-github = { path = "../github" }
+tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }
 tiny_http = "0.12"
 tokio = { version = "1", features = ["rt", "time", "net"] }
@@ -37,4 +38,9 @@ harness = false
 [[test]]
 name = "github"
 path = "tests/github.rs"
+harness = false
+
+[[test]]
+name = "mergify"
+path = "tests/mergify.rs"
 harness = false

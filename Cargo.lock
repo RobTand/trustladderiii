@@ -2607,6 +2607,7 @@ dependencies = [
  "tl3-config",
  "tl3-github",
  "tl3-kernel",
+ "tl3-mergify",
  "tl3-store",
  "tl3-worktrees",
  "tokio",

@@ -217,6 +217,14 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::Queue(fact) = &observation {
+            let identity = fact.identity();
+            if snapshot.rows.iter().any(|row| (row.table == "queue_facts" && row.id == identity)
+                || (row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
+                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity)))) {
+                return Ok(());
+            }
+        }
         if let Observation::GitHubComment {
             repository,
             comment,
@@ -651,6 +659,54 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
+            Observation::Queue(fact) => {
+                let identity = fact.identity();
+                if snapshot
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "queue_facts" && row.id == identity)
+                {
+                    return Ok(None);
+                }
+                let Some(binding) = snapshot.rows.iter().find(|row| {
+                    row.table == "pull_requests"
+                        && row.value["number"].as_u64() == Some(fact.number)
+                        && row
+                            .id
+                            .parse::<u64>()
+                            .ok()
+                            .and_then(|id| request(snapshot, NodeId(id)).ok())
+                            .is_some_and(|request| request.repo == fact.repository)
+                }) else {
+                    return Ok(None);
+                };
+                let node = NodeId(
+                    binding
+                        .id
+                        .parse()
+                        .map_err(|_| Error::Invalid("invalid PR binding"))?,
+                );
+                use adapters::mergify::Evidence;
+                let value = json!(&fact);
+                let fact = match fact.evidence {
+                    Evidence::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
+                    },
+                    Evidence::CiFailed { infra, .. } => Fact::CiFailed { infra },
+                    Evidence::Conflict { .. } => Fact::Conflict,
+                    Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
+                    Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
+                    Evidence::PushByOther { head } => Fact::PushByOther {
+                        head: self.head(node, &head)?,
+                    },
+                };
+                commit.rows.push(put("queue_facts", identity, value));
+                Event::Fact { node, fact }
+            }
             Observation::GitHubComment {
                 repository,
                 issue,

@@ -173,28 +173,42 @@ struct Inbox<'a> {
     store: &'a mut Store,
     bootstrap: &'a Bootstrap,
     inputs: Vec<Input>,
+    queue: Option<&'a crate::adapters::mergify::Translator>,
 }
 impl webhook::Inbox for Inbox<'_> {
-    type Error = tl3_store::Error;
+    type Error = Error;
     fn insert(&mut self, delivery: webhook::Delivery) -> std::result::Result<bool, Self::Error> {
-        self.inputs = inputs(&delivery.id, delivery.event, self.bootstrap);
-        self.store
-            .receive_ingress("github-webhook", &delivery.id, &json!(&self.inputs))
+        self.inputs = inputs(&delivery.id, delivery.event.clone(), self.bootstrap);
+        if let (Some(queue), Some(event)) = (self.queue, delivery.event.as_ref()) {
+            self.inputs
+                .extend(queue.webhook(event, &self.store.load()?, self.bootstrap)?);
+        }
+        Ok(self
+            .store
+            .receive_ingress("github-webhook", &delivery.id, &json!(&self.inputs))?)
     }
 }
 
 pub struct CatchUp {
     clients: BTreeMap<u64, GitHub>,
     runtime: tokio::runtime::Runtime,
+    queue: Option<crate::adapters::mergify::Translator>,
 }
 impl CatchUp {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
+            queue: None,
             clients,
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
         })
+    }
+    pub fn with_mergify(mut self) -> Result<Self> {
+        self.queue = Some(crate::adapters::mergify::Translator::new(
+            self.clients.clone(),
+        )?);
+        Ok(self)
     }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
         let runtime = &self.runtime;
@@ -244,6 +258,19 @@ impl CatchUp {
                 old.min(result.next_cursor)
             }));
             for changes in result.repositories {
+                for input in self
+                    .queue
+                    .as_ref()
+                    .map(|queue| queue.catch_up(repo, &changes, &snapshot))
+                    .transpose()?
+                    .unwrap_or_default()
+                {
+                    let Input::Observation { ref key, .. } = input else {
+                        unreachable!()
+                    };
+                    deliveries.push((key.clone(), json!([input.clone()])));
+                    notifications.push(input);
+                }
                 for (number, change) in changes.labels {
                     if change.event != "labeled" {
                         continue;
@@ -321,6 +348,7 @@ pub struct Webhooks {
     bootstrap: Bootstrap,
     secret: Vec<u8>,
     catch_up: Option<CatchUp>,
+    queue: Option<crate::adapters::mergify::Translator>,
 }
 impl Webhooks {
     pub fn bind(
@@ -346,7 +374,12 @@ impl Webhooks {
             bootstrap,
             secret,
             catch_up,
+            queue: None,
         })
+    }
+    pub fn with_mergify(mut self, translator: crate::adapters::mergify::Translator) -> Self {
+        self.queue = Some(translator);
+        self
     }
     pub fn address(&self) -> SocketAddr {
         self.control
@@ -434,6 +467,11 @@ impl Source for Webhooks {
                 store: &mut self.store,
                 bootstrap: &self.bootstrap,
                 inputs: vec![],
+                queue: self.queue.as_ref().or_else(|| {
+                    self.catch_up
+                        .as_ref()
+                        .and_then(|catch_up| catch_up.queue.as_ref())
+                }),
             };
             let result = webhook::receive(
                 &self.secret,

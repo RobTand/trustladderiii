@@ -40,6 +40,16 @@ pub enum Event {
         after: String,
         actor: Actor,
     },
+    PullRequestUnlabeled {
+        context: Context,
+        pull_request: PullRequest,
+        label: Label,
+        actor: Actor,
+    },
+    MergeGroup {
+        context: Context,
+        merge_group: MergeGroup,
+    },
     CheckRunCompleted {
         context: Context,
         check_run: CheckRun,
@@ -137,7 +147,8 @@ pub fn verify_and_parse(
         (event_name, action),
         ("issues", "labeled")
             | ("issue_comment", "created")
-            | ("pull_request", "closed" | "synchronize")
+            | ("pull_request", "closed" | "synchronize" | "unlabeled")
+            | ("merge_group", "checks_requested" | "destroyed")
             | ("check_run" | "check_suite", "completed")
     );
     if !relevant {
@@ -207,6 +218,16 @@ pub fn verify_and_parse(
             before: field(&value, "before")?,
             after: field(&value, "after")?,
             actor: field(&value, "sender")?,
+        },
+        ("pull_request", "unlabeled") => Event::PullRequestUnlabeled {
+            context,
+            pull_request: field(&value, "pull_request")?,
+            label: field(&value, "label")?,
+            actor: field(&value, "sender")?,
+        },
+        ("merge_group", _) => Event::MergeGroup {
+            context,
+            merge_group: field(&value, "merge_group")?,
         },
         ("check_run", "completed") => Event::CheckRunCompleted {
             context,

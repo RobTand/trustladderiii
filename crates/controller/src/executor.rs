@@ -32,6 +32,7 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Queue(crate::adapters::mergify::QueueFact),
     GitHubComment {
         repository: crate::Repository,
         issue: u64,
