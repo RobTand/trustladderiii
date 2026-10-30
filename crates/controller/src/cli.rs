@@ -102,13 +102,22 @@ pub fn daemon() -> Result<()> {
         }
         let epoch = Store::open(&config.store)?.load()?.epoch.get();
         let mut clients = BTreeMap::new();
+        let mut catch_up_clients = BTreeMap::new();
         let mut secret = Vec::new();
         for repo in &bootstrap.repos {
             if clients.contains_key(&repo.installation) {
                 continue;
             }
-            let app: tl3_github::AppConfig =
-                serde_json::from_slice(&fs::read(&config.github.app_credentials_file)?)?;
+            let credentials = fs::read(&config.github.app_credentials_file)?;
+            let app: tl3_github::AppConfig = serde_json::from_slice(&credentials)?;
+            catch_up_clients.insert(
+                repo.installation,
+                tl3_github::GitHub::new(
+                    serde_json::from_slice(&credentials)?,
+                    repo.installation,
+                    options.clone(),
+                )?,
+            );
             secret = app.webhook_secret.as_bytes().to_vec();
             clients.insert(
                 repo.installation,
@@ -118,7 +127,7 @@ pub fn daemon() -> Result<()> {
         adapters.register(
             crate::executor::Upstream::GitHub,
             adapters::github::Adapter::new(
-                clients.clone(),
+                clients,
                 adapters::workers::FakeWriter,
                 epoch,
                 tl3_github::message::Policy::default(),
@@ -130,7 +139,7 @@ pub fn daemon() -> Result<()> {
             Store::open(&config.store)?,
             bootstrap.clone(),
             secret,
-            Some(crate::ingress::CatchUp { clients }),
+            Some(crate::ingress::CatchUp::new(catch_up_clients)?),
         )?);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;

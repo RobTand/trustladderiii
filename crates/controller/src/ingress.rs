@@ -184,13 +184,20 @@ impl webhook::Inbox for Inbox<'_> {
 }
 
 pub struct CatchUp {
-    pub clients: BTreeMap<u64, GitHub>,
+    clients: BTreeMap<u64, GitHub>,
+    runtime: tokio::runtime::Runtime,
 }
 impl CatchUp {
+    pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
+        Ok(Self {
+            clients,
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        })
+    }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        let runtime = &self.runtime;
         let since: DateTime<Utc> = store
             .ingress_cursor("github-catch-up")?
             .map(serde_json::from_value)

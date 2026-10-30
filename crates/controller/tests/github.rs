@@ -154,7 +154,12 @@ impl Respond for Api {
             }
             ("GET", "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200)
                 .set_body_json(if state.gap {
-                    json!([fixture(true)["comment"]])
+                    {
+                        let mut comment = fixture(true)["comment"].clone();
+                        comment["created_at"] = json!(Utc::now());
+                        comment["updated_at"] = comment["created_at"].clone();
+                        json!([comment])
+                    }
                 } else {
                     json!([])
                 }),
@@ -362,9 +367,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
         Store::open(settings).unwrap(),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp {
-            clients: BTreeMap::from([(3, client(&api.uri()))]),
-        }),
+        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
     )
     .unwrap();
     let address = source.address();
@@ -397,9 +400,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .count(),
         1
     );
-    let catch_up = CatchUp {
-        clients: BTreeMap::from([(3, client(&api.uri()))]),
-    };
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes.len(), 1);
@@ -589,10 +590,10 @@ impl Writer for ScriptWriter {
         let mut calls = self.calls.lock().unwrap();
         calls.push(input.clone());
         let mut reply = FakeWriter.draft("fake", input)?;
-        if calls.len() <= self.failures {
-            if let WriterReply::Question(question) = &mut reply {
-                question.obstacle = "The leaf needs attention.".into();
-            }
+        if calls.len() <= self.failures
+            && let WriterReply::Question(question) = &mut reply
+        {
+            question.obstacle = "The leaf needs attention.".into();
         }
         Ok(reply)
     }
