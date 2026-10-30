@@ -377,3 +377,69 @@ storing a plan. Recovery reattaches to the same process and key with one attempt
 Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
+
+## Allowance looks and incidents
+
+`looks` stores active allowances and incidents in `tl3_world`. It uses the
+existing schema versions 1 through 4. No store migration is needed.
+`Controller::now` supplies every allowance time. Simulation can advance a fake
+clock and call `look_due` without sleeping. `look_now` reads pending operations
+after restart or a webhook gap.
+
+The ingress receiver arms one timer for the next outstanding allowance. Expiry
+reads the adapter's own record through `Executor::look`. The first live record
+establishes a progress baseline. New checkpoints renew the allowance. An unchanged
+record after the no-progress allowance establishes a stall. An unanswered read
+disarms that allowance until upstream evidence or restart supplies another look.
+There is no recurring wake-up scan. Finished deliveries leave the active set.
+
+Worker looks read the supervisor and `tl3_worker_progress`. A stop intent is
+stored before `stop_stalled` proves the exact process ended. A reply that raced
+the stop is still used. Otherwise the kernel receives `RunFailed` and decides the
+retry and incident. PrismaBuild alone decides whether its progress contract failed
+or a worker was lost. A queue stall enters as `Fact::UpstreamStalled`; the kernel
+raises its incident. The real Mergify adapter remains owned by PR #69. Its
+`Executor::look` must report a checkpoint from `Mergify::read`, including queue
+state and completed checks, rather than treating a dispatch receipt as progress.
+
+When a failed write's allowance expires, authoritative absence counts that
+delivery as retryable through the kernel. A transport error never proves absence.
+A new Found result or a new checkpoint releases held effects. Repeated unchanged
+looks do not. Duplicate upstream deliveries also release holds. Those retries are
+bounded by upstream events.
+
+Set `[github.operations]` to the existing pinned operations issue in TL3's own
+repo. The app needs an installation there as well as on served repos. That
+repository participates in authenticated comment intake and catch-up, but cannot
+start a request unless it is also explicitly served. Incident messages use the
+existing writer, checker, hidden markers and duplicate deletion. A real GitHub
+adapter refuses to post an incident without the operations target configured.
+
+The deliberately narrow operations command is `clear incident <number>`, using
+the number printed in that incident's message. Only Rob's authenticated comment
+on that issue can clear it. A stale number cannot clear a later incident. This
+command uses #10's `github_comments` storage and leaves natural-language request
+classification to #14. A passing adapter probe clears a first incident; the
+kernel refuses probe clearance for a later one. `status::load_request_details`
+loads all open incident summaries with one batched query.
+
+A GitHub look also pages the App's delivery log with App JWT authentication.
+Failed deliveries above the durable watermark request redelivery. A pending
+delivery holds that watermark back. The watermark advances only after all
+redelivery requests succeed, so a crash can repeat a request but cannot skip it.
+The receiver's existing delivery keys deduplicate the recovered webhook.
+
+Quota is a wait for a provider-announced reset, never an infrastructure failure.
+`Error::Quota` defers an uncertain write until the reset. A worker that receives
+HTTP 429 with `Retry-After` or `X-RateLimit-Reset` emits a terminal quota record and
+exits successfully. The supervisor proves that ending, and the controller resumes
+under the same operation key and generation at the announced reset. Malformed
+or absent reset information remains an ordinary failure. No provider text enters
+the protocol. Other adapters can return `Look::Quota` or `Observation::Quota` and
+implement `resume_after_quota` for acknowledged operations.
+
+Generate the host runs, workspace checks, worker protocol tests and three Kani
+proofs with `python3 crates/controller/tools/looks_manifest.py`. Submit the
+manifest with the published `pbcampaign.py`. Process and timing tests run once
+on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
+receipt before reporting a pass.

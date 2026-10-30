@@ -234,8 +234,8 @@ impl Store {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
-            settings: settings.clone(),
             boundary_hook: None,
+            settings: settings.clone(),
         };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
             return Err(Error::Invalid("store requires Postgres fsync = on"));

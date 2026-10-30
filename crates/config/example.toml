@@ -129,3 +129,15 @@ protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.p
 prompt = 5000
 making = 20000
 review = 5000
+
+[allowances.worktrees]
+silence_secs = 120
+no_progress_secs = 900
+
+# Q17: configure the existing pinned "TL3 operations" issue in TL3's own repo.
+# The app must also be installed there. This does not make it a served repo.
+# [github.operations]
+# owner = "RobTand"
+# name = "trustladderiii"
+# installation_id = 2
+# number = 17

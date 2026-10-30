@@ -1084,6 +1084,16 @@ fn quota_resumes_same_operation(settings: &tl3_config::Store) {
             .attempt,
         1
     );
+    wait(|| {
+        for iteration in 0..200 {
+            if !controller.drive_once().unwrap() {
+                break;
+            }
+            assert!(iteration < 199, "quota result replay did not settle");
+        }
+        controller.world().unwrap().nodes[0].phase != Phase::Ingesting
+    });
+    assert_eq!(controller.world().unwrap().nodes[0].run_failures, 0);
     controller
         .observe(
             "stop-after-quota",

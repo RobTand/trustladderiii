@@ -356,3 +356,15 @@ Planner replies also append code-generated `violations`. Leaf and split rule
 violations are successful evidence reports, so the controller can preserve the
 reason for the kernel's next planner run. Transport errors, malformed replies
 and unsafe file reads still fail the process. Models cannot supply `violations`.
+
+A provider HTTP 429 with a valid `Retry-After` or `X-RateLimit-Reset` header ends
+with a quota record and exit 0 instead of a failed run:
+
+```json
+{"event":"quota","role":"ingest","reset_ms":1893456000000}
+```
+
+`reset_ms` is the announced Unix time in milliseconds. It is the last event.
+The controller waits for that reset and the supervisor starts another attempt
+under the same operation key and generation. A 429 without a valid future reset
+still fails. The protocol includes no exception text or response body.

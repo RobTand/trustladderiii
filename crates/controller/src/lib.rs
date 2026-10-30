@@ -14,6 +14,7 @@ pub mod status_web;
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
@@ -502,7 +503,7 @@ impl Controller {
                 for (index, observation) in completion.observations.iter().enumerate() {
                     commit.rows.push(put(
                         "inbox",
-                        format!("{}:{index:08}", delivery.key),
+                        format!("{}:{index:08}:{}", delivery.key, evidence_key(observation)?),
                         json!(observation),
                     ));
                 }
@@ -1182,4 +1183,11 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn evidence_key(observation: &Observation) -> Result<String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(observation)?)
+    ))
 }

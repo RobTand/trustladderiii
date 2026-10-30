@@ -333,7 +333,14 @@ impl Controller {
 
     fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
         for (index, observation) in completion.observations.into_iter().enumerate() {
-            self.observe(&format!("look:{}:{index}", delivery.key), observation)?;
+            self.observe(
+                &format!(
+                    "look:{}:{index}:{}",
+                    delivery.key,
+                    crate::evidence_key(&observation)?
+                ),
+                observation,
+            )?;
         }
         Ok(())
     }
