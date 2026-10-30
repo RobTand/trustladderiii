@@ -206,7 +206,9 @@ impl Respond for Api {
                 pull["state"] = json!("open");
                 pull["merged_at"] = Value::Null;
                 pull["head"]["ref"] = body["head"].clone();
-                pull["head"]["sha"] = state.checks.last().unwrap()["head_sha"].clone();
+                if let Some(check) = state.checks.last() {
+                    pull["head"]["sha"] = check["head_sha"].clone();
+                }
                 pull["head"]["repo"] = fixture(false)["repository"].clone();
                 pull["base"]["ref"] = body["base"].clone();
                 state.pull = Some(pull.clone());
