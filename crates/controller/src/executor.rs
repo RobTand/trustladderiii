@@ -19,6 +19,8 @@ pub struct Delivery {
     pub round: u8,
     #[serde(default)]
     pub question: Option<tl3_kernel::Question>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 impl Delivery {
@@ -36,6 +38,12 @@ pub enum Observation {
         repository: crate::Repository,
         issue: u64,
         comment: tl3_github::Comment,
+    },
+    WorkerReply {
+        node: NodeId,
+        generation: u64,
+        role: String,
+        reply: serde_json::Value,
     },
     Kernel(Event),
     Plan {

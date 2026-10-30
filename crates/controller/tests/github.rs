@@ -11,14 +11,14 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use std::{
     collections::BTreeMap,
-    env,
+    env, fs,
     io::{BufRead, BufReader, Read, Write},
     net::{Shutdown, SocketAddr, TcpStream},
     path::Path,
     process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
@@ -338,8 +338,10 @@ fn main() {
     println!("test parsed_deliveries_and_translators ... ok");
     catch_up_preserves_evidence(&database.create("catch_up_evidence"));
     println!("test catch_up_preserves_evidence ... ok");
+    daemon_with_workers(&database.create("daemon_workers"));
+    println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
     database.stop();
-    println!("10 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("11 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -580,6 +582,7 @@ fn delivery(notice: Notice) -> Delivery {
         attempt: 1,
         round: 0,
         question: None,
+        note: None,
     }
 }
 fn message_reconciliation() {
@@ -1274,4 +1277,124 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
     );
     drain(&mut controller);
     assert_eq!(calls.lock().unwrap().len(), 1);
+}
+
+
+fn daemon_with_workers(settings: &tl3_config::Store) {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap();
+    assert!(Command::new(env::var_os("TL3_TEST_UV").unwrap_or_else(|| "uv".into()))
+        .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
+        .arg(&package)
+        .status()
+        .expect("daemon worker test requires uv 0.10.10 on PATH or TL3_TEST_UV")
+        .success());
+    let root = tempfile::tempdir().unwrap();
+    let api = Server::new();
+    let credentials = root.path().join("app.json");
+    let model_key = root.path().join("model-key");
+    fs::write(&credentials, serde_json::to_vec(&json!({
+        "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
+    })).unwrap()).unwrap();
+    fs::write(&model_key, "fixture-only").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&credentials, &model_key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let marker = root.path().join("entered");
+    let runs = root.path().join("runs");
+    let config = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace("database = \"tl3\"", &format!("database = {:?}", settings.database))
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace("connect_timeout_secs = 10", &format!(
+            "password_file = {:?}\nconnect_timeout_secs = 10", settings.password_file.as_ref().unwrap()))
+        .replace("/home/rob/.config/tl3/github-app.json", credentials.to_str().unwrap())
+        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        .replace("owner = \"RobTand\"", "owner = \"owner\"")
+        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
+        .replace("installation_id = 1", "installation_id = 3")
+        .replace("id = 24923402", "id = 42")
+        .replace("/srv/tl3/workers/.venv/bin/python", package.join(".venv/bin/python").to_str().unwrap())
+        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace("command = [\"-m\", \"tl3_workers\", \"run\"]", &format!(
+            "command = [{:?}, \"audit-blocked\", {marker:?}]",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")));
+    let config_path = root.path().join("config.toml");
+    fs::write(&config_path, config).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    store.put_worker_materials("0", &json!({
+        "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
+        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"]}
+    })).unwrap();
+    struct Daemon(std::process::Child);
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut daemon = Daemon(Command::new(env!("CARGO_BIN_EXE_tl3d"))
+        .arg("--config").arg(&config_path)
+        .arg("--simulate").arg(root.path().join("fakes"))
+        .args(["--workers", "--github-listen", "127.0.0.1:0", "--github-api"])
+        .arg(api.uri())
+        .stdin(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().unwrap());
+    let (logs, received) = mpsc::channel();
+    let stderr = daemon.0.stderr.take().unwrap();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            logs.send(line.unwrap()).unwrap();
+        }
+    });
+    let address = loop {
+        let line = received.recv_timeout(Duration::from_secs(90)).unwrap();
+        if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
+            break address.parse().unwrap();
+        }
+    };
+    assert_eq!(post(address, "daemon-labelled", false, fixture(false), true), 202);
+    let wait = |condition: &mut dyn FnMut() -> bool| {
+        let started = Instant::now();
+        while !condition() {
+            assert!(started.elapsed() < Duration::from_secs(90), "daemon did not produce expected evidence");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    // The source's observation key proves ingress delivered the reply, even if a look also found it.
+    wait(&mut || store.events_after(tl3_store::Revision::ZERO, 1000).unwrap().iter()
+        .any(|event| event.key.contains(":worker:")
+            && event.payload["WorkerReply"]["role"] == "ingest"));
+    assert_eq!(store.worker_document("0", "briefs").unwrap().unwrap()["brief"], "Fix the greeting.");
+    wait(&mut || store.worker_progress(Some("0")).unwrap().len() == 2);
+    // Webhooks remain live while audit waits. Redelivery must preserve one request and one ingest.
+    assert_eq!(post(address, "daemon-labelled-again", false, fixture(false), true), 202);
+    fs::write(marker.with_extension("release"), "go").unwrap();
+    wait(&mut || store.events_after(tl3_store::Revision::ZERO, 1000).unwrap().iter()
+        .any(|event| event.key.contains(":worker:")
+            && event.payload["WorkerReply"]["role"] == "audit"));
+    wait(&mut || api.state.lock().unwrap().closed);
+    assert_eq!(store.worker_document("0", "audits").unwrap().unwrap()["verdict"], "agree");
+    let progress = store.worker_progress(Some("0")).unwrap();
+    assert_eq!(progress.len(), 2);
+    assert!(progress.iter().all(|p| p.last_progress_ms.is_some()));
+    let snapshot = store.load().unwrap();
+    assert_eq!(snapshot.rows.iter().filter(|row| row.table == "requests").count(), 1);
+    assert!(!snapshot.rows.iter().any(|row| row.table == "watches"));
+    assert!(api.state.lock().unwrap().comments.iter()
+        .any(|comment| comment["body"].as_str().unwrap().contains("Return hello.")));
+    // Malformed durable worker notification fails the actual source while webhooks and stdin live.
+    fs::write(runs.join(".ready-dead"), "{").unwrap();
+    let mut ending = None;
+    wait(&mut || {
+        ending = daemon.0.try_wait().unwrap();
+        ending.is_some()
+    });
+    assert_eq!(ending.unwrap().code(), Some(1));
+    reader.join().unwrap();
+    let logs: Vec<_> = received.try_iter().collect();
+    assert!(logs.iter().any(|line| line.contains("WorkerOutputSource failed:")), "{logs:?}");
 }

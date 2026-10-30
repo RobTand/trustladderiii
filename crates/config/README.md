@@ -74,3 +74,16 @@ world's capacity requires a snapshot migration.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.
+
+`workers` configures an absolute Python interpreter, a durable run root, and
+Python arguments. Sync the worker environment once before starting the service:
+
+```bash
+uv sync --locked --project /srv/tl3/workers --python 3.14+gil
+```
+
+Set `workers.python` to `/srv/tl3/workers/.venv/bin/python`. The supervisor
+launches it directly with `workers.command`, defaulting to `-m tl3_workers run`.
+Per-run launches do not invoke uv or take its environment locks. Keep the run
+root across controller restarts. Tests replace only the worker arguments and
+model construction. Never configure a fixture launcher in deployment.

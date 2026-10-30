@@ -22,4 +22,16 @@ pub fn simulation(root: &Path) -> Result<Registry> {
     Ok(adapters)
 }
 
-pub use record::{delivery_counts, delivery_epochs};
+pub use record::{delivered_notes, delivery_counts, delivery_epochs};
+
+/// Real ingest and audit processes, with the remaining upstreams simulated.
+pub fn simulation_with_workers(
+    root: &Path,
+    config: &tl3_config::Config,
+) -> Result<(Registry, workers::WorkerOutputSource)> {
+    let mut registry = simulation(root)?;
+    let supervisor = workers::Supervisor::new(config, root)?;
+    let source = supervisor.source();
+    registry.register(Upstream::Workers, supervisor);
+    Ok((registry, source))
+}
