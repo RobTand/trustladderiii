@@ -1,0 +1,24 @@
+{
+  "repository": {
+    "id": 7,
+    "name": "sandbox",
+    "owner": {
+      "id": 42,
+      "login": "owner"
+    }
+  },
+  "installation": {
+    "id": 3
+  },
+  "sender": {
+    "id": 42,
+    "login": "owner"
+  },
+  "action": "completed",
+  "check_suite": {
+    "id": 23,
+    "head_sha": "abc1234",
+    "status": "completed",
+    "conclusion": "success"
+  }
+}

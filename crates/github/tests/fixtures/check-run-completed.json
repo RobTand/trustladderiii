@@ -1,0 +1,30 @@
+{
+  "repository": {
+    "id": 7,
+    "name": "sandbox",
+    "owner": {
+      "id": 42,
+      "login": "owner"
+    }
+  },
+  "installation": {
+    "id": 3
+  },
+  "sender": {
+    "id": 42,
+    "login": "owner"
+  },
+  "action": "completed",
+  "check_run": {
+    "id": 22,
+    "name": "approval",
+    "head_sha": "abc1234",
+    "external_id": "approval-key",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 123,
+      "slug": "factory"
+    }
+  }
+}

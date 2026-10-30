@@ -1,0 +1,50 @@
+{
+  "repository": {
+    "id": 7,
+    "name": "sandbox",
+    "owner": {
+      "id": 42,
+      "login": "owner"
+    }
+  },
+  "installation": {
+    "id": 3
+  },
+  "sender": {
+    "id": 42,
+    "login": "owner"
+  },
+  "action": "closed",
+  "number": 13,
+  "pull_request": {
+    "number": 13,
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-10-30T01:00:00Z",
+    "head": {
+      "ref": "tl3/change",
+      "sha": "abc1234",
+      "repo": {
+        "id": 7,
+        "name": "sandbox",
+        "owner": {
+          "id": 42,
+          "login": "owner"
+        }
+      }
+    },
+    "base": {
+      "ref": "main",
+      "sha": "def5678",
+      "repo": {
+        "id": 7,
+        "name": "sandbox",
+        "owner": {
+          "id": 42,
+          "login": "owner"
+        }
+      }
+    },
+    "updated_at": "2026-10-30T01:00:00Z"
+  }
+}
