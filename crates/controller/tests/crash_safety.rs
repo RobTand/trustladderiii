@@ -243,6 +243,25 @@ fn wait_for_disconnect(settings: &tl3_config::Store) {
         .unwrap();
 }
 
+struct ControllerProcess(std::process::Child);
+impl Drop for ControllerProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+impl std::ops::Deref for ControllerProcess {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ControllerProcess {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 fn run(
     settings: &tl3_config::Store,
     root: &Path,
@@ -254,18 +273,20 @@ fn run(
     let upstream = root.join("upstreams");
     let mut killed = BTreeSet::new();
     for _ in 0..1000 {
-        let mut child = Command::new(env::current_exe().unwrap())
-            .arg("--child")
-            .arg(&config)
-            .arg(&upstream)
-            .arg(scenario)
-            .arg(selected)
-            .arg(seed.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+        let mut child = ControllerProcess(
+            Command::new(env::current_exe().unwrap())
+                .arg("--child")
+                .arg(&config)
+                .arg(&upstream)
+                .arg(scenario)
+                .arg(selected)
+                .arg(seed.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        );
         let mut input = child.stdin.take().unwrap();
         let mut output = BufReader::new(child.stdout.take().unwrap());
         loop {
