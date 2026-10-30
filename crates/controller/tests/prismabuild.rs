@@ -1,3 +1,7 @@
+#[expect(
+    dead_code,
+    reason = "shared fixture also has status-reader restart helpers"
+)]
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
