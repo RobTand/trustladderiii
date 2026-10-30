@@ -17,6 +17,10 @@ pub struct Delivery {
     pub paths: Vec<String>,
     pub attempt: u8,
     pub round: u8,
+    #[serde(default)]
+    pub checks: Option<crate::adapters::prismabuild::CheckRun>,
+    #[serde(default)]
+    pub job_generation: Option<u64>,
 }
 
 impl Delivery {
@@ -31,6 +35,20 @@ impl Delivery {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     Kernel(Event),
+    CheckPlan {
+        node: NodeId,
+        run: crate::adapters::prismabuild::CheckRun,
+    },
+    Checks {
+        node: NodeId,
+        generation: u64,
+        action_key: String,
+        base_sha: String,
+        sha: String,
+        changed_paths: Vec<String>,
+        report: bool,
+        pass: bool,
+    },
     Plan {
         node: NodeId,
         generation: u64,

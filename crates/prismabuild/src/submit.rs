@@ -150,20 +150,25 @@ impl SubmitAction {
 }
 
 impl PrismaBuild {
-    fn tool(&self) -> Command {
+    pub(crate) fn tool(&self) -> Command {
         let mut command = Command::new(&self.options.tool.program);
         command.args(&self.options.tool.args).kill_on_drop(true);
         command
     }
 
     pub async fn submit(&self, action: &SubmitAction) -> Result<Submission, Error> {
+        self.submission(self.action_command(action, "--detach")?)
+            .await
+    }
+
+    fn action_command(&self, action: &SubmitAction, mode: &str) -> Result<Command, Error> {
         action.validate()?;
         let mut command = self.tool();
         command
+            .arg(mode)
             .args([
                 "--transport",
                 "pool",
-                "--detach",
                 "--anywhere",
                 "--max-attempts",
                 "1",
@@ -201,6 +206,10 @@ impl PrismaBuild {
             command.arg("--env").arg(format!("{name}={value}"));
         }
         command.arg("--").args(&action.command);
+        Ok(command)
+    }
+
+    async fn submission(&self, mut command: Command) -> Result<Submission, Error> {
         let output = command.output().await.map_err(|source| Error::Io {
             path: self.options.tool.program.clone(),
             source,
@@ -237,6 +246,45 @@ impl PrismaBuild {
             status: wire.status,
             published_unix,
         })
+    }
+
+    /// Seal inputs into CAS without publishing executable work. Persist the key before publish.
+    pub async fn seal(&self, action: &SubmitAction) -> Result<ActionKey, Error> {
+        #[derive(Deserialize)]
+        struct Sealed {
+            schema: String,
+            action_key: ActionKey,
+            transport: String,
+        }
+        let mut command = self.action_command(action, "--seal-only")?;
+        let output = command.output().await.map_err(|source| Error::Io {
+            path: self.options.tool.program.clone(),
+            source,
+        })?;
+        if !output.status.success() {
+            return Err(Error::Tool {
+                code: output.status.code(),
+            });
+        }
+        let wire: Sealed = serde_json::from_slice(&output.stdout)
+            .map_err(|e| Error::ToolResponse(e.to_string()))?;
+        if wire.schema != "prismabuild.sealed.v1" || wire.transport != "pool" {
+            return Err(Error::ToolResponse("invalid sealed request".into()));
+        }
+        Ok(wire.action_key)
+    }
+
+    /// Publish the original CAS request even after the checkout or PB runtime changes.
+    pub async fn publish(&self, key: &ActionKey) -> Result<Submission, Error> {
+        let mut command = self.tool();
+        command.args(["--publish-sealed", key.as_str(), "--detach"]);
+        let submission = self.submission(command).await?;
+        if &submission.key != key {
+            return Err(Error::ToolResponse(
+                "publication returned another action key".into(),
+            ));
+        }
+        Ok(submission)
     }
 
     pub async fn withdraw(&self, key: &ActionKey, reason: &str) -> Result<Withdrawal, Error> {

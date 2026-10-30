@@ -345,6 +345,7 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
+                delivery.checks = check_run(snapshot, delivery.node())?;
                 if let Ok(Reconciliation::Found(completion)) =
                     self.adapters.adapter(&delivery)?.reconcile(&delivery)
                 {
@@ -573,6 +574,8 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                checks: check_run(snapshot, node)?,
+                job_generation: n.job,
             };
             if matches!(
                 output,
@@ -627,6 +630,47 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::CheckPlan { node, run } => {
+                request(snapshot, node)?;
+                commit
+                    .rows
+                    .push(put("check_plans", node.0.to_string(), json!(run)));
+                return Ok(None);
+            }
+            Observation::Checks {
+                node,
+                generation,
+                sha,
+                changed_paths,
+                report,
+                pass,
+                ..
+            } => {
+                let request = request(snapshot, node)?;
+                let repo = self
+                    .store
+                    .intern_repo(&request.repo.owner, &request.repo.name)?;
+                let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
+                let footprint: std::collections::BTreeSet<_> = world
+                    .files(n.footprint)
+                    .ok_or(Error::Invalid("unknown footprint"))?
+                    .collect();
+                let exact_head = n.head == Some(self.head(node, &sha)?);
+                let mut in_footprint = true;
+                for path in changed_paths {
+                    let id = self.store.intern_path(repo, &path)?;
+                    in_footprint &= footprint.contains(&tl3_kernel::FileId(id.get() as u64));
+                }
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::ChecksDone {
+                        report,
+                        pass: pass && exact_head,
+                        in_footprint,
+                    },
+                }
+            }
             Observation::Plan {
                 node,
                 generation,
@@ -744,10 +788,21 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
     delivery.epoch = effect.epoch.get();
+    delivery.checks = check_run(snapshot, delivery.node())?;
     delivery.pull_request = snapshot
         .rows
         .iter()
         .find(|r| r.table == "pull_requests" && r.id == delivery.node().0.to_string())
         .and_then(|r| r.value["number"].as_u64());
     Ok(delivery)
+}
+
+fn check_run(snapshot: &Snapshot, node: NodeId) -> Result<Option<adapters::prismabuild::CheckRun>> {
+    snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "check_plans" && r.id == node.0.to_string())
+        .map(|r| serde_json::from_value(r.value.clone()))
+        .transpose()
+        .map_err(Into::into)
 }
