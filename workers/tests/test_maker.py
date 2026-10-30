@@ -794,6 +794,7 @@ def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, mo
         maker_request['last_accepted_generation'] = maker_request['operation']['generation']
         maker_request['operation']['generation'] += 1
         maker_request['inputs']['round'] = 1
+        maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Repair the greeting.', 'goal_ids': ['greeting']}]
         maker_request['resume_session'] = True
     visit_base = git(root, 'rev-parse', 'HEAD')
     visit_generation = maker_request['operation']['generation']

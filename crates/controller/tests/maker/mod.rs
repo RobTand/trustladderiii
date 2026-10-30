@@ -816,7 +816,6 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     drop(supervisor);
     delivery.key = "legacy-session-revisit".into();
     delivery.generation += 1;
-    delivery.round = 1;
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let result = supervisor.execute(&delivery);
     assert!(
