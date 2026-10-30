@@ -1,15 +1,14 @@
+mod support;
 use postgres::{Client, NoTls};
-use postgresql_embedded::{PostgreSQL, Settings, VersionReq};
 use serde_json::json;
 use std::{
-    collections::HashMap,
     env, fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
-use tempfile::TempDir;
+use support::Database;
 use tl3_store::*;
 
 fn main() {
@@ -31,100 +30,14 @@ fn main() {
         ("migrations_and_append_only", migrations_and_append_only),
         ("killed_writer_recovers", killed_writer_recovers),
         ("durability_settings", durability_settings),
+        ("arrival_within_transaction", arrival_within_transaction),
     ] {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
     database.stop();
-    println!("8 Postgres integration scenarios passed; no skips");
-}
-
-struct Database {
-    postgres: PostgreSQL,
-    runtime: tokio::runtime::Runtime,
-    scratch: TempDir,
-    password_file: PathBuf,
-}
-
-impl Database {
-    fn start() -> Self {
-        Self::start_with_fsync(true)
-    }
-
-    fn start_with_fsync(fsync: bool) -> Self {
-        // Every archive, executable, cluster and fixture credential belongs to this job.
-        let scratch = tempfile::Builder::new()
-            .prefix("tl3-store-pg-")
-            .tempdir()
-            .unwrap();
-        let root = scratch.path();
-        let settings = Settings {
-            releases_url: "https://github.com/zonkyio/embedded-postgres-binaries".into(),
-            version: VersionReq::parse("=17.4.0").unwrap(),
-            installation_dir: root.join("binaries"),
-            password_file: root.join("pgpass"),
-            data_dir: root.join("data"),
-            host: "127.0.0.1".into(),
-            username: "postgres".into(),
-            password: "tl3-disposable-test-password".into(),
-            timeout: Some(Duration::from_secs(90)),
-            configuration: HashMap::from([
-                ("max_connections".into(), "20".into()),
-                ("shared_buffers".into(), "16MB".into()),
-                ("max_parallel_workers".into(), "0".into()),
-                ("max_worker_processes".into(), "0".into()),
-                // postgresql_embedded supplies -F; override it for every recovery test.
-                ("fsync".into(), if fsync { "on" } else { "off" }.into()),
-                ("synchronous_commit".into(), "on".into()),
-            ]),
-            ..Settings::default()
-        };
-        let mut postgres = PostgreSQL::new(settings);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .max_blocking_threads(2)
-            .build()
-            .unwrap();
-        let started = Instant::now();
-        runtime
-            .block_on(postgres.setup())
-            .expect("download and initialize embedded Postgres");
-        println!(
-            "embedded Postgres cold setup (fsync={fsync}): {:.2}s",
-            started.elapsed().as_secs_f64()
-        );
-        runtime
-            .block_on(postgres.start())
-            .expect("start embedded Postgres");
-        let password_file = root.join("client-password");
-        fs::write(&password_file, "tl3-disposable-test-password\n").unwrap();
-        Self {
-            postgres,
-            runtime,
-            scratch,
-            password_file,
-        }
-    }
-
-    fn create(&mut self, name: &str) -> tl3_config::Store {
-        self.runtime
-            .block_on(self.postgres.create_database(name))
-            .unwrap();
-        tl3_config::Store {
-            host: "127.0.0.1".into(),
-            port: self.postgres.settings().port,
-            database: name.into(),
-            user: "postgres".into(),
-            password_file: Some(self.password_file.clone()),
-            connect_timeout_secs: 10,
-        }
-    }
-
-    fn stop(&self) {
-        self.runtime.block_on(self.postgres.stop()).unwrap();
-        assert!(self.scratch.path().exists());
-    }
+    println!("9 Postgres integration scenarios passed; no skips");
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -144,6 +57,51 @@ fn put(id: &str, value: serde_json::Value) -> RowChange {
         id: id.into(),
         value,
     }
+}
+
+fn arrival_within_transaction(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("arrivals", json!(null), &snapshot);
+    for key in ["effect:2", "effect:12", "effect:1"] {
+        change.rows.push(RowChange::Put {
+            table: "inbox".into(),
+            id: key.into(),
+            value: json!(key),
+        });
+    }
+    store.commit(&change).unwrap();
+    let before = store.load().unwrap();
+    assert_eq!(
+        before
+            .rows
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        ["effect:2", "effect:12", "effect:1"]
+    );
+    assert!(
+        before
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].arrival < pair[1].arrival)
+    );
+    let mut update = Commit::new("update-arrival", json!(null), &before);
+    update.rows.push(RowChange::Put {
+        table: "inbox".into(),
+        id: "effect:2".into(),
+        value: json!("updated"),
+    });
+    store.commit(&update).unwrap();
+    let after = store.load().unwrap();
+    assert_eq!(
+        after.rows.iter().map(|r| r.arrival).collect::<Vec<_>>(),
+        before.rows.iter().map(|r| r.arrival).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        Store::open_read_only(settings).unwrap().load().unwrap(),
+        after
+    );
 }
 
 fn effect(key: &str) -> NewEffect {
@@ -536,7 +494,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
             .unwrap()
             .get::<_, i64>(0),
-        1
+        2
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [

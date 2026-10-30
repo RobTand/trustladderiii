@@ -1,5 +1,9 @@
 macro_rules! id {
     ($name:ident) => {
+        #[cfg_attr(
+            all(feature = "serde", not(kani)),
+            derive(serde::Serialize, serde::Deserialize)
+        )]
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[cfg_attr(kani, derive(kani::Arbitrary))]
         pub struct $name(pub u64);

@@ -1,7 +1,6 @@
 # TL3 config
 
-`tl3-config` reads slice one's single TOML file. It is a standalone Rust 2024
-crate with its own lockfile. The coordinator adds it to the Cargo workspace.
+`tl3-config` reads slice one's single TOML file. It is a Rust 2024 crate in the root workspace with one shared lockfile.
 [example.toml](example.toml) cites the source of each setting.
 
 `Config::parse(text)` rejects unknown fields at every level and validates the
@@ -64,6 +63,10 @@ not a work-duration deadline. Credit reserve and free rechecks allow zero;
 W must be 1 for slice one. Listen addresses are numeric socket addresses with a
 fixed nonzero port. HTTP endpoints allow LAN HTTP and reject embedded credentials,
 queries, and fragments. Parse diagnostics omit source lines.
+
+`limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.
+It defaults to 1 for existing configuration files. Changing an initialized
+world's capacity requires a snapshot migration.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.

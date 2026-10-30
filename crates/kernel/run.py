@@ -1,7 +1,7 @@
 """Run the kernel's tests, or Kani proofs, as one PrismaBuild action.
 
     run.py manifest [NAME...]  print a PrismaBuild campaign manifest
-    run.py tests             build the workspace, then run the tests
+    run.py tests             build the kernel, then run its tests
     run.py prove NAME...     prove only the named harnesses
     run.py prove             prove every harness
 
@@ -61,18 +61,18 @@ if mode == "tests":
     code = step("format", ["cargo", "fmt", "--all", "--", "--check"])
     if code:
         sys.exit(code)
-    code = step("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"])
+    code = step("clippy", ["cargo", "clippy", "-p", "tl3-kernel", "--all-targets", "--locked", "--", "-D", "warnings"])
     if code:
         sys.exit(code)
-    code = step("workspace build (no_std)", ["cargo", "build", "--workspace", "--release"])
+    code = step("kernel build (no_std)", ["cargo", "build", "-p", "tl3-kernel", "--release"])
     if code:
         sys.exit(code)
-    sys.exit(step("tests", ["cargo", "test", "--release", "--no-fail-fast", "--", "--nocapture"]))
+    sys.exit(step("tests", ["cargo", "test", "-p", "tl3-kernel", "--release", "--no-fail-fast", "--", "--nocapture"]))
 if mode == "prove":
     # KANI_OUTPUT=regular shows CBMC's progress, which tells where a run that
     # ran out of memory got to.
     output = os.environ.get("KANI_OUTPUT", "terse")
-    kani = ["cargo", "kani", "--output-format", output, "-j", os.environ.get("KANI_JOBS", "1")]
+    kani = ["cargo", "kani", "-p", "tl3-kernel", "--output-format", output, "-j", os.environ.get("KANI_JOBS", "1")]
     for name in names:
         kani += ["--harness", f"proofs::{name}", "--exact"]
     print(f"== kani: {' '.join(kani)}", flush=True)

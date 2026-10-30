@@ -23,8 +23,10 @@ use alloc::vec::Vec;
 
 mod footprint;
 mod ids;
+mod queries;
 pub use footprint::Footprint;
 pub use ids::{FileId, HeadId, NodeId, RepoId};
+pub use queries::Wait;
 
 #[cfg(kani)]
 mod proofs;
@@ -34,6 +36,10 @@ pub const RESERVE: u32 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
 pub const FREE_RECHECKS: u8 = 3;
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Outcome {
@@ -45,6 +51,10 @@ pub enum Outcome {
     NotActionable,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EarlyEnd {
@@ -64,6 +74,10 @@ impl EarlyEnd {
 }
 
 /// The holding phase a leaf waiting in Ready goes back to.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Resume {
@@ -86,6 +100,10 @@ impl Resume {
     }
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Phase {
@@ -159,6 +177,10 @@ impl Phase {
     }
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Role {
@@ -169,6 +191,10 @@ pub enum Role {
     Review,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EffectKind {
@@ -202,6 +228,10 @@ impl EffectKind {
 }
 
 /// The one effect a node may have in flight.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct InFlight {
@@ -211,6 +241,10 @@ pub struct InFlight {
     pub cancelling: bool,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum QKind {
@@ -223,6 +257,10 @@ pub enum QKind {
 }
 
 /// Where a node goes when Rob says carry on.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Cont {
@@ -235,6 +273,10 @@ pub enum Cont {
     Nowhere,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Question {
@@ -247,6 +289,10 @@ pub struct Question {
 }
 
 /// The request's credit ledger. The balance is derived, so it can't drift from the entries.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Credit {
@@ -281,6 +327,10 @@ impl Credit {
     }
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Node {
@@ -472,12 +522,20 @@ impl Node {
     }
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Gate {
     pub w: u8,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     pub nodes: Vec<Node>,
@@ -489,6 +547,10 @@ pub struct World {
     file_sets: Vec<Vec<FileId>>,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
@@ -530,6 +592,10 @@ pub enum Reply {
     RunFailed,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Ack {
@@ -538,6 +604,10 @@ pub enum Ack {
     Permanent,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
@@ -550,6 +620,10 @@ pub enum Fact {
     IncidentCleared { by_rob: bool },
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Answer {
@@ -563,6 +637,10 @@ pub enum Answer {
     MarkHandled,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Command {
@@ -573,6 +651,10 @@ pub enum Command {
     Answer { question: u64, answer: Answer },
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Event {
@@ -600,6 +682,10 @@ pub enum Event {
     },
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
     UnapprovedMerge,
@@ -610,6 +696,10 @@ pub enum NoteKind {
     LateMerge,
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Notice {
     Ask { question: u64 },
@@ -620,6 +710,10 @@ pub enum Notice {
     Note(NoteKind),
 }
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Out {
     Effect {
@@ -642,6 +736,10 @@ pub const OUTBOX: usize = 5;
 /// transition of settle. A fixed array holds them, not a list on the heap,
 /// because Kani reasons about a growable list far more expensively: the merge
 /// proofs ran out of memory reading one. `step` collects them into its list.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outbox {
     items: [Option<Out>; OUTBOX],
@@ -692,6 +790,10 @@ impl Outbox {
 }
 
 /// One step of a phase's agenda.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
     /// Emit the effect and wait for its acknowledgement.
@@ -1315,6 +1417,10 @@ impl World {
 }
 
 /// The rule a world breaks, from `World::check`.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Broken {
     Config,

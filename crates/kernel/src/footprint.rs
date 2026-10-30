@@ -2,6 +2,10 @@ use alloc::vec::Vec;
 
 use crate::{FileId, World};
 
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Repr {
     Inline(u64),
@@ -9,6 +13,10 @@ enum Repr {
 }
 
 /// A world-scoped immutable file set. Create it with World::intern_footprint.
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Footprint(Repr);
 

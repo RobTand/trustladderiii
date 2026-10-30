@@ -1,6 +1,6 @@
 # tl3-worktrees
 
-Standalone Rust edition 2024 adapter for the controller's Git operations on Unix.
+Rust edition 2024 workspace adapter for the controller's Git operations on Unix.
 The crate uses the Git CLI. It does not depend on the controller or GitHub client.
 
 ```rust,no_run
