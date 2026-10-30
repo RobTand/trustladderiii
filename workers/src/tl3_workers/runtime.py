@@ -1,6 +1,7 @@
 """Run one role with the TL3 Deep Agents profile."""
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from importlib.resources import files
 import json
 from pathlib import Path
@@ -17,18 +18,20 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, schema, validate
+from tl3_workers.roles import ROLES
+from tl3_workers.tools import Worktree, build_tools
 
 
-TOOL_DESCRIPTIONS = {
-    "ls": "List files supplied to this role. Unavailable for ingest and audit.",
-    "read_file": "Read material supplied to this role. Unavailable for ingest and audit.",
-    "write_file": "Write within the assigned worktree. Unavailable for ingest and audit.",
-    "edit_file": "Edit within the assigned worktree. Unavailable for ingest and audit.",
-    "delete": "Remove a worktree file. Unavailable for ingest and audit.",
-    "glob": "Find worktree paths. Unavailable for ingest and audit.",
-    "grep": "Search worktree text. Unavailable for ingest and audit.",
+BUILTIN_TOOL_DESCRIPTIONS = {
+    "ls": "Unavailable. Use only this role's TL3 tools.",
+    "read_file": "Unavailable. Use only this role's TL3 tools.",
+    "write_file": "Unavailable. Use only this role's TL3 tools.",
+    "edit_file": "Unavailable. Use only this role's TL3 tools.",
+    "delete": "Unavailable. Use only this role's TL3 tools.",
+    "glob": "Unavailable unless supplied by TL3 for this role.",
+    "grep": "Unavailable unless supplied by TL3 for this role.",
     "execute": "Execution is unavailable. Tests must use PrismaBuild.",
-    "task": "Delegation is unavailable for ingest and audit.",
+    "task": "Delegation is unavailable.",
 }
 
 
@@ -57,45 +60,57 @@ def create_model(request) -> BaseChatModel:
     )
 
 
-def build_agent(model: BaseChatModel, role: str):
+def build_agent(model: BaseChatModel, role, worktree=None):
+    descriptions = {**BUILTIN_TOOL_DESCRIPTIONS, **role.tools}
     profile = HarnessProfile(
         base_system_prompt="",
         system_prompt_suffix="",
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        excluded_tools=frozenset(TOOL_DESCRIPTIONS),
+        # Deep Agents unions exclusions across registrations. glob and grep are
+        # TL3 tools, registered only for roles that declare them, never built-ins.
+        excluded_tools=frozenset(BUILTIN_TOOL_DESCRIPTIONS.keys() - {"glob", "grep"}),
         excluded_middleware=frozenset({
             "SummarizationMiddleware", "PatchToolCallsMiddleware",
             "AnthropicPromptCachingMiddleware", "UnsupportedContentMiddleware",
         }),
-        tool_description_overrides=TOOL_DESCRIPTIONS,
+        tool_description_overrides=descriptions,
     )
     provider = model._get_ls_params()["ls_provider"]
     identifier = getattr(model, "model_name", None) or getattr(model, "model", None)
     register_harness_profile(provider, profile)
     if identifier:
         register_harness_profile(f"{provider}:{identifier}", profile)
-    prompt = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
+    prompt = files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     prompt += "\n\nReply with one JSON object matching this schema:\n"
-    prompt += json.dumps(schema(role + "-reply"), ensure_ascii=False)
+    prompt += json.dumps(schema(role.reply_schema), ensure_ascii=False)
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(
         tools=["read_file"],
         system_prompt="",
-        custom_tool_descriptions=TOOL_DESCRIPTIONS,
+        custom_tool_descriptions=descriptions,
         human_message_token_limit_before_evict=None,
         tool_token_limit_before_evict=None,
     )
     return create_deep_agent(
-        model=model, tools=[], subagents=[], system_prompt=prompt,
-        middleware=[filesystem], name="tl3_" + role,
+        model=model, tools=build_tools(worktree, role.tools), subagents=[], system_prompt=prompt,
+        middleware=[filesystem], name="tl3_" + role.name,
     )
 
 
 def run(request, emit: Callable[[dict], None]):
-    role = request["role"]
+    role = ROLES[request["role"]]
     model = create_model(request)
-    agent = build_agent(model, role)
+    with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
+        agent = build_agent(model, role, worktree)
+        reply = _run_agent(agent, request, emit)
+    validate(role.reply_schema, reply)
+    if role.check_reply is not None:
+        role.check_reply(request["inputs"], reply)
+    emit({"event": "reply", "role": role.name, "reply": reply})
+
+
+def _run_agent(agent, request, emit):
     last_message = None
     for update in agent.stream(
         {"messages": [HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False))]},
@@ -112,10 +127,4 @@ def run(request, emit: Callable[[dict], None]):
                     emit({"event": "progress", "unit": "tool_result"})
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final model reply")
-    reply = read_json(last_message.text)
-    validate(role + "-reply", reply)
-    if role == "ingest" and reply["kind"] == "brief":
-        supplied = {memory["id"] for memory in request["inputs"].get("memories", [])}
-        if not set(reply["memory_ids"]) <= supplied:
-            raise ValueError("reply cites a memory it was not given")
-    emit({"event": "reply", "role": role, "reply": reply})
+    return read_json(last_message.text)

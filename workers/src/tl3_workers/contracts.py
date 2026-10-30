@@ -9,7 +9,6 @@ from referencing import Registry, Resource
 
 
 SCHEMA_BASE = "https://trustladderiii.invalid/workers/protocol-1/"
-ROLES = ("ingest", "audit")
 
 
 def _object(pairs):

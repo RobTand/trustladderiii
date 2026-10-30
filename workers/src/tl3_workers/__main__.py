@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from tl3_workers.contracts import read_json, validate
+from tl3_workers.roles import ROLES
 
 
 def main():
@@ -33,7 +34,7 @@ def main():
     try:
         request = read_json(sys.stdin.buffer.read().decode("utf-8"))
         validate("request", request)
-        validate(request["role"] + "-input", request["inputs"])
+        validate(ROLES[request["role"]].input_schema, request["inputs"])
         if not Path(request["worktree"]).is_absolute():
             raise ValueError("worktree must be absolute")
         os.chdir(request["worktree"])

@@ -50,14 +50,16 @@ document. Fields not described by the schemas are errors.
 `operation.node` and `generation` are nonnegative integers. `kind` is a nonempty
 string, preserved as supervisor metadata. The worker does not interpret it or
 perform stale-operation checks. The supervisor associates the process with the
-operation. `role` selects the prompt and schemas. No operation ID is added to
+operation. `role` is a lowercase name matching `[a-z][a-z0-9_]*` and selects the prompt
+and schemas. An unknown role fails before model construction. No operation ID is added to
 events, matching ticket #24.
 
 `key_file` and `worktree` are absolute paths. The worker changes its working
 directory to `worktree` before running the role. It reads and strips the key
 file at runtime, after validating the inputs. It gives only `inputs` to the
-model. Neither a key nor a key path enters the role prompt. These roles have no
-host filesystem tools. Deployment owns filesystem and network isolation.
+model. Neither a key nor a key path enters the role prompt. Ingest and audit
+have no tools. Other roles can declare the confined file tools below.
+Deployment owns process and network isolation.
 
 Models use `langchain_openai.ChatOpenAI` with Chat Completions explicitly
 selected, pointed at `base_url`. `name` passes through unchanged. `effort` maps
@@ -171,9 +173,9 @@ are locked in `uv.lock`.
 
 Each role has a TL3-written system prompt in `src/tl3_workers/prompts/`.
 `HarnessProfile` uses an empty base prompt and suffix, disables the default
-general-purpose sub-agent, overrides built-in tool descriptions, and excludes
-all built-in tools. Both roles declare an empty tool set, so the overridden
-descriptions only matter once a later role enables a tool. Ingest may cite only
+general-purpose sub-agent, and excludes built-in tools. TL3 supplies file tools
+only when the role declares them, with descriptions written by that role.
+Ingest and audit declare empty tool sets. Ingest may cite only
 memory ids it was given. No sub-agents, skills,
 external memory middleware or host filesystem backend are installed.
 Summarization, tool-call patching, provider prompt caching and unsupported
@@ -194,6 +196,113 @@ Tests inspect the final model request to catch any injected prompts or tools.
 The worker asks for a JSON object directly and validates it against the schema.
 It does not use structured-output tool calls or model repair loops, so no
 implicit output tool or extra model turn can change the declared role tools.
+
+## Add a role
+
+The runtime and CLI look up `roles.ROLES`. A `Role` declares its prompt filename,
+input and reply schema names, tool descriptions, and optional reply check.
+Ingest's check rejects memory IDs absent from its inputs. Audit has no extra
+check. Neither module changes the protocol or controller rules.
+
+For example, to add `planner`:
+
+1. Add `prompts/planner.md`, `schemas/planner-input.json`, and
+   `schemas/planner-reply.json` under `src/tl3_workers/`. Use draft 2020-12 and
+   the existing `SCHEMA_BASE` for each schema's `$id`. These files ship through
+   the existing package-data rules.
+2. Add `src/tl3_workers/roles/planner.py`. Supply descriptions for each tool the
+   role needs. Omit a tool to deny it at both model and dispatch boundaries.
+
+   ```python
+   from tl3_workers.roles.base import Role
+
+   ROLE = Role(
+       name="planner",
+       prompt="planner.md",
+       input_schema="planner-input",
+       reply_schema="planner-reply",
+       tools={
+           "list": "List the worktree directory to locate planning material.",
+           "read": "Read worktree text needed to plan this request.",
+           "glob": "Find source paths relevant to the plan with relative globs.",
+           "grep": "Find literal references in worktree text to check the plan.",
+       },
+   )
+   ```
+
+   For an extra semantic check, define `check_reply(inputs, reply)` in that
+   module and pass it as `check_reply=check_reply`. It runs after schema
+   validation and raises `ValueError` to fail the run before emitting a reply.
+3. Add the role's tests in its own test module. Run them through PrismaBuild.
+   `test_discovered_roles_have_prompts_and_schemas_without_orphans` checks every
+   discovered role's packaged resources and rejects orphan schema files.
+
+The registry discovers modules in `roles/` automatically, excluding `base.py`
+and names beginning with `_`. The module filename must match `ROLE.name`.
+Adding a role changes only that role's module, prompt, two schemas and tests.
+No shared registry or request schema edit is needed.
+
+## Confined file tools
+
+`tools.py` builds the role's declared tools against the request's worktree.
+The available names and arguments are:
+
+| Tool | Arguments and result |
+|---|---|
+| `list` | `path="."`, `offset=0`. A page of direct children with relative `path` and `is_dir`. |
+| `read` | `path`, `offset=0`, `limit=200`, `column=0`. UTF-8 text, paged by zero-based lines and character columns. |
+| `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. |
+| `grep` | `pattern`, `path="."`, `offset=0`. A page of literal text matches below a directory, with relative paths, one-based line numbers, and matching text. Non-UTF-8 files are skipped. |
+| `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
+| `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
+
+`READ_TOOLS` and `WRITE_TOOLS` group the names for checks. Each role still writes
+its own descriptions. `TOOL_FACTORIES` maps each name to its factory. Unknown tool names and empty descriptions fail graph
+creation. A rejected file operation returns an error tool result, so the agent
+can correct its call without changing protocol v1 progress events. TL3's static
+validation errors pass through, including non-unique edits and missing files.
+Operating system exception text stays hidden because it can reveal host paths.
+
+Output caps live in `OUTPUT_LIMITS`. Read returns at most 200 lines, 2,048
+UTF-8 bytes per line and 16,384 bytes in total, including its notice. A smaller
+`limit` still applies. A truncated read reports the next line `offset` and
+character `column`. Use both to continue, including within a long line.
+
+List and glob return `entries`, `next_offset` and `message`. Grep returns
+`matches`, `next_offset` and `message`. A null `next_offset` ends the results.
+List and glob cap each page at 200 entries. Grep caps it at 100 matches and
+clips each text preview to 2,048 UTF-8 bytes, with a notice directing the model
+to `read`. Each collection page also fits a 16,384-byte JSON budget, including
+metadata. A truncated page names the continuation offset in its message. If
+one entry exceeds the byte budget, the message asks for a narrower path or
+pattern.
+
+All tool paths and glob patterns must be relative. Absolute paths, NULs,
+backslashes, and any `..` or `.git` segment are rejected. Enumeration omits
+`.git` files and directories at every depth. `.` selects the root directory.
+No shell expands paths or patterns. A run holds an open worktree directory
+descriptor. Each operation opens path components relative to directory
+descriptors with `O_NOFOLLOW`, including the final file. This checks paths at
+the filesystem operation, including when a symlink appears during the run.
+TL3 rejects all symlinks, even ones targeting the worktree. Enumeration omits
+symlinks rather than traversing them. Files must be regular and have one hard
+link. Devices and FIFOs are refused, and write checks the open file before
+truncating it. These tools require POSIX descriptor-relative operations.
+
+This choice follows inspection of the installed Deep Agents 0.7.32
+`backends/filesystem.py`, `middleware/filesystem.py`, `graph.py`, and
+`middleware/_tool_exclusion.py`. `FilesystemBackend(virtual_mode=True)` resolves
+paths under its root before opening them. `O_NOFOLLOW` there protects the final
+component, but parent directories can change after resolution. Its middleware
+also describes file paths as absolute. TL3 instead supplies its own tools and
+keeps the required built-in `read_file` excluded over an empty `StateBackend`.
+The built-in `glob` and `grep` are absent; those names refer only to TL3 tools.
+
+No role can declare shell, network, delete, or delegation tools. The model
+transport still connects to the configured proxy. Ticket #33 can extend the
+`TOOL_FACTORIES` table with one PrismaBuild test tool entry, without changing
+`build_tools` or file confinement.
+It must submit admitted work rather than expose `execute` or a local shell.
 
 ## Verification
 
