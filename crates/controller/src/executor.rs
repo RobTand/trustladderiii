@@ -27,6 +27,7 @@ pub enum CommentKind {
     Classify,
     Clarify,
     FileCorrection,
+    ReplacementDropped,
 }
 
 impl From<tl3_kernel::Out> for Output {
@@ -144,6 +145,8 @@ pub enum Observation {
         failed_tests: Vec<crate::findings::FailedTest>,
         report: bool,
         pass: bool,
+        #[serde(default)]
+        results: Vec<serde_json::Value>,
     },
     Plan {
         node: NodeId,
@@ -266,6 +269,9 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn implementation(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
     fn watch_wait(
         &mut self,
         _delivery: &Delivery,
@@ -344,6 +350,12 @@ pub fn upstream(output: Output) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
+    pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
+        self.0
+            .iter()
+            .map(|(upstream, adapter)| (*upstream, adapter.implementation()))
+            .collect()
+    }
     pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) {
         for (upstream, adapter) in &mut self.0 {
             if let Err(error) = adapter.retire(store) {

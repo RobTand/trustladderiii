@@ -110,8 +110,14 @@ pub fn daemon() -> Result<()> {
         github_api,
         ..
     } = arguments(true)?;
-    let simulation =
-        simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;
+    let Some(simulation) = simulation else {
+        if workers || github_listen.is_some() || github_api.is_some() || drain {
+            return Err(Error::Invalid(
+                "simulation options require --simulate DIRECTORY",
+            ));
+        }
+        return production(config);
+    };
     let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
         github_api
             .as_ref()
@@ -207,5 +213,28 @@ pub fn daemon() -> Result<()> {
         return Ok(());
     }
     sources.register(crate::ingress::Stdin);
+    sources.run(&mut controller)
+}
+
+fn production(config: tl3_config::Config) -> Result<()> {
+    let registration = crate::production::register(&config)?;
+    let mut controller = Controller::open(
+        Store::open(&config.store)?,
+        registration.adapters,
+        Bootstrap::from_config(&config)?,
+    )?;
+    controller.set_allowances(config.allowances.clone());
+    controller.register_github_translator("mergify", registration.mergify);
+    eprintln!(
+        "GitHub webhooks listening on {}",
+        registration.webhooks.address()
+    );
+    eprintln!(
+        "production adapters registered: GitHub, worktrees, PrismaBuild, Mergify, workers; looks and incidents enabled"
+    );
+    let mut sources = crate::ingress::Sources::default();
+    sources.register(registration.webhooks);
+    sources.register(registration.workers);
+    sources.register(registration.bell);
     sources.run(&mut controller)
 }

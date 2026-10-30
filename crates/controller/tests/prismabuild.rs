@@ -195,11 +195,19 @@ fn bounded_failure_details() {
     match &result.observations[0] {
         Observation::Checks {
             failed_tests,
+            results,
             report,
             pass,
             ..
         } => {
             assert!(*report && !*pass);
+            assert!(
+                results
+                    .iter()
+                    .flat_map(|result| result["tests"].as_array().unwrap())
+                    .all(|test| test["message"] == "é".repeat(1000)),
+                "reviewer check messages must be clipped"
+            );
             assert_eq!(failed_tests.len(), 20);
             assert_eq!(failed_tests[0].test, "test_value.py::test_0");
             assert!(
@@ -1005,6 +1013,33 @@ fn completed_records_retire_only_when_superseded() {
     assert!(adapter.action_key(&other).unwrap().is_some());
 }
 
+fn retirement_refuses_active_or_unreadable_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    let queue = root.path().join("queue");
+    fs::rename(
+        queue.join(format!("ready/{key}.json")),
+        queue.join(format!("claimed/{key}.json")),
+    )
+    .unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(adapter.action_key(&delivery).unwrap().is_some());
+    let path = record_path(root.path(), &delivery.key, "job");
+    let binding = fs::read(&path).unwrap();
+    fs::write(&path, "invalid binding").unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(path.exists());
+    fs::write(&path, binding).unwrap();
+    fs::remove_file(queue.join(format!("claimed/{key}.json"))).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    assert!(!root.path().join("records/0").exists());
+}
+
 fn retirement_forgets_an_active_source() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1470,6 +1505,73 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     }
     drop(running);
 }
+fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        Bootstrap {
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+            operations: None,
+        },
+    )
+    .unwrap();
+    for node in 0..3 {
+        controller
+            .intake(LabelledIssue {
+                delivery: format!("retirement-{node}"),
+                owner: "RobTand".into(),
+                repo: "tl3-sandbox".into(),
+                installation: 1,
+                number: 42 + node,
+                title: "Retirement fixture".into(),
+                actor: 1,
+                label: "tl3".into(),
+            })
+            .unwrap();
+        while controller.drive_once().unwrap() {}
+    }
+    assert!(
+        controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|n| n.phase.is_closed())
+    );
+    let mut adapter = fixture(root.path(), "done");
+    let records = root.path().join("records");
+    for node in 0..3 {
+        fs::create_dir_all(records.join(node.to_string())).unwrap();
+    }
+    // Corrupt the first candidate regardless of filesystem directory ordering.
+    let bad = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.is_dir())
+        .unwrap();
+    fs::write(bad.join("corrupt.job"), "not JSON").unwrap();
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    assert!(
+        adapter.retire(&mut store).is_err(),
+        "retirement must still report the corrupt job"
+    );
+    assert!(bad.exists(), "unreadable evidence must remain for recovery");
+    let remaining: Vec<_> = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![bad],
+        "one corrupt node must not block other retirements"
+    );
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
@@ -1496,6 +1598,16 @@ fn main() {
             std::thread::park();
         }
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--retirement-regression")
+    {
+        let mut database = support::Database::start();
+        retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+        database.stop();
+        println!("test retirement_continues_after_corrupt_node ... ok");
+        return;
+    }
     for (name, test) in [
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
@@ -1504,6 +1616,10 @@ fn main() {
         ),
         ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
         ("recorded_endings", recorded_endings as fn()),
+        (
+            "retirement_refuses_active_or_unreadable_jobs",
+            retirement_refuses_active_or_unreadable_jobs,
+        ),
         ("bounded_failure_details", bounded_failure_details),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
@@ -1550,6 +1666,8 @@ fn main() {
         println!("test {name} ... ok");
     }
     let mut database = support::Database::start();
+    retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+    println!("test retirement_continues_after_corrupt_node ... ok");
     through_controller(&database.create("pb_pass"), false, false, false);
     println!("test recorded_records_reach_kernel ... ok");
     through_controller(&database.create("pb_footprint"), true, false, false);

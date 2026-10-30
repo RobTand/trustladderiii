@@ -78,11 +78,14 @@ fn labelled() -> LabelledIssue {
     }
 }
 fn client(uri: &str) -> GitHub {
+    client_with_pem(uri, PEM.clone())
+}
+fn client_with_pem(uri: &str, pem: String) -> GitHub {
     GitHub::new(
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: PEM.clone(),
+            pem,
             webhook_secret: "test-secret".into(),
         },
         3,
@@ -99,6 +102,8 @@ fn client(uri: &str) -> GitHub {
 #[derive(Default)]
 struct ApiState {
     comments: Vec<Value>,
+    checks: Vec<Value>,
+    pull: Option<Value>,
     posts: usize,
     deletes: usize,
     closed: bool,
@@ -276,21 +281,55 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(events)
             }
             ("GET", "/repos/owner/sandbox/pulls") => {
-                let pulls = if state.catch_up_evidence {
+                let mut pulls: Vec<_> = state.pull.iter().cloned().collect();
+                if state.catch_up_evidence {
                     let mut pull = event_fixture("pull_request")["pull_request"].clone();
                     pull["updated_at"] = json!(Utc::now());
-                    json!([pull])
-                } else {
-                    json!([])
-                };
+                    pulls.push(pull);
+                }
                 ResponseTemplate::new(200).set_body_json(pulls)
             }
-            ("GET", path) if path.ends_with("/check-runs") => ResponseTemplate::new(200)
-                .set_body_json(if state.catch_up_evidence {
-                    json!({"check_runs": [event_fixture("check_run")["check_run"]]})
-                } else {
-                    json!({"check_runs": []})
-                }),
+            ("POST", "/repos/owner/sandbox/pulls") => {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut pull = event_fixture("pull_request")["pull_request"].clone();
+                pull["number"] = json!(100);
+                pull["state"] = json!("open");
+                pull["merged_at"] = Value::Null;
+                pull["head"]["ref"] = body["head"].clone();
+                if let Some(check) = state.checks.last() {
+                    pull["head"]["sha"] = check["head_sha"].clone();
+                }
+                pull["head"]["repo"] = fixture(false)["repository"].clone();
+                pull["base"]["ref"] = body["base"].clone();
+                state.pull = Some(pull.clone());
+                ResponseTemplate::new(201).set_body_json(pull)
+            }
+            ("PATCH", "/repos/owner/sandbox/pulls/100") => {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let pull = state.pull.as_mut().unwrap();
+                pull["state"] = body["state"].clone();
+                ResponseTemplate::new(200).set_body_json(pull)
+            }
+            ("GET", path) if path.ends_with("/check-runs") => {
+                let sha = path.split('/').nth(5).unwrap();
+                let mut checks: Vec<_> = state
+                    .checks
+                    .iter()
+                    .filter(|check| check["head_sha"] == sha)
+                    .cloned()
+                    .collect();
+                if state.catch_up_evidence {
+                    checks.push(event_fixture("check_run")["check_run"].clone());
+                }
+                ResponseTemplate::new(200).set_body_json(json!({"check_runs": checks}))
+            }
+            ("POST", "/repos/owner/sandbox/check-runs") => {
+                let mut check: Value = serde_json::from_slice(&request.body).unwrap();
+                check["id"] = json!(state.checks.len() + 1);
+                check["app"] = json!({"id": 123, "slug": "factory"});
+                state.checks.push(check.clone());
+                ResponseTemplate::new(201).set_body_json(check)
+            }
             ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200)
                 .set_body_json(if state.catch_up_evidence {
                     json!({"check_suites": [event_fixture("check_suite")["check_suite"]]})
@@ -349,8 +388,11 @@ impl Server {
     }
 }
 fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
+    adapter_with_client(client(uri), root)
+}
+fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter {
     adapters::github::Adapter::new(
-        BTreeMap::from([(3, client(uri))]),
+        BTreeMap::from([(3, client)]),
         FakeWriter,
         0,
         Policy {
@@ -421,7 +463,24 @@ fn main() {
         crash_child(&args);
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--merge-pending-child")
+    {
+        steering::merge_pending_child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
+        match scenario {
+            "quote" => steering::dropped_change_quote(),
+            "second" => steering::second_replacement(&database.create("second_replacement")),
+            "merge" => steering::merge_pending(&database.create("merge_pending"), "none"),
+            _ => panic!("unknown followup scenario"),
+        }
+        database.stop();
+        return;
+    }
     operations_and_delivery_log(&database.create("operations"));
     println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
@@ -466,6 +525,24 @@ fn main() {
         );
     }
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    steering::dropped_change_quote();
+    steering::second_replacement(&database.create("second_replacement"));
+    for point in [
+        "none",
+        "EventWritten",
+        "RowsWritten",
+        "EffectsWritten",
+        "TransitionsWritten",
+        "CreditWritten",
+        "BeforeCommit",
+        "AfterCommit",
+        "BeforeDispatch",
+        "AfterDispatch",
+        "BeforeReconcile",
+        "AfterReconcile",
+    ] {
+        steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+    }
     database.stop();
     println!("GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
@@ -1571,7 +1648,8 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         while !condition() {
             assert!(
                 started.elapsed() < Duration::from_secs(90),
-                "daemon did not produce expected evidence"
+                "daemon did not produce expected evidence: {:?}",
+                received.try_iter().collect::<Vec<_>>()
             );
             thread::sleep(Duration::from_millis(10));
         }
@@ -1619,6 +1697,25 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
                 event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "audit"
             })
     });
+    wait(&mut || {
+        store
+            .worker_document("0", "maker_replies")
+            .unwrap()
+            .is_some()
+    });
+    // This ingress fixture uses a real maker and fake checks. Publishing tests own real review.
+    let stop = Input::Observation {
+        key: "stop-after-maker".into(),
+        observation: Observation::Kernel(tl3_kernel::Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: tl3_kernel::Command::Stop,
+        }),
+    };
+    let stdin = daemon.0.stdin.as_mut().unwrap();
+    serde_json::to_writer(&mut *stdin, &stop).unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
     wait(&mut || api.state.lock().unwrap().closed);
     wait(&mut || {
         let snapshot = store.load().unwrap();

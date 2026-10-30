@@ -481,6 +481,9 @@ pub(super) fn parse_reply(
             protocol::validate_classification(inputs, &value["reply"])?;
         } else {
             protocol::map_reply(role, &value["reply"])?;
+            if role == "reviewer" {
+                super::review::validate_reply(&value["reply"], inputs)?;
+            }
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
         reply = Some(value["reply"].clone());

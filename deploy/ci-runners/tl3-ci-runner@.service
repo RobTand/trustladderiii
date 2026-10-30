@@ -1,0 +1,22 @@
+[Unit]
+Description=TL3 ephemeral CI runner slot %i
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+NotifyAccess=all
+EnvironmentFile=%h/.config/tl3-ci-runners/runner.env
+ExecStartPre=-/usr/bin/podman rm --force tl3-ci-runner-%i
+ExecStart=%h/.local/lib/tl3-ci-runners/runner-slot.sh %i
+ExecStop=-/usr/bin/podman stop --time 30 tl3-ci-runner-%i
+ExecStopPost=-/usr/bin/podman rm --force tl3-ci-runner-%i
+Restart=always
+RestartSec=30
+RestartSteps=5
+RestartMaxDelaySec=5min
+TimeoutStopSec=90
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=default.target

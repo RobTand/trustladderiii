@@ -1,5 +1,11 @@
 # Deploy TL3 on dl380g10
 
+Use [GO-LIVE.md](GO-LIVE.md) for production startup, release builds and rollback.
+The default deployment reuses TL2's external tunnel at
+`tl2-hooks.prismaquant.org`, forwarding to `127.0.0.1:8742`. It requires no TL3
+Cloudflare token or connector. Use `install --managed-tunnel` only when TL3
+owns its own connector. `check` then requires that unit and token.
+
 This deployment uses Rob's user manager and lingering. It needs no sudo.
 Run one installer at a time. Never read credential files into an agent session.
 The scripts suppress child output on failure because it can contain credentials.
@@ -68,8 +74,8 @@ The maker ladder uses GPT-6.1 Sol twice, then Claude Fable 5.1. Attempt 2 uses
 `max` effort and 128,000 output tokens. GPT makers get Claude Opus 5.5 review;
 Claude makers get GPT-6.1 Sol review. The planner and rebaser use GPT-6.1 Sol.
 Ingest, audit, comment classification and writer use Claude Sonnet 5.5.
-The writer field is optional for older configs and defaults to ingest. #20 must
-wire it into production registration, along with the other role settings.
+The writer field is optional for older configs and defaults to ingest.
+Production registration uses the configured ladders, including writer.
 
 Provider limits checked on 2026-10-30:
 
@@ -125,39 +131,31 @@ receive it through `LoadCredential=postgres-password`.
 Service wrappers write nonsecret runtime configs with their credential-copy
 paths. No secret bytes enter a config, command argument, or environment variable.
 
-Rob's steps:
-
-1. In Cloudflare, create a tunnel and a public hostname routing to `http://127.0.0.1:8081`.
-2. Give the tunnel token through the coordinator's secret prompt. The model key is installed.
-3. After production startup is available, have the coordinator run the command below with the chosen hostname.
-4. In [the App settings](https://github.com/settings/apps/tl3-robtand), check the webhook URL and enable **Active**.
-5. Optionally pin the **TL3 operations** issue from its menu.
-
-```sh
-~/.local/share/tl3/bin/tl3-deploy webhook-configure ~/.config/tl3/tl3.toml TUNNEL_HOST
-systemctl --user enable --now tl3-cloudflared.service
-```
+The deployed App already points to TL2's external route at
+`https://tl2-hooks.prismaquant.org/github/events`. The listener is
+`127.0.0.1:8742`. The model key is installed. No new tunnel token is needed.
+Follow [GO-LIVE.md](GO-LIVE.md) for the startup order. Rob enables **Active**
+after the listener starts, then labels the seed after delivery and restart checks.
+Pinning the **TL3 operations** issue remains optional.
 
 `PATCH /app/hook/config` accepts `url`, `secret`, `content_type`, and
 `insecure_ssl` using an App JWT. The command sends the existing secret in-process,
 checks that the URL persisted, and never displays the request or response.
-REST exposes no `active` setting. The initial wizard set it false; the read-only
-App check confirms the placeholder URL but cannot independently prove inactivity.
+REST exposes no `active` setting. The read-only App check can verify the URL
+but cannot independently prove inactivity.
 Reference: [GitHub App webhook REST API](https://docs.github.com/en/rest/apps/webhooks?apiVersion=2022-11-28).
 
-## Production startup blocker
+## Production startup
 
-At this PR's base, `tl3d` requires `--simulate`, and webhook startup requires
-a loopback mock API. Production registration belongs to #20. The installed
-controller unit passes `--workers`, and its config supplies loopback webhook
-ingress. It never enables simulation against the deployment database.
-The unit has a `~/.config/tl3/production-ready` gate. After #20 supplies and
-verifies real startup, install that release, validate with `Config::load`,
-narrow worker credentials to `model-key` only, and create the marker before starting `tl3d`. The daemon and loopback webhook
-check remain missing until then. Do not create the marker to bypass this blocker.
+The installed wrapper starts `tl3d --config FILE` with real adapters and sources.
+Worker requests use private attempt copies of `model-key`; they do not retain
+paths into the controller's temporary systemd credential directory.
+The unit keeps its `~/.config/tl3/production-ready` condition. The coordinator
+creates that marker only after the startup checks in [GO-LIVE.md](GO-LIVE.md).
 
-`KillMode=process` keeps durable worker supervisors alive during controller
-restarts, as #9 requires. Postgres starts before the controller and status.
+`KillMode=control-group` stops all local descendants on a service restart.
+Recovery reconciles their durable records before retrying an effect.
+Postgres starts before the controller and status.
 Each service restarts on failure. Postgres uses a fast, orderly shutdown.
 Status binds `192.168.1.107:8033` on `bond0`, never a wildcard. Change the explicit
 address if the LAN lease changes. Status uses `Config::load_status` to check

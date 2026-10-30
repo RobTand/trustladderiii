@@ -15,6 +15,7 @@ pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
+pub mod production;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -868,13 +869,14 @@ impl Controller {
         }
         if completion.ack == Ack::Confirmed {
             self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
-            for (index, observation) in completion.observations.iter().enumerate() {
-                commit.rows.push(put(
-                    "inbox",
-                    format!("{key}:{index:08}"),
-                    json!(observation),
-                ));
-            }
+        }
+        // Upstream facts remain evidence even when the attempted write was refused.
+        for (index, observation) in completion.observations.iter().enumerate() {
+            commit.rows.push(put(
+                "inbox",
+                format!("{key}:{index:08}"),
+                json!(observation),
+            ));
         }
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
@@ -891,9 +893,58 @@ impl Controller {
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
         let (world, outputs) = tl3_kernel::step(world, event);
+        for (index, node) in world.nodes.iter().enumerate() {
+            if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
+                || previous
+                    .nodes
+                    .get(index)
+                    .is_some_and(|node| matches!(node.phase, tl3_kernel::Phase::Planning { .. }))
+            {
+                continue;
+            }
+            let id = index.to_string();
+            let maker_findings = commit
+                .rows
+                .iter()
+                .rev()
+                .find_map(|row| match row {
+                    RowChange::Put {
+                        table,
+                        id: row_id,
+                        value,
+                    } if table == "maker_findings" && row_id == &id => Some(value),
+                    _ => None,
+                })
+                .or_else(|| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "maker_findings" && row.id == id)
+                        .map(|row| &row.value)
+                });
+            if let Some(maker_findings) = maker_findings {
+                let mut findings = self
+                    .store
+                    .worker_document(&id, "findings")?
+                    .unwrap_or(json!([]));
+                let reports = findings
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("findings must be text reports"))?;
+                for finding in maker_findings
+                    .as_array()
+                    .ok_or(Error::Invalid("invalid maker findings"))?
+                {
+                    if !reports.contains(&finding["report"]) {
+                        reports.push(finding["report"].clone());
+                    }
+                }
+                commit.rows.push(put("findings", id, findings));
+            }
+        }
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
+        self.close_replacement(snapshot, &previous, &world, commit)?;
         commit.result = json!({"kernel_event": event});
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
@@ -970,7 +1021,25 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let checks = check_run(snapshot, node, head_sha.as_deref())?;
+            let mut checks = check_run(snapshot, node, head_sha.as_deref())?;
+            if checks.is_none()
+                && matches!(
+                    output,
+                    Out::Effect {
+                        kind: tl3_kernel::EffectKind::SubmitChecks,
+                        ..
+                    }
+                )
+                && let Some(sha) = &head_sha
+                && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+                && let Some(run) = materials.get("check_run")
+            {
+                let run: adapters::prismabuild::CheckRun = serde_json::from_value(run.clone())?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(&run)));
+                checks = Some(run);
+            }
             let question_context = if let Out::Notice {
                 notice: tl3_kernel::Notice::Ask { question },
                 ..
@@ -1145,6 +1214,21 @@ impl Controller {
                 });
             }
         }
+        for row in &snapshot.rows {
+            if row.table == "check_reports"
+                && row
+                    .id
+                    .split(':')
+                    .next()
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .is_some_and(|id| closed.contains(&NodeId(id)))
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -1268,6 +1352,7 @@ impl Controller {
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
+        let mut detailed_review = false;
         let event = match observation {
             Observation::Progress { key, checkpoint } => {
                 self.progress_allowance(snapshot, &key, checkpoint, commit)?;
@@ -1329,9 +1414,27 @@ impl Controller {
                     Evidence::Conflict { .. } => Fact::Conflict,
                     Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
                     Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
-                    Evidence::PushByOther { head } => Fact::PushByOther {
-                        head: self.head(node, &head)?,
-                    },
+                    Evidence::PushByOther { head } => {
+                        let previous_sha = current.head.and_then(|head| {
+                            snapshot
+                                .interned
+                                .iter()
+                                .find(|i| {
+                                    i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                                })
+                                .map(|i| i.value.as_str())
+                        });
+                        if let Some(run) = check_run(snapshot, node, previous_sha)? {
+                            commit.rows.push(put(
+                                "check_plans",
+                                format!("{}:{head}", node.0),
+                                json!(run),
+                            ));
+                        }
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }
@@ -1392,6 +1495,8 @@ impl Controller {
                 failed_tests: tests,
                 report,
                 pass,
+                results,
+                base_sha,
                 ..
             } => {
                 let request = request(snapshot, node)?;
@@ -1404,6 +1509,24 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
+                if n.job == Some(generation) && n.generation == generation && exact_head {
+                    let prefix = format!("{}:", node.0);
+                    for row in snapshot.rows.iter().filter(|row| {
+                        row.table == "check_reports"
+                            && row.id.starts_with(&prefix)
+                            && row.id != format!("{}:{sha}", node.0)
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: row.table.clone(),
+                            id: row.id.clone(),
+                        });
+                    }
+                    commit.rows.push(put(
+                        "check_reports",
+                        format!("{}:{sha}", node.0),
+                        json!({"base_sha": base_sha, "results": results}),
+                    ));
+                }
                 let mut in_footprint = true;
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
@@ -1453,6 +1576,7 @@ impl Controller {
                         | (tl3_kernel::Phase::Auditing, "audit")
                         | (tl3_kernel::Phase::Making, "maker")
                         | (tl3_kernel::Phase::Planning { .. }, "planner")
+                        | (tl3_kernel::Phase::Reviewing, "reviewer")
                 );
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
@@ -1464,9 +1588,86 @@ impl Controller {
                         }));
                     }
                 };
+                if role == "reviewer" {
+                    let mut criteria = adapters::workers::review::criteria(&mut self.store, node)?;
+                    criteria["head_sha"] = json!(n.head.and_then(|head| {
+                        snapshot
+                            .interned
+                            .iter()
+                            .find(|i| {
+                                i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                            })
+                            .map(|i| i.value.clone())
+                    }));
+                    if adapters::workers::review::validate_reply(&reply, &criteria).is_err() {
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    if reply["verdict"] == "approve" {
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
+                            });
+                    }
+                    if reply["verdict"] == "changes" {
+                        let mut feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let reports = feedback
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("invalid maker findings"))?;
+                        let mut remaining = findings::MAX_REPORT_CHARS;
+                        for finding in reply["blocking_findings"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .take(findings::MAX_REVIEW_FINDINGS)
+                        {
+                            let report = format!(
+                                "{}: {}",
+                                findings::clipped(
+                                    finding["problem"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
+                                ),
+                                findings::clipped(
+                                    finding["evidence"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
+                                ),
+                            );
+                            let length = report.chars().count();
+                            if length > remaining {
+                                break;
+                            }
+                            remaining -= length;
+                            let goal_ids = if finding["citation"]["kind"] == "goal" {
+                                vec![finding["citation"]["id"].as_str().unwrap().to_owned()]
+                            } else {
+                                Vec::new()
+                            };
+                            reports.push(serde_json::to_value(findings::Finding {
+                                kind: findings::Kind::ReviewFinding,
+                                report,
+                                goal_ids,
+                                failed_tests: Vec::new(),
+                                outside_paths: Vec::new(),
+                                outside_paths_total: 0,
+                                ci_checks: Vec::new(),
+                            })?);
+                        }
+                        commit
+                            .rows
+                            .push(put("maker_findings", node.0.to_string(), feedback));
+                        detailed_review = true;
+                    }
+                }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
                     "audit" => "audits",
+                    "reviewer" => "reviews",
                     "maker" => "maker_replies",
                     _ => "plans",
                 };
@@ -1667,7 +1868,7 @@ impl Controller {
                     (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
                         if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
                             findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
                         findings::Kind::ReviewFinding,
                         "The independent reviewer requested changes. No detailed review report was supplied.".into(),
                     )),

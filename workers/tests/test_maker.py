@@ -848,3 +848,12 @@ def test_outside_path_feedback_schema_is_bounded(maker_request, paths):
         maker_request['inputs']['feedback'][0]['outside_paths'] = [f'outside-{i}.py' for i in range(101)]
     with pytest.raises(ValidationError):
         validate('maker-input', maker_request['inputs'])
+
+
+def test_standing_rule_feedback_needs_no_goal_citation(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'review_finding', 'report': 'Protect the test report stream.', 'goal_ids': [],
+    }]
+    validate('maker-input', maker_request['inputs'])
+    maker._check_inputs(maker_request['inputs'])

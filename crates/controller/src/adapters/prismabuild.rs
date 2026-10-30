@@ -337,6 +337,21 @@ impl Adapter {
     pub fn retire_node(&mut self, node: NodeId) -> Result<()> {
         let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
         let root = node_root(&self.settings.records, node);
+        for path in node_job_paths(&root, false)? {
+            // Corrupt bindings and failed upstream reads cannot establish termination.
+            let job: Job = serde_json::from_slice(&fs::read(path)?)?;
+            let record = self
+                .runtime
+                .block_on(self.client.read(&job.action))
+                .map_err(adapter_error)?;
+            if record.is_some_and(|record| {
+                matches!(record.state, ActionState::Queued | ActionState::Claimed)
+            }) {
+                return Err(crate::Error::Invalid(
+                    "cannot retire an active PrismaBuild job",
+                ));
+            }
+        }
         // Remove bindings durably before their completions, including after partial retirement.
         for path in node_job_paths(&root, false)?
             .into_iter()
@@ -520,6 +535,70 @@ impl Executor for Adapter {
     fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord> {
         read_wait(&self.client, &self.runtime, key, checkout)
     }
+    fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        let snapshot = store.load()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        let pending = snapshot
+            .pending_effects
+            .iter()
+            .filter(|effect| effect.kind == "PrismaBuild")
+            .map(|effect| serde_json::from_value::<Delivery>(effect.payload.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let watches = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "watches")
+            .map(|row| serde_json::from_value::<Delivery>(row.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut first_error = None;
+        // Only retained adapter directories are candidates. Closed history costs no scan.
+        for entry in fs::read_dir(&self.settings.records)? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
+            };
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => {}
+                Ok(_) => continue,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
+            }
+            let Some(node) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(NodeId)
+            else {
+                continue;
+            };
+            if !world
+                .nodes
+                .get(node.0 as usize)
+                .is_some_and(|n| n.phase.is_closed())
+            {
+                continue;
+            }
+            if pending.iter().any(|d| d.node() == node)
+                || watches.iter().any(|d| {
+                    d.node() == node
+                        && crate::executor::upstream(d.output)
+                            == crate::executor::Upstream::PrismaBuild
+                })
+            {
+                continue;
+            }
+            if let Err(error) = self.retire_node(node) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery.epoch)?;
         match delivery.output {
