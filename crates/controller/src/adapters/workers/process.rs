@@ -68,7 +68,13 @@ fn matches(identity: &Identity) -> Result<bool> {
 fn stat_matches(identity: &Identity, stat: io::Result<String>) -> Result<bool> {
     let stat = match stat {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        // procfs also returns ESRCH if the task exits between opening and reading stat.
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+        {
+            return Ok(false);
+        }
         Err(e) => return Err(e.into()),
     };
     let fields: Vec<_> = stat
