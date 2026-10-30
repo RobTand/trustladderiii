@@ -8,6 +8,7 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("suite", choices=("workers", "planning", "maker", "workspace"))
+parser.add_argument("--trial-image", help="immutable locally prepared harness image for an additional real maker trial")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -34,4 +35,9 @@ workspace = {
 }
 if args.suite == "maker":
     rows.append({**workspace, "argv": ["bash", "crates/controller/tools/verify-maker.sh"]})
+    if args.trial_image:
+        rows.append({**workspace,
+                     "argv": ["/home/rob/.local/bin/uv", "run", "--locked", "--project", "workers", "--python", "3.14+gil", "python", "crates/controller/tools/maker_trial.py", args.trial_image],
+                     "env": {**env, "PYTHONPATH": "harness/src"},
+                     "container_images": [args.trial_image], "progress_phases": ["tests=900"]})
 print(json.dumps([workspace] if args.suite == "workspace" else rows, indent=2))

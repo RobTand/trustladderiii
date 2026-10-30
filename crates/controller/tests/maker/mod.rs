@@ -624,6 +624,8 @@ fn restart_after_replan(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    real::acceptance(&database.create("maker_real_worktrees"));
+    println!("test maker_real_worktrees_and_recorded_harness ... ok");
     restart_after_replan(&database.create("maker_replan_restart"));
     println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
     process_contract(&database.create("maker_process"));

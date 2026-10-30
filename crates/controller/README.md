@@ -138,7 +138,9 @@ before delivering kernel replies. It stores the latest reply as `maker_replies`.
 
 Maker acceptance runs the actual Python entry point and maker graph with a
 scripted model, fake read-only Hindsight, and recorded self-check results.
-The worktree and PrismaBuild adapters stay fake until #61 and #62 merge.
+The combined acceptance also uses #61's real worktrees adapter for checkout,
+publication and cleanup. Focused worker cases keep their local Git fixtures.
+The PrismaBuild adapter stays fake until #62 merges.
 Scenarios cover success, failed checks through both rounds of all three attempts
 and one re-plan, an actual commit outside the footprint, requested files,
 context exhaustion, unmet goals, invalid output, recovery, and stop.
@@ -163,12 +165,15 @@ Production integration still requires:
    and the finding report, and compare `changed_paths` with the footprint to fill
    `outside_paths`. The current fake reports only verdict booleans; it cannot
    supply missing test messages or offending paths.
-4. Replace the acceptance worktree setup with #61's real adapter, PR #68, and the
-   check fake with #62's real adapter and result source, PR #67. Keep recorded
-   terminal records and CAS receipts in tests. Then run a real maker change
-   through the real harness on PrismaBuild and record one live trial from the
-   implementation session. Admitted tests consume records and never submit a
-   second PrismaBuild action.
+4. Replace the check fake with #62's real adapter and result source, PR #67.
+   The real worktrees integration and maker-to-harness trial are implemented.
+   `tests/maker/records` retains that trial's actual terminal record, CAS receipt
+   and result payload. Acceptance verifies the payload hash and compares its
+   code, tests and harness configuration with a new real maker change before
+   replaying the recorded check result. The trial runs the real harness against
+   the maker's actual base and head through PrismaBuild's managed container.
+   Both use a scripted model and fake read-only recall. The worker self-check
+   stays recorded; the outer trial checks the committed result independently.
 
 Generate all-host verification with
 `python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
@@ -176,6 +181,11 @@ the manifest with `pbcampaign.py --detach`. The three pinned actions run maker, 
 The daemon fixture makes and commits a real change through the shared ingress loop.
 A separate portable action runs the Python worker and harness suites and
 `tools/verify.sh`. These tests use fixtures and never submit nested jobs.
+Add `--trial-image <immutable-image>` to the manifest command to include a new
+real maker-to-harness trial in its own admitted action. The image must already
+exist on an eligible worker. `tools/maker_trial.py` requires admission and
+never submits work. The submitting session runs `pbcampaign.py` outside every
+admitted action.
 
 ## GitHub ingress in simulation
 

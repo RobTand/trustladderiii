@@ -269,7 +269,7 @@ fn main() {
     planning::stop(&database.create("planner_stop"));
     maker::run(&mut database);
     database.stop();
-    println!("33 required worker supervisor, planning and maker scenarios passed; no skips");
+    println!("34 required worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
