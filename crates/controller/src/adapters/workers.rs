@@ -66,6 +66,7 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(config: &tl3_config::Config, fake_root: &Path) -> Result<Self> {
         fs::create_dir_all(&config.workers.runs)?;
+        fs::create_dir_all(fake_root)?;
         let active = ActiveRuns::default();
         for entry in fs::read_dir(&config.workers.runs)? {
             let entry = entry?;
@@ -234,9 +235,9 @@ impl Executor for Supervisor {
             ));
         }
         self.active.add(delivery);
+        reap(child);
         let name = root.file_name().unwrap().to_string_lossy();
         write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
-        reap(child);
         Ok(Completion::confirmed(vec![]))
     }
 
@@ -255,10 +256,7 @@ impl Executor for Supervisor {
             Out::Effect {
                 kind: EffectKind::StopRun,
                 ..
-            } => {
-                self.stop_node(delivery)?;
-                Fake::new(&self.fake_root).reconcile(delivery)
-            }
+            } => Fake::new(&self.fake_root).reconcile(delivery),
             _ => Fake::new(&self.fake_root).reconcile(delivery),
         }
     }

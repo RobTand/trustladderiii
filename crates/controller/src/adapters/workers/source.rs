@@ -118,7 +118,10 @@ impl WorkerOutputSource {
                 continue;
             }
             let root = entry.path();
-            if let Some(value) = read(&root.join("delivery.json"))? {
+            let Some(value) = read(&root.join("delivery.json"))? else {
+                continue;
+            };
+            {
                 let delivery: Delivery = serde_json::from_value(value)?;
                 if !watched.contains(delivery.key.as_str())
                     && store
@@ -209,9 +212,6 @@ impl WorkerOutputSource {
                             dirty.insert(root);
                             fs::remove_file(path)?;
                         }
-                    } else if !name.starts_with('.') && path.is_dir() {
-                        self.add(path.clone())?;
-                        dirty.insert(path);
                     }
                 }
             } else if let Some(root) = self.watches.get(&wd) {
@@ -266,11 +266,7 @@ impl WorkerOutputSource {
             return Ok(true);
         };
         // A directory or cancelled claim is not evidence of a run that started.
-        let claim = read(&attempt.join("claim.json"))?;
-        if claim.as_ref().is_some_and(|c| c["cancelled"] == true) {
-            return Ok(false);
-        }
-        if claim.is_none() {
+        if read(&attempt.join("claim.json"))?.is_none() {
             return Ok(true);
         }
         for name in ["claim.json", "process.json"] {
