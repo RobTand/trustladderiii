@@ -59,20 +59,23 @@ pub(crate) fn spawn<T: Send + 'static>(
         .spawn(f)
         .unwrap()
 }
-pub(crate) fn bounded(check: impl Fn() + Send + Sync + 'static) {
+pub(crate) fn bounded(preemptions: usize, check: impl Fn() + Send + Sync + 'static) {
     let check = std::sync::Arc::new(check);
     let mut builder = loom::model::Builder::new();
-    builder.preemption_bound = Some(1);
+    builder.preemption_bound = Some(preemptions);
     builder.max_branches = 10_000;
     builder.check(move || {
         let check = check.clone();
         spawn(move || check()).join().unwrap();
     });
 }
-pub(crate) fn model(check: impl Fn(&tl3_config::Store) + Send + Sync + 'static) {
+pub(crate) fn model(
+    preemptions: usize,
+    check: impl Fn(&tl3_config::Store) + Send + Sync + 'static,
+) {
     let mut database = support::Database::start();
     let settings = database.create("loom_model");
-    bounded(move || {
+    bounded(preemptions, move || {
         let mut db = postgres::Config::new()
             .host(&settings.host)
             .port(settings.port)

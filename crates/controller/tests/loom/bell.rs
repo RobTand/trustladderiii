@@ -22,7 +22,7 @@ fn model_bell(outage: bool) {
             .set_body_json(serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]})))
         .mount(&server));
     let url = server.uri();
-    crate::loom_tests::bounded(move || {
+    crate::loom_tests::bounded(1, move || {
         let root = tempfile::tempdir().unwrap();
         let mut adapter = waits::adapter_with_bell(root.path(), &url);
         let mut source = adapter.source();

@@ -221,11 +221,10 @@ including watch reads. Hooks are optional and do not change acknowledgement or
 recovery rules. Dictionary inserts now use an explicit transaction so their
 connection can die before commit too.
 
-[The crash simulation](crash-simulation.md) documents all thirteen cuts, the
-upstream contracts, replay controls, and the placeholder ingress model for loom.
-That model runs no controller code. Ticket #71 covers the real ingress and
-worker source after #64 and #60 merge. Every
-cut kills a real controller process while Postgres and upstream records remain
+[The crash simulation](crash-simulation.md) documents twenty cuts, the upstream
+contracts, replay controls, and bounded loom models of the real ingress loop,
+worker output, and PrismaBuild bell source. Every cut kills a real controller
+process while Postgres and upstream records remain
 alive. The test audits the outbox against kernel outputs and compares the
 recovered world with an uninterrupted run.
 

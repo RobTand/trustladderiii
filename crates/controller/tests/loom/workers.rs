@@ -15,7 +15,7 @@ fn append(path: &std::path::Path, bytes: &[u8]) {
 
 #[test]
 fn loom_worker_output_progress_wait_and_restart() {
-    model(|settings| {
+    model(1, |settings| {
         let root = tempfile::tempdir().unwrap();
         let delivery = delivery();
         let runs = root.path().join("runs");

@@ -44,7 +44,7 @@ impl Source for Finished {
 
 #[test]
 fn loom_sources_run_real_controller_once_per_request() {
-    model(|settings| {
+    model(0, |settings| {
         let root = tempfile::tempdir().unwrap();
         let (ack, applied) = channel::channel();
         let (other_ack, other_applied) = channel::channel();

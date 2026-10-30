@@ -133,11 +133,17 @@ The five models call real code:
   cover a reset and HTTP 503. Each checks that a live record emits no look, an
   ending emits one look per batch, and removal leaves no awaited wait.
 
-Every model exhausts a preemption bound of one, with a 10,000-branch limit that
-fails rather than skips an unfinished execution. The model body and I/O actors
+The full controller model exhausts a preemption bound of zero after the bound
+of one proved too slow. It still explores blocking source interleavings. The
+worker, bell, and control models exhaust a bound of one. The shared runner has
+a 10,000-branch limit that fails rather than skips an unfinished execution. The model body and I/O actors
 use 8 MiB stacks because Loom's default coroutine stack cannot run these library
 calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
-HTTP, Tokio scheduling, and socket deadlines remain external operations. The
+HTTP, Tokio scheduling, and socket deadlines remain external operations. A sixth
+model checks that the channel shim rejects sends after receiver drop. Loom 0.7
+does not model receiver timeouts or sender disconnection; the finite controller
+model ends through an explicitly acknowledged source error. Ordinary channel
+tests cover standard-library disconnection. The
 worker fixture serializes file append steps against individual source passes;
 it includes an incomplete line and checks every resulting input. These models
 check source publication and registration schedules, not every possible OS I/O
