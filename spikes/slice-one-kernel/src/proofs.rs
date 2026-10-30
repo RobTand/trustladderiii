@@ -137,21 +137,33 @@ fn check_nodes(before: &World, after: &World) {
 fn check_outputs(before: &World, after: &World, out: &[Out], exempt: Option<usize>) {
     for o in out {
         if let Out::Effect { node, seq, kind, head } = *o {
-            let n = &after.nodes[node];
-            assert!(seq < n.next_seq);
-            if let Some(b) = before.nodes.get(node) {
-                // Every effect gets a key no earlier effect of its node had.
-                assert!(seq >= b.next_seq);
-                // A paused node starts nothing new, though teardown still runs.
-                if b.paused && !b.phase.is_stopping() && exempt != Some(node) {
-                    assert!(teardown(kind));
+            assert!(node < after.nodes.len());
+            // Look the node up by a concrete index. A read at a symbolic index
+            // into nodes the event just rewrote made the merge proofs need
+            // more than 48 GB; this way they need a few.
+            let mut i = 0;
+            while i < after.nodes.len() {
+                if i == node {
+                    check_effect(before.nodes.get(i), &after.nodes[i], seq, kind, head, exempt == Some(i));
                 }
-            }
-            // TL3 enqueues a head only after that exact head passed its checks and review.
-            if kind == EffectKind::Enqueue {
-                assert!(matches!(head, Some(h) if has(n.approved, h) && n.checked == Some(h)));
+                i += 1;
             }
         }
+    }
+}
+fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, head: Option<u8>, exempt: bool) {
+    assert!(seq < n.next_seq);
+    if let Some(b) = before {
+        // Every effect gets a key no earlier effect of its node had.
+        assert!(seq >= b.next_seq);
+        // A paused node starts nothing new, though teardown still runs.
+        if b.paused && !b.phase.is_stopping() && !exempt {
+            assert!(teardown(kind));
+        }
+    }
+    // TL3 enqueues a head only after that exact head passed its checks and review.
+    if kind == EffectKind::Enqueue {
+        assert!(matches!(head, Some(h) if has(n.approved, h) && n.checked == Some(h)));
     }
 }
 
@@ -159,7 +171,7 @@ fn check_outputs(before: &World, after: &World, out: &[Out], exempt: Option<usiz
 fn check_apply(event: Event) {
     let before = any_settled_world(None);
     let mut after = before.clone();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
     apply(&mut after, event, &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
@@ -190,7 +202,7 @@ fn check_advance(phase: Phase, moves: bool) {
     let before = any_world(Some(phase));
     let rank = before.nodes[0].settle_rank();
     let mut after = before.clone();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
     let changed = advance(&mut after, 0, &mut out);
     // Not vacuous: settle takes a transition from this phase, or, for a phase
     // that only waits on outside events, a world in it exists. One cover per
@@ -219,7 +231,7 @@ fn check_witness(phase: Phase) {
     assert!(event.is_some());
     if let Some(event) = event {
         let mut after = world;
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
         apply(&mut after, event, &mut out);
         assert!(after.measure() < before);
     }
@@ -338,7 +350,7 @@ fn check_pr_merged(phase: Phase) {
     let checks_passed: bool = kani::any();
     let event = fact(Fact::PrMerged { head, checks_passed });
     let mut after = before.clone();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
     apply(&mut after, event, &mut out);
     kani::cover!(after != before, "the merge changes the world");
     require_consistent(&after);
@@ -371,3 +383,4 @@ proof!(pr_merged_rebasing, check_pr_merged(Phase::Rebasing));
 proof!(pr_merged_awaiting_rob, check_pr_merged(Phase::AwaitingRob));
 proof!(pr_merged_stopping, check_pr_merged(Phase::Stopping(kani::any())));
 proof!(pr_merged_closed, check_pr_merged(Phase::Closed(kani::any())));
+

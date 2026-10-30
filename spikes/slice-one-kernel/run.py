@@ -30,19 +30,26 @@ mode, names = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
 if mode == "tests":
     sys.exit(step("tests", ["cargo", "test", "--release", "--no-fail-fast", "--", "--nocapture"]))
 if mode == "prove":
-    kani = ["cargo", "kani", "--output-format", "terse", "-j", os.environ.get("KANI_JOBS", "1")]
+    # KANI_OUTPUT=regular shows CBMC's progress, which tells where a run that
+    # ran out of memory got to.
+    output = os.environ.get("KANI_OUTPUT", "terse")
+    kani = ["cargo", "kani", "--output-format", output, "-j", os.environ.get("KANI_JOBS", "1")]
     for name in names:
         kani += ["--harness", f"proofs::{name}", "--exact"]
     print(f"== kani: {' '.join(kani)}", flush=True)
     start = time.monotonic()
-    done = subprocess.run(kani, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    print(done.stdout, flush=True)
-    print(f"== kani: exit {done.returncode} in {time.monotonic() - start:.1f}s", flush=True)
-    if done.returncode:
-        sys.exit(done.returncode)
+    proc = subprocess.Popen(kani, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines = []
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        lines.append(line)
+    code = proc.wait()
+    print(f"== kani: exit {code} in {time.monotonic() - start:.1f}s", flush=True)
+    if code:
+        sys.exit(code)
     # A proof whose cover checks aren't all reachable proved nothing about
     # those cases, so it fails too.
-    covers = re.findall(r"\*\* (\d+) of (\d+) cover properties satisfied", done.stdout)
+    covers = re.findall(r"\*\* (\d+) of (\d+) cover properties satisfied", "".join(lines))
     if not covers:
         sys.exit("== kani: no cover results reported")
     if any(int(hit) < int(total) for hit, total in covers):
