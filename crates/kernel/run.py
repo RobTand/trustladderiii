@@ -47,7 +47,7 @@ if mode == "manifest":
         elif name.startswith("progress_from_"):
             memory = 40
         elif name.startswith("apply_"):
-            memory = 24
+            memory = 32
         else:
             memory = 10
         rows.append({"cwd": str(HERE), "argv": ["/usr/bin/python3", "run.py", *(["tests"] if name == "tests" else ["prove", name])],

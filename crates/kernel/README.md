@@ -34,6 +34,8 @@ Use handles only with their own world. Unknown table indices in replies count as
 
 Proof assumptions bound file IDs below 4, so the footprint table is empty in those worlds.
 Large sets use the same transition code and are covered by scenarios with 300 files, high IDs, extensions and file locks across repositories.
+Kani asserts that the bounded fixture never enters an interned-set helper, then prunes that path to avoid expanding growable storage.
+The assertion must prove before the path can count as excluded.
 The fixed `Outbox` remains in place.
 
 Owning a vector in each node proved too costly, even with small file sets held inline.
@@ -42,6 +44,9 @@ Interning large sets preserves `Node: Copy` and avoids that clone path. The PR r
 
 The controller-facing interner normalizes incoming file lists. Transitions union already-sorted sets with a linear merge.
 This keeps Rust's recursive sort out of the transition proofs. A diagnostic found Kani expanding that sort even in a reply proof with only inline footprints.
+The lock invariant compares each pair of holders once, separately from counting holders per repo.
+Putting that comparison inside the repo loop made a reply proof exhaust 48 GiB.
+The separate comparison verified at 21.8 GiB, with the same bounds, assertions and cover.
 
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
@@ -146,7 +151,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance and merge proofs reserve 10 GiB, event proofs reserve 24 GiB, and progress proofs reserve 40 GiB.
+Advance and merge proofs reserve 10 GiB, event proofs reserve 32 GiB, and progress proofs reserve 40 GiB.
 `progress_from_queued` and `apply_new_request` reserve 64 GiB.
 These budgets account for the larger symbolic state from production IDs and optional heads.
 A progress proof measured 26.8 GiB after exhausting the spike's 20 GiB reservation.

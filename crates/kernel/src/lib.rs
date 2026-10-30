@@ -871,22 +871,36 @@ impl World {
             self.check_node(&self.nodes[i])?;
             i += 1;
         }
-        // Locks are the footprints of holders; compare holders without growing a temporary set.
-        for (r, gate) in self.gates.iter().enumerate() {
-            let mut count = 0usize;
-            for (i, n) in self.nodes.iter().enumerate() {
-                if n.holds && n.repo == RepoId(r as u64) {
-                    count += 1;
-                    for other in &self.nodes[..i] {
-                        if other.holds && other.repo == n.repo && !self.footprints_disjoint(other.footprint, n.footprint) {
-                            return Err(Broken::Gate);
-                        }
+        // Locks are the footprints of holders in the same repo.
+        let mut i = 0;
+        while i < self.nodes.len() {
+            let n = self.nodes[i];
+            if n.holds {
+                let mut j = 0;
+                while j < i {
+                    let other = self.nodes[j];
+                    if other.holds && other.repo == n.repo
+                        && !self.footprints_disjoint(other.footprint, n.footprint)
+                    {
+                        return Err(Broken::Gate);
                     }
+                    j += 1;
                 }
             }
-            if count > gate.w as usize {
+            i += 1;
+        }
+        let mut r = 0;
+        while r < self.gates.len() {
+            let mut count = 0usize;
+            for n in &self.nodes {
+                if n.holds && n.repo == RepoId(r as u64) {
+                    count += 1;
+                }
+            }
+            if count > self.gates[r].w as usize {
                 return Err(Broken::Gate);
             }
+            r += 1;
         }
         let mut runs = 0u32;
         for n in &self.nodes {

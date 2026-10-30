@@ -83,6 +83,13 @@ impl World {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return a & b == 0;
         }
+        #[cfg(kani)]
+        {
+            // Assert before pruning: the four-file proof fixture must stay inline.
+            assert!(false, "interned footprints are outside the bounded proof fixture");
+            kani::assume(false);
+        }
+
         for file in self.files(a).expect("interned footprint") {
             let contains = match b.0 {
                 Repr::Inline(bits) => file.0 < 64 && bits & (1 << file.0) != 0,
@@ -99,6 +106,13 @@ impl World {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return Footprint::inline(a | b);
         }
+        #[cfg(kani)]
+        {
+            // Assert before pruning: the four-file proof fixture must stay inline.
+            assert!(false, "interned footprints are outside the bounded proof fixture");
+            kani::assume(false);
+        }
+
         let files = {
             let mut left = self.files(a).expect("interned footprint").peekable();
             let mut right = self.files(b).expect("interned footprint").peekable();
