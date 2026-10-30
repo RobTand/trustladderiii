@@ -150,8 +150,8 @@ registry.register(Upstream::GitHub, github_adapter_using_a_local_mock);
 ```
 
 The `mixed_registry` controller scenario does this with the real worktree
-client in a temporary Git repository. Its test adapter delegates worktree
-operations outside that test's scope to the worktree fake. The same registration
+client in a temporary Git repository. It registers `worktrees::Real` for prepare, push, rebase and teardown against
+local bare remotes over `file://`. Other upstreams remain fake. The same registration
 shape lets #10 test its real GitHub adapter against local fixtures.
 
 Simulation fakes persist receipts, delivery counts and every accepted delivery's
@@ -197,3 +197,37 @@ read-only status and configuration permissions. The review campaign generator
 in `crates/controller/tools/review_manifest.py` adds kernel tests and three
 representative Kani proofs. Generate it from a clean detached worktree at the
 final commit. CI runs independently on Mergify runners.
+
+## Real worktree records
+
+`adapters::worktrees::Real` serves configured repositories beneath
+`config.worktrees_root`. `serve_github` uses the GitHub client's cached
+installation token. `serve_local` uses token-free file transport for tests.
+A single registry entry handles all four worktree effects. Production startup
+registration remains separate from the explicit simulation daemon.
+
+The common Git directory holds a `tl3-controller` journal and durable epoch fence.
+Its repository and root binding prevents a restart from redirecting an unfinished
+operation to a different checkout. An in-process mutex serializes journal and Git
+operations for that repository. The existing client mutex serializes individual
+Git commands across handles. No OS file locks are used.
+
+Each effect records its exact prepare base, push head and lease, rebase target,
+or teardown lease before changing request state. Completed records preserve the
+original acknowledgement and observations, including after teardown. Pending
+records reconcile the local refs, checkout registration and remote ref. Missing
+intent proves the adapter never started that effect's Git mutation. Network and
+filesystem errors prove no terminal outcome. Old epochs can read existing results
+and confirm already-applied Git evidence, but cannot resume unfinished writes.
+
+A clean rebase updates branch and recorded base atomically in the client. Recovery
+restores an interrupted checkout before returning its new SHA through controller
+interning. A conflicting rebase aborts to a clean checkout before reporting
+`RebaseNeedsChanges`. Pushes use immutable heads and explicit leases. Teardown
+refuses dirty files and remote heads this controller did not publish, and deletes
+the local branch last.
+
+Keep the Git journal with its repository, and terminate the controller's whole
+service process group before a replacement takes ownership. Concurrent external
+Git writers and maintenance are outside repository ownership. This adapter adds
+no SQL schema or kernel transition.

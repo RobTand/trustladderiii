@@ -257,9 +257,10 @@ fn fences_and_unknowns() {
     ));
     // A remote failure is unknown, never an invented acknowledgement or absence.
     missing.epoch = 2;
+    let mut adapter = f.adapter();
     fs::rename(&f.remote, f.root.join("offline.git")).unwrap();
-    assert!(f.adapter().execute(&missing).is_err());
-    assert!(f.adapter().reconcile(&missing).is_err());
+    assert!(adapter.execute(&missing).is_err());
+    assert!(adapter.reconcile(&missing).is_err());
     fs::rename(f.root.join("offline.git"), &f.remote).unwrap();
     found(f.adapter().reconcile(&missing).unwrap());
 }
@@ -304,6 +305,35 @@ fn leases_and_exact_heads() {
         external
     );
 }
+fn old_epoch_partial_attempts() {
+    for boundary in ["before", "after"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = prepared(&f);
+        let push = made(&f, &prepare, false);
+        kill(&f, &push, boundary);
+        let mut newer = prepare.clone();
+        newer.key = "new-epoch".into();
+        newer.epoch = 2;
+        f.adapter().execute(&newer).unwrap();
+        assert!(f.adapter().execute(&push).is_err());
+        let result = f.adapter().reconcile(&push).unwrap();
+        if boundary == "before" {
+            assert!(matches!(result, Reconciliation::Pending));
+            assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+        } else {
+            found(result);
+            assert_eq!(
+                git(
+                    &f.remote,
+                    &["rev-parse", Real::branch(&push).unwrap().as_str()]
+                ),
+                push.head_sha.unwrap()
+            );
+        }
+    }
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--child") {
@@ -314,7 +344,8 @@ fn main() {
     conflicts();
     fences_and_unknowns();
     leases_and_exact_heads();
+    old_epoch_partial_attempts();
     println!(
-        "worktree lifecycle, 12 SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips"
+        "worktree lifecycle, 14 SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips"
     );
 }

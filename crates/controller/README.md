@@ -34,8 +34,9 @@ modules under `src/adapters` each contain a fake. The controller owns interning
 and persistence. Executors own authoritative reconciliation and epoch fencing.
 `adapters::simulation` is currently the only registry builder. A test starts
 with it and replaces one entry with `register`. The `mixed_registry` scenario
-uses the real `tl3-worktrees` client in a temporary repository and delegates
-the remaining worktree effects to its fake. The other four upstreams stay fake.
+registers `worktrees::Real` for all four worktree effects against local bare
+repositories over `file://`. The other four upstreams stay fake. The worker
+fixture reports the actual local head so real pushes can use it.
 
 Each adapter ticket extends `Delivery` with the fields its real client needs.
 The tracer does not predefine issue text, branch text, or PR text fields.
@@ -66,3 +67,48 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
+
+## Worktree adapter
+
+`worktrees::Real::new(&config.worktrees_root)` uses the existing configurable
+root. Add each repository with `serve_github(identity, local_repository, github)`.
+The GitHub client must match the repository's installation. The client supplies
+cached installation tokens at runtime. For simulation, use `serve_local` with a
+local bare remote. Local operations never obtain or pass a token.
+
+Register the adapter once with `registry.register(Upstream::Worktrees, real)`.
+The daemon still requires explicit simulation; production ingress and startup
+registration belong to their adapter tickets.
+
+The adapter owns branches named `tl3/issue-N-node-M`. Checkout paths beneath the
+configured root separate repositories and requests. `Real::branch` and
+`Real::checkout` expose those names for worker registration. One controller
+process and its Git children own each repository. Stop the whole service process
+group before starting a replacement. Do not run another Git writer or maintenance
+process against an owned repository.
+
+Keep `<common-git-dir>/tl3-controller` across restarts. It binds the repository
+and worktree root, records the highest accepted epoch, and journals immutable
+operation intents and terminal evidence. Changing that root requires an explicit
+migration of existing checkouts and records. Records use atomic replacement and
+sync both the file and its directory. No store migration is required.
+
+Prepare pins the fetched main commit before creating branch, base and checkout.
+Push pins the delivery's exact head and leases against the last head this adapter
+published. Rebase pins its target before execution, so recovery cannot silently
+use a newer main. A clean rebase reports `Observation::Rebased`; the controller
+interns its SHA before the kernel receives `RebaseClean`. A conflict reports
+`RebaseNeedsChanges` after aborting and verifying a clean checkout at the old
+head. The kernel alone selects the next phase.
+
+Teardown removes the clean checkout, leases deletion of the recorded remote
+head, then removes the local branch and base. A dirty checkout or changed remote
+ref returns an adapter error. Unknown outcomes keep their original effect key.
+Interrupted current-epoch operations reconcile against Git and finish their
+original intent. Older epochs may read terminal evidence, but cannot resume
+unfinished Git writes. No duration or silence establishes absence.
+
+The `worktrees` test executable kills adapter children with SIGKILL before and
+after Git applies each effect, including conflict and stale-epoch cases. The
+workspace verification script runs it, the mixed registry lifecycle, and the
+existing controller and store scenarios through PrismaBuild.

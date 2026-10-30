@@ -30,7 +30,10 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-The controller refreshes local `refs/heads/main` before branch creation or rebase.
+The controller refreshes local `refs/heads/main` before `create_branch` or
+`rebase_onto_main`. For recorded effects, `fetch_main` fetches into the private
+`refs/tl3/upstream-main` ref, then `create_branch_at` and `rebase_onto` use the
+exact recorded commit without changing a checked-out main.
 This adapter does not fetch,
 choose effect identities, persist controller state, retry network failures, or mark
 a new head approved. Every new head still needs checks and review.
@@ -84,11 +87,16 @@ Remote deletion reads and leases the ref, and an absent ref already counts as do
 
 `Remote::https` accepts only `github.com` HTTPS URLs without userinfo, query
 strings, or fragments.
-`Remote::local` accepts a local repository for tests. Neither type has a debug
+`Remote::local` converts a local repository into a `file://` URL for tests.
+Network methods take `Option<&InstallationToken>`. Pass `None` for local remotes;
+the client also withholds an accidentally supplied token from file transport.
+`publish` leases an exact commit against the controller's recorded remote head.
+`delete_remote_branch_at` leases deletion against a recorded head. Neither type has a debug
 implementation. Neither does `InstallationToken`.
 
 Authenticated Git processes receive the Basic authorization header through
 `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, and `GIT_CONFIG_VALUE_n` environment variables.
+The authorization header is scoped to `https://github.com/`.
 The token and its encoding never enter argv, remote URLs, or repository config.
 The adapter clears inherited environment variables, including Git tracing and
 config injection. It disables interactive credentials, configured credential

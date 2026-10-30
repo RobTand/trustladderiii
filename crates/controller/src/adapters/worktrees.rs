@@ -50,14 +50,14 @@ use std::{
 use tl3_kernel::{Event, Reply};
 use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
-/// One controller process owns every served repository and its Git subprocesses.
-/// Keep the common Git directory when restarting, including tl3-controller records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     BeforeApply,
     AfterApply,
 }
 
+/// One controller process owns every served repository and its Git subprocesses.
+/// Keep the common Git directory when restarting, including tl3-controller records.
 pub struct Real {
     root: PathBuf,
     repositories: Vec<Served>,
@@ -211,7 +211,6 @@ impl Real {
     }
 
     pub fn checkout(&self, delivery: &Delivery) -> PathBuf {
-        // Store-provided names never become filesystem components.
         let owner = hex(delivery.repository.owner.to_ascii_lowercase().as_bytes());
         let repo = hex(delivery.repository.name.to_ascii_lowercase().as_bytes());
         self.root.join(owner).join(repo).join(format!(
@@ -260,12 +259,12 @@ impl Served {
 
     fn load(&self, delivery: &Delivery) -> Result<Option<Record>> {
         let record: Option<Record> = read(&self.record_path(delivery))?;
-        if let Some(record) = &record {
-            if serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)? {
-                return Err(Error::Invalid(
-                    "worktree effect key reused with different payload",
-                ));
-            }
+        if let Some(record) = &record
+            && serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)?
+        {
+            return Err(Error::Invalid(
+                "worktree effect key reused with different payload",
+            ));
         }
         Ok(record)
     }
