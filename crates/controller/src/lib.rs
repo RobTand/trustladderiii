@@ -209,7 +209,7 @@ impl Controller {
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         commit
             .rows
-            .push(put("inbox", key.to_owned(), json!(&observation)));
+            .push(put("inbox", format!("external:{key}"), json!(&observation)));
         self.store.commit(&commit)?;
         Ok(())
     }
@@ -272,9 +272,8 @@ impl Controller {
                         }
                         Reconciliation::Absent => {
                             if effect.state == EffectState::Cancelling {
-                                return Err(Error::Invalid(
-                                    "cancellation requires an executor completion",
-                                ));
+                                self.cancel_absent(effect, &delivery)?;
+                                return Ok(true);
                             }
                             self.transition(effect, EffectState::Intended)?;
                             progressed = true;
@@ -365,6 +364,34 @@ impl Controller {
         Ok(())
     }
 
+    fn cancel_absent(&mut self, effect: &Effect, delivery: &Delivery) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("cancel:{}:{}", effect.key, snapshot.revision.get()),
+            json!({"cancelled_absent": effect.key}),
+            &snapshot,
+        );
+        commit.transitions.push(EffectTransition {
+            key: effect.key.clone(),
+            from: EffectState::Cancelling,
+            to: EffectState::Cancelled,
+        });
+        if let Out::Effect { node, seq, .. } = delivery.output {
+            self.apply(
+                &snapshot,
+                snapshot::decode(&snapshot)?,
+                Event::Ack {
+                    node,
+                    seq,
+                    ack: Ack::Confirmed,
+                },
+                &mut commit,
+            )?;
+        }
+        self.store.commit(&commit)?;
+        Ok(())
+    }
+
     fn complete(&mut self, key: &str, completion: Completion) -> Result<()> {
         let snapshot = self.store.load()?;
         let effect = snapshot
@@ -419,7 +446,7 @@ impl Controller {
                 &mut commit,
             )?;
         }
-        if completion.ack == Ack::Retryable {
+        if completion.ack == Ack::Retryable && matches!(delivery.output, Out::Effect { .. }) {
             // The kernel assigns a fresh sequence to its retry. Retire the old
             // delivery so only that new decision can start another attempt.
             commit.transitions.push(EffectTransition {

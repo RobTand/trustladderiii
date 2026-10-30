@@ -15,6 +15,9 @@ impl Fake {
 impl Executor for Fake {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
+        if delivery.pull_request.is_none() {
+            return Err(crate::Error::Invalid("enqueue needs a PR number"));
+        }
         let observations = match delivery.output {
             Out::Effect {
                 kind: EffectKind::Enqueue,
