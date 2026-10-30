@@ -3,6 +3,15 @@
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
 
+[store]
+host = "127.0.0.1"
+port = 5432
+database = "tl3"
+user = "tl3"
+connect_timeout_secs = 10
+# Omit for local peer/trust authentication. Runtime alone reads this file.
+# password_file = "/run/tl3/postgres-password"
+
 [limits]
 # Q4, docs/state-table.md, "Fit and splits": starting fit and context sizes.
 fit_tokens = 100000
