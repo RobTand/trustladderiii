@@ -9,7 +9,11 @@ from langchain_core.messages import AIMessage
 import pytest
 
 from tl3_workers import runtime
-from test_workers import BRIEF, request_doc  # noqa: F401
+import test_workers
+from test_workers import BRIEF
+
+# pytest collects the shared fixture under this module-level name.
+request_doc = test_workers.request_doc
 
 
 @pytest.fixture
