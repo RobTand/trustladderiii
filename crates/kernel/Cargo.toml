@@ -1,5 +1,5 @@
 [package]
-name = "tl3-slice-one-kernel"
+name = "tl3-kernel"
 version = "0.1.0"
 edition = "2024"
 publish = false

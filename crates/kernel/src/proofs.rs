@@ -33,7 +33,11 @@ fn small(n: &Node) -> bool {
     n.generation < LIMIT
         && n.next_seq < LIMIT
         && n.last_cmd < LIMIT
-        && n.footprint < 16
+        && n.repo.0 < 2
+        && [n.head, n.checked, n.approved, n.merged]
+            .into_iter()
+            .flatten()
+            .all(|h| h.0 < 8)
         && n.credit.start < CREDIT_LIMIT
         && n.credit.earned < CREDIT_LIMIT
         && n.credit.added < CREDIT_LIMIT
@@ -61,6 +65,7 @@ fn any_world(phase: Option<Phase>) -> World {
         pool_capacity: kani::any(),
         next_ticket: kani::any(),
         next_question: kani::any(),
+        file_sets: Vec::new(),
     };
     kani::assume(world.pool_capacity <= 2);
     kani::assume(world.gates[0].w <= 2 && world.gates[1].w <= 2);
@@ -82,9 +87,9 @@ fn any_settled_world(phase: Option<Phase>) -> World {
 fn require_consistent(w: &World) {
     match w.check() {
         Ok(()) => {}
+        Err(Broken::Footprint) => panic!("broken: footprint handle"),
         Err(Broken::Config) => panic!("broken: config"),
         Err(Broken::Agenda) => panic!("broken: agenda"),
-        Err(Broken::Head) => panic!("broken: head"),
         Err(Broken::Effect) => panic!("broken: effect"),
         Err(Broken::Holds) => panic!("broken: holds"),
         Err(Broken::Run) => panic!("broken: run"),
@@ -105,7 +110,10 @@ fn require_consistent(w: &World) {
 fn teardown(kind: EffectKind) -> bool {
     matches!(
         kind,
-        EffectKind::StopRun | EffectKind::WithdrawJob | EffectKind::ClosePr | EffectKind::RemoveWorktree
+        EffectKind::StopRun
+            | EffectKind::WithdrawJob
+            | EffectKind::ClosePr
+            | EffectKind::RemoveWorktree
     )
 }
 
@@ -137,15 +145,28 @@ fn check_nodes(before: &World, after: &World) {
 fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usize>) {
     let mut slot = 0;
     while slot < OUTBOX {
-        if let Some(Out::Effect { node, seq, kind, head }) = out.get(slot) {
-            assert!(node < after.nodes.len());
+        if let Some(Out::Effect {
+            node,
+            seq,
+            kind,
+            head,
+        }) = out.get(slot)
+        {
+            assert!(node.index().is_some_and(|i| i < after.nodes.len()));
             // Look the node up by a concrete index. A read at a symbolic index
             // into nodes the event just rewrote made the merge proofs need
             // more than 48 GB; this way they need a few.
             let mut i = 0;
             while i < after.nodes.len() {
-                if i == node {
-                    check_effect(before.nodes.get(i), &after.nodes[i], seq, kind, head, exempt == Some(i));
+                if NodeId(i as u64) == node {
+                    check_effect(
+                        before.nodes.get(i),
+                        &after.nodes[i],
+                        seq,
+                        kind,
+                        head,
+                        exempt == Some(i),
+                    );
                 }
                 i += 1;
             }
@@ -153,7 +174,14 @@ fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usi
         slot += 1;
     }
 }
-fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, head: Option<u8>, exempt: bool) {
+fn check_effect(
+    before: Option<&Node>,
+    n: &Node,
+    seq: u64,
+    kind: EffectKind,
+    head: Option<HeadId>,
+    exempt: bool,
+) {
     assert!(seq < n.next_seq);
     if let Some(b) = before {
         // Every effect gets a key no earlier effect of its node had.
@@ -165,7 +193,7 @@ fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, hea
     }
     // TL3 enqueues a head only after that exact head passed its checks and review.
     if kind == EffectKind::Enqueue {
-        assert!(matches!(head, Some(h) if has(n.approved, h) && n.checked == Some(h)));
+        assert!(matches!(head, Some(h) if n.approved == Some(h) && n.checked == Some(h)));
     }
 }
 
@@ -174,21 +202,29 @@ fn check_apply(event: Event) {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event, &mut out);
+    apply(&mut after, event.clone(), &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
     let exempt = match event {
-        Event::Ack { node, .. } => Some(node as usize),
-        Event::Command { node, command: Command::Resume, .. } => Some(node as usize),
+        Event::Ack { node, .. } => node.index(),
+        Event::Command {
+            node,
+            command: Command::Resume,
+            ..
+        } => node.index(),
         _ => None,
     };
     check_outputs(&before, &after, &out, exempt);
     // Each of Rob's answers applies only to the question it names, and only
     // once: anything it changes closes that question.
-    if let Event::Command { command: Command::Answer { question, .. }, .. } = event {
-        let mut unchanged = before.nodes[0];
+    if let Event::Command {
+        command: Command::Answer { question, .. },
+        ..
+    } = event
+    {
+        let mut unchanged = before.nodes[0].clone();
         unchanged.last_cmd = after.nodes[0].last_cmd;
         if after.nodes[0] != unchanged {
             assert!(before.nodes[0].question.is_some_and(|q| q.id == question));
@@ -234,29 +270,56 @@ fn check_witness(phase: Phase) {
     if let Some(event) = event {
         let mut after = world;
         let mut out = Outbox::new();
-        apply(&mut after, event, &mut out);
+        apply(&mut after, event.clone(), &mut out);
         assert!(after.measure() < before);
     }
 }
 
 fn reply(reply: Reply) -> Event {
-    Event::Reply { node: 0, generation: kani::any(), reply }
+    match &reply {
+        Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head } => {
+            kani::assume(head.0 < 8)
+        }
+        _ => {}
+    }
+    Event::Reply {
+        node: NodeId(0),
+        generation: kani::any(),
+        reply,
+    }
 }
 
 fn ack(ack: Ack) -> Event {
-    Event::Ack { node: 0, seq: kani::any(), ack }
+    Event::Ack {
+        node: NodeId(0),
+        seq: kani::any(),
+        ack,
+    }
 }
 
 fn fact(fact: Fact) -> Event {
-    Event::Fact { node: 0, fact }
+    if let Fact::PushByOther { head } = fact {
+        kani::assume(head.0 < 8);
+    }
+    Event::Fact {
+        node: NodeId(0),
+        fact,
+    }
 }
 
 fn command(command: Command) -> Event {
-    Event::Command { node: 0, id: kani::any(), command }
+    Event::Command {
+        node: NodeId(0),
+        id: kani::any(),
+        command,
+    }
 }
 
 fn answer(answer: Answer) -> Event {
-    command(Command::Answer { question: kani::any(), answer })
+    command(Command::Answer {
+        question: kani::any(),
+        answer,
+    })
 }
 
 macro_rules! proof {
@@ -270,100 +333,228 @@ macro_rules! proof {
 }
 
 // Applying each event variant.
-proof!(apply_new_request, check_apply(Event::NewRequest { repo: kani::any() }));
-proof!(apply_ingest_done, check_apply(reply(Reply::IngestDone { size: kani::any() })));
-proof!(apply_ingest_early_end, check_apply(reply(Reply::IngestEarlyEnd(kani::any()))));
+proof!(
+    apply_new_request,
+    check_apply(Event::NewRequest { repo: kani::any() })
+);
+proof!(
+    apply_ingest_done,
+    check_apply(reply(Reply::IngestDone { size: kani::any() }))
+);
+proof!(
+    apply_ingest_early_end,
+    check_apply(reply(Reply::IngestEarlyEnd(kani::any())))
+);
 proof!(apply_audit_agrees, check_apply(reply(Reply::AuditAgrees)));
-proof!(apply_audit_disagrees, check_apply(reply(Reply::AuditDisagrees)));
-proof!(apply_plan_leaf, check_apply(reply(Reply::PlanLeaf { footprint: kani::any(), fits: kani::any() })));
+proof!(
+    apply_audit_disagrees,
+    check_apply(reply(Reply::AuditDisagrees))
+);
+proof!(
+    apply_plan_leaf,
+    check_apply(reply(Reply::PlanLeaf {
+        footprint: kani::any(),
+        fits: kani::any()
+    }))
+);
 proof!(apply_plan_split, check_apply(reply(Reply::PlanSplit)));
-proof!(apply_plan_cant_meet, check_apply(reply(Reply::PlanCantMeet)));
-proof!(apply_maker_done, check_apply(reply(Reply::MakerDone { head: kani::any() })));
-proof!(apply_maker_needs_files, check_apply(reply(Reply::MakerNeedsFiles { files: kani::any(), fits: kani::any() })));
-proof!(apply_maker_cant_meet, check_apply(reply(Reply::MakerCantMeet)));
-proof!(apply_maker_out_of_room, check_apply(reply(Reply::MakerOutOfRoom)));
-proof!(apply_checks_done, check_apply(reply(Reply::ChecksDone { report: kani::any(), pass: kani::any(), in_footprint: kani::any() })));
-proof!(apply_approved, check_apply(reply(Reply::Approved { head: kani::any() })));
-proof!(apply_changes_requested, check_apply(reply(Reply::ChangesRequested)));
-proof!(apply_rebase_clean, check_apply(reply(Reply::RebaseClean { head: kani::any() })));
-proof!(apply_rebase_needs_changes, check_apply(reply(Reply::RebaseNeedsChanges)));
+proof!(
+    apply_plan_cant_meet,
+    check_apply(reply(Reply::PlanCantMeet))
+);
+proof!(
+    apply_maker_done,
+    check_apply(reply(Reply::MakerDone { head: kani::any() }))
+);
+proof!(
+    apply_maker_needs_files,
+    check_apply(reply(Reply::MakerNeedsFiles {
+        files: kani::any(),
+        fits: kani::any()
+    }))
+);
+proof!(
+    apply_maker_cant_meet,
+    check_apply(reply(Reply::MakerCantMeet))
+);
+proof!(
+    apply_maker_out_of_room,
+    check_apply(reply(Reply::MakerOutOfRoom))
+);
+proof!(
+    apply_checks_done,
+    check_apply(reply(Reply::ChecksDone {
+        report: kani::any(),
+        pass: kani::any(),
+        in_footprint: kani::any()
+    }))
+);
+proof!(
+    apply_approved,
+    check_apply(reply(Reply::Approved { head: kani::any() }))
+);
+proof!(
+    apply_changes_requested,
+    check_apply(reply(Reply::ChangesRequested))
+);
+proof!(
+    apply_rebase_clean,
+    check_apply(reply(Reply::RebaseClean { head: kani::any() }))
+);
+proof!(
+    apply_rebase_needs_changes,
+    check_apply(reply(Reply::RebaseNeedsChanges))
+);
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
 proof!(apply_pr_closed, check_apply(fact(Fact::PrClosedByPerson)));
-proof!(apply_pr_dequeued, check_apply(fact(Fact::PrDequeuedByPerson)));
-proof!(apply_outside_push, check_apply(fact(Fact::PushByOther { head: kani::any() })));
-proof!(apply_ci_failed, check_apply(fact(Fact::CiFailed { infra: kani::any() })));
+proof!(
+    apply_pr_dequeued,
+    check_apply(fact(Fact::PrDequeuedByPerson))
+);
+proof!(
+    apply_outside_push,
+    check_apply(fact(Fact::PushByOther { head: kani::any() }))
+);
+proof!(
+    apply_ci_failed,
+    check_apply(fact(Fact::CiFailed { infra: kani::any() }))
+);
 proof!(apply_conflict, check_apply(fact(Fact::Conflict)));
-proof!(apply_incident_cleared, check_apply(fact(Fact::IncidentCleared { by_rob: kani::any() })));
+proof!(
+    apply_incident_cleared,
+    check_apply(fact(Fact::IncidentCleared {
+        by_rob: kani::any()
+    }))
+);
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
 proof!(apply_resume, check_apply(command(Command::Resume)));
-proof!(apply_change_request, check_apply(command(Command::ChangeRequest)));
+proof!(
+    apply_change_request,
+    check_apply(command(Command::ChangeRequest))
+);
 proof!(apply_answer_continue, check_apply(answer(Answer::Continue)));
-proof!(apply_answer_try_again, check_apply(answer(Answer::TryAgain)));
-proof!(apply_answer_add_credit, check_apply(answer(Answer::AddCredit(kani::any()))));
-proof!(apply_answer_change_request, check_apply(answer(Answer::ChangeRequest)));
+proof!(
+    apply_answer_try_again,
+    check_apply(answer(Answer::TryAgain))
+);
+proof!(
+    apply_answer_add_credit,
+    check_apply(answer(Answer::AddCredit(kani::any())))
+);
+proof!(
+    apply_answer_change_request,
+    check_apply(answer(Answer::ChangeRequest))
+);
 proof!(apply_answer_stop, check_apply(answer(Answer::Stop)));
 proof!(apply_answer_unclear, check_apply(answer(Answer::Unclear)));
 proof!(apply_answer_retry, check_apply(answer(Answer::Retry)));
-proof!(apply_answer_mark_handled, check_apply(answer(Answer::MarkHandled)));
+proof!(
+    apply_answer_mark_handled,
+    check_apply(answer(Answer::MarkHandled))
+);
 
 // Settle's internal transitions, one phase at a time.
 proof!(advance_ingesting, check_advance(Phase::Ingesting, true));
 proof!(advance_auditing, check_advance(Phase::Auditing, true));
 proof!(advance_unplanned, check_advance(Phase::Unplanned, true));
-proof!(advance_planning, check_advance(Phase::Planning { must_split: kani::any() }, true));
-proof!(advance_ready, check_advance(Phase::Ready(kani::any()), true));
+proof!(
+    advance_planning,
+    check_advance(
+        Phase::Planning {
+            must_split: kani::any()
+        },
+        true
+    )
+);
+proof!(
+    advance_ready,
+    check_advance(Phase::Ready(kani::any()), true)
+);
 proof!(advance_making, check_advance(Phase::Making, true));
 proof!(advance_checking, check_advance(Phase::Checking, true));
 proof!(advance_reviewing, check_advance(Phase::Reviewing, true));
 proof!(advance_publishing, check_advance(Phase::Publishing, true));
 proof!(advance_queued, check_advance(Phase::Queued, false));
 proof!(advance_rebasing, check_advance(Phase::Rebasing, true));
-proof!(advance_awaiting_rob, check_advance(Phase::AwaitingRob, false));
-proof!(advance_stopping, check_advance(Phase::Stopping(kani::any()), true));
-proof!(advance_closed, check_advance(Phase::Closed(kani::any()), false));
+proof!(
+    advance_awaiting_rob,
+    check_advance(Phase::AwaitingRob, false)
+);
+proof!(
+    advance_stopping,
+    check_advance(Phase::Stopping(kani::any()), true)
+);
+proof!(
+    advance_closed,
+    check_advance(Phase::Closed(kani::any()), false)
+);
 
 // No dead states, one phase at a time.
 proof!(progress_from_ingesting, check_witness(Phase::Ingesting));
 proof!(progress_from_auditing, check_witness(Phase::Auditing));
 proof!(progress_from_unplanned, check_witness(Phase::Unplanned));
-proof!(progress_from_planning, check_witness(Phase::Planning { must_split: kani::any() }));
-proof!(progress_from_ready, check_witness(Phase::Ready(kani::any())));
+proof!(
+    progress_from_planning,
+    check_witness(Phase::Planning {
+        must_split: kani::any()
+    })
+);
+proof!(
+    progress_from_ready,
+    check_witness(Phase::Ready(kani::any()))
+);
 proof!(progress_from_making, check_witness(Phase::Making));
 proof!(progress_from_checking, check_witness(Phase::Checking));
 proof!(progress_from_reviewing, check_witness(Phase::Reviewing));
 proof!(progress_from_publishing, check_witness(Phase::Publishing));
 proof!(progress_from_queued, check_witness(Phase::Queued));
 proof!(progress_from_rebasing, check_witness(Phase::Rebasing));
-proof!(progress_from_awaiting_rob, check_witness(Phase::AwaitingRob));
-proof!(progress_from_stopping, check_witness(Phase::Stopping(kani::any())));
-proof!(progress_from_closed, check_witness(Phase::Closed(kani::any())));
+proof!(
+    progress_from_awaiting_rob,
+    check_witness(Phase::AwaitingRob)
+);
+proof!(
+    progress_from_stopping,
+    check_witness(Phase::Stopping(kani::any()))
+);
+proof!(
+    progress_from_closed,
+    check_witness(Phase::Closed(kani::any()))
+);
 
 /// A merge TL3 observes keeps every rule, is recorded truthfully, and a merge
 /// of a head TL3 didn't approve raises an incident and a note to Rob. Merges
 /// are the heaviest event to prove, so they get one proof per phase.
 fn check_pr_merged(phase: Phase) {
     let before = any_settled_world(Some(phase));
-    let n = before.nodes[0];
-    let head: u8 = kani::any();
+    let n = &before.nodes[0];
+    let head: HeadId = kani::any();
+    kani::assume(head.0 < 8);
     let checks_passed: bool = kani::any();
-    let event = fact(Fact::PrMerged { head, checks_passed });
+    let event = fact(Fact::PrMerged {
+        head,
+        checks_passed,
+    });
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event, &mut out);
+    apply(&mut after, event.clone(), &mut out);
     kani::cover!(after != before, "the merge changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);
     check_outputs(&before, &after, &out, None);
-    if n.had_pr && n.merged.is_none() && !n.phase.is_closed() && head < MAX_HEADS {
-        let m = after.nodes[0];
+    if n.had_pr && n.merged.is_none() && !n.phase.is_closed() {
+        let m = &after.nodes[0];
         assert!(m.merged == Some(head));
         assert!(m.phase == Phase::Stopping(Outcome::Merged));
-        if !(has(n.approved, head) && checks_passed) {
-            assert!(out.contains(Out::Notice { node: 0, notice: Notice::Note(NoteKind::UnapprovedMerge) }));
+        if !(n.approved == Some(head) && checks_passed) {
+            assert!(out.contains(Out::Notice {
+                node: NodeId(0),
+                notice: Notice::Note(NoteKind::UnapprovedMerge)
+            }));
         }
     }
 }
@@ -371,7 +562,12 @@ fn check_pr_merged(phase: Phase) {
 proof!(pr_merged_ingesting, check_pr_merged(Phase::Ingesting));
 proof!(pr_merged_auditing, check_pr_merged(Phase::Auditing));
 proof!(pr_merged_unplanned, check_pr_merged(Phase::Unplanned));
-proof!(pr_merged_planning, check_pr_merged(Phase::Planning { must_split: kani::any() }));
+proof!(
+    pr_merged_planning,
+    check_pr_merged(Phase::Planning {
+        must_split: kani::any()
+    })
+);
 proof!(pr_merged_ready, check_pr_merged(Phase::Ready(kani::any())));
 proof!(pr_merged_making, check_pr_merged(Phase::Making));
 proof!(pr_merged_checking, check_pr_merged(Phase::Checking));
@@ -380,6 +576,11 @@ proof!(pr_merged_publishing, check_pr_merged(Phase::Publishing));
 proof!(pr_merged_queued, check_pr_merged(Phase::Queued));
 proof!(pr_merged_rebasing, check_pr_merged(Phase::Rebasing));
 proof!(pr_merged_awaiting_rob, check_pr_merged(Phase::AwaitingRob));
-proof!(pr_merged_stopping, check_pr_merged(Phase::Stopping(kani::any())));
-proof!(pr_merged_closed, check_pr_merged(Phase::Closed(kani::any())));
-
+proof!(
+    pr_merged_stopping,
+    check_pr_merged(Phase::Stopping(kani::any()))
+);
+proof!(
+    pr_merged_closed,
+    check_pr_merged(Phase::Closed(kani::any()))
+);

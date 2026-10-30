@@ -1,11 +1,11 @@
-//! TL3's slice-one kernel, built from `docs/state-table.md` version 4.
+//! TL3's slice-one kernel, built from `docs/state-table.md` version 5.
 //!
 //! The kernel is one pure function, `step(world, event) -> (world, outputs)`.
 //! After applying the event, `settle` takes every internal transition the
 //! facts allow until none is left. Ordinary builds have no standard library,
 //! so the kernel can't reach files, sockets, clocks or processes.
 //!
-//! Deliberate simplifications for the spike:
+//! Slice-one simplifications:
 //! - Each request is a single root leaf, so its credit lives on its node.
 //! - Rob owns every pause, as in slice one.
 //! - Notices are outbox entries that no node waits on: questions to Rob,
@@ -21,6 +21,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+mod footprint;
+mod ids;
+pub use footprint::Footprint;
+pub use ids::{FileId, HeadId, NodeId, RepoId};
+
 #[cfg(kani)]
 mod proofs;
 
@@ -28,8 +33,6 @@ mod proofs;
 pub const RESERVE: u32 = 3;
 /// Rechecks after clean rebases that cost nothing, per leaf.
 pub const FREE_RECHECKS: u8 = 3;
-/// Heads are abstract commit ids below this bound, so one byte holds a set of them.
-pub const MAX_HEADS: u8 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
@@ -284,9 +287,9 @@ pub struct Node {
     pub phase: Phase,
     /// Position in the phase's agenda.
     pub pos: u8,
-    pub repo: u8,
-    /// Declared files, as a bitmask.
-    pub footprint: u8,
+    pub repo: RepoId,
+    /// The files this leaf may change.
+    pub footprint: Footprint,
     /// Operation generation. Every phase change and retry takes a new one.
     pub generation: u64,
     pub next_seq: u64,
@@ -316,12 +319,12 @@ pub struct Node {
     pub fx_incidents: u8,
     pub waiting_incident: bool,
     pub incident_needs_rob: bool,
-    pub head: Option<u8>,
+    pub head: Option<HeadId>,
     /// The head that passed its checks.
-    pub checked: Option<u8>,
-    /// Heads that passed checks and review, as a bitmask.
-    pub approved: u8,
-    pub merged: Option<u8>,
+    pub checked: Option<HeadId>,
+    /// The exact head that passed checks and review.
+    pub approved: Option<HeadId>,
+    pub merged: Option<HeadId>,
     pub pr_open: bool,
     pub had_pr: bool,
     /// The branch and worktree may exist.
@@ -331,12 +334,12 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(repo: u8) -> Node {
+    pub fn new(repo: RepoId) -> Node {
         Node {
             phase: Phase::Ingesting,
             pos: 0,
             repo,
-            footprint: 0,
+            footprint: Footprint::default(),
             generation: 0,
             next_seq: 0,
             effect: None,
@@ -362,7 +365,7 @@ impl Node {
             incident_needs_rob: false,
             head: None,
             checked: None,
-            approved: 0,
+            approved: None,
             merged: None,
             pr_open: false,
             had_pr: false,
@@ -434,11 +437,11 @@ impl Node {
         if self.phase.is_closed() {
             return 0;
         }
-        if self.pause_move_due() {
-            if let Some(r) = self.phase.resume() {
-                // Counted as the paused Ready it is about to become.
-                return rank(Phase::Ready(r)) * 64 + 2 + 8;
-            }
+        if self.pause_move_due()
+            && let Some(r) = self.phase.resume()
+        {
+            // Counted as the paused Ready it is about to become.
+            return rank(Phase::Ready(r)) * 64 + 2 + 8;
         }
         let rank = match self.phase {
             Phase::AwaitingRob => self.question.map_or(3, |q| cont_rank(q.cont) + 1),
@@ -449,12 +452,11 @@ impl Node {
         let mut d = rank * 64 + 2 * (len - pos);
         if let Some(e) = self.effect {
             d += 1;
-            if !e.cancelling {
-                if let Some(Item::Do(k) | Item::Teardown(k)) = self.current() {
-                    if k == e.kind {
-                        d -= 2;
-                    }
-                }
+            if !e.cancelling
+                && let Some(Item::Do(k) | Item::Teardown(k)) = self.current()
+                && k == e.kind
+            {
+                d -= 2;
             }
         }
         if self.paused && !self.phase.is_stopping() {
@@ -484,26 +486,45 @@ pub struct World {
     pub pool_capacity: u8,
     pub next_ticket: u64,
     pub next_question: u64,
+    file_sets: Vec<Vec<FileId>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
-    IngestDone { size: u8 },
+    IngestDone {
+        size: u8,
+    },
     IngestEarlyEnd(EarlyEnd),
     AuditAgrees,
     AuditDisagrees,
-    PlanLeaf { footprint: u8, fits: bool },
+    PlanLeaf {
+        footprint: Footprint,
+        fits: bool,
+    },
     PlanSplit,
     PlanCantMeet,
-    MakerDone { head: u8 },
-    MakerNeedsFiles { files: u8, fits: bool },
+    MakerDone {
+        head: HeadId,
+    },
+    MakerNeedsFiles {
+        files: Footprint,
+        fits: bool,
+    },
     MakerCantMeet,
     MakerOutOfRoom,
-    ChecksDone { report: bool, pass: bool, in_footprint: bool },
-    Approved { head: u8 },
+    ChecksDone {
+        report: bool,
+        pass: bool,
+        in_footprint: bool,
+    },
+    Approved {
+        head: HeadId,
+    },
     ChangesRequested,
-    RebaseClean { head: u8 },
+    RebaseClean {
+        head: HeadId,
+    },
     RebaseNeedsChanges,
     /// A crash, setup error, lost worker or stall.
     RunFailed,
@@ -520,10 +541,10 @@ pub enum Ack {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
-    PrMerged { head: u8, checks_passed: bool },
+    PrMerged { head: HeadId, checks_passed: bool },
     PrClosedByPerson,
     PrDequeuedByPerson,
-    PushByOther { head: u8 },
+    PushByOther { head: HeadId },
     CiFailed { infra: bool },
     Conflict,
     IncidentCleared { by_rob: bool },
@@ -555,16 +576,34 @@ pub enum Command {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Event {
-    NewRequest { repo: u8 },
-    Reply { node: u32, generation: u64, reply: Reply },
-    Ack { node: u32, seq: u64, ack: Ack },
-    Fact { node: u32, fact: Fact },
-    Command { node: u32, id: u64, command: Command },
+    NewRequest {
+        repo: RepoId,
+    },
+    Reply {
+        node: NodeId,
+        generation: u64,
+        reply: Reply,
+    },
+    Ack {
+        node: NodeId,
+        seq: u64,
+        ack: Ack,
+    },
+    Fact {
+        node: NodeId,
+        fact: Fact,
+    },
+    Command {
+        node: NodeId,
+        id: u64,
+        command: Command,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
     UnapprovedMerge,
+    Replanned,
     PrClosed,
     PrDequeued,
     OutsidePush,
@@ -583,8 +622,16 @@ pub enum Notice {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Out {
-    Effect { node: usize, seq: u64, kind: EffectKind, head: Option<u8> },
-    Notice { node: usize, notice: Notice },
+    Effect {
+        node: NodeId,
+        seq: u64,
+        kind: EffectKind,
+        head: Option<HeadId>,
+    },
+    Notice {
+        node: NodeId,
+        notice: Notice,
+    },
 }
 
 /// Most outputs one transition emits. A late merge with an unapproved head
@@ -595,7 +642,7 @@ pub const OUTBOX: usize = 5;
 /// transition of settle. A fixed array holds them, not a list on the heap,
 /// because Kani reasons about a growable list far more expensively: the merge
 /// proofs ran out of memory reading one. `step` collects them into its list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outbox {
     items: [Option<Out>; OUTBOX],
     len: usize,
@@ -603,11 +650,17 @@ pub struct Outbox {
 
 impl Outbox {
     pub const fn new() -> Self {
-        Outbox { items: [None; OUTBOX], len: 0 }
+        Outbox {
+            items: [None; OUTBOX],
+            len: 0,
+        }
     }
 
     fn push(&mut self, o: Out) {
-        assert!(self.len < OUTBOX, "a transition emitted more than OUTBOX outputs");
+        assert!(
+            self.len < OUTBOX,
+            "a transition emitted more than OUTBOX outputs"
+        );
         self.items[self.len] = Some(o);
         self.len += 1;
     }
@@ -677,9 +730,12 @@ fn agenda(phase: Phase) -> &'static [Item] {
         Phase::Making => &[I::Do(K::PrepareWorktree), I::Start(Role::Make), I::Await],
         Phase::Checking => &[I::StartChecks, I::Await],
         Phase::Reviewing => &[I::Start(Role::Review), I::Await],
-        Phase::Publishing => {
-            &[I::Do(K::Push), I::Do(K::PostApproval), I::Do(K::OpenPr), I::Do(K::Enqueue)]
-        }
+        Phase::Publishing => &[
+            I::Do(K::Push),
+            I::Do(K::PostApproval),
+            I::Do(K::OpenPr),
+            I::Do(K::Enqueue),
+        ],
         Phase::Queued => &[I::Merge],
         Phase::Rebasing => &[I::StartRebase, I::Await],
         Phase::AwaitingRob => &[I::Answer],
@@ -732,12 +788,11 @@ fn cont_rank(cont: Cont) -> u64 {
     }
 }
 
-fn has(bits: u8, head: u8) -> bool {
-    head < MAX_HEADS && bits & (1u8 << head) != 0
-}
-
 fn notice(out: &mut Outbox, node: usize, notice: Notice) {
-    out.push(Out::Notice { node, notice });
+    out.push(Out::Notice {
+        node: NodeId(node as u64),
+        notice,
+    });
 }
 
 impl World {
@@ -748,11 +803,12 @@ impl World {
             pool_capacity,
             next_ticket: 0,
             next_question: 0,
+            file_sets: Vec::new(),
         }
     }
 
-    fn index(&self, node: u32) -> Option<usize> {
-        let i = node as usize;
+    fn index(&self, node: NodeId) -> Option<usize> {
+        let i = node.index()?;
         if i < self.nodes.len() { Some(i) } else { None }
     }
 
@@ -787,15 +843,26 @@ impl World {
             if n.phase.is_closed() {
                 continue;
             }
-            let node = i as u32;
+            let node = NodeId(i as u64);
             if n.paused && !n.phase.is_stopping() {
-                return Some(Event::Command { node, id: n.last_cmd + 1, command: Command::Resume });
+                return Some(Event::Command {
+                    node,
+                    id: n.last_cmd + 1,
+                    command: Command::Resume,
+                });
             }
             if let Some(e) = n.effect {
-                return Some(Event::Ack { node, seq: e.seq, ack: Ack::Confirmed });
+                return Some(Event::Ack {
+                    node,
+                    seq: e.seq,
+                    ack: Ack::Confirmed,
+                });
             }
             if n.waiting_incident {
-                return Some(Event::Fact { node, fact: Fact::IncidentCleared { by_rob: true } });
+                return Some(Event::Fact {
+                    node,
+                    fact: Fact::IncidentCleared { by_rob: true },
+                });
             }
             if let Some(q) = n.question {
                 let answer = match q.kind {
@@ -805,8 +872,15 @@ impl World {
                     QKind::OutOfCredit => Answer::AddCredit(1),
                     QKind::CleanupFailed => Answer::MarkHandled,
                 };
-                let command = Command::Answer { question: q.id, answer };
-                return Some(Event::Command { node, id: n.last_cmd + 1, command });
+                let command = Command::Answer {
+                    question: q.id,
+                    answer,
+                };
+                return Some(Event::Command {
+                    node,
+                    id: n.last_cmd + 1,
+                    command,
+                });
             }
             match n.current() {
                 Some(Item::Await) => {
@@ -816,24 +890,41 @@ impl World {
                         Phase::Auditing => Reply::AuditAgrees,
                         Phase::Planning { must_split: true } => Reply::PlanSplit,
                         Phase::Planning { must_split: false } => Reply::PlanLeaf {
-                            footprint: if n.footprint != 0 { n.footprint } else { 1 },
+                            footprint: if !n.footprint.is_empty() {
+                                n.footprint
+                            } else {
+                                Footprint::inline(1)
+                            },
                             fits: true,
                         },
                         Phase::Making => Reply::MakerDone {
-                            head: n.head.map_or(0, |h| (h + 1) % MAX_HEADS),
+                            head: n.head.unwrap_or(HeadId(0)),
                         },
-                        Phase::Checking => {
-                            Reply::ChecksDone { report: true, pass: true, in_footprint: true }
-                        }
-                        Phase::Reviewing => Reply::Approved { head: n.head.unwrap_or(0) },
-                        Phase::Rebasing => Reply::RebaseClean { head: n.head.unwrap_or(0) },
+                        Phase::Checking => Reply::ChecksDone {
+                            report: true,
+                            pass: true,
+                            in_footprint: true,
+                        },
+                        Phase::Reviewing => Reply::Approved {
+                            head: n.head.unwrap_or(HeadId(0)),
+                        },
+                        Phase::Rebasing => Reply::RebaseClean {
+                            head: n.head.unwrap_or(HeadId(0)),
+                        },
                         _ => continue,
                     };
-                    return Some(Event::Reply { node, generation, reply });
+                    return Some(Event::Reply {
+                        node,
+                        generation,
+                        reply,
+                    });
                 }
                 Some(Item::Merge) => {
-                    let head = n.head.unwrap_or(0);
-                    let fact = Fact::PrMerged { head, checks_passed: true };
+                    let head = n.head.unwrap_or(HeadId(0));
+                    let fact = Fact::PrMerged {
+                        head,
+                        checks_passed: true,
+                    };
                     return Some(Event::Fact { node, fact });
                 }
                 // Waiting on the gate or the pool: another node holds what it needs.
@@ -869,21 +960,34 @@ impl World {
             self.check_node(&self.nodes[i])?;
             i += 1;
         }
-        // A gate grants at most W slots and never gives two holders the same file.
-        let mut r = 0;
-        while r < self.gates.len() {
-            let mut count = 0u32;
-            let mut files = 0u8;
-            for n in &self.nodes {
-                if n.holds && n.repo as usize == r {
-                    if files & n.footprint != 0 {
+        // Locks are the footprints of holders in the same repo.
+        let mut i = 0;
+        while i < self.nodes.len() {
+            let n = self.nodes[i];
+            if n.holds {
+                let mut j = 0;
+                while j < i {
+                    let other = self.nodes[j];
+                    if other.holds
+                        && other.repo == n.repo
+                        && !self.footprints_disjoint(other.footprint, n.footprint)
+                    {
                         return Err(Broken::Gate);
                     }
-                    files |= n.footprint;
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+        let mut r = 0;
+        while r < self.gates.len() {
+            let mut count = 0usize;
+            for n in &self.nodes {
+                if n.holds && n.repo == RepoId(r as u64) {
                     count += 1;
                 }
             }
-            if count > self.gates[r].w as u32 {
+            if count > self.gates[r].w as usize {
                 return Err(Broken::Gate);
             }
             r += 1;
@@ -909,8 +1013,11 @@ impl World {
 
     fn check_node(&self, n: &Node) -> Result<(), Broken> {
         let items = agenda(n.phase);
-        if n.repo as usize >= self.gates.len() {
+        if n.repo.index().is_none_or(|r| r >= self.gates.len()) {
             return Err(Broken::Config);
+        }
+        if !self.has_footprint(n.footprint) {
+            return Err(Broken::Footprint);
         }
         if n.phase.is_closed() {
             if n.pos != 0 {
@@ -924,11 +1031,6 @@ impl World {
             return Err(Broken::Agenda);
         }
         let current = n.current();
-        for h in [n.head, n.checked, n.merged].into_iter().flatten() {
-            if h >= MAX_HEADS {
-                return Err(Broken::Head);
-            }
-        }
 
         // One effect in flight, with a fresh key, belonging to the current step
         // unless the node has moved on.
@@ -967,7 +1069,11 @@ impl World {
                 | Phase::Rebasing
         );
         if current == Some(Item::Await) {
-            let mine = if n.phase == Phase::Checking { n.job } else { n.run };
+            let mine = if n.phase == Phase::Checking {
+                n.job
+            } else {
+                n.run
+            };
             if mine != Some(n.generation) {
                 return Err(Broken::Run);
             }
@@ -992,7 +1098,12 @@ impl World {
         // Places in line.
         if let Some(t) = n.ticket {
             let in_line = matches!(current, Some(Item::Slot) | Some(Item::Start(_)));
-            if t >= self.next_ticket || n.waiting_incident || n.effect.is_some() || n.pool || !in_line {
+            if t >= self.next_ticket
+                || n.waiting_incident
+                || n.effect.is_some()
+                || n.pool
+                || !in_line
+            {
                 return Err(Broken::Ticket);
             }
         }
@@ -1004,7 +1115,8 @@ impl World {
                     QKind::CantMeet | QKind::OutOfCredit => 1,
                     _ => 0,
                 };
-                if q.id >= self.next_question || q.cost != price || (q.cost > 0 && !n.credit.ready) {
+                if q.id >= self.next_question || q.cost != price || (q.cost > 0 && !n.credit.ready)
+                {
                     return Err(Broken::Question);
                 }
                 // While Rob is asked, nothing else is in flight for the node.
@@ -1021,7 +1133,10 @@ impl World {
                                 Outcome::Duplicate | Outcome::AlreadyDone | Outcome::NotActionable
                             ),
                             (QKind::NeedsSplitting, Cont::Nowhere) => true,
-                            (QKind::CantMeet, Cont::Planning { .. } | Cont::Ready(Resume::Making)) => true,
+                            (
+                                QKind::CantMeet,
+                                Cont::Planning { .. } | Cont::Ready(Resume::Making),
+                            ) => true,
                             (
                                 QKind::OutOfCredit,
                                 Cont::Planning { .. }
@@ -1044,12 +1159,18 @@ impl World {
                         if let Cont::Ready(r) = q.cont {
                             self.check_ready(n, r)?;
                         }
-                        if matches!(q.cont, Cont::Auditing | Cont::Unplanned | Cont::Planning { .. }) && !n.credit.ready {
+                        if matches!(
+                            q.cont,
+                            Cont::Auditing | Cont::Unplanned | Cont::Planning { .. }
+                        ) && !n.credit.ready
+                        {
                             return Err(Broken::Question);
                         }
                     }
                     Phase::Stopping(_) => {
-                        if q.kind != QKind::CleanupFailed || !matches!(current, Some(Item::Teardown(_))) {
+                        if q.kind != QKind::CleanupFailed
+                            || !matches!(current, Some(Item::Teardown(_)))
+                        {
                             return Err(Broken::Question);
                         }
                     }
@@ -1095,8 +1216,10 @@ impl World {
             }
         }
         let leaf = n.phase.holding() || matches!(n.phase, Phase::Ready(_));
-        let after_ingest =
-            matches!(n.phase, Phase::Auditing | Phase::Unplanned | Phase::Planning { .. });
+        let after_ingest = matches!(
+            n.phase,
+            Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
+        );
         if (leaf || after_ingest || n.had_pr) && !n.credit.ready {
             return Err(Broken::Credit);
         }
@@ -1114,7 +1237,8 @@ impl World {
         // The PR counts as open from the moment TL3 asks GitHub to open it.
         let opening = n.phase == Phase::Publishing
             && n.pos == 2
-            && n.effect.is_some_and(|e| !e.cancelling && e.kind == EffectKind::OpenPr);
+            && n.effect
+                .is_some_and(|e| !e.cancelling && e.kind == EffectKind::OpenPr);
         if n.phase == Phase::Publishing && (n.pos >= 3 || opening) && !n.pr_open {
             return Err(Broken::Pr);
         }
@@ -1131,12 +1255,17 @@ impl World {
         if n.merged.is_some()
             && (!n.had_pr
                 || n.pr_open
-                || !matches!(n.phase, Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)))
+                || !matches!(
+                    n.phase,
+                    Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)
+                ))
         {
             return Err(Broken::Merge);
         }
-        if matches!(n.phase, Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged))
-            && n.merged.is_none()
+        if matches!(
+            n.phase,
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)
+        ) && n.merged.is_none()
         {
             return Err(Broken::Merge);
         }
@@ -1164,7 +1293,12 @@ impl World {
 
     /// What a leaf needs before it may resume into a holding phase.
     fn check_ready(&self, n: &Node, r: Resume) -> Result<(), Broken> {
-        if n.attempt == 0 || n.attempt > 3 || n.round > 1 || n.footprint == 0 || !n.credit.ready {
+        if n.attempt == 0
+            || n.attempt > 3
+            || n.round > 1
+            || n.footprint.is_empty()
+            || !n.credit.ready
+        {
             return Err(Broken::Leaf);
         }
         let ok = match r {
@@ -1172,7 +1306,7 @@ impl World {
             Resume::Checking | Resume::Rebasing => n.head.is_some(),
             Resume::Reviewing => n.head.is_some() && n.checked == n.head,
             Resume::Publishing => match n.head {
-                Some(h) => has(n.approved, h) && n.checked == Some(h),
+                Some(h) => n.approved == Some(h) && n.checked == Some(h),
                 None => false,
             },
         };
@@ -1184,8 +1318,8 @@ impl World {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Broken {
     Config,
+    Footprint,
     Agenda,
-    Head,
     Effect,
     Holds,
     Run,
@@ -1317,11 +1451,15 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
         Event::NewRequest { repo } => {
-            if (repo as usize) < w.gates.len() {
+            if repo.index().is_some_and(|r| r < w.gates.len()) {
                 w.nodes.push(Node::new(repo));
             }
         }
-        Event::Reply { node, generation, reply } => {
+        Event::Reply {
+            node,
+            generation,
+            reply,
+        } => {
             if let Some(i) = w.index(node) {
                 on_reply(w, i, generation, reply, out);
             }
@@ -1363,10 +1501,10 @@ fn abandon_operation(m: &mut Node) {
     m.run = None;
     m.job = None;
     m.pool = false;
-    if let Some(e) = m.effect.as_mut() {
-        if e.kind.starts_operation() {
-            e.cancelling = true;
-        }
+    if let Some(e) = m.effect.as_mut()
+        && e.kind.starts_operation()
+    {
+        e.cancelling = true;
     }
 }
 
@@ -1420,7 +1558,13 @@ fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut
     w.next_question += 1;
     let m = &mut w.nodes[i];
     m.holds = false;
-    m.question = Some(Question { id, kind, cont, cost, clarified: false });
+    m.question = Some(Question {
+        id,
+        kind,
+        cont,
+        cost,
+        clarified: false,
+    });
     set_phase(m, Phase::AwaitingRob);
     notice(out, i, Notice::Ask { question: id });
 }
@@ -1442,7 +1586,11 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     let seq = m.next_seq;
     m.next_seq += 1;
-    m.effect = Some(InFlight { seq, kind, cancelling: false });
+    m.effect = Some(InFlight {
+        seq,
+        kind,
+        cancelling: false,
+    });
     match kind {
         EffectKind::PrepareWorktree => m.worktree = true,
         EffectKind::OpenPr => {
@@ -1457,38 +1605,39 @@ fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
         }
         _ => None,
     };
-    out.push(Out::Effect { node: i, seq, kind, head });
+    out.push(Out::Effect {
+        node: NodeId(i as u64),
+        seq,
+        kind,
+        head,
+    });
 }
 
 // ---------------------------------------------------------------- replies
 
-fn accepts(n: &Node, reply: Reply) -> bool {
+fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
     match (n.phase, reply) {
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
-        (
-            Phase::Planning { .. },
-            Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet,
-        ) => true,
-        (Phase::Making, Reply::MakerDone { head }) => head < MAX_HEADS,
-        (
-            Phase::Making,
-            Reply::MakerNeedsFiles { .. } | Reply::MakerCantMeet | Reply::MakerOutOfRoom,
-        ) => true,
+        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
+        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet) => true,
+        (Phase::Making, Reply::MakerDone { .. }) => true,
+        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) => w.has_footprint(*files),
+        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
         // No report means the tests never ran: an infrastructure failure.
-        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
+        (Phase::Checking, Reply::ChecksDone { report, .. }) => *report,
         (Phase::Reviewing, Reply::Approved { head }) => {
-            head < MAX_HEADS && n.head == Some(head) && n.checked == Some(head)
+            n.head == Some(*head) && n.checked == Some(*head)
         }
         (Phase::Reviewing, Reply::ChangesRequested) => true,
-        (Phase::Rebasing, Reply::RebaseClean { head }) => head < MAX_HEADS,
+        (Phase::Rebasing, Reply::RebaseClean { .. }) => true,
         (Phase::Rebasing, Reply::RebaseNeedsChanges) => true,
         _ => false,
     }
 }
 
 fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
-    let n = w.nodes[i];
+    let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
@@ -1501,11 +1650,12 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         return;
     }
-    if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation)) {
+    if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
+    {
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    if !accepts(&n, reply) {
+    if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         return;
     }
@@ -1553,7 +1703,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         Reply::PlanLeaf { footprint, fits } => {
             let m = &mut w.nodes[i];
             let must_split = matches!(m.phase, Phase::Planning { must_split: true });
-            if fits && footprint != 0 && !must_split {
+            if fits && !footprint.is_empty() && !must_split {
                 m.footprint = footprint;
                 m.attempt = 1;
                 m.round = 0;
@@ -1572,10 +1722,11 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             set_phase(m, Phase::Checking);
         }
         Reply::MakerNeedsFiles { files, fits } => {
-            let m = &mut w.nodes[i];
-            if fits && files != 0 && m.credit.can_spend(1) {
+            if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
+                let footprint = w.union_footprints(w.nodes[i].footprint, files);
+                let m = &mut w.nodes[i];
                 m.credit.spend(1);
-                m.footprint |= files;
+                m.footprint = footprint;
                 m.holds = false;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
@@ -1584,7 +1735,9 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::MakerCantMeet => next_rung(w, i, out),
         Reply::MakerOutOfRoom => out_of_room(w, i, out),
-        Reply::ChecksDone { pass, in_footprint, .. } => {
+        Reply::ChecksDone {
+            pass, in_footprint, ..
+        } => {
             if pass && in_footprint {
                 let m = &mut w.nodes[i];
                 m.checked = m.head;
@@ -1595,7 +1748,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::Approved { head } => {
             let m = &mut w.nodes[i];
-            m.approved |= 1u8 << head;
+            m.approved = Some(head);
             set_phase(m, Phase::Publishing);
         }
         Reply::ChangesRequested => failed_round(w, i, out),
@@ -1611,7 +1764,14 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
                 m.credit.spend(1);
                 set_phase(m, Phase::Making);
             } else {
-                ask_rob(w, i, QKind::OutOfCredit, Cont::Ready(Resume::Making), 1, out);
+                ask_rob(
+                    w,
+                    i,
+                    QKind::OutOfCredit,
+                    Cont::Ready(Resume::Making),
+                    1,
+                    out,
+                );
             }
         }
         Reply::RunFailed => {}
@@ -1655,7 +1815,14 @@ fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
             m.credit.spend(1);
             set_phase(m, Phase::Making);
         } else {
-            ask_rob(w, i, QKind::OutOfCredit, Cont::Ready(Resume::Making), 1, out);
+            ask_rob(
+                w,
+                i,
+                QKind::OutOfCredit,
+                Cont::Ready(Resume::Making),
+                1,
+                out,
+            );
         }
     } else if !m.replanned {
         m.replanned = true;
@@ -1664,8 +1831,16 @@ fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
             m.credit.spend(1);
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split: false });
+            notice(out, i, Notice::Note(NoteKind::Replanned));
         } else {
-            ask_rob(w, i, QKind::OutOfCredit, Cont::Planning { must_split: false }, 1, out);
+            ask_rob(
+                w,
+                i,
+                QKind::OutOfCredit,
+                Cont::Planning { must_split: false },
+                1,
+                out,
+            );
         }
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
@@ -1680,7 +1855,14 @@ fn out_of_room(w: &mut World, i: usize, out: &mut Outbox) {
         m.plan_retries = 0;
         set_phase(m, Phase::Planning { must_split: true });
     } else {
-        ask_rob(w, i, QKind::OutOfCredit, Cont::Planning { must_split: true }, 1, out);
+        ask_rob(
+            w,
+            i,
+            QKind::OutOfCredit,
+            Cont::Planning { must_split: true },
+            1,
+            out,
+        );
     }
 }
 
@@ -1712,7 +1894,14 @@ fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
         }
         set_phase(m, target);
     } else {
-        ask_rob(w, i, QKind::OutOfCredit, Cont::Ready(Resume::Checking), 1, out);
+        ask_rob(
+            w,
+            i,
+            QKind::OutOfCredit,
+            Cont::Ready(Resume::Checking),
+            1,
+            out,
+        );
     }
 }
 
@@ -1747,12 +1936,11 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
-    if !kind.starts_operation() {
-        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
-            if k == kind {
-                m.pos += 1;
-            }
-        }
+    if !kind.starts_operation()
+        && let Some(Item::Do(k) | Item::Teardown(k)) = m.current()
+        && k == kind
+    {
+        m.pos += 1;
     }
 }
 
@@ -1810,7 +1998,10 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
 
 fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
-        Fact::PrMerged { head, checks_passed } => pr_merged(w, i, head, checks_passed, out),
+        Fact::PrMerged {
+            head,
+            checks_passed,
+        } => pr_merged(w, i, head, checks_passed, out),
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
@@ -1835,7 +2026,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
-            if head >= MAX_HEADS || !m.had_pr {
+            if !m.had_pr {
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -1885,12 +2076,12 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     }
 }
 
-fn pr_merged(w: &mut World, i: usize, head: u8, checks_passed: bool, out: &mut Outbox) {
+fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bool, out: &mut Outbox) {
     let m = &mut w.nodes[i];
-    if !m.had_pr || head >= MAX_HEADS || m.merged.is_some() {
+    if !m.had_pr || m.merged.is_some() {
         return;
     }
-    let approved = has(m.approved, head) && checks_passed;
+    let approved = m.approved == Some(head) && checks_passed;
     match m.phase {
         Phase::Closed(o) => {
             if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
@@ -1969,7 +2160,11 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                 if !q.clarified {
                     let next = w.next_question;
                     w.next_question += 1;
-                    w.nodes[i].question = Some(Question { id: next, clarified: true, ..q });
+                    w.nodes[i].question = Some(Question {
+                        id: next,
+                        clarified: true,
+                        ..q
+                    });
                     notice(out, i, Notice::Ask { question: next });
                 }
                 return;
@@ -1978,17 +2173,25 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                 return;
             }
             match answer {
-                Answer::Continue => go_on(w, i, q),
+                Answer::Continue => go_on(w, i, q, out),
                 Answer::TryAgain => {
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
                     m.round = 0;
                     m.replanned = false;
-                    go_on(w, i, Question { cost: q.cost.max(1), ..q });
+                    go_on(
+                        w,
+                        i,
+                        Question {
+                            cost: q.cost.max(1),
+                            ..q
+                        },
+                        out,
+                    );
                 }
                 Answer::AddCredit(k) => {
                     w.nodes[i].credit.added += k as u32;
-                    go_on(w, i, q);
+                    go_on(w, i, q, out);
                 }
                 Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
                 Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
@@ -2000,7 +2203,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
 }
 
 /// Carry on to the question's continuation, paying what it costs.
-fn go_on(w: &mut World, i: usize, q: Question) {
+fn go_on(w: &mut World, i: usize, q: Question, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.credit.pay(q.cost as u32);
     m.question = None;
@@ -2011,6 +2214,9 @@ fn go_on(w: &mut World, i: usize, q: Question) {
         Cont::Planning { must_split } => {
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split });
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                notice(out, i, Notice::Note(NoteKind::Replanned));
+            }
         }
         Cont::Ready(r) => set_phase(m, Phase::Ready(r)),
         Cont::Stop(o) => enter_stopping(m, o),
@@ -2065,7 +2271,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
 
 /// One internal transition for node `i`, if the facts allow one.
 fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
-    let n = w.nodes[i];
+    let n = &w.nodes[i];
     if n.phase.is_closed() {
         return false;
     }
@@ -2148,7 +2354,9 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
             true
         }
         Item::Slot => {
-            let Phase::Ready(r) = n.phase else { return false };
+            let Phase::Ready(r) = n.phase else {
+                return false;
+            };
             if n.paused {
                 if n.ticket.is_some() {
                     w.nodes[i].ticket = None;
@@ -2203,12 +2411,12 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
 /// and files and waits in Ready, resuming at the step it reached.
 fn pause(w: &mut World, i: usize) -> bool {
     let m = &mut w.nodes[i];
-    if m.phase.holding() {
-        if let Some(r) = m.phase.resume() {
-            m.holds = false;
-            set_phase(m, Phase::Ready(r));
-            return true;
-        }
+    if m.phase.holding()
+        && let Some(r) = m.phase.resume()
+    {
+        m.holds = false;
+        set_phase(m, Phase::Ready(r));
+        return true;
     }
     if m.ticket.is_some() {
         m.ticket = None;
@@ -2234,8 +2442,10 @@ fn pool_free(w: &World) -> bool {
 }
 
 /// Planning is admitted while fewer than W leaves wait for a slot in the repo.
-fn admits(w: &World, repo: u8) -> bool {
-    let Some(gate) = w.gates.get(repo as usize) else { return false };
+fn admits(w: &World, repo: RepoId) -> bool {
+    let Some(gate) = repo.index().and_then(|r| w.gates.get(r)) else {
+        return false;
+    };
     let mut waiting = 0u32;
     for n in &w.nodes {
         if n.repo == repo && matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some() {
@@ -2246,12 +2456,14 @@ fn admits(w: &World, repo: u8) -> bool {
 }
 
 fn slot_free(w: &World, i: usize) -> bool {
-    let me = w.nodes[i];
-    let Some(gate) = w.gates.get(me.repo as usize) else { return false };
+    let me = &w.nodes[i];
+    let Some(gate) = me.repo.index().and_then(|r| w.gates.get(r)) else {
+        return false;
+    };
     let mut holders = 0u32;
     for (j, n) in w.nodes.iter().enumerate() {
         if j != i && n.holds && n.repo == me.repo {
-            if n.footprint & me.footprint != 0 {
+            if !w.footprints_disjoint(n.footprint, me.footprint) {
                 return false;
             }
             holders += 1;
@@ -2262,7 +2474,7 @@ fn slot_free(w: &World, i: usize) -> bool {
 
 /// First come, first served: no one waiting in the same line holds an older ticket.
 fn first_in_line(w: &World, i: usize) -> bool {
-    let me = w.nodes[i];
+    let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     let for_slot = matches!(me.phase, Phase::Ready(_));
     for (j, n) in w.nodes.iter().enumerate() {

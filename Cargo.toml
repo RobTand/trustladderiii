@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/kernel"]
+exclude = ["crates/config", "crates/github", "crates/mergify", "crates/prismabuild", "crates/store", "crates/worktrees"]
+resolver = "3"

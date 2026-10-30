@@ -4,7 +4,7 @@
 //! and settled, and every witnessed event must lower the progress measure.
 
 use std::collections::BTreeSet;
-use tl3_slice_one_kernel::*;
+use tl3_kernel::*;
 
 struct Rng(u64);
 
@@ -22,14 +22,34 @@ impl Rng {
     }
 }
 
-fn random_event(w: &World, rng: &mut Rng) -> Event {
+/// File ids for footprints, one pool per seed. Ids below 64 make inline sets
+/// and larger ids interned ones, so the walks lock and extend both kinds,
+/// mixed, and across the 63/64 boundary.
+const POOLS: [[u64; 4]; 4] = [
+    [0, 1, 2, 3],
+    [62, 63, 64, 65],
+    [0, 63, 1 << 40, u64::MAX],
+    [64, 66, 1 << 40, u64::MAX],
+];
+
+fn footprint(w: &mut World, pool: &[u64; 4], bits: u64) -> Footprint {
+    w.intern_footprint(
+        (0..4)
+            .filter(|i| bits & (1 << i) != 0)
+            .map(|i| FileId(pool[i])),
+    )
+}
+
+fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
-        return Event::NewRequest { repo: rng.below(3) as u8 };
+        return Event::NewRequest {
+            repo: RepoId(rng.below(3)),
+        };
     }
     let i = rng.below(w.nodes.len() as u64) as usize;
     let n = w.nodes[i];
-    let node = if rng.below(50) == 0 { 9 } else { i as u32 };
-    let head = rng.below(MAX_HEADS as u64 + 1) as u8; // one past the range, on purpose
+    let node = NodeId(if rng.below(50) == 0 { 9 } else { i as u64 });
+    let head = HeadId(rng.next());
     match rng.below(12) {
         0..=3 => match n.effect {
             Some(e) => {
@@ -38,22 +58,42 @@ fn random_event(w: &World, rng: &mut Rng) -> Event {
                     1 => Ack::Permanent,
                     _ => Ack::Confirmed,
                 };
-                Event::Ack { node, seq: e.seq, ack }
+                Event::Ack {
+                    node,
+                    seq: e.seq,
+                    ack,
+                }
             }
-            None => Event::Ack { node, seq: rng.below(5), ack: Ack::Confirmed },
+            None => Event::Ack {
+                node,
+                seq: rng.below(5),
+                ack: Ack::Confirmed,
+            },
         },
         4..=7 => {
-            let generation = if rng.below(10) == 0 { n.generation.saturating_sub(1) } else { n.generation };
+            let generation = if rng.below(10) == 0 {
+                n.generation.saturating_sub(1)
+            } else {
+                n.generation
+            };
             let reply = match rng.below(17) {
-                0 => Reply::IngestDone { size: rng.below(4) as u8 },
+                0 => Reply::IngestDone {
+                    size: rng.below(4) as u8,
+                },
                 1 => Reply::IngestEarlyEnd(EarlyEnd::Duplicate),
                 2 => Reply::AuditAgrees,
                 3 => Reply::AuditDisagrees,
-                4 => Reply::PlanLeaf { footprint: rng.below(16) as u8, fits: rng.below(5) != 0 },
+                4 => Reply::PlanLeaf {
+                    footprint: footprint(w, pool, rng.below(16)),
+                    fits: rng.below(5) != 0,
+                },
                 5 => Reply::PlanSplit,
                 6 => Reply::PlanCantMeet,
                 7 => Reply::MakerDone { head },
-                8 => Reply::MakerNeedsFiles { files: rng.below(16) as u8, fits: rng.below(2) == 0 },
+                8 => Reply::MakerNeedsFiles {
+                    files: footprint(w, pool, rng.below(16)),
+                    fits: rng.below(2) == 0,
+                },
                 9 => Reply::MakerCantMeet,
                 10 => Reply::MakerOutOfRoom,
                 11 => Reply::ChecksDone {
@@ -61,31 +101,53 @@ fn random_event(w: &World, rng: &mut Rng) -> Event {
                     pass: rng.below(3) != 0,
                     in_footprint: rng.below(8) != 0,
                 },
-                12 => Reply::Approved { head: if rng.below(2) == 0 { n.head.unwrap_or(head) } else { head } },
+                12 => Reply::Approved {
+                    head: if rng.below(2) == 0 {
+                        n.head.unwrap_or(head)
+                    } else {
+                        head
+                    },
+                },
                 13 => Reply::ChangesRequested,
                 14 => Reply::RebaseClean { head },
                 15 => Reply::RebaseNeedsChanges,
                 _ => Reply::RunFailed,
             };
-            Event::Reply { node, generation, reply }
+            Event::Reply {
+                node,
+                generation,
+                reply,
+            }
         }
         8..=9 => {
             let fact = match rng.below(7) {
                 0 => Fact::PrMerged {
-                    head: if rng.below(2) == 0 { n.head.unwrap_or(head) } else { head },
+                    head: if rng.below(2) == 0 {
+                        n.head.unwrap_or(head)
+                    } else {
+                        head
+                    },
                     checks_passed: rng.below(4) != 0,
                 },
                 1 => Fact::PrClosedByPerson,
                 2 => Fact::PrDequeuedByPerson,
                 3 => Fact::PushByOther { head },
-                4 => Fact::CiFailed { infra: rng.below(2) == 0 },
+                4 => Fact::CiFailed {
+                    infra: rng.below(2) == 0,
+                },
                 5 => Fact::Conflict,
-                _ => Fact::IncidentCleared { by_rob: rng.below(2) == 0 },
+                _ => Fact::IncidentCleared {
+                    by_rob: rng.below(2) == 0,
+                },
             };
             Event::Fact { node, fact }
         }
         _ => {
-            let id = if rng.below(10) == 0 { n.last_cmd } else { n.last_cmd + 1 };
+            let id = if rng.below(10) == 0 {
+                n.last_cmd
+            } else {
+                n.last_cmd + 1
+            };
             let command = match rng.below(10) {
                 0 => Command::Stop,
                 1 => Command::ChangeRequest,
@@ -124,13 +186,14 @@ fn random_walks_keep_every_rule() {
     let mut passes_by_size = [0u32; 5];
     for seed in 1..=400u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let pool = &POOLS[seed as usize % POOLS.len()];
         let gates = [1 + rng.below(2) as u8, 1 + rng.below(2) as u8, 1];
         let mut w = World::new(&gates, 1 + rng.below(2) as u8);
         for _ in 0..500 {
             let event = if rng.below(4) == 0 {
-                w.witness().unwrap_or(Event::NewRequest { repo: 0 })
+                w.witness().unwrap_or(Event::NewRequest { repo: RepoId(0) })
             } else {
-                random_event(&w, &mut rng)
+                random_event(&mut w, pool, &mut rng)
             };
             let witnessed = w.witness() == Some(event);
             let before = w.measure();
@@ -141,24 +204,67 @@ fn random_walks_keep_every_rule() {
             // transition lowers its node's settle rank.
             let (_, _, trace) = step_traced(w.clone(), event);
             for (k, mid) in trace.iter().enumerate() {
-                assert!(mid.consistent(), "seed {seed}: {:?} after transition {k} of {event:?}\nfrom {w:#?}\nto {mid:#?}\ntrace before: {:#?}", mid.check(), if k > 0 { Some(&trace[k - 1]) } else { None });
+                assert!(
+                    mid.consistent(),
+                    "seed {seed}: {:?} after transition {k} of {event:?}\nfrom {w:#?}\nto {mid:#?}\ntrace before: {:#?}",
+                    mid.check(),
+                    if k > 0 { Some(&trace[k - 1]) } else { None }
+                );
             }
             for pair in trace.windows(2) {
                 let (a, b) = (&pair[0], &pair[1]);
-                let lowered = a.nodes.iter().zip(&b.nodes).any(|(x, y)| y.settle_rank() < x.settle_rank());
-                let raised = a.nodes.iter().zip(&b.nodes).any(|(x, y)| y.settle_rank() > x.settle_rank());
-                assert!(lowered && !raised, "seed {seed}: settle rank didn't fall during {event:?}");
+                let lowered = a
+                    .nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .any(|(x, y)| y.settle_rank() < x.settle_rank());
+                let raised = a
+                    .nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .any(|(x, y)| y.settle_rank() > x.settle_rank());
+                assert!(
+                    lowered && !raised,
+                    "seed {seed}: settle rank didn't fall during {event:?}"
+                );
             }
-            assert!(next.valid(), "seed {seed}: invalid world after {event:?}\nfrom {w:#?}\nto {next:#?}");
+            assert!(
+                next.valid(),
+                "seed {seed}: invalid world after {event:?}\nfrom {w:#?}\nto {next:#?}"
+            );
             assert!(next.is_settled(), "seed {seed}: unsettled after {event:?}");
+            // The lock rule again, with plain sets instead of the kernel's set code.
+            for (a, x) in next.nodes.iter().enumerate() {
+                for y in &next.nodes[..a] {
+                    if x.holds && y.holds && x.repo == y.repo {
+                        let held: BTreeSet<FileId> = next.files(y.footprint).unwrap().collect();
+                        assert!(
+                            next.files(x.footprint).unwrap().all(|f| !held.contains(&f)),
+                            "seed {seed}: two holders share a file after {event:?}"
+                        );
+                    }
+                }
+            }
             if witnessed {
-                assert!(next.measure() < before, "seed {seed}: witness {event:?} didn't make progress");
+                assert!(
+                    next.measure() < before,
+                    "seed {seed}: witness {event:?} didn't make progress"
+                );
             }
             for o in &out {
-                if let Out::Effect { node, kind: EffectKind::Enqueue, head, .. } = *o {
-                    let n = next.nodes[node];
+                if let Out::Effect {
+                    node,
+                    kind: EffectKind::Enqueue,
+                    head,
+                    ..
+                } = *o
+                {
+                    let n = &next.nodes[node.index().unwrap()];
                     let h = head.expect("an enqueue names its head");
-                    assert!(n.approved & (1 << h) != 0 && n.checked == Some(h), "seed {seed}: unapproved enqueue");
+                    assert!(
+                        n.approved == Some(h) && n.checked == Some(h),
+                        "seed {seed}: unapproved enqueue"
+                    );
                 }
             }
             for n in &next.nodes {
@@ -167,7 +273,11 @@ fn random_walks_keep_every_rule() {
             w = next;
             steps += 1;
         }
-        merged += w.nodes.iter().filter(|n| n.phase == Phase::Closed(Outcome::Merged)).count() as u64;
+        merged += w
+            .nodes
+            .iter()
+            .filter(|n| n.phase == Phase::Closed(Outcome::Merged))
+            .count() as u64;
     }
     println!("random walks: {steps} steps, {merged} requests merged, phases seen: {phases:?}");
     println!("most settle passes, by number of requests 0..=4: {passes_by_size:?}");
@@ -179,9 +289,10 @@ fn random_walks_keep_every_rule() {
 fn the_witness_always_finishes_the_work() {
     for seed in 1..=200u64 {
         let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
+        let pool = &POOLS[seed as usize % POOLS.len()];
         let mut w = World::new(&[1, 2], 2);
         for _ in 0..rng.below(300) {
-            let e = random_event(&w, &mut rng);
+            let e = random_event(&mut w, pool, &mut rng);
             w = step(w, e).0;
         }
         for _ in 0..2_000 {
@@ -190,6 +301,9 @@ fn the_witness_always_finishes_the_work() {
             w = step(w, e).0;
             assert!(w.measure() < before);
         }
-        assert!(w.nodes.iter().all(|n| n.phase.is_closed()), "seed {seed}: {w:#?}");
+        assert!(
+            w.nodes.iter().all(|n| n.phase.is_closed()),
+            "seed {seed}: {w:#?}"
+        );
     }
 }

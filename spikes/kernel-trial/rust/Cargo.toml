@@ -1,9 +1,0 @@
-[package]
-name = "tl3-kernel-trial"
-version = "0.1.0"
-edition = "2024"
-publish = false
-
-[lints.rust]
-unsafe_code = "forbid"
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

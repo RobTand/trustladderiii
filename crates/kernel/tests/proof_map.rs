@@ -16,16 +16,22 @@ fn mapped() -> BTreeSet<&'static str> {
         .split('"')
         .skip(1)
         .step_by(2)
-        .filter(|s| ["apply_", "advance_", "progress_from_", "pr_merged_"].iter().any(|p| s.starts_with(p)))
+        .filter(|s| {
+            ["apply_", "advance_", "progress_from_", "pr_merged_"]
+                .iter()
+                .any(|p| s.starts_with(p))
+        })
         .collect()
 }
 
-/// Names of the per-variant and per-phase proofs in proofs.rs.
+/// Names of the per-variant and per-phase proofs in proofs.rs. Only calls
+/// that start a line count, so a commented-out proof is missing, not proven.
 fn proven() -> BTreeSet<&'static str> {
     PROOFS
-        .lines()
-        .filter_map(|l| l.strip_prefix("proof!("))
-        .filter_map(|l| l.split(',').next())
+        .split("\nproof!(")
+        .skip(1)
+        .filter_map(|call| call.split(',').next())
+        .map(str::trim)
         .collect()
 }
 
@@ -33,7 +39,10 @@ fn proven() -> BTreeSet<&'static str> {
 /// like the per-phase advance proofs: `pr_merged_by_phase` means
 /// `pr_merged_ingesting`, `pr_merged_auditing`, and so on.
 fn expand(mapped: BTreeSet<&'static str>) -> BTreeSet<String> {
-    let phases: Vec<&str> = mapped.iter().filter_map(|m| m.strip_prefix("advance_")).collect();
+    let phases: Vec<&str> = mapped
+        .iter()
+        .filter_map(|m| m.strip_prefix("advance_"))
+        .collect();
     let mut names = BTreeSet::new();
     for m in &mapped {
         match m.strip_suffix("_by_phase") {
@@ -53,6 +62,12 @@ fn every_event_and_phase_has_a_proof() {
     let missing: Vec<_> = mapped.difference(&proven).collect();
     let unmapped: Vec<_> = proven.difference(&mapped).collect();
     assert!(missing.is_empty(), "mapped but not proven: {missing:?}");
-    assert!(unmapped.is_empty(), "proven but not on the map: {unmapped:?}");
-    println!("{} proofs, one per event variant and two per phase", proven.len());
+    assert!(
+        unmapped.is_empty(),
+        "proven but not on the map: {unmapped:?}"
+    );
+    println!(
+        "{} proofs, one per event variant and two per phase",
+        proven.len()
+    );
 }
