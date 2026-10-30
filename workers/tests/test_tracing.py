@@ -109,8 +109,12 @@ def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver
                 'input_tokens': '11', 'output_tokens': '7', 'total_tokens': '18'}
     for key, value in expected.items():
         assert attrs['mlflow.traceTag.' + key] == value
-    assert any(json.loads(attr.value.string_value) == 'LLM'
-               for span in spans for attr in span.attributes if attr.key == 'mlflow.spanType')
+    from mlflow.entities import Span
+    decoded = [Span.from_otel_proto(span) for span in spans]
+    model = next(span for span in decoded if span.span_type == 'CHAT_MODEL')
+    assert model.get_attribute('mlflow.chat.tokenUsage') == {
+        'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18}
+    assert all(Span.from_dict(span.to_dict()).span_type == span.span_type for span in decoded)
     assert len(spans) > 1, 'Deep Agents graph was not autologged'
 
 

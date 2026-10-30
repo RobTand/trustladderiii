@@ -91,6 +91,8 @@ def live_check():
         trace = found[0]
         assert trace.info.tags['outcome'] == 'succeeded'
         assert trace.info.tags['total_tokens'] == '18'
+        assert trace.info.token_usage['total_tokens'] == 18
+        assert any(span.span_type == 'CHAT_MODEL' for span in trace.data.spans)
         assert trace.info.tags['role'] == 'ingest'
         assert 'fixture-secret-value' not in json.dumps(trace.to_dict())
         trace_id = trace.info.trace_id

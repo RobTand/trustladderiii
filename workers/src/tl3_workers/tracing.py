@@ -68,8 +68,8 @@ class Capture:
         for span in self.spans:
             for attr in span.attributes:
                 if attr.key == 'mlflow.chat.tokenUsage':
-                    for key, value in json.loads(attr.value.string_value).items():
-                        usage[key] += value
+                    for item in attr.value.kvlist_value.values:
+                        usage[item.key] += item.value.int_value
         self.tags.update(outcome=outcome, **{key: str(value) for key, value in usage.items()})
         root = next(span for span in self.spans if not span.parent_span_id)
         root.status.code = 1 if outcome == 'succeeded' else 2
@@ -92,9 +92,7 @@ def safe_span(span):
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
     kind = json.loads(span.attributes.get('mlflow.spanType', '"CHAIN"'))
-    if kind == 'CHAT_MODEL':
-        kind = 'LLM'
-    if kind not in {'LLM', 'TOOL', 'AGENT', 'CHAIN', 'RETRIEVER'}:
+    if kind not in {'LLM', 'CHAT_MODEL', 'TOOL', 'AGENT', 'CHAIN', 'RETRIEVER'}:
         kind = 'CHAIN'
     result = Span(trace_id=span.context.trace_id.to_bytes(16, 'big'),
                   span_id=span.context.span_id.to_bytes(8, 'big'),
@@ -102,14 +100,16 @@ def safe_span(span):
                   name='tl3_' + kind.lower(), start_time_unix_nano=span.start_time,
                   end_time_unix_nano=span.end_time)
     result.status.code = 2 if span.status.status_code.name == 'ERROR' else 1
-    result.attributes.add(key='mlflow.spanType').value.string_value = json.dumps(kind)
+    result.attributes.add(key='mlflow.spanType').value.string_value = kind
     # Prompts, replies, tool arguments/results, events, headers, provider metadata,
     # resource attributes and exception messages are deliberately never serialized.
-    if kind == 'LLM' and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
+    if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
         usage = json.loads(raw)
         usage = {key: value for key in ('input_tokens', 'output_tokens', 'total_tokens')
                  if type(value := usage.get(key)) is int and value >= 0}
-        result.attributes.add(key='mlflow.chat.tokenUsage').value.string_value = json.dumps(usage)
+        attr = result.attributes.add(key='mlflow.chat.tokenUsage')
+        for key, value in usage.items():
+            attr.value.kvlist_value.values.add(key=key).value.int_value = value
     return result
 
 
