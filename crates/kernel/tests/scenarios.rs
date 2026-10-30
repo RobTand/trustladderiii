@@ -10,6 +10,51 @@ const CHECKS_PASS: Reply = Reply::ChecksDone {
     in_footprint: true,
 };
 
+#[test]
+fn comment_clarification_and_closed_correction_are_not_new_work_on_the_old_request() {
+    let mut run = Run::new();
+    let phase = run.phase();
+    run.command(Command::ClarifyComment);
+    assert_eq!(run.phase(), phase);
+    assert!(
+        run.notices
+            .iter()
+            .any(|n| matches!(n, Notice::ClarifyComment { .. }))
+    );
+    run.command(Command::Complaint { revert: true });
+    assert!(
+        !run.notices
+            .iter()
+            .any(|n| matches!(n, Notice::FileCorrection { .. }))
+    );
+    run.command(Command::Stop);
+    assert_eq!(run.phase(), Phase::Closed(Outcome::Stopped));
+    run.command(Command::Complaint { revert: true });
+    assert_eq!(
+        run.notices
+            .iter()
+            .filter(|n| matches!(n, Notice::FileCorrection { revert: true }))
+            .count(),
+        1
+    );
+    run.send(Event::Command {
+        node: NodeId(0),
+        id: run.cmd,
+        command: Command::Complaint { revert: true },
+    });
+    assert_eq!(
+        run.notices
+            .iter()
+            .filter(|n| matches!(n, Notice::FileCorrection { .. }))
+            .count(),
+        1
+    );
+    let mut before = run.node();
+    run.command(Command::Resume);
+    before.last_cmd = run.node().last_cmd;
+    assert_eq!(run.node(), before);
+}
+
 struct Run {
     w: World,
     cmd: u64,

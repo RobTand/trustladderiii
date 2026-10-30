@@ -224,3 +224,72 @@ pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn classifier_rejects_unsafe_or_unoffered_answers() {
+        let mut inputs = json!({"comment": {"author": "owner", "body": "continue"}, "state": {
+            "phase": "AwaitingRob", "closed": false,
+            "open_question": {"id": "17", "kind": "out_of_credit", "answers": ["add_credit", "change_request", "stop"]}
+        }});
+        validate_inputs("classifier", &inputs).unwrap();
+        for amount in [1, 100] {
+            validate_classification(&inputs, &json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": amount})).unwrap();
+        }
+        for reply in [
+            json!({"kind": "answer", "question_id": "16", "answer": "stop"}),
+            json!({"kind": "answer", "question_id": "17", "answer": "continue"}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 0}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 101}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 1.0}),
+            json!({"kind": "change_request", "new_text": " "}),
+            json!({"kind": "pause", "extra": true}),
+            json!({"kind": "complaint", "summary": "Broken", "revert": true}),
+        ] {
+            assert!(validate_classification(&inputs, &reply).is_err(), "{reply}");
+        }
+        inputs["state"]["closed"] = json!(true);
+        inputs["state"]["open_question"] = Value::Null;
+        for kind in ["pause", "resume", "stop"] {
+            assert!(validate_classification(&inputs, &json!({"kind": kind})).is_err());
+        }
+        for revert in [false, true] {
+            validate_classification(
+                &inputs,
+                &json!({"kind": "complaint", "summary": "Broken", "revert": revert}),
+            )
+            .unwrap();
+        }
+        assert!(
+            validate_classification(&inputs, &json!({"kind": "complaint", "summary": "Broken"}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unsure_is_one_nonempty_line_of_at_most_300_characters() {
+        let inputs = json!({"state": {"closed": false}});
+        validate_classification(
+            &inputs,
+            &json!({"kind": "unsure", "question": "é".repeat(300)}),
+        )
+        .unwrap();
+        for question in [
+            "".into(),
+            " ".into(),
+            "é".repeat(301),
+            "First?\nSecond?".into(),
+            "First?\rSecond?".into(),
+            "First?\u{2028}Second?".into(),
+        ] {
+            assert!(
+                validate_classification(&inputs, &json!({"kind": "unsure", "question": question}))
+                    .is_err()
+            );
+        }
+    }
+}
