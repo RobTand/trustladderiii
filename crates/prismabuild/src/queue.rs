@@ -202,7 +202,34 @@ impl PrismaBuild {
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
         // Claims can return to ready. Revisit live slots after the terminal scan
         // so a link-ready/unlink-claimed handoff cannot look like an ending.
-        for state in STATES.iter().chain(["ready", "claimed"].iter()) {
+        for (index, state) in STATES.iter().chain(["ready", "claimed"].iter()).enumerate() {
+            // PrismaBuild entombs claims before publishing retries or endings.
+            // Check sidecars before live rereads: retiring one publishes ready first.
+            if index == STATES.len() && chosen.as_ref().is_none_or(|(rank, _, _)| *rank >= 2) {
+                let claimed = root.join("claimed");
+                let mut entries =
+                    tokio::fs::read_dir(&claimed)
+                        .await
+                        .map_err(|source| Error::Io {
+                            path: claimed.clone(),
+                            source,
+                        })?;
+                while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
+                    path: claimed.clone(),
+                    source,
+                })? {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if name.starts_with(&format!("{key}."))
+                        && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
+                    {
+                        return Err(invalid(
+                            &entry.path(),
+                            "queue record is moving; reconcile again",
+                        ));
+                    }
+                }
+            }
             let rank = STATES
                 .iter()
                 .position(|candidate| candidate == state)
@@ -239,32 +266,6 @@ impl PrismaBuild {
                     || (record.published_unix == old.published_unix && rank > *old_rank)
             }) {
                 chosen = Some((rank, path, record));
-            }
-        }
-        // PrismaBuild entombs claims before publishing retries or endings.
-        // Its own RecordStore.standing treats these sidecars as moving.
-        if chosen.as_ref().is_none_or(|(rank, _, _)| *rank >= 2) {
-            let claimed = root.join("claimed");
-            let mut entries = tokio::fs::read_dir(&claimed)
-                .await
-                .map_err(|source| Error::Io {
-                    path: claimed.clone(),
-                    source,
-                })?;
-            while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
-                path: claimed.clone(),
-                source,
-            })? {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name.starts_with(&format!("{key}."))
-                    && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
-                {
-                    return Err(invalid(
-                        &entry.path(),
-                        "queue record is moving; reconcile again",
-                    ));
-                }
             }
         }
         let Some((rank, path, record)) = chosen else {
