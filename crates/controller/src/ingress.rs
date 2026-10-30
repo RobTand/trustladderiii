@@ -344,7 +344,10 @@ impl CatchUp {
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;
-        let world: tl3_kernel::World = crate::snapshot::decode(&snapshot)?;
+        // Sources can finish their first catch-up before Controller::open initializes the store.
+        let world = (!snapshot.rows.is_empty())
+            .then(|| crate::snapshot::decode(&snapshot))
+            .transpose()?;
         let mut deliveries = Vec::new();
         let mut notifications = Vec::new();
         let mut cursor = None;
@@ -368,7 +371,9 @@ impl CatchUp {
                         && id
                             .parse::<usize>()
                             .ok()
-                            .and_then(|index| world.nodes.get(index))
+                            .and_then(|index| {
+                                world.as_ref().and_then(|world| world.nodes.get(index))
+                            })
                             .is_some_and(|node| !matches!(node.phase, tl3_kernel::Phase::Closed(_)))
                 })
                 .map(|(id, _)| id)
