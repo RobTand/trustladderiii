@@ -45,6 +45,40 @@ pub enum Error {
 pub struct Store {
     client: Client,
     settings: tl3_config::Store,
+    boundary_hook: Option<BoundaryHook>,
+}
+
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<Store>();
+};
+
+/// Write boundaries used by process crash simulations. Migration setup and
+/// read-only transactions are outside the controller save-point contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SavePoint {
+    EventWritten,
+    RowsWritten,
+    EffectsWritten,
+    TransitionsWritten,
+    CreditWritten,
+    BeforeCommit,
+    AfterCommit,
+    InternBeforeCommit,
+    InternAfterCommit,
+}
+
+type BoundaryHook = Box<dyn FnMut(SavePoint, &str, &serde_json::Value) + Send>;
+
+fn boundary(
+    hook: &mut Option<BoundaryHook>,
+    point: SavePoint,
+    key: &str,
+    event: &serde_json::Value,
+) {
+    if let Some(hook) = hook {
+        hook(point, key, event);
+    }
 }
 
 const MIGRATIONS: &[(i32, &str)] = &[
@@ -78,10 +112,14 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+// Ingress receipt, catch-up, consumer registration and cursor/retirement writes
+// are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
     pub fn reconnect(&mut self) -> Result<()> {
-        *self = Self::open(&self.settings)?;
+        let mut store = Self::open(&self.settings)?;
+        store.boundary_hook = self.boundary_hook.take();
+        *self = store;
         Ok(())
     }
 
@@ -196,6 +234,7 @@ impl Store {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut store = Self {
             client: connect(settings, false)?,
+            boundary_hook: None,
             settings: settings.clone(),
         };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
@@ -204,6 +243,15 @@ impl Store {
         store.client.batch_execute("SET synchronous_commit = on")?;
         store.migrate()?;
         Ok(store)
+    }
+
+    /// Install before opening the controller to include bootstrap and intake.
+    /// A hook must return normally or terminate the process; unwinding is not a crash.
+    pub fn set_boundary_hook(
+        &mut self,
+        hook: impl FnMut(SavePoint, &str, &serde_json::Value) + Send + 'static,
+    ) {
+        self.boundary_hook = Some(Box::new(hook));
     }
 
     /// Hold a session advisory lock for the sole controller writer. Status readers
@@ -294,6 +342,12 @@ impl Store {
         }
         let committed = receipt(tx.query_one("INSERT INTO tl3_events (event_key, revision, epoch, payload, result) VALUES ($1, $2, $3, $4, $5) RETURNING revision, epoch, result",
             &[&change.event_key, &revision.get(), &next_epoch.get(), &change.event, &change.result])?)?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::EventWritten,
+            &change.event_key,
+            &change.event,
+        );
         for row in &change.rows {
             match row {
                 RowChange::Put { table, id, value } => {
@@ -308,10 +362,22 @@ impl Store {
                 }
             }
         }
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::RowsWritten,
+            &change.event_key,
+            &change.event,
+        );
         for effect in &change.effects {
             tx.execute("INSERT INTO tl3_effects (effect_key, epoch, kind, payload, created_revision, updated_revision) VALUES ($1, $2, $3, $4, $5, $5)",
                 &[&effect.key, &next_epoch.get(), &effect.kind, &effect.payload, &revision.get()])?;
         }
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::EffectsWritten,
+            &change.event_key,
+            &change.event,
+        );
         for transition in &change.transitions {
             if !transition.from.allows(transition.to) {
                 return Err(Error::IllegalTransition {
@@ -324,6 +390,12 @@ impl Store {
                 return Err(Error::EffectConflict);
             }
         }
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::TransitionsWritten,
+            &change.event_key,
+            &change.event,
+        );
         for entry in &change.credit {
             let inserted = tx.execute("INSERT INTO tl3_credit (node_id, reason, root_id, amount, revision) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (node_id, reason) DO NOTHING",
                 &[&entry.node, &entry.reason, &entry.root, &entry.amount, &revision.get()])?;
@@ -337,6 +409,12 @@ impl Store {
                 }
             }
         }
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::CreditWritten,
+            &change.event_key,
+            &change.event,
+        );
         if next_epoch != epoch {
             tx.execute(
                 "UPDATE tl3_effects SET epoch = $1, updated_revision = $2 WHERE state = 'Intended'",
@@ -351,7 +429,19 @@ impl Store {
             "UPDATE tl3_meta SET revision = $1, epoch = $2",
             &[&revision.get(), &next_epoch.get()],
         )?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::BeforeCommit,
+            &change.event_key,
+            &change.event,
+        );
         tx.commit()?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::AfterCommit,
+            &change.event_key,
+            &change.event,
+        );
         Ok(committed)
     }
 
@@ -502,11 +592,27 @@ impl Store {
         if let Some(row) = self.client.query_opt(select, params)? {
             return Ok(row.get(0));
         }
-        if let Some(row) = self.client.query_opt("INSERT INTO tl3_intern (kind, scope, value) VALUES ($1::text::tl3_intern_kind, $2, $3) ON CONFLICT (kind, scope, value) DO NOTHING RETURNING id", params)? {
-            return Ok(row.get(0));
-        }
-        let row = self.client.query_one(select, params)?;
-        Ok(row.get(0))
+        let key = format!("intern:{}:{scope}:{value}", kind.as_str());
+        let mut tx = self.client.transaction()?;
+        let inserted = tx.query_opt("INSERT INTO tl3_intern (kind, scope, value) VALUES ($1::text::tl3_intern_kind, $2, $3) ON CONFLICT (kind, scope, value) DO NOTHING RETURNING id", params)?;
+        let id = match inserted {
+            Some(row) => row.get(0),
+            None => tx.query_one(select, params)?.get(0),
+        };
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::InternBeforeCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
+        tx.commit()?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::InternAfterCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
+        Ok(id)
     }
 }
 
