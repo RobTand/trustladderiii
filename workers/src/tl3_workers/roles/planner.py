@@ -3,7 +3,7 @@
 from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
-from tl3_workers.forecast import MAX_FILE_BYTES, measure
+from tl3_workers.forecast import measure
 from tl3_workers.tools import _parts
 
 
@@ -24,6 +24,10 @@ def check_reply(inputs, reply):
             violations.append("A leaf must land on its own.")
         covered = set()
         for check in reply["checks"]:
+            if not check["node_ids"]:
+                violations.append("Every check must name at least one test.")
+            if not check["goal_ids"]:
+                violations.append("Every check must cite at least one goal.")
             for node_id in check["node_ids"]:
                 path, *names = node_id.split("::")
                 _parts(path)
@@ -39,6 +43,8 @@ def check_reply(inputs, reply):
     elif reply["kind"] == "split":
         covered = set()
         for piece in reply["pieces"]:
+            if not piece["goal_ids"]:
+                violations.append("Every piece must cite at least one goal.")
             cited = set(piece["goal_ids"])
             if not cited <= goals:
                 violations.append("A piece cites an unknown goal.")

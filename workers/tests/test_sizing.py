@@ -11,7 +11,9 @@ from worker_process import start_worker
 def sizing_tokenizer(tmp_path_factory):
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path_factory.mktemp("sizing-tokenizer")))
-        tiktoken.get_encoding("o200k_base")
+        from tiktoken.load import read_file_cached
+        from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
+        read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
         yield
 
 

@@ -53,7 +53,11 @@ def create_model(request):
 
 if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash"}:
     request = json.load(sys.stdin)
-    reply = brief if mode != "bad-schema" else {"kind": "brief", "brief": "Missing goals"}
+    reply = dict(brief) if mode != "bad-schema" else {"kind": "brief", "brief": "Missing goals"}
+    if mode != "bad-schema":
+        from tl3_workers.forecast import measure
+        os.chdir(request["worktree"])
+        reply["forecast"] = measure(reply["brief"], reply["files"], request["inputs"]["forecast"])
     if mode == "duplicate-key":
         print('{"event":"reply","role":"ingest","reply":{"kind":"brief","brief":"x","brief":"y","goals":[{"description":"x","verification":"test"}],"memory_ids":[]}}', flush=True)
     elif mode in {"partial", "partial-crash"}:

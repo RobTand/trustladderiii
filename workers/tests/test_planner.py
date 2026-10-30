@@ -41,7 +41,9 @@ def cache_tokenizer(tmp_path_factory):
     # subprocesses then use this cache while all model and tool calls stay offline.
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path_factory.mktemp("tokenizer")))
-        tiktoken.get_encoding("o200k_base")
+        from tiktoken.load import read_file_cached
+        from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
+        read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
         yield
 
 
@@ -273,23 +275,23 @@ def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, plan
     assert forecast["brief_tokens"] == len(encoding.encode_ordinary("<|endoftext|>"))
 
 
-@pytest.mark.parametrize("change", [
-    {"checks": []},
-    {"checks": [LEAF["checks"][0]]},
-    {"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]},
-    {"checks": [{**LEAF["checks"][0], "goal_ids": []}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": []}]},
-    {"checks": [{**LEAF["checks"][0], "kind": "guess"}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]},
-    {"files": []},
-    {"files": ["greeting.py", "greeting.py"]},
-    {"no_design_questions": False},
-    {"lands_on_its_own": False},
+@pytest.mark.parametrize("change,reported", [
+    ({"checks": []}, True),
+    ({"checks": [LEAF["checks"][0]]}, True),
+    ({"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "goal_ids": []}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": []}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "kind": "guess"}]}, False),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]}, False),
+    ({"files": []}, True),
+    ({"files": ["greeting.py", "greeting.py"]}, False),
+    ({"no_design_questions": False}, True),
+    ({"lands_on_its_own": False}, True),
 ])
-def test_invalid_leaf_never_leaves_worker(tmp_path, planner_request, change):
+def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, change, reported):
     result = run_reply(tmp_path, planner_request, {**LEAF, **change})
-    if result.exit_code == 0:
+    if reported:
         assert_rule_report(result)
     else:
         assert_rejected(result)
@@ -327,18 +329,18 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
     assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
 
 
-@pytest.mark.parametrize("proposal", [
-    {**SPLIT, "pieces": SPLIT["pieces"][:1]},
-    {**SPLIT, "reason": "convenience"},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]},
-    {**CANT_MEET, "report": ""},
-    {**CANT_MEET, "files": ["../escape"]},
+@pytest.mark.parametrize("proposal,reported", [
+    ({**SPLIT, "pieces": SPLIT["pieces"][:1]}, True),
+    ({**SPLIT, "reason": "convenience"}, False),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]}, True),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]}, True),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]}, False),
+    ({**CANT_MEET, "report": ""}, False),
+    ({**CANT_MEET, "files": ["../escape"]}, False),
 ])
-def test_invalid_alternatives_never_leave_worker(tmp_path, planner_request, proposal):
+def test_split_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, proposal, reported):
     result = run_reply(tmp_path, planner_request, proposal)
-    if result.exit_code == 0:
+    if reported:
         assert_rule_report(result)
     else:
         assert_rejected(result)

@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(settings, root.path(), mode);
+    config.models.planner.push(config.models.audit[0].clone());
     if mode == "plan-split" || mode == "plan-bad-split" {
         config.limits.fit_tokens = 31_000;
     }
@@ -68,13 +69,13 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         let context = store.question_context(question.id).unwrap().unwrap();
         assert_eq!(context["pieces"], plan["pieces"]);
         assert_eq!(context["pieces"][0]["brief"], "Fix greeting.");
-        assert!(
+        assert_eq!(
             snapshot
                 .rows
                 .iter()
                 .filter(|r| r.table == "plan_reports")
-                .count()
-                == 1
+                .count(),
+            1
         );
         drop(controller);
         let (registry, _) =
@@ -100,6 +101,7 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             .iter()
             .find(|r| !r["inputs"]["findings"].as_array().unwrap().is_empty())
             .expect("retry includes the previous report");
+        assert_eq!(retry["model"]["name"], "alternate-model");
         assert!(
             retry["inputs"]["findings"]
                 .as_array()

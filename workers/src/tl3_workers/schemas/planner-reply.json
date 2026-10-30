@@ -87,7 +87,7 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true
               },
               "goal_ids": {
@@ -96,7 +96,7 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true,
                 "description": "Zero-based positions in inputs.ingest.goals."
               }
@@ -165,7 +165,7 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "minItems": 1,
+                "minItems": 0,
                 "uniqueItems": true,
                 "description": "Zero-based positions in inputs.ingest.goals."
               },
