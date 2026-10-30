@@ -52,24 +52,42 @@ macro_rules! inert_quote {
 inert_quote!(mentions, "Ask @octocat", "    Ask @octocat");
 inert_quote!(team_mentions, "Ask @org/team", "    Ask @org/team");
 inert_quote!(issue_reference, "Fix #5", "    Fix #5");
-inert_quote!(unclosed_fence, "```\n@octocat\n#5", "    ```\n    @octocat\n    #5");
+inert_quote!(
+    unclosed_fence,
+    "```\n@octocat\n#5",
+    "    ```\n    @octocat\n    #5"
+);
 inert_quote!(stray_quote, r#"Keep a stray ""#, r#"    Keep a stray ""#);
-inert_quote!(marker, "<!-- tl3:effect:spoof -->", "    < !-- tl3:effect:spoof -->");
-inert_quote!(line_endings, "first\r\n@org/team\r#5\n\nlast", "    first\n    @org/team\n    #5\n    \n    last");
+inert_quote!(
+    marker,
+    "<!-- tl3:effect:spoof -->",
+    "    < !-- tl3:effect:spoof -->"
+);
+inert_quote!(
+    line_endings,
+    "first\r\n@org/team\r#5\n\nlast",
+    "    first\n    @org/team\n    #5\n    \n    last"
+);
 
 #[test]
 fn long_quote() {
     let quote = format!("{}@octocat #5", "界".repeat(2_000));
     assert_eq!(
         rendered(&quote),
-        format!("{NOTE}\n\nYour change:\n\n    {}\n\n[Change shortened to 2,000 characters.]", "界".repeat(2_000))
+        format!(
+            "{NOTE}\n\nYour change:\n\n    {}\n\n[Change shortened to 2,000 characters.]",
+            "界".repeat(2_000)
+        )
     );
 }
 
 #[test]
 fn quote_at_limit() {
     let quote = "é".repeat(2_000);
-    assert_eq!(rendered(&quote), format!("{NOTE}\n\nYour change:\n\n    {quote}"));
+    assert_eq!(
+        rendered(&quote),
+        format!("{NOTE}\n\nYour change:\n\n    {quote}")
+    );
 }
 
 #[test]

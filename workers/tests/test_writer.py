@@ -272,14 +272,14 @@ def test_invalid_clarification_fails_in_real_role(tmp_path, writer_request, text
     assert result.events == [{"event": "progress", "unit": "model_turn"}]
 
 
-def test_dropped_change_note_accepts_exact_quote(tmp_path, writer_request):
+def test_dropped_change_note_drafts_only_prose(tmp_path, writer_request):
     writer_request["inputs"] = inputs_for("note")
     quote = "Fix the leaf in workers/src/agent_job.rs."
     writer_request["inputs"]["facts"].update({
         "change": "The old version merged before your change could start. File it again.",
         "change_quote": quote,
     })
-    reply = {"text": f'The old version merged before your change could start. File it again.\n\n"{quote}"'}
+    reply = {"text": "The old version merged before your change could start. File it again."}
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]["reply"] == reply

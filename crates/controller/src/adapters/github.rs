@@ -342,7 +342,7 @@ fn writer_input(
         return Ok(WriteRequest {
             kind: MessageKind::Note,
             facts: json!({"issue_title": title, "request": request,
-                "change": format!("{change}\n\nYour change:\n\"{text}\""), "change_quote": text}),
+                "change": change, "change_quote": text}),
             violations: vec![],
         });
     }
