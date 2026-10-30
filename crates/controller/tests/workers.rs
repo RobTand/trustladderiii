@@ -836,6 +836,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     materials(&mut store);
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let run = delivery();
+    watch_run(&mut store, &run);
     supervisor.execute(&run).unwrap();
     wait(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
@@ -848,6 +849,22 @@ fn partial_crash(settings: &tl3_config::Store) {
     assert_eq!(
         store.worker_progress(None).unwrap()[0].output_offset,
         complete as i64
+    );
+    let progress = store.worker_progress(None).unwrap();
+    assert!(
+        progress[0]
+            .last_progress_ms
+            .is_some_and(|ms| ms >= progress[0].started_ms)
+    );
+    assert_eq!(progress[0].unit, "model_turn");
+    let mut replay = Supervisor::new(&config, &root.path().join("fakes"))
+        .unwrap()
+        .source();
+    replay.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        store.worker_progress(None).unwrap(),
+        progress,
+        "restart replay cannot refresh progress time"
     );
     assert!(rx.try_recv().is_err());
     kill_record(&attempt.join("process.json"));
