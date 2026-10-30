@@ -528,9 +528,16 @@ impl Controller {
             .filter(|s| {
                 s.delivery.node() == node && matches!(s.delivery.output, Out::Effect { .. })
             })
-            .max_by_key(|s| s.delivery.generation);
+            .max_by_key(|s| {
+                let seq = match s.delivery.output {
+                    Out::Effect { seq, .. } => seq,
+                    Out::Notice { .. } => unreachable!(),
+                };
+                (s.delivery.generation, seq)
+            });
         if let Some(mut state) = cause {
             state.incident = Some(id.into());
+            state.healthy = false;
             state.due_ms = Some(
                 self.now_ms()
                     .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000),
