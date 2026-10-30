@@ -1,9 +1,9 @@
 use crate::{
-    Bootstrap, Controller, Error, LabelledIssue, Result, adapters, executor::Observation, status,
+    Bootstrap, Controller, Error, LabelledIssue, Result, adapters, executor::Observation, status, status_web,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, net::SocketAddr, path::PathBuf};
-use tl3_store::Store;
+use tl3_store::{Reader, Store};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
@@ -20,13 +20,20 @@ struct Arguments {
     drain: bool,
     github_listen: Option<SocketAddr>,
     github_api: Option<String>,
+    serve_status: bool,
 }
 
 fn arguments(daemon: bool) -> Result<Arguments> {
     let mut args = std::env::args().skip(1);
-    if !daemon && args.next().as_deref() != Some("status") {
-        return Err(Error::Invalid("usage: tl3 status --config FILE"));
-    }
+    let serve_status = if daemon {
+        false
+    } else {
+        match args.next().as_deref() {
+            Some("status") => false,
+            Some("status-serve") => true,
+            _ => return Err(Error::Invalid("usage: tl3 {status|status-serve} --config FILE")),
+        }
+    };
     let mut path = None;
     let mut simulation = None;
     let mut drain = false;
@@ -57,16 +64,19 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         drain,
         github_listen,
         github_api,
+        serve_status,
     })
 }
 
 pub fn status() -> Result<()> {
-    let config = arguments(false)?.config;
-    print!(
-        "{}",
-        status::render(&mut Store::open_read_only(&config.store)?)?
-    );
-    Ok(())
+    let Arguments { config, serve_status, .. } = arguments(false)?;
+    if serve_status {
+        status_web::serve(&config)
+    } else {
+        let model = status::load(&mut Reader::open(&config.store)?)?;
+        print!("{}", status::render_text(&model));
+        Ok(())
+    }
 }
 
 pub fn daemon() -> Result<()> {
@@ -76,6 +86,7 @@ pub fn daemon() -> Result<()> {
         drain,
         github_listen,
         github_api,
+        ..
     } = arguments(true)?;
     let simulation =
         simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;

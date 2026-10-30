@@ -30,14 +30,23 @@ fn main() {
         ("migrations_and_append_only", migrations_and_append_only),
         ("killed_writer_recovers", killed_writer_recovers),
         ("durability_settings", durability_settings),
+        ("read_only_reader", read_only_reader),
+        ("reader_schema_versions", reader_schema_versions),
         ("arrival_within_transaction", arrival_within_transaction),
     ] {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
+    let settings = database.create("reader_restart");
+    let before = Store::open(&settings).unwrap().load().unwrap();
+    let mut reader = Reader::open(&settings).unwrap();
+    database.restart();
+    assert!(reader.load().is_err());
+    assert_eq!(Reader::open(&settings).unwrap().load().unwrap(), before);
+    println!("test reader_restart ... ok");
     database.stop();
-    println!("9 Postgres integration scenarios passed; no skips");
+    println!("12 Postgres integration scenarios passed; no skips");
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -98,10 +107,7 @@ fn arrival_within_transaction(settings: &tl3_config::Store) {
         after.rows.iter().map(|r| r.arrival).collect::<Vec<_>>(),
         before.rows.iter().map(|r| r.arrival).collect::<Vec<_>>()
     );
-    assert_eq!(
-        Store::open_read_only(settings).unwrap().load().unwrap(),
-        after
-    );
+    assert_eq!(Reader::open(settings).unwrap().load().unwrap(), after);
 }
 
 fn effect(key: &str) -> NewEffect {
@@ -672,4 +678,125 @@ fn crash_writer(args: &[String]) {
     fs::write(Path::new(&args[5]), b"committed").unwrap();
     store.commit(&second_commit(&snapshot)).unwrap();
     panic!("parent should kill the writer before the second commit returns");
+}
+
+fn read_only_reader(settings: &tl3_config::Store) {
+    assert!(matches!(Reader::open(settings), Err(Error::NotInitialized)));
+    assert!(
+        raw(settings)
+            .query_one("SELECT to_regclass('tl3_schema_migrations') IS NULL", &[])
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    let mut writer = Store::open(settings).unwrap();
+    let change = seed(&mut writer);
+    writer.commit(&change).unwrap();
+    let before = writer.load().unwrap();
+    let mut reader = Reader::open(settings).unwrap();
+    assert_eq!(reader.load().unwrap(), before);
+    for sql in [
+        "CREATE TABLE forbidden (id int)",
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
+        "UPDATE tl3_world SET value = '{}'",
+        "DELETE FROM tl3_world",
+    ] {
+        let mut tx = reader.transaction().unwrap();
+        assert_eq!(
+            tx.query_one("SHOW transaction_read_only", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "on"
+        );
+        assert_eq!(
+            tx.query_one("SHOW default_transaction_read_only", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "on"
+        );
+        assert_eq!(
+            tx.query_one("SHOW transaction_isolation", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "repeatable read"
+        );
+        let error = tx.batch_execute(sql).unwrap_err();
+        assert_eq!(error.code().unwrap().code(), "25006");
+    }
+    assert_eq!(writer.load().unwrap(), before);
+    assert_eq!(
+        raw(settings)
+            .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
+}
+
+fn reader_schema_versions(settings: &tl3_config::Store) {
+    assert_eq!(
+        Reader::open(settings).err().unwrap().to_string(),
+        "database not initialized"
+    );
+    let mut client = raw(settings);
+    assert!(
+        client
+            .query_one("SELECT to_regclass('tl3_schema_migrations') IS NULL", &[])
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    Store::open(settings).unwrap();
+    let migrations = client
+        .query(
+            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+            &[],
+        )
+        .unwrap();
+    for version in [0, 3] {
+        client
+            .execute("DELETE FROM tl3_schema_migrations", &[])
+            .unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, 'incompatible')",
+                &[&version],
+            )
+            .unwrap();
+        assert_eq!(
+            Reader::open(settings).err().unwrap().to_string(),
+            format!("schema version {version}, expected 2")
+        );
+    }
+    client
+        .execute("DELETE FROM tl3_schema_migrations", &[])
+        .unwrap();
+    for row in migrations {
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&row.get::<_, i32>(0), &row.get::<_, String>(1)],
+            )
+            .unwrap();
+    }
+    let mut reader = Reader::open(settings).unwrap();
+    client
+        .execute(
+            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 2",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        reader.load().unwrap_err().to_string(),
+        "schema version 3, expected 2"
+    );
+    client
+        .execute(
+            "UPDATE tl3_schema_migrations SET version = 2 WHERE version = 3",
+            &[],
+        )
+        .unwrap();
+    client.batch_execute("DROP TABLE tl3_world").unwrap();
+    assert_eq!(
+        Reader::open(settings).err().unwrap().to_string(),
+        "database not initialized"
+    );
 }

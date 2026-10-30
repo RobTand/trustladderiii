@@ -3,7 +3,8 @@
 mod types;
 pub use types::*;
 
-use postgres::{Client, IsolationLevel, NoTls, Row, Transaction};
+use postgres::{Client, IsolationLevel, NoTls, Row};
+pub use postgres::{Error as DatabaseError, Transaction};
 use std::{fs, time::Duration};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -32,6 +33,10 @@ pub enum Error {
     ActiveDeliveries,
     #[error("database migration differs from this binary or is newer")]
     MigrationMismatch,
+    #[error("database not initialized")]
+    NotInitialized,
+    #[error("schema version {actual}, expected {expected}")]
+    SchemaVersion { actual: i32, expected: i32 },
     #[error("store counter exhausted")]
     CounterOverflow,
 }
@@ -110,66 +115,15 @@ impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
     /// Transport is local TCP or a Unix socket, without TLS.
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        let mut store = Self::connect(settings, false)?;
+        let mut store = Self {
+            client: connect(settings, false)?,
+        };
         if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
             return Err(Error::Invalid("store requires Postgres fsync = on"));
         }
         store.client.batch_execute("SET synchronous_commit = on")?;
         store.migrate()?;
         Ok(store)
-    }
-
-    /// Never migrates. Postgres rejects writes for the lifetime of this connection.
-    pub fn open_read_only(settings: &tl3_config::Store) -> Result<Self> {
-        let mut store = Self::connect(settings, true)?;
-        if !store
-            .client
-            .query_one(
-                "SELECT to_regclass('tl3_schema_migrations') IS NOT NULL",
-                &[],
-            )?
-            .get::<_, bool>(0)
-        {
-            return Err(Error::Invalid("store is uninitialized; start tl3d first"));
-        }
-        let applied = store.client.query(
-            "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
-            &[],
-        )?;
-        if applied.len() != MIGRATIONS.len()
-            || applied
-                .iter()
-                .zip(MIGRATIONS)
-                .any(|(row, &(version, sql))| {
-                    row.get::<_, i32>(0) != version || row.get::<_, &str>(1) != sql
-                })
-        {
-            return Err(Error::MigrationMismatch);
-        }
-        Ok(store)
-    }
-
-    fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Self> {
-        settings.validate()?;
-        let mut connection = postgres::Config::new();
-        connection
-            .host(&settings.host)
-            .port(settings.port)
-            .dbname(&settings.database)
-            .user(&settings.user)
-            .connect_timeout(Duration::from_secs(settings.connect_timeout_secs.into()));
-        if read_only {
-            connection.options("-c default_transaction_read_only=on");
-        }
-        if let Some(path) = &settings.password_file {
-            let password = fs::read(path).map_err(Error::Password)?;
-            let password = password.strip_suffix(b"\n").unwrap_or(&password);
-            let password = password.strip_suffix(b"\r").unwrap_or(password);
-            connection.password(password);
-        }
-        Ok(Self {
-            client: connection.connect(NoTls)?,
-        })
     }
 
     /// Hold a session advisory lock for the sole controller writer. Status readers
@@ -226,49 +180,10 @@ impl Store {
 
     /// Read a consistent world, pending outbox, ledger and intern dictionary, without replay.
     pub fn load(&mut self) -> Result<Snapshot> {
-        let mut tx = self
-            .client
-            .build_transaction()
-            .isolation_level(IsolationLevel::RepeatableRead)
-            .read_only(true)
-            .start()?;
-        let (revision, epoch) = metadata(&mut tx, false)?;
-        let rows = tx.query("SELECT table_name, row_id, value, version, arrival FROM tl3_world ORDER BY table_name, arrival", &[])?
-            .into_iter().map(|row| Ok(WorldRow {
-                table: row.get(0), id: row.get(1), value: row.get(2), version: Revision::try_from(row.get::<_, i64>(3))?,
-                arrival: row.get(4),
-            })).collect::<Result<_>>()?;
-        let pending_effects = tx.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects WHERE state IN ('Intended', 'Sent', 'Uncertain', 'Cancelling') ORDER BY created_revision, effect_key", &[])?
-            .into_iter().map(decode_effect).collect::<Result<_>>()?;
-        let credit = tx.query("SELECT node_id, reason, root_id, amount, revision FROM tl3_credit ORDER BY node_id, reason", &[])?
-            .into_iter().map(|row| Ok(CreditRecord {
-                entry: CreditEntry { node: row.get(0), reason: row.get(1), root: row.get(2), amount: row.get(3) },
-                revision: Revision::try_from(row.get::<_, i64>(4))?,
-            })).collect::<Result<_>>()?;
-        let interned = tx
-            .query(
-                "SELECT id, kind::text, scope, value FROM tl3_intern ORDER BY id",
-                &[],
-            )?
-            .into_iter()
-            .map(|row| {
-                Ok(Interned {
-                    id: row.get(0),
-                    kind: InternKind::try_from(row.get::<_, &str>(1))?,
-                    scope: row.get(2),
-                    value: row.get(3),
-                })
-            })
-            .collect::<Result<_>>()?;
+        let mut tx = read_transaction(&mut self.client)?;
+        let snapshot = load_snapshot(&mut tx)?;
         tx.commit()?;
-        Ok(Snapshot {
-            revision,
-            epoch,
-            rows,
-            pending_effects,
-            credit,
-            interned,
-        })
+        Ok(snapshot)
     }
 
     /// Identical events return the original receipt, even if this caller's revision is stale.
@@ -367,17 +282,12 @@ impl Store {
 
     /// Includes terminal deliveries so callers can audit coverage, not just pending work.
     pub fn effects(&mut self) -> Result<Vec<Effect>> {
-        self.client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
-            .into_iter().map(decode_effect).collect()
+        load_effects(&mut self.client)
     }
 
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.
     pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
-        self.client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
-            .into_iter().map(|row| Ok(EventRecord {
-                key: row.get(0), payload: row.get(1),
-                receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },
-            })).collect()
+        load_events(&mut self.client, revision, limit)
     }
 
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {
@@ -446,6 +356,193 @@ impl Store {
         let row = self.client.query_one(select, params)?;
         Ok(row.get(0))
     }
+}
+
+/// A reader never runs migrations or exposes the store's write operations.
+pub struct Reader {
+    client: Client,
+}
+
+impl Reader {
+    pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let mut reader = Self {
+            client: connect(settings, true)?,
+        };
+        reader.transaction()?.commit()?;
+        Ok(reader)
+    }
+
+    /// Extra status queries must use this transaction to share the snapshot.
+    pub fn transaction(&mut self) -> Result<Transaction<'_>> {
+        let mut tx = read_transaction(&mut self.client)?;
+        check_schema(&mut tx)?;
+        Ok(tx)
+    }
+
+    pub fn load(&mut self) -> Result<Snapshot> {
+        let mut tx = self.transaction()?;
+        let snapshot = load_snapshot(&mut tx)?;
+        tx.commit()?;
+        Ok(snapshot)
+    }
+
+    pub fn effects(&mut self) -> Result<Vec<Effect>> {
+        let mut tx = self.transaction()?;
+        let effects = load_effects(&mut tx)?;
+        tx.commit()?;
+        Ok(effects)
+    }
+
+    pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
+        let mut tx = self.transaction()?;
+        let events = load_events(&mut tx, revision, limit)?;
+        tx.commit()?;
+        Ok(events)
+    }
+}
+
+fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
+    client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
+            .into_iter().map(decode_effect).collect()
+}
+
+fn load_events(
+    client: &mut impl postgres::GenericClient,
+    revision: Revision,
+    limit: u32,
+) -> Result<Vec<EventRecord>> {
+    client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
+            .into_iter().map(|row| Ok(EventRecord {
+                key: row.get(0), payload: row.get(1),
+                receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },
+            })).collect()
+}
+
+fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
+    if tx
+        .query_one("SELECT to_regclass('tl3_schema_migrations') IS NULL", &[])?
+        .get::<_, bool>(0)
+    {
+        return Err(Error::NotInitialized);
+    }
+    let applied = tx.query(
+        "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+        &[],
+    )?;
+    let Some(last) = applied.last() else {
+        return Err(Error::NotInitialized);
+    };
+    let actual = last.get::<_, i32>(0);
+    let expected = MIGRATIONS.last().expect("store migration").0;
+    if actual != expected {
+        return Err(Error::SchemaVersion { actual, expected });
+    }
+    if applied.len() != MIGRATIONS.len()
+        || applied
+            .iter()
+            .zip(MIGRATIONS)
+            .any(|(row, &(version, sql))| {
+                row.get::<_, i32>(0) != version || row.get::<_, &str>(1) != sql
+            })
+    {
+        return Err(Error::MigrationMismatch);
+    }
+    for table in [
+        "tl3_meta",
+        "tl3_world",
+        "tl3_events",
+        "tl3_effects",
+        "tl3_credit",
+        "tl3_intern",
+    ] {
+        if tx
+            .query_one("SELECT to_regclass($1) IS NULL", &[&table])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::NotInitialized);
+        }
+    }
+    Ok(())
+}
+
+fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
+    settings.validate()?;
+    let mut connection = postgres::Config::new();
+    connection
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .connect_timeout(Duration::from_secs(settings.connect_timeout_secs.into()));
+    if let Some(path) = &settings.password_file {
+        let password = fs::read(path).map_err(Error::Password)?;
+        let password = password.strip_suffix(b"\n").unwrap_or(&password);
+        let password = password.strip_suffix(b"\r").unwrap_or(password);
+        connection.password(password);
+    }
+    if read_only {
+        connection.options("-c default_transaction_read_only=on");
+    }
+    Ok(connection.connect(NoTls)?)
+}
+
+fn read_transaction(client: &mut Client) -> Result<Transaction<'_>> {
+    Ok(client
+        .build_transaction()
+        .isolation_level(IsolationLevel::RepeatableRead)
+        .read_only(true)
+        .start()?)
+}
+
+/// Load the controller snapshot inside the caller's existing read transaction.
+pub fn load_snapshot(tx: &mut Transaction<'_>) -> Result<Snapshot> {
+    let (revision, epoch) = metadata(tx, false)?;
+    let rows = tx
+        .query(
+            "SELECT table_name, row_id, value, version, arrival FROM tl3_world ORDER BY table_name, arrival",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| {
+            Ok(WorldRow {
+                table: row.get(0),
+                id: row.get(1),
+                value: row.get(2),
+                version: Revision::try_from(row.get::<_, i64>(3))?,
+                arrival: row.get(4),
+            })
+        })
+        .collect::<Result<_>>()?;
+    let pending_effects = tx.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects WHERE state IN ('Intended', 'Sent', 'Uncertain', 'Cancelling') ORDER BY created_revision, effect_key", &[])?
+            .into_iter().map(decode_effect).collect::<Result<_>>()?;
+    let credit = tx.query("SELECT node_id, reason, root_id, amount, revision FROM tl3_credit ORDER BY node_id, reason", &[])?
+            .into_iter().map(|row| Ok(CreditRecord {
+                entry: CreditEntry { node: row.get(0), reason: row.get(1), root: row.get(2), amount: row.get(3) },
+                revision: Revision::try_from(row.get::<_, i64>(4))?,
+            })).collect::<Result<_>>()?;
+    let interned = tx
+        .query(
+            "SELECT id, kind::text, scope, value FROM tl3_intern ORDER BY id",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| {
+            Ok(Interned {
+                id: row.get(0),
+                kind: InternKind::try_from(row.get::<_, &str>(1))?,
+                scope: row.get(2),
+                value: row.get(3),
+            })
+        })
+        .collect::<Result<_>>()?;
+    Ok(Snapshot {
+        revision,
+        epoch,
+        rows,
+        pending_effects,
+        credit,
+        interned,
+    })
 }
 
 fn metadata(tx: &mut Transaction<'_>, lock: bool) -> Result<(Revision, Epoch)> {
