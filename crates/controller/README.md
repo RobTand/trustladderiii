@@ -184,6 +184,7 @@ with an installation message. They sync the locked Python 3.14 environment once
 per test process. Run the process scenarios on dl380g10, sparky and sparklina
 through PrismaBuild with `--tag HOST`. From a clean detached worktree, run
 `python3 crates/controller/tools/worker_review_manifest.py workers` to generate
-the three host actions. After they pass, generate the portable full check with
+the three host actions, including controller and store process scenarios.
+After they pass, generate the portable full check with
 `python3 crates/controller/tools/worker_review_manifest.py workspace`.
 Submit each generated manifest with `pbcampaign.py --detach`.

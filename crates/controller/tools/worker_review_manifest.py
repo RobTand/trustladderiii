@@ -1,6 +1,6 @@
 """Print PR #60's verification campaign from a clean detached worktree.
 
-Every row executes on PrismaBuild. Host tags are required for process tests.
+Every row executes on PrismaBuild. Host tags cover worker, controller and store process tests.
 """
 import argparse
 import json
@@ -18,7 +18,7 @@ env = {
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
 }
 rows = [{
-    "cwd": str(root), "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--locked"],
+    "cwd": str(root), "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
     "cpus": 2, "demand": {"mem_gb": 6}, "tags": [host], "env": env,
 } for host in ("dl380g10", "sparky", "sparklina")]
 workspace = {
