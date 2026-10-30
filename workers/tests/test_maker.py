@@ -23,6 +23,8 @@ DONE = {
         {"goal_id": "interface", "status": "met", "evidence": "The greet() signature is unchanged."},
     ],
 }
+
+
 def turn(reply=None, *, calls=None, input_tokens=100, output_tokens=50):
     return {
         "content": json.dumps(reply) if reply is not None else "",
@@ -182,6 +184,7 @@ def test_done_can_report_an_unmet_goal_with_a_reason(tmp_path, maker_request):
     {**DONE, "self_check": [DONE["self_check"][0], {"goal_id": "unknown", "status": "met", "evidence": "x"}]},
     {**DONE, "self_check": [{"goal_id": "greeting", "status": "met"}, DONE["self_check"][1]]},
     {**DONE, "self_check": [{"goal_id": "greeting", "status": "not_met"}, DONE["self_check"][1]]},
+    {**DONE, "self_check": [{"goal_id": "greeting", "status": "met", "evidence": "\ud800"}, DONE["self_check"][1]]},
     {"kind": "cant_meet", "report": " "},
     {"kind": "needs_files", "files": []},
     {"kind": "needs_files", "files": [{"path": "../outside.py", "why": "x"}]},
@@ -239,6 +242,30 @@ def test_missing_usage_fails_before_tools(tmp_path, maker_request):
     assert result.exit_code == 1
     assert not (Path(maker_request["worktree"]) / "must-not-exist").exists()
     assert all(event["event"] != "reply" for event in result.events)
+
+
+@pytest.mark.parametrize("invalid", ["duplicate-goal", "unknown-check-goal", "unknown-feedback-goal", "uncovered-goal"])
+def test_goal_references_are_checked_before_tool_calls(tmp_path, maker_request, invalid):
+    inputs = maker_request["inputs"]
+    if invalid == "duplicate-goal":
+        inputs["goals"].append(inputs["goals"][0])
+    elif invalid == "unknown-check-goal":
+        inputs["plan"]["checks"][0]["goal_ids"] = ["unknown"]
+    elif invalid == "unknown-feedback-goal":
+        inputs["feedback"] = [{"kind": "review_finding", "report": "x", "goal_ids": ["unknown"]}]
+    else:
+        inputs["plan"]["checks"] = inputs["plan"]["checks"][:1]
+    result = start_worker(tmp_path, maker_request, [write_turn("must-not-exist"), turn(DONE)])
+    assert result.exit_code == 1
+    assert result.events == []
+    assert not (Path(maker_request["worktree"]) / "must-not-exist").exists()
+
+
+def test_footprint_is_left_for_the_controller_to_check(tmp_path, maker_request):
+    result = start_worker(tmp_path, maker_request, [write_turn("outside-plan.py"), turn(DONE)])
+    assert result.exit_code == 0, result.stderr
+    root = Path(maker_request["worktree"])
+    assert git(root, "show", "HEAD:outside-plan.py") == "def greet(): return 'hello'"
 
 
 @pytest.mark.parametrize("field,value", [

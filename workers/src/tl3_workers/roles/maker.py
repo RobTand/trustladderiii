@@ -123,6 +123,7 @@ def run(model, request, worktree, emit):
     reply = read_json(last_message.text)
     validate("maker-reply", reply)
     _check_reply(inputs, reply)
+    json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if reply["kind"] == "done":
         if "head" in reply:
             raise ValueError("the worker supplies the commit head")

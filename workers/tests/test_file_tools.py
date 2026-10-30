@@ -340,6 +340,9 @@ def test_grep_reads_bounded_chunks_and_finds_tail_and_boundary_matches(tree, mon
         def bounded_file(path):
             with original(path) as stream:
                 class Bounded:
+                    def __iter__(self):
+                        raise AssertionError("grep must use bounded readline")
+
                     def readline(self, size=-1):
                         assert 0 < size <= cap + 1
                         sizes.append(size)
