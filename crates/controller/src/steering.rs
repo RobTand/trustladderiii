@@ -113,6 +113,7 @@ impl Controller {
                     paths: vec![],
                     attempt: 1,
                     round: 0,
+                    replanned: world.nodes[index].replanned,
                     checks: None,
                     job_generation: None,
                     question: None,
