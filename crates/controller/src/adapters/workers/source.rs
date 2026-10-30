@@ -241,6 +241,10 @@ impl WorkerOutputSource {
             self.add(root.clone(), delivery)?;
             Ok(Some(root))
         })();
+        let result = match result {
+            Err(error @ Error::Store(_)) => return Err(error),
+            result => result,
+        };
         remove_ready(&path)?;
         match result {
             Ok(root) => Ok(root),
