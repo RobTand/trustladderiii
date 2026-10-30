@@ -344,7 +344,7 @@ fn crash_reuses_seal() {
         )
         .unwrap();
         if ended == 0 {
-            pidfd_send_signal(&publisher, Signal::KILL, Default::default()).unwrap();
+            pidfd_send_signal(&publisher, Signal::KILL).unwrap();
         }
         assert_eq!(ended, 1, "publisher must die with its controller");
         assert!(events[0].revents().contains(PollFlags::IN));
@@ -1057,6 +1057,19 @@ fn completed_records_retire_only_when_superseded() {
         "newer delivered checks also retire a never-published cancelled seal"
     );
     assert!(record_path(root.path(), &other.key, "job").exists());
+    let other_path = record_path(root.path(), &other.key, "job");
+    let other_bytes = fs::read(&other_path).unwrap();
+    fs::write(&other_path, "another node must not be parsed").unwrap();
+    let mut withdrawal = later.clone();
+    withdrawal.output = Out::Effect {
+        node: later.node(),
+        seq: 99,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    withdrawal.job_generation = Some(later.generation);
+    adapter.execute(&withdrawal).unwrap();
+    fs::write(other_path, other_bytes).unwrap();
     adapter.retire_node(first.node()).unwrap();
     assert!(!root.path().join("records/0").exists());
     assert!(record_path(root.path(), &other.key, "job").exists());
@@ -1064,6 +1077,48 @@ fn completed_records_retire_only_when_superseded() {
     let adapter = fixture(root.path(), "pending");
     assert!(adapter.action_key(&first).unwrap().is_none());
     assert!(adapter.action_key(&other).unwrap().is_some());
+}
+
+fn retirement_forgets_an_active_source() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    fs::write(root.path().join("queue/fail_publish"), "true").unwrap();
+    assert!(adapter.execute(&delivery).is_err());
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    // This seal is absent and cancelled, so its request can close. The source still
+    // has a cached watch until teardown's notification is consumed.
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Absent
+    ));
+    adapter.retire_node(delivery.node()).unwrap();
+    waiting.reply(1, serde_json::json!([]));
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        bell.requests.as_ref().unwrap().try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    drop(running);
+    let running = adapter.source().spawn(sender);
+    assert!(!root.path().join("records/0").exists());
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(matches!(
+        bell.requests.as_ref().unwrap().try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    drop(running);
+    assert!(!root.path().join("queue/publications").exists());
 }
 
 fn endings_outlive_queue_rows() {
@@ -1455,6 +1510,10 @@ fn main() {
         ),
         ("abandoned_inputs_are_removed", abandoned_inputs_are_removed),
         ("endings_outlive_queue_rows", endings_outlive_queue_rows),
+        (
+            "retirement_forgets_an_active_source",
+            retirement_forgets_an_active_source,
+        ),
         ("reconcile_never_submits", reconcile_never_submits),
         (
             "footprint_paths_and_merge_base",
@@ -1476,5 +1535,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("20 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("21 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
