@@ -202,7 +202,7 @@ run_wizard() {
   say "Default destination: ~/.config/tl3/github-app.json on dl380g10."
   local script_dir
   script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-  PYTHONDONTWRITEBYTECODE=1 python3 -u "$script_dir/setup.py" "$@"
+  exec env PYTHONDONTWRITEBYTECODE=1 python3 -u "$script_dir/setup.py" "$@"
 }
 
 run_wizard "$@"; exit
