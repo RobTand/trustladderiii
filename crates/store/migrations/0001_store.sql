@@ -84,7 +84,7 @@ CREATE TRIGGER tl3_credit_append_only BEFORE UPDATE OR DELETE OR TRUNCATE
 
 CREATE TYPE tl3_intern_kind AS ENUM ('Repo', 'Commit', 'Path', 'Issue', 'PullRequest');
 CREATE TABLE tl3_intern (
-    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id > 0),
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id > 0),
     kind tl3_intern_kind NOT NULL,
     scope text NOT NULL,
     value text NOT NULL CHECK (value <> ''),

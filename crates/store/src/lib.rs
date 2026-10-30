@@ -24,6 +24,8 @@ pub enum Error {
     IllegalTransition { from: EffectState, to: EffectState },
     #[error("effect missing or its delivery state changed")]
     EffectConflict,
+    #[error("event key already has a different payload")]
+    EventKeyReused,
     #[error("credit key already has a different root or amount")]
     CreditConflict,
     #[error("active effect deliveries must drain before an upgrade")]
@@ -150,15 +152,18 @@ impl Store {
         })
     }
 
-    /// Duplicate keys return the original receipt, even if this caller's revision is stale.
+    /// Identical events return the original receipt, even if this caller's revision is stale.
     /// On any error the transaction rolls back, including the event and all earlier changes.
     pub fn commit(&mut self, change: &Commit) -> Result<CommitReceipt> {
         let mut tx = self.client.transaction()?;
         let (revision, epoch) = metadata(&mut tx, true)?;
         if let Some(row) = tx.query_opt(
-            "SELECT revision, epoch, result FROM tl3_events WHERE event_key = $1",
-            &[&change.event_key],
+            "SELECT revision, epoch, result, payload = $2 FROM tl3_events WHERE event_key = $1",
+            &[&change.event_key, &change.event],
         )? {
+            if !row.get::<_, bool>(3) {
+                return Err(Error::EventKeyReused);
+            }
             return receipt(row);
         }
         if revision != change.expected_revision || epoch != change.epoch {
@@ -301,11 +306,19 @@ impl Store {
         )?))
     }
 
-    fn intern(&mut self, kind: InternKind, scope: &str, value: &str) -> Result<i32> {
+    fn intern(&mut self, kind: InternKind, scope: &str, value: &str) -> Result<i64> {
         if scope.is_empty() || value.is_empty() {
             return Err(Error::Invalid("intern scope and value must be nonempty"));
         }
-        let row = self.client.query_one("INSERT INTO tl3_intern (kind, scope, value) VALUES ($1::text::tl3_intern_kind, $2, $3) ON CONFLICT (kind, scope, value) DO UPDATE SET value = EXCLUDED.value RETURNING id", &[&kind.as_str(), &scope, &value])?;
+        let select = "SELECT id FROM tl3_intern WHERE kind = $1::text::tl3_intern_kind AND scope = $2 AND value = $3";
+        let params: &[&(dyn postgres::types::ToSql + Sync)] = &[&kind.as_str(), &scope, &value];
+        if let Some(row) = self.client.query_opt(select, params)? {
+            return Ok(row.get(0));
+        }
+        if let Some(row) = self.client.query_opt("INSERT INTO tl3_intern (kind, scope, value) VALUES ($1::text::tl3_intern_kind, $2, $3) ON CONFLICT (kind, scope, value) DO NOTHING RETURNING id", params)? {
+            return Ok(row.get(0));
+        }
+        let row = self.client.query_one(select, params)?;
         Ok(row.get(0))
     }
 }

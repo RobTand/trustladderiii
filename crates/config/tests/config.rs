@@ -39,6 +39,37 @@ fn store_settings_default_and_validate_without_reading_credentials() {
     assert!(Config::parse(&source).is_ok());
 }
 
+#[test]
+fn store_connections_require_loopback_or_unix_sockets() {
+    for host in ["localhost", "127.0.0.1", "::1", "/var/run/postgresql"] {
+        Config::parse(&changed(&["store", "host"], Value::String(host.into()))).unwrap();
+    }
+    for host in [
+        "database.example.com",
+        "192.168.1.120",
+        "0.0.0.0",
+        "::",
+        "2001:db8::1",
+        "localhost.example.com",
+        "127.0.0.1,remote",
+        "postgres://localhost/tl3",
+        "relative/socket",
+    ] {
+        let error = Config::parse(&changed(&["store", "host"], Value::String(host.into())))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("store.host") && error.contains("no TLS"),
+            "{host}: {error}"
+        );
+        let settings = tl3_config::Store {
+            host: host.into(),
+            ..tl3_config::Store::default()
+        };
+        assert!(settings.validate().is_err(), "{host}");
+    }
+}
+
 fn changed(path: &[&str], value: Value) -> String {
     let mut document: Value = EXAMPLE.parse().unwrap();
     let mut target = &mut document;
@@ -519,11 +550,14 @@ fn load_checks_metadata_without_parsing_secret_contents() {
     let directory = tempfile::tempdir().unwrap();
     let app = directory.path().join("app.json");
     let key = directory.path().join("key");
+    let password = directory.path().join("password");
     private_file(&app, 0o600);
     private_file(&key, 0o400);
+    private_file(&password, 0o400);
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["github"]["app_credentials_file"] = Value::String(app.display().to_string());
     document["models"]["key_file"] = Value::String(key.display().to_string());
+    document["store"]["password_file"] = Value::String(password.display().to_string());
     let path = directory.path().join("config.toml");
     fs::write(&path, toml::to_string(&document).unwrap()).unwrap();
     Config::load(&path).unwrap();
@@ -532,6 +566,57 @@ fn load_checks_metadata_without_parsing_secret_contents() {
             .unwrap_err()
             .to_string()
             .contains("config: cannot inspect")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn load_checks_password_file_metadata_and_private_modes() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let directory = tempfile::tempdir().unwrap();
+    let app = directory.path().join("app");
+    let key = directory.path().join("key");
+    let password = directory.path().join("password");
+    private_file(&app, 0o600);
+    private_file(&key, 0o600);
+    private_file(&password, 0o600);
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["github"]["app_credentials_file"] = Value::String(app.display().to_string());
+    document["models"]["key_file"] = Value::String(key.display().to_string());
+    document["store"]["password_file"] = Value::String(password.display().to_string());
+    let path = directory.path().join("config.toml");
+    fs::write(&path, toml::to_string(&document).unwrap()).unwrap();
+    Config::load(&path).unwrap();
+    for mode in [0o644, 0o640, 0o606, 0o000] {
+        fs::set_permissions(&password, fs::Permissions::from_mode(mode)).unwrap();
+        let error = Config::load(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("store.password_file") && error.contains("chmod 600"),
+            "{error}"
+        );
+    }
+    fs::remove_file(&password).unwrap();
+    let error = Config::load(&path).unwrap_err().to_string();
+    assert!(
+        error.contains("store.password_file: cannot inspect"),
+        "{error}"
+    );
+    fs::create_dir(&password).unwrap();
+    let error = Config::load(&path).unwrap_err().to_string();
+    assert!(
+        error.contains("store.password_file") && error.contains("regular secret file"),
+        "{error}"
+    );
+    fs::remove_dir(&password).unwrap();
+    let target = directory.path().join("password-target");
+    private_file(&target, 0o400);
+    symlink(&target, &password).unwrap();
+    Config::load(&path).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+    let error = Config::load(&path).unwrap_err().to_string();
+    assert!(
+        error.contains("store.password_file") && error.contains("chmod 600"),
+        "{error}"
     );
 }
 

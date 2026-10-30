@@ -42,10 +42,10 @@ counter!(Epoch);
 macro_rules! intern_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-        pub struct $name(pub(crate) i32);
+        pub struct $name(pub(crate) i64);
 
         impl $name {
-            pub fn get(self) -> i32 {
+            pub fn get(self) -> i64 {
                 self.0
             }
         }
@@ -218,7 +218,7 @@ impl TryFrom<&str> for InternKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Interned {
-    pub id: i32,
+    pub id: i64,
     pub kind: InternKind,
     /// Repo: owner; commit: node; path/issue/PR: decimal repo id.
     pub scope: String,

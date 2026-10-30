@@ -156,7 +156,11 @@ fn effect(key: &str) -> NewEffect {
 
 fn seed(store: &mut Store) -> Commit {
     let snapshot = store.load().unwrap();
-    let mut change = Commit::new("event-1", json!({"request": 1}), &snapshot);
+    let mut change = Commit::new(
+        "event-1",
+        json!({"request": 1, "large_number": 1.0e18}),
+        &snapshot,
+    );
     change.rows = vec![
         put("1", json!({"phase": "Making"})),
         put("2", json!([1, 2])),
@@ -197,10 +201,13 @@ fn atomic_commit_and_idempotency(settings: &tl3_config::Store) {
     change.result = json!("different redelivery result");
     assert_eq!(store.commit(&change).unwrap(), receipt);
     assert_eq!(store.load().unwrap(), committed);
+    change.event = json!({"request": 2});
+    assert!(matches!(store.commit(&change), Err(Error::EventKeyReused)));
+    assert_eq!(store.load().unwrap(), committed);
     let events = store.events_after(Revision::ZERO, 100).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].receipt, receipt);
-    assert_eq!(events[0].payload, json!({"request": 1}));
+    assert_eq!(events[0].payload["request"], json!(1));
     assert!(
         store
             .events_after(receipt.revision, 100)
@@ -368,6 +375,28 @@ fn credit_and_interning(settings: &tl3_config::Store) {
     assert_ne!(pr.get(), issue.get());
     assert!(store.intern_issue(repo, 0).is_err());
     assert!(store.intern_commit("node-1", "bad").is_err());
+    let mut client = raw(settings);
+    client
+        .query_one("SELECT setval('tl3_intern_id_seq', 2147483648)", &[])
+        .unwrap();
+    let large = store.intern_repo("RobTand", "large-id").unwrap();
+    assert!(large.get() > i64::from(i32::MAX));
+    let sequence = || {
+        let row = raw(settings)
+            .query_one("SELECT last_value, is_called FROM tl3_intern_id_seq", &[])
+            .unwrap();
+        (row.get::<_, i64>(0), row.get::<_, bool>(1))
+    };
+    let before_lookups = sequence();
+    client.batch_execute("CREATE FUNCTION test_no_intern_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intern lookups must not update rows'; END $$; CREATE TRIGGER test_no_intern_update BEFORE UPDATE ON tl3_intern FOR EACH ROW EXECUTE FUNCTION test_no_intern_update()").unwrap();
+    for _ in 0..1_000 {
+        assert_eq!(store.intern_repo("RobTand", "TL3").unwrap(), repo);
+        assert_eq!(store.intern_commit("node-1", &sha).unwrap(), commit);
+        assert_eq!(store.intern_path(repo, "src/lib.rs").unwrap(), path);
+        assert_eq!(store.intern_issue(repo, 55).unwrap(), issue);
+        assert_eq!(store.intern_pull_request(repo, 55).unwrap(), pr);
+    }
+    assert_eq!(sequence(), before_lookups);
     let before = store.load().unwrap();
     assert!(
         before
@@ -378,6 +407,7 @@ fn credit_and_interning(settings: &tl3_config::Store) {
     drop(store);
     let mut reopened = Store::open(settings).unwrap();
     assert_eq!(reopened.load().unwrap(), before);
+    assert_eq!(reopened.intern_repo("RobTand", "large-id").unwrap(), large);
     assert_eq!(reopened.intern_commit("node-1", &sha).unwrap(), commit);
 }
 
@@ -433,8 +463,8 @@ fn concurrent_writers(settings: &tl3_config::Store) {
         .collect();
     assert_eq!(receipts[0], receipts[1]);
     assert_eq!(store.events_after(Revision::ZERO, 10).unwrap().len(), 2);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let handles: Vec<_> = (0..2)
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let handles: Vec<_> = (0..8)
         .map(|_| {
             let settings = settings.clone();
             let barrier = barrier.clone();
@@ -449,7 +479,14 @@ fn concurrent_writers(settings: &tl3_config::Store) {
         .into_iter()
         .map(|handle| handle.join().unwrap())
         .collect();
-    assert_eq!(ids[0], ids[1]);
+    assert!(ids.iter().all(|id| *id == ids[0]));
+    assert_eq!(
+        raw(settings)
+            .query_one("SELECT count(*) FROM tl3_intern WHERE kind = 'Repo' AND scope = 'robtand' AND value = 'concurrent'", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
 }
 
 fn epochs_and_upgrades(settings: &tl3_config::Store) {

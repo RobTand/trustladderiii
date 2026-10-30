@@ -79,10 +79,12 @@ impl Store {
         ] {
             nonempty(field, value)?;
         }
-        if self.host.contains("://") || self.host.chars().any(char::is_whitespace) {
+        if !matches!(self.host.as_str(), "localhost" | "127.0.0.1" | "::1")
+            && !Path::new(&self.host).is_absolute()
+        {
             return Err(invalid(
                 "store.host",
-                "use a hostname, IP address, or Unix socket directory",
+                "use localhost, 127.0.0.1, ::1, or an absolute Unix socket directory; store connections have no TLS",
             ));
         }
         if self.port == 0 || self.connect_timeout_secs == 0 {
