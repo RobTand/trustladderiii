@@ -61,6 +61,11 @@ class Capture:
 
     def finish(self, outcome):
         self.context.__exit__(None, None, None)
+        from mlflow.tracing.trace_manager import InMemoryTraceManager
+        import mlflow.langchain
+
+        InMemoryTraceManager.get_instance().pop_trace(self.root._span.context.trace_id)
+        mlflow.langchain.autolog(disable=True, silent=True)
         if self.dropped:
             failure()
             return

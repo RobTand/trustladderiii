@@ -116,6 +116,10 @@ def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver
         'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18}
     assert all(Span.from_dict(span.to_dict()).span_type == span.span_type for span in decoded)
     assert len(spans) > 1, 'Deep Agents graph was not autologged'
+    from mlflow.tracing.trace_manager import InMemoryTraceManager
+    with InMemoryTraceManager.get_instance().get_trace(int.from_bytes(root.trace_id, 'big')) as retained:
+        assert retained is None, 'raw spans must leave the SDK cache after export'
+
 
 
 def test_run_succeeds_with_mlflow_down(request_doc, monkeypatch, exporters, capfd):
