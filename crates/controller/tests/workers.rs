@@ -1013,6 +1013,43 @@ fn bounded_startup(settings: &tl3_config::Store) {
             .unwrap();
         }
     }
+    let mut finished = run.clone();
+    finished.key = "effect:finished:1".into();
+    watch_run(&mut store, &finished);
+    save(
+        &mut store,
+        vec![RowChange::Delete {
+            table: "watches".into(),
+            id: finished.key.clone(),
+        }],
+        vec![
+            EffectTransition {
+                key: finished.key.clone(),
+                from: EffectState::Intended,
+                to: EffectState::Sent,
+            },
+            EffectTransition {
+                key: finished.key.clone(),
+                from: EffectState::Sent,
+                to: EffectState::Confirmed,
+            },
+        ],
+        vec![],
+    );
+    let finished_root = root_for(&config, &finished.key);
+    fs::create_dir(&finished_root).unwrap();
+    fs::write(finished_root.join("delivery.json"), "bad finished record").unwrap();
+    let finished_ready = config.workers.runs.join(".ready").join(format!(
+        ".ready-{}",
+        finished_root.file_name().unwrap().to_string_lossy()
+    ));
+    fs::write(&finished_ready, json!(finished).to_string()).unwrap();
+    inotify::add_watch(
+        &observer,
+        &finished_root,
+        inotify::WatchFlags::OPEN | inotify::WatchFlags::ACCESS,
+    )
+    .unwrap();
     let mut bad = run.clone();
     bad.key = "effect:bad:1".into();
     watch_run(&mut store, &bad);
@@ -1048,6 +1085,7 @@ fn bounded_startup(settings: &tl3_config::Store) {
     );
     assert!(!legacy.exists());
     assert!(!corrupt_ready.exists());
+    assert!(!finished_ready.exists());
     assert!(rx.try_recv().is_err());
     let mut buffer = [MaybeUninit::uninit(); 1024];
     let mut reader = inotify::Reader::new(&observer, &mut buffer);
@@ -1140,12 +1178,40 @@ fn retirement(settings: &tl3_config::Store) {
         .spawn()
         .unwrap();
     wait(|| !run_root.exists());
+    let mut backend = None;
+    wait(|| {
+        transaction
+            .simple_query("SELECT pg_stat_clear_snapshot()")
+            .unwrap();
+        backend = transaction.query_opt("SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'DELETE FROM tl3_worker_progress%'", &[]).unwrap().map(|row| row.get::<_, i32>(0));
+        backend.is_some()
+    });
     assert!(
         child.try_wait().unwrap().is_none(),
         "cleanup is blocked at the final row deletion"
     );
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
+    // Client death does not cancel an executing SQL statement. End that session too.
+    let backend = backend.unwrap();
+    transaction
+        .query(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = $1",
+            &[&backend],
+        )
+        .unwrap();
+    wait(|| {
+        transaction
+            .simple_query("SELECT pg_stat_clear_snapshot()")
+            .unwrap();
+        !transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1)",
+                &[&backend],
+            )
+            .unwrap()
+            .get::<_, bool>(0)
+    });
     transaction.rollback().unwrap();
     assert_eq!(
         store.worker_progress(None).unwrap().len(),

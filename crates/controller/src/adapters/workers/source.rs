@@ -192,7 +192,7 @@ impl WorkerOutputSource {
             dirty.extend(self.runs.keys().cloned());
         }
         for name in ready_names {
-            if let Some(root) = self.ready(&name)? {
+            if let Some(root) = self.ready(&name, store)? {
                 dirty.insert(root);
             }
         }
@@ -216,7 +216,7 @@ impl WorkerOutputSource {
         Ok(())
     }
 
-    fn ready(&mut self, name: &str) -> Result<Option<PathBuf>> {
+    fn ready(&mut self, name: &str, store: &mut Store) -> Result<Option<PathBuf>> {
         if !ready_name(name) {
             return Ok(None);
         }
@@ -226,6 +226,9 @@ impl WorkerOutputSource {
                 return Ok(None);
             };
             let delivery: Delivery = serde_json::from_value(value)?;
+            if !store.worker_reconcilable(&delivery.key)? {
+                return Ok(None);
+            }
             let root = run_root(&self.root, &delivery.key);
             if !root.is_dir() {
                 return Ok(None);
@@ -256,7 +259,7 @@ impl WorkerOutputSource {
         // Read only the notification inbox, never the historical run directories.
         for entry in fs::read_dir(self.root.join(".ready"))? {
             let name = entry?.file_name();
-            self.ready(&name.to_string_lossy())?;
+            self.ready(&name.to_string_lossy(), store)?;
         }
         // Pre-inbox releases left markers next to run directories.
         for progress in store.worker_progress(None)? {

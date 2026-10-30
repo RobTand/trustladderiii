@@ -295,6 +295,11 @@ impl Store {
             .into_iter().map(|row| (row.get(0), row.get(1))).collect())
     }
 
+    /// A stale notification cannot revive a terminal, unwatched delivery.
+    pub fn worker_reconcilable(&mut self, key: &str) -> Result<bool> {
+        Ok(self.client.query_one("SELECT NOT EXISTS (SELECT 1 FROM tl3_effects WHERE effect_key = $1 AND state IN ('Confirmed', 'Failed', 'Cancelled')) OR EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'watches' AND row_id = $1)", &[&key])?.get(0))
+    }
+
     /// Terminal effects cannot be dispatched again. Watches retain their evidence.
     pub fn retired_workers(&mut self) -> Result<Vec<String>> {
         Ok(self.client.query("SELECT p.run_key FROM tl3_worker_progress p JOIN tl3_effects e ON e.effect_key = p.run_key WHERE e.state IN ('Confirmed', 'Failed', 'Cancelled') AND NOT EXISTS (SELECT 1 FROM tl3_world w WHERE w.table_name = 'watches' AND w.row_id = p.run_key)", &[])?
