@@ -3,7 +3,7 @@
 `tl3-kernel` implements slice one of [the state table](../../docs/state-table.md), version 5.
 It is an edition-2024 Rust crate in the root Cargo workspace, with `no_std` plus `alloc` in ordinary builds.
 It does no I/O. The controller commits its decisions and carries out its outputs.
-The root workspace contains the kernel. The existing config, GitHub, Mergify, PrismaBuild and worktree packages keep their independent Cargo manifests and lockfiles.
+The root workspace contains the kernel. The existing config, GitHub, Mergify, PrismaBuild, store and worktree packages keep their independent Cargo manifests and lockfiles.
 
 ## Controller API
 
@@ -33,7 +33,12 @@ The controller persists `World::file_sets()` in order and restores the sets with
 Use handles only with their own world. Unknown table indices in replies count as schema failures.
 
 Proof assumptions bound file IDs below 4, so the footprint table is empty in those worlds.
-Large sets use the same transition code and are covered by scenarios with 300 files, high IDs, extensions and file locks across repositories.
+Large sets go through the same transitions, but their set operations take a separate path that the proofs exclude. Tests cover that path instead:
+
+- scenarios with 300 files, high IDs, extensions and file locks across repositories;
+- random walks whose file IDs cross the 63/64 boundary, with the lock rule checked again using plain sets;
+- `tests/footprint_sets.rs`, which checks every union and lock decision over inline, interned and mixed sets against `BTreeSet`.
+
 Kani asserts that the bounded fixture never enters an interned-set helper, then prunes that path to avoid expanding growable storage.
 The assertion must prove before the path can count as excluded.
 The fixed `Outbox` remains in place.
@@ -60,7 +65,7 @@ The message adapter supplies the plain-language text.
   - `witness`, the progress event;
   - `proof_of_event` and `proofs_of_phase`, the proof map.
 - `src/proofs.rs` holds the Kani proofs.
-- `tests/` holds scripted scenarios, seeded random walks and the proof-map check.
+- `tests/` holds scripted scenarios, seeded random walks, the footprint set checks and the proof-map check.
 - `run.py` runs a build and tests, runs named Kani proofs, or prints a PrismaBuild campaign manifest.
 
 ## How the proofs work
