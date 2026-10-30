@@ -197,6 +197,23 @@ class DeployTests(unittest.TestCase):
         self.assertNotIn("--alternate", output.getvalue())
         self.assertEqual(destination.read_bytes(), config.read_bytes())
 
+    def test_older_hindsight_config_migrates_without_replacing_endpoint_or_bank(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        for bank in (None, "operator-bank"):
+            with self.subTest(bank=bank):
+                original = config.read_text().replace('bank = "tl3"\n', '')
+                if bank:
+                    original = original.replace('[hindsight]\n', f'[hindsight]\nbank = "{bank}"\n')
+                before = tomllib.loads(original)["hindsight"]
+                deploy.write_file(destination, original.encode())
+                deploy.configure(self.home, "192.168.1.107:8033", {})
+                parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
+                actual = tomllib.loads(destination.read_text())["hindsight"]
+                self.assertEqual(actual["endpoint"], before["endpoint"])
+                self.assertEqual(actual["bank"], bank or "tl3")
+
     def test_configure_explains_a_config_without_github_repos(self):
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.write_file(destination, b"[store]\nhost = \"x\"\n")
