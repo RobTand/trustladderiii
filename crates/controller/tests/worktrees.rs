@@ -469,7 +469,9 @@ fn repeated_prepare_preserves_maker_work() {
             commit(&checkout, "leaf.txt", "maker commit\n");
         }
         fs::write(checkout.join("shared.txt"), "maker wip\n").unwrap();
-        fs::write(checkout.join("scratch.txt"), "untracked maker notes\n").unwrap();
+        if committed {
+            fs::write(checkout.join("scratch.txt"), "untracked maker notes\n").unwrap();
+        }
         let head = f.head(&prepare);
         let status = git(
             &checkout,
@@ -486,10 +488,12 @@ fn repeated_prepare_preserves_maker_work() {
             fs::read_to_string(checkout.join("shared.txt")).unwrap(),
             "maker wip\n"
         );
-        assert_eq!(
-            fs::read_to_string(checkout.join("scratch.txt")).unwrap(),
-            "untracked maker notes\n"
-        );
+        if committed {
+            assert_eq!(
+                fs::read_to_string(checkout.join("scratch.txt")).unwrap(),
+                "untracked maker notes\n"
+            );
+        }
         assert_eq!(
             git(
                 &checkout,
@@ -584,7 +588,15 @@ fn prepare_repairs_at_durable_base_after_main_moves() {
 }
 
 fn removal_of_unpopulated_prepare() {
-    for dirt in ["none", "modified", "untracked", "committed", "unowned"] {
+    for dirt in [
+        "none",
+        "initializing",
+        "locked",
+        "modified",
+        "untracked",
+        "committed",
+        "unowned",
+    ] {
         let scratch = tempfile::tempdir().unwrap();
         let f = Fixture::create(scratch.path());
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
@@ -593,6 +605,26 @@ fn removal_of_unpopulated_prepare() {
         }
         let checkout = half_add(&f, &prepare);
         match dirt {
+            "initializing" | "locked" => {
+                let lock = git(
+                    &checkout,
+                    &[
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "locked",
+                    ],
+                );
+                fs::write(
+                    lock,
+                    if dirt == "initializing" {
+                        "initializing\n"
+                    } else {
+                        "keep locked\n"
+                    },
+                )
+                .unwrap();
+            }
             "modified" => {
                 fs::write(checkout.join("shared.txt"), "keep edit\n").unwrap();
             }
@@ -611,7 +643,7 @@ fn removal_of_unpopulated_prepare() {
         let mut current = f.adapter_at(2);
         let mut remove = f.delivery(EffectKind::RemoveWorktree, 2);
         remove.epoch = 2;
-        if dirt == "none" {
+        if matches!(dirt, "none" | "initializing") {
             let completion = current.execute(&remove).unwrap();
             assert!(matches!(completion.ack, Ack::Confirmed));
             assert_removed(&f, &remove);

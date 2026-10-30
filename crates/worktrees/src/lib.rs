@@ -257,25 +257,7 @@ impl Worktrees {
         }
         self.verify_checkout(path, name)?;
         let dirty = !self.status(path)?.is_empty();
-        let locked = path_line(
-            &self
-                .run(
-                    path,
-                    "prepare registration lock",
-                    [
-                        "rev-parse",
-                        "--path-format=absolute",
-                        "--git-path",
-                        "locked",
-                    ],
-                )?
-                .stdout,
-        )?;
-        let initializing = match fs::read(&locked) {
-            Ok(reason) => reason == b"initializing\n",
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(_) => return Err(Error::Io),
-        };
+        let initializing = self.initializing(path)?;
         if !writable {
             return Ok(!dirty && !initializing);
         }
@@ -325,6 +307,28 @@ impl Worktrees {
             )?;
         }
         Ok(true)
+    }
+
+    fn initializing(&self, path: &Path) -> Result<bool, Error> {
+        let locked = path_line(
+            &self
+                .run(
+                    path,
+                    "prepare registration lock",
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "locked",
+                    ],
+                )?
+                .stdout,
+        )?;
+        match fs::read(locked) {
+            Ok(reason) => Ok(reason == b"initializing\n"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(Error::Io),
+        }
     }
 
     pub fn delete_local_branch(&self, name: &BranchName) -> Result<(), Error> {
@@ -762,6 +766,17 @@ impl Worktrees {
                     }
                 } else {
                     self.require_clean(&path)?;
+                }
+                if allow_deletions && self.initializing(&path)? {
+                    self.run(
+                        &self.repo,
+                        "unlock removed checkout",
+                        [
+                            OsStr::new("worktree"),
+                            OsStr::new("unlock"),
+                            path.as_os_str(),
+                        ],
+                    )?;
                 }
             }
             self.run(
