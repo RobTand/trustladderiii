@@ -509,6 +509,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             env!("CARGO_MANIFEST_DIR")
         ),
         root.path().join("reviews.jsonl").to_str().unwrap().into(),
+        mode.into(),
     ];
     config.models.key_file = root.path().join("fixture-key");
     fs::write(&config.models.key_file, "fixture").unwrap();
