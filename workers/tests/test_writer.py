@@ -44,6 +44,8 @@ def inputs_for(kind):
     if kind == "question":
         facts.update({key: copy.deepcopy(value) for key, value in QUESTION.items()
                       if key != "request_quote"})
+    elif kind == "clarification":
+        facts.update({"question": "Would you like me to stop or continue?", "comment_excerpt": "Maybe do that"})
     elif kind == "note":
         facts["change"] = "Rob removed the change from the merge queue, pausing work until he resumes."
     else:
@@ -72,6 +74,7 @@ def test_writer_is_registered_without_tools():
 
 @pytest.mark.parametrize("kind,reply", [
     ("question", QUESTION), ("note", NOTE), ("summary", SUMMARY),
+    ("clarification", {"text": 'About "Maybe do that", would you like me to stop or continue?'}),
 ])
 def test_message_kinds_through_protocol(tmp_path, writer_request, kind, reply):
     writer_request["inputs"] = inputs_for(kind)
@@ -255,3 +258,14 @@ def test_checker_violations_reach_model_on_protocol_rerun(tmp_path, writer_reque
     assert first == initial
     assert second == revised
     assert first != second
+
+
+@pytest.mark.parametrize("text", [
+    "Stop now.", "Stop? Continue?", "Stop?\n", "x" * 301 + "?",
+    'About "Maybe do that", stop?\nContinue', "Could you rephrase your comment?",
+])
+def test_invalid_clarification_fails_in_real_role(tmp_path, writer_request, text):
+    writer_request["inputs"] = inputs_for("clarification")
+    result = start_worker(tmp_path, writer_request, [{"content": json.dumps({"text": text})}])
+    assert result.exit_code == 1
+    assert result.events == [{"event": "progress", "unit": "model_turn"}]

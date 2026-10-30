@@ -21,9 +21,10 @@ use tl3_controller::{
         self,
         prismabuild::{Adapter, Check, CheckRun, Kind, Settings},
     },
+    executor::Output as Out,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Out, Phase};
+use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Phase};
 use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -110,6 +111,8 @@ fn run(root: &Path, outside: bool) -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        steering: None,
+        request_text: None,
         question_context: None,
         question: None,
         job_generation: Some(4),

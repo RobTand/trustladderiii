@@ -1,15 +1,22 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{EffectKind, Out};
+use tl3_kernel::EffectKind;
 
-pub struct Fake(Records);
+pub struct Fake {
+    records: Records,
+    hold_merges: bool,
+}
 impl Fake {
     pub fn new(root: &Path) -> Self {
-        Self(Records::new(root))
+        Self {
+            records: Records::new(root),
+            hold_merges: root.join("hold-merges").exists(),
+        }
     }
 }
 impl Executor for Fake {
@@ -32,11 +39,17 @@ impl Executor for Fake {
             }],
             _ => return Err(crate::Error::Invalid("unsupported Mergify effect")),
         };
-        self.0
-            .deliver(delivery, Completion::confirmed(observations))
+        self.records.deliver(
+            delivery,
+            Completion::confirmed(if self.hold_merges {
+                vec![]
+            } else {
+                observations
+            }),
+        )
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        self.0.reconcile(delivery)
+        self.records.reconcile(delivery)
     }
 }
 
