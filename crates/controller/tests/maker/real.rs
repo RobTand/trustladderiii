@@ -504,6 +504,7 @@ pub(super) fn review_feedback(settings: &tl3_config::Store) {
         assert_eq!(feedback[index]["kind"], "review_finding");
         assert_eq!(feedback[index]["goal_ids"], goal_ids);
     }
+    assert!(feedback.len() <= 20, "review feedback must be bounded");
     let report: String = feedback
         .iter()
         .map(|finding| finding["report"].as_str().unwrap())

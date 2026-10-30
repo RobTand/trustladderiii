@@ -169,8 +169,8 @@ transaction as its kernel fact. A bare non-infrastructure CI fact still records
 feedback, explicitly stating when the upstream supplied no check details.
 Infrastructure failures and stale replies do not add maker findings.
 Reviewer blockers supply their problem, evidence and cited goal IDs to the next
-maker run. Each problem and evidence is capped at 1,000 characters, with a
-16,000-character report limit. Accumulated maker reports enter the planner's
+maker run, with up to 20 blockers per review. Each problem and evidence is
+capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's
 `findings` only when the request re-plans.
 
 Production integration still requires:

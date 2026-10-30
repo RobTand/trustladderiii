@@ -1102,7 +1102,7 @@ impl Controller {
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
-        let mut review_feedback = None;
+        let mut detailed_review = false;
         let event = match observation {
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
@@ -1355,35 +1355,55 @@ impl Controller {
                             });
                     }
                     if reply["verdict"] == "changes" {
-                        let mut report = String::new();
-                        let mut goal_ids = BTreeSet::new();
+                        let mut feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let reports = feedback
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("invalid maker findings"))?;
                         let mut remaining = findings::MAX_REPORT_CHARS;
-                        for finding in reply["blocking_findings"].as_array().unwrap() {
-                            let text = findings::clipped(
-                                &format!(
-                                    "{}: {}\n",
-                                    findings::clipped(
-                                        finding["problem"].as_str().unwrap(),
-                                        findings::MAX_MESSAGE_CHARS
-                                    ),
-                                    findings::clipped(
-                                        finding["evidence"].as_str().unwrap(),
-                                        findings::MAX_MESSAGE_CHARS
-                                    ),
+                        for finding in reply["blocking_findings"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .take(findings::MAX_REVIEW_FINDINGS)
+                        {
+                            let report = format!(
+                                "{}: {}",
+                                findings::clipped(
+                                    finding["problem"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
                                 ),
-                                remaining,
+                                findings::clipped(
+                                    finding["evidence"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
+                                ),
                             );
-                            remaining -= text.chars().count();
-                            report.push_str(&text);
-                            if finding["citation"]["kind"] == "goal" {
-                                goal_ids
-                                    .insert(finding["citation"]["id"].as_str().unwrap().to_owned());
-                            }
-                            if remaining == 0 {
+                            let length = report.chars().count();
+                            if length > remaining {
                                 break;
                             }
+                            remaining -= length;
+                            let goal_ids = if finding["citation"]["kind"] == "goal" {
+                                vec![finding["citation"]["id"].as_str().unwrap().to_owned()]
+                            } else {
+                                Vec::new()
+                            };
+                            reports.push(serde_json::to_value(findings::Finding {
+                                kind: findings::Kind::ReviewFinding,
+                                report,
+                                goal_ids,
+                                failed_tests: Vec::new(),
+                                outside_paths: Vec::new(),
+                                outside_paths_total: 0,
+                                ci_checks: Vec::new(),
+                            })?);
                         }
-                        review_feedback = Some((report, goal_ids.into_iter().collect::<Vec<_>>()));
+                        commit
+                            .rows
+                            .push(put("maker_findings", node.0.to_string(), feedback));
+                        detailed_review = true;
                     }
                 }
                 let document = match role.as_str() {
@@ -1590,10 +1610,9 @@ impl Controller {
                     (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
                         if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
                             findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
                         findings::Kind::ReviewFinding,
-                        review_feedback.as_ref().map(|(report, _)| report.clone()).unwrap_or_else(||
-                            "The independent reviewer requested changes. No detailed review report was supplied.".into()),
+                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
                     )),
                     (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
                         findings::Kind::ReviewFinding,
@@ -1627,29 +1646,25 @@ impl Controller {
             let goals = materials
                 .as_ref()
                 .and_then(|materials| materials.get("maker").unwrap_or(materials).get("goals"));
-            let goal_ids = if let Some((_, goal_ids)) = review_feedback {
-                goal_ids
-            } else {
-                match goals {
-                    Some(goals) => goals
-                        .as_array()
-                        .ok_or(Error::Invalid("maker goals must be an array"))?
-                        .iter()
-                        .map(|goal| {
-                            goal["id"]
-                                .as_str()
-                                .filter(|id| !id.trim().is_empty())
-                                .map(str::to_owned)
-                                .ok_or(Error::Invalid("maker goal needs a string id"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                    None => {
-                        eprintln!(
-                            "maker finding for node {} has no goal materials; retaining unbound evidence",
-                            node.0
-                        );
-                        Vec::new()
-                    }
+            let goal_ids = match goals {
+                Some(goals) => goals
+                    .as_array()
+                    .ok_or(Error::Invalid("maker goals must be an array"))?
+                    .iter()
+                    .map(|goal| {
+                        goal["id"]
+                            .as_str()
+                            .filter(|id| !id.trim().is_empty())
+                            .map(str::to_owned)
+                            .ok_or(Error::Invalid("maker goal needs a string id"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                None => {
+                    eprintln!(
+                        "maker finding for node {} has no goal materials; retaining unbound evidence",
+                        node.0
+                    );
+                    Vec::new()
                 }
             };
             let mut findings = self
