@@ -820,10 +820,16 @@ fn writer_checks() {
     let posted = api.state.lock().unwrap().posts;
     assert_eq!(
         rejecting.execute(&draft).unwrap().ack,
-        tl3_kernel::Ack::Permanent
+        tl3_kernel::Ack::Confirmed
     );
     assert_eq!(calls.lock().unwrap().len(), 3);
-    assert_eq!(api.state.lock().unwrap().posts, posted);
+    assert_eq!(api.state.lock().unwrap().posts, posted + 1);
+    assert!(
+        api.state.lock().unwrap().comments.last().unwrap()["body"]
+            .as_str()
+            .unwrap()
+            .contains("Could you rephrase it?")
+    );
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {

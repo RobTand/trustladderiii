@@ -155,8 +155,15 @@ impl Controller {
             .iter()
             .filter(|r| r.table == "github_comments" && r.value.get("classification").is_some())
         {
-            let Some(node) = row.value["node"].as_u64() else {
-                continue;
+            let node = match row.value["node"].as_u64() {
+                Some(node) => node,
+                None => {
+                    // Older applied rows predate the node field; their delivery owns the binding.
+                    let Some(effect) = self.store.effect(&format!("classify:{}", row.id))? else {
+                        continue;
+                    };
+                    serde_json::from_value::<Delivery>(effect.payload)?.node().0
+                }
             };
             let closed = snapshot.rows.iter().any(|r| {
                 r.table == "nodes"

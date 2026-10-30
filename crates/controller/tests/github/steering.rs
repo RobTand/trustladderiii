@@ -729,7 +729,14 @@ pub(super) fn concurrent_requests(settings: &tl3_config::Store) {
         fs::read_dir(&d.runs)
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.path().join("attempt-00000000/process.json").exists())
+            .any(|e| {
+                let attempt = e.path().join("attempt-00000000");
+                let Ok(bytes) = fs::read(attempt.join("request.json")) else {
+                    return false;
+                };
+                let request: Value = serde_json::from_slice(&bytes).unwrap();
+                request["role"] == "classifier" && attempt.join("process.json").exists()
+            })
     );
     d.send(18002, "Please pause");
     let mut other = fixture(true);
@@ -844,6 +851,7 @@ pub(super) fn writer_rejection() {
         .unwrap();
         let mut clarification = delivery(Notice::MeasuresPosted);
         clarification.key = "clarify:writer-rejection".into();
+        clarification.request_text = Some("Return goodbye instead of hello.".into());
         clarification.output = Out::Comment {
             node: NodeId(0),
             kind: tl3_controller::executor::CommentKind::Clarify,
@@ -858,6 +866,11 @@ pub(super) fn writer_rejection() {
         );
         adapter.execute(&clarification).unwrap();
         let inputs = calls.lock().unwrap();
+        assert!(
+            inputs
+                .iter()
+                .all(|i| i.facts["request"] == "Return goodbye instead of hello.")
+        );
         assert_eq!(inputs.len(), if failures == 1 { 2 } else { 3 });
         assert!(inputs[1].violations.iter().any(|v| v.contains("leaf")));
         let state = api.state.lock().unwrap();

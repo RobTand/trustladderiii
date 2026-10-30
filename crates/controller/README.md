@@ -189,8 +189,9 @@ rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
-Three rejected drafts return a permanent acknowledgement, so recovery does not
-restart the writer loop. A worker transport error stays uncertain.
+Three rejected or failed drafts post a fixed, checked request to rephrase.
+The reply uses the original effect marker, so recovery does not restart the
+writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.

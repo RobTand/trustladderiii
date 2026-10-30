@@ -13,6 +13,8 @@ env = {
     "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "2",
     "RUST_TEST_THREADS": "2", "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
+    "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
+    "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
 if args.suite == "hosts":
