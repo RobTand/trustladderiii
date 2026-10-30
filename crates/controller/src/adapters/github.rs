@@ -113,8 +113,7 @@ impl Adapter {
     fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
         Completion::confirmed(vec![Observation::LinkedRequest {
             repository: delivery.repository.clone(),
-            number: issue.number,
-            title: issue.title,
+            issue,
             original: delivery.node(),
         }])
     }

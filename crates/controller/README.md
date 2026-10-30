@@ -342,8 +342,11 @@ for a complaint on a closed request. The GitHub adapter creates an issue with a
 stable effect marker, the `tl3` label and a link to Rob's authorizing comment.
 A correction also records his request for a revert. Confirming or reconciling
 that issue starts a new kernel request with the original request's authorization.
-The original request stays closed. These changes use existing store tables and
-do not add a SQL migration.
+The new ingest uses the filed issue's text and inherits the original repository
+snapshot through the durable request link. Links point to earlier requests, so
+replacement chains terminate at the original materials. The original request
+stays closed. These changes use existing store tables and do not add a SQL
+migration.
 
 The GitHub integration target drives `tl3d`, signed recorded webhook fixtures,
 the Python worker with a fake model, and a local REST server. It covers command

@@ -362,8 +362,7 @@ impl Controller {
         &mut self,
         snapshot: &Snapshot,
         repository: Repository,
-        number: u64,
-        title: String,
+        issue: tl3_github::Issue,
         original: NodeId,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
@@ -375,7 +374,7 @@ impl Controller {
         let repo = self
             .store
             .intern_repo(&repository.owner, &repository.name)?;
-        let issue_id = self.store.intern_issue(repo, number)?.get();
+        let issue_id = self.store.intern_issue(repo, issue.number)?.get();
         if snapshot
             .rows
             .iter()
@@ -389,15 +388,15 @@ impl Controller {
             node.0.to_string(),
             json!(Request {
                 repo: repository,
-                issue: number,
-                title,
+                issue: issue.number,
+                title: issue.title.clone(),
                 issue_id
             }),
         ));
         commit.rows.push(put(
             "request_links",
             node.0.to_string(),
-            json!({"original": original, "authorized_by": self.bootstrap.rob}),
+            json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue}),
         ));
         Ok(Some(Event::NewRequest {
             repo: world.nodes[original.0 as usize].repo,

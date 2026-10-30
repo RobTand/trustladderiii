@@ -288,6 +288,21 @@ pub(super) fn replacement(settings: &tl3_config::Store) {
             .count()
             == 2
     });
+    d.wait(|s| !s.store.worker_progress(Some("1")).unwrap().is_empty());
+    let requests = fs::read_dir(&d.runs)
+        .unwrap()
+        .map(|e| e.unwrap().path().join("attempt-00000000/request.json"))
+        .filter_map(|p| fs::read(p).ok())
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap())
+        .collect::<Vec<_>>();
+    assert!(requests.iter().any(|r| {
+        r["role"] == "ingest"
+            && r["inputs"]["issue"]["number"] == 1000
+            && r["inputs"]["issue"]["body"]
+                .as_str()
+                .unwrap()
+                .contains("Return goodbye instead of hello.")
+    }));
     let state = d.api.state.lock().unwrap();
     let issue = &state.linked[0];
     assert!(
@@ -321,6 +336,7 @@ pub(super) fn correction(settings: &tl3_config::Store) {
             .iter()
             .any(|r| r.table == "request_links" && r.value["authorized_by"] == 42)
     });
+    d.wait(|s| !s.store.worker_progress(Some("1")).unwrap().is_empty());
     let state = d.api.state.lock().unwrap();
     assert!(
         state.linked[0]["body"]
@@ -456,7 +472,7 @@ pub(super) fn linked_reconciliation() {
     assert!(matches!(
         completion.observations.as_slice(),
         [Observation::LinkedRequest {
-            number: 1000,
+            issue: tl3_github::Issue { number: 1000, .. },
             original: NodeId(0),
             ..
         }]

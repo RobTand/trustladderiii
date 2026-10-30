@@ -44,8 +44,7 @@ pub enum Observation {
     },
     LinkedRequest {
         repository: crate::Repository,
-        number: u64,
-        title: String,
+        issue: tl3_github::Issue,
         original: NodeId,
     },
     GitHubComment {

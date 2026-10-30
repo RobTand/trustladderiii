@@ -138,9 +138,7 @@ impl Supervisor {
             if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
                 inputs.clone()
             } else {
-                store
-                    .worker_materials(&node)?
-                    .ok_or(Error::Invalid("worker materials are missing"))?
+                self.materials(delivery, store, snapshot)?
             };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
@@ -185,6 +183,41 @@ impl Supervisor {
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": self.root(&delivery.key).join("worktree"),
         }))
+    }
+
+    fn materials(
+        &self,
+        delivery: &Delivery,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Value> {
+        let mut ancestor = delivery.node();
+        let mut linked_issue: Option<tl3_github::Issue> = None;
+        loop {
+            if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
+                if let Some(issue) = linked_issue {
+                    materials["issue"] = json!({"number": issue.number, "title": issue.title,
+                        "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});
+                }
+                return Ok(materials);
+            }
+            let link = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "request_links" && r.id == ancestor.0.to_string())
+                .ok_or(Error::Invalid("worker materials are missing"))?;
+            if linked_issue.is_none() {
+                linked_issue = Some(serde_json::from_value(link.value["issue"].clone())?);
+            }
+            let original: tl3_kernel::NodeId =
+                serde_json::from_value(link.value["original"].clone())?;
+            if original.0 >= ancestor.0 {
+                return Err(Error::Invalid(
+                    "request links must point to an earlier request",
+                ));
+            }
+            ancestor = original;
+        }
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.
@@ -250,9 +283,7 @@ impl Executor for Supervisor {
         fs::create_dir_all(root.join("worktree"))?;
         let request = self.request(delivery, role, &mut store, &snapshot)?;
         if role != "audit" && role != "classifier" {
-            let materials = store
-                .worker_materials(&delivery.node().0.to_string())?
-                .ok_or(Error::Invalid("worker materials missing"))?;
+            let materials = self.materials(delivery, &mut store, &snapshot)?;
             materialize(&root.join("worktree"), &materials["repo"])?;
         }
         let attempt_number = latest(&root)?.map_or(0, |(n, _)| n + 1);
