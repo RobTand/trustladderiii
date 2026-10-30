@@ -697,6 +697,18 @@ fn read_only_reader(settings: &tl3_config::Store) {
     let change = seed(&mut writer);
     writer.commit(&change).unwrap();
     let before = writer.load().unwrap();
+    let schema = |client: &mut Client| {
+        client
+            .query(
+                "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.get::<_, i32>(0), row.get::<_, String>(1)))
+            .collect::<Vec<_>>()
+    };
+    let migrations_before = schema(&mut raw(settings));
     let mut reader = Reader::open(settings).unwrap();
     assert_eq!(reader.load().unwrap(), before);
     for sql in [
@@ -728,13 +740,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
         assert_eq!(error.code().unwrap().code(), "25006");
     }
     assert_eq!(writer.load().unwrap(), before);
-    assert_eq!(
-        raw(settings)
-            .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
-            .unwrap()
-            .get::<_, i64>(0),
-        2
-    );
+    assert_eq!(schema(&mut raw(settings)), migrations_before);
 }
 
 fn reader_schema_versions(settings: &tl3_config::Store) {
@@ -756,7 +762,9 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             &[],
         )
         .unwrap();
-    for version in [0, 3] {
+    let expected = migrations.last().unwrap().get::<_, i32>(0);
+    let future = expected + 1;
+    for version in [0, future] {
         client
             .execute("DELETE FROM tl3_schema_migrations", &[])
             .unwrap();
@@ -768,7 +776,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap();
         assert_eq!(
             Reader::open(settings).err().unwrap().to_string(),
-            format!("schema version {version}, expected 2")
+            format!("schema version {version}, expected {expected}")
         );
     }
     client
@@ -785,18 +793,18 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
     let mut reader = Reader::open(settings).unwrap();
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 2",
-            &[],
+            "UPDATE tl3_schema_migrations SET version = $1 WHERE version = $2",
+            &[&future, &expected],
         )
         .unwrap();
     assert_eq!(
         reader.load().unwrap_err().to_string(),
-        "schema version 3, expected 2"
+        format!("schema version {future}, expected {expected}")
     );
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 2 WHERE version = 3",
-            &[],
+            "UPDATE tl3_schema_migrations SET version = $1 WHERE version = $2",
+            &[&expected, &future],
         )
         .unwrap();
     client.batch_execute("DROP TABLE tl3_world").unwrap();
