@@ -615,3 +615,21 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
         {"event": "reply", "role": "maker", "reply": response},
     ]
     assert not (Path(maker_request["worktree"]) / "forbidden").exists()
+
+
+@pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
+def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, fit_tokens, linked, expected):
+    maker_request['inputs']['fit_tokens'] = fit_tokens
+    root = Path(maker_request['worktree'])
+    if linked:
+        (root / 'helper.py').symlink_to(root / 'greeting.py')
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['fits'] is expected
+
+
+def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
+    maker_request['inputs']['fit_tokens'] = 100000
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}], 'fits': True})])
+    assert result.exit_code == 1
+    assert all(event['event'] != 'reply' for event in result.events)

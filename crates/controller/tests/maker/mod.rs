@@ -235,14 +235,13 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     controller.intake(labelled()).unwrap();
     loop {
         let world = controller.world().unwrap();
-        if let Some(node) = world.nodes.first() {
-            if node.phase.is_closed()
+        if let Some(node) = world.nodes.first()
+            && (node.phase.is_closed()
                 || (node.replanned && matches!(node.phase, Phase::Planning { .. }))
                 || (mode == "out-of-room"
-                    && matches!(node.phase, Phase::Planning { must_split: true }))
-            {
-                break;
-            }
+                    && matches!(node.phase, Phase::Planning { must_split: true })))
+        {
+            break;
         }
         if !controller.drive_once().unwrap() {
             let Input::Observation { key, observation } = rx.recv().unwrap() else {
@@ -324,6 +323,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         );
         if mode == "needs-files" {
             assert_eq!(runs.len(), 2);
+            assert_eq!(runs[1]["resume_session"], true);
             assert!(
                 runs[1]["inputs"]["plan"]["files"]
                     .as_array()
