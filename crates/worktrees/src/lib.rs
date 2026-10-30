@@ -282,6 +282,31 @@ impl Worktrees {
             ["reset", "--hard", &name.reference()],
         )?;
         self.require_clean(path)?;
+        let locked = path_line(
+            &self
+                .run(
+                    path,
+                    "prepare registration lock",
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        "locked",
+                    ],
+                )?
+                .stdout,
+        )?;
+        if fs::read(&locked).is_ok_and(|reason| reason == b"initializing\n") {
+            self.run(
+                &self.repo,
+                "unlock prepared checkout",
+                [
+                    OsStr::new("worktree"),
+                    OsStr::new("unlock"),
+                    path.as_os_str(),
+                ],
+            )?;
+        }
         Ok(true)
     }
 

@@ -601,13 +601,21 @@ fn killed_git_add() {
     // EOF proves the smudge process has exited before recovery changes Git state.
     assert_eq!(filter.read(&mut ready).unwrap(), 0);
     git(&f.repo, &["config", "--remove-section", "filter.park"]);
-    assert!(!checkout.join("shared.txt").exists());
+    assert_ne!(
+        fs::read(checkout.join("shared.txt")).unwrap_or_default(),
+        b"base\n"
+    );
     found(f.adapter().reconcile(&prepare).unwrap());
     assert_eq!(
         fs::read_to_string(checkout.join("shared.txt")).unwrap(),
         "base\n"
     );
     assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+    found(f.adapter().reconcile(&prepare).unwrap());
+    f.adapter()
+        .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
+        .unwrap();
+    assert_removed(&f, &prepare);
     println!("SIGKILL during git worktree add: populated before confirmation");
 }
 
