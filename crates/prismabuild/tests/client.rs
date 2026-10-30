@@ -821,3 +821,25 @@ async fn bell_returns_bad_records_beside_good_records_and_keeps_listening() {
         ActionState::Finished { returncode: 0 }
     );
 }
+
+#[tokio::test]
+async fn seal_does_not_publish_and_publication_uses_only_the_retained_key() {
+    let f = Fixture::new("http://127.0.0.1:9/");
+    f.response(json!({"schema":"prismabuild.sealed.v1", "action_key":key(7), "transport":"pool"}));
+    let sealed = f.client.seal_at_priority(&action(), -10).await.unwrap();
+    assert_eq!(sealed, key(7));
+    let calls = f.calls();
+    assert!(calls[0].contains(&"--seal-only".to_owned()));
+    assert!(!calls[0].contains(&"--detach".to_owned()));
+    assert!(calls[0].windows(2).any(|w| w == ["--priority", "-10"]));
+    f.response(json!({"schema":"prismabuild.submission.v1", "action_key":key(7), "transport":"pool", "status":"attached", "published_unix":100}));
+    f.client.publish(&sealed).await.unwrap();
+    assert_eq!(
+        f.calls()[1],
+        ["--publish-sealed", key(7).as_str(), "--detach"]
+    );
+    f.response(json!({"schema":"prismabuild.submission.v1", "action_key":key(8), "transport":"pool", "status":"attached", "published_unix":100}));
+    assert!(f.client.publish(&sealed).await.is_err());
+    f.response(json!({"schema":"unsupported", "action_key":key(7), "transport":"pool"}));
+    assert!(f.client.seal(&action()).await.is_err());
+}
