@@ -249,7 +249,8 @@ impl Executor for Fake {
         );
         save(&self.path, &state);
         // All messages lose their answer so their next authoritative read must
-        // remove the rare duplicate. Other lost answers are seed-selected.
+        // remove the rare duplicate. Synchronous writes also lose their answer;
+        // asynchronous starts lose it only when selected by the seed.
         if notice
             || !asynchronous(delivery.output)
             || (self.scenario == "stop-sent"

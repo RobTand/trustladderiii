@@ -14,7 +14,8 @@ Postgres and the upstream records survive every cut.
 `cargo test -p tl3-controller --test crash_safety --locked` runs separate passes
 for each save point. In a pass, the parent kills the child once per distinct
 operation key, then restarts it from the database. Repeated visits to that key
-continue normally. Each pass ends at the same world as an uninterrupted run.
+continue normally. Each pass ends at the same world as an uninterrupted run. A final coverage check
+requires every committed operation in that pass to appear in the injected cuts.
 Separate passes let an earlier cut leave later save points reachable.
 
 Every cut uses SIGKILL. A panic or dropping the controller would run destructors
@@ -89,6 +90,18 @@ by days while awaiting upstream evidence.
 Tickets #9 and #10 are absent from this branch. `ingress_loom.rs` models the
 wave brief's two source threads and one controller owner over a channel. It
 checks publication of durable webhook evidence, successful worker exit before
-its reply, source order, one-time consumption, and send errors after the owner
-has gone. Integration must replace these model sources with the real ingress
+its reply, source order, and one-time consumption. A standard-channel test checks send
+errors after the owner has gone, because loom 0.7 does not model disconnection. Integration must replace these model sources with the real ingress
 and worker-output source when those branches land.
+
+## Fleet verification
+
+`crates/controller/tools/crash_manifest.py` generates five PrismaBuild actions.
+Three require the host tags `dl380g10`, `sparky`, and `sparklina`. Two allow any
+worker, with separate seeds so they cannot reuse one action's receipt. All five
+run the controller scenarios and ingress tests. One also runs workspace
+formatting, Clippy, all Rust tests, and the kernel build without default features.
+The simulation prints its own elapsed time and number of real process kills.
+
+The crash matrix uses a small seeded footprint. The tracer's existing 80-file
+case remains in the controller suite and runs in every placement too.

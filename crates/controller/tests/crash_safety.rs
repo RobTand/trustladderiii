@@ -126,7 +126,7 @@ fn child(args: &[String]) {
     let scenario = args[4].as_str();
     let selected = args[5].as_str();
     let seed: u64 = args[6].parse().unwrap();
-    let clock = FakeClock(Rc::new(Cell::new(seed)));
+    let clock = FakeClock(Rc::new(Cell::new(seed % 1_000_000_000)));
     let mut controller = Controller::open_with_clock(
         hooked_store(&settings, selected),
         upstreams::registry(root, scenario, seed),
@@ -136,7 +136,7 @@ fn child(args: &[String]) {
     .unwrap();
     controller.intake(issue(seed)).unwrap();
     for turn in 0..500 {
-        clock.0.set(seed.wrapping_add(turn * 86400));
+        clock.0.set(seed % 1_000_000_000 + turn * 86400);
         assert_eq!(controller.now(), clock.now());
         let world = controller.world().unwrap();
         assert!(world.valid() && world.is_settled());
@@ -403,6 +403,65 @@ fn emission_coverage(
     coverage
 }
 
+fn verify_cuts(
+    settings: &tl3_config::Store,
+    root: &Path,
+    selected: &str,
+    killed: &BTreeSet<String>,
+) {
+    assert!(
+        !killed.is_empty(),
+        "save point {selected} was never reached"
+    );
+    let mut store = Store::open_read_only(settings).unwrap();
+    if matches!(
+        selected,
+        "EventWritten"
+            | "RowsWritten"
+            | "EffectsWritten"
+            | "TransitionsWritten"
+            | "CreditWritten"
+            | "BeforeCommit"
+            | "AfterCommit"
+    ) {
+        for event in store.events_after(Revision::ZERO, u32::MAX).unwrap() {
+            assert!(
+                killed.contains(&event.key),
+                "{selected}: committed event {} escaped injection",
+                event.key
+            );
+        }
+    } else if selected.starts_with("Intern") {
+        for entry in store.load().unwrap().interned {
+            let kind = match entry.kind {
+                InternKind::Repo => "Repo",
+                InternKind::Commit => "Commit",
+                InternKind::Path => "Path",
+                InternKind::Issue => "Issue",
+                InternKind::PullRequest => "PullRequest",
+            };
+            let key = format!("intern:{kind}:{}:{}", entry.scope, entry.value);
+            assert!(
+                killed.contains(&key),
+                "{selected}: dictionary write {key} escaped injection"
+            );
+        }
+    } else {
+        for upstream in upstreams::UPSTREAMS {
+            for (key, record) in
+                upstreams::load(&upstreams::path(&root.join("upstreams"), upstream)).records
+            {
+                if matches!(selected, "BeforeDispatch" | "AfterDispatch") || record.probes > 0 {
+                    assert!(
+                        killed.contains(&key),
+                        "{selected}: upstream operation {key} escaped injection"
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Value {
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
@@ -553,6 +612,7 @@ fn main() {
             let root = tempfile::tempdir().unwrap();
             let kills = run(&settings, root.path(), scenario, point, seed);
             let actual = normalized(&settings, root.path(), scenario);
+            verify_cuts(&settings, root.path(), point, &kills);
             assert_eq!(
                 actual, baseline,
                 "seed={seed} scenario={scenario} point={point}: recovery differs from uninterrupted run"
