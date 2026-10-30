@@ -1022,8 +1022,9 @@ fn marker_files(root: &Path) -> Vec<std::path::PathBuf> {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext == "intent" || ext == "applied" || ext == "json")
+            path.extension().is_some_and(|ext| {
+                ext == "intent" || ext == "applied" || ext == "json" || ext == "tmp"
+            })
         })
         .collect()
 }
@@ -1081,13 +1082,12 @@ fn marker_retirement(settings: &tl3_config::Store, confirmed: bool) {
     );
     // Simulate a crash partway through deleting the files, before cleanup is acknowledged.
     drop(controller);
-    std::fs::remove_file(
-        marker_files(&records)
-            .into_iter()
-            .find(|path| path.extension().unwrap() == "intent")
-            .unwrap(),
-    )
-    .unwrap();
+    let intent = marker_files(&records)
+        .into_iter()
+        .find(|path| path.extension().unwrap() == "intent")
+        .unwrap();
+    std::fs::write(intent.with_extension("tmp"), b"interrupted write").unwrap();
+    std::fs::remove_file(intent).unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::Mergify, api.adapter(&records, 0));
     let mut controller =
