@@ -161,7 +161,8 @@ elif name == "id": print("1000")
                 self.assertEqual(config.read_text(), f"CI_RUNNER_IMAGE={IMAGE}\nCI_RUNNER_CPUSET=40-79\n")
                 unit = configparser.ConfigParser(interpolation=None)
                 unit.read(self.home / f".config/systemd/user/{prefix}@.service")
-                self.assertEqual(unit["Service"]["EnvironmentFile"],
+                environment_file = unit["Service"]["EnvironmentFile"]
+                self.assertEqual(environment_file.replace("%p", prefix),
                                  f"%h/.config/tl3-ci-runners/{filename}")
                 expected_args = "%i %p" if profile == "sandbox" else "%i"
                 self.assertEqual(unit["Service"]["ExecStart"],
