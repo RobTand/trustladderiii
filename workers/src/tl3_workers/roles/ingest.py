@@ -12,10 +12,10 @@ def check_memory_ids(inputs, reply):
             raise ValueError("reply cites a memory it was not given")
 
         if "forecast" in inputs:
-            from tl3_workers.forecast import measure
+            from tl3_workers.forecast import Forecaster
             if "files" not in reply:
                 raise ValueError("sized briefs must declare their root files")
-            reply["forecast"] = measure(reply["brief"], reply["files"], inputs["forecast"])
+            reply["forecast"] = Forecaster(inputs["forecast"]).measure(reply["brief"], reply["files"])
 
 
 ROLE = Role(
