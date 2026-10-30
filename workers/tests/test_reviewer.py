@@ -208,3 +208,12 @@ def test_prompt_blocks_test_report_tampering():
     prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
     assert "breaks the standing\nrule that protects test reports" in prompt
     assert "is not\ntampering" in prompt
+
+
+@pytest.mark.parametrize("length,valid", [(1000, True), (1001, False)])
+def test_review_check_message_bound(review_request, length, valid):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+
+    review_request["inputs"]["checks"][0]["tests"][0]["message"] = "é" * length
+    assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"]) == valid

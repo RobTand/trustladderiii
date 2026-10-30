@@ -2,6 +2,10 @@ use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
 mod real;
 
+pub(super) fn review_trial(settings: &tl3_config::Store) {
+    real::review_feedback(settings);
+}
+
 pub(super) fn rebase_trial(settings: &tl3_config::Store, new_edits: bool) {
     real::rebase_revisit(settings, new_edits);
 }
@@ -111,6 +115,7 @@ fn fixture(
 struct Workers {
     real: Supervisor,
     fake: adapters::workers::Fake,
+    review: bool,
 }
 impl Workers {
     fn plan(completion: &mut Completion) {
@@ -147,13 +152,22 @@ impl Executor for Workers {
         self.real.retire(store)
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.execute(delivery)
         } else {
             let mut result = self.fake.execute(delivery)?;
@@ -162,13 +176,22 @@ impl Executor for Workers {
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.reconcile(delivery)
         } else {
             let mut result = self.fake.reconcile(delivery)?;
@@ -193,6 +216,11 @@ fn registry(
         Workers {
             real,
             fake: adapters::workers::Fake::new(root),
+            review: config
+                .workers
+                .command
+                .get(1)
+                .is_some_and(|mode| mode == "review-feedback"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(
@@ -847,6 +875,8 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 pub(super) fn run(database: &mut Database) {
     declared_wait(&database.create("maker_declared_wait"));
     println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
+    real::review_feedback(&database.create("maker_review_feedback"));
+    println!("test reviewer_blockers_reach_real_maker ... ok");
     legacy_session(&database.create("maker_legacy_session"));
     println!("test maker_legacy_session_fails_closed ... ok");
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));

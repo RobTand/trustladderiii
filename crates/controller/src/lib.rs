@@ -886,6 +886,54 @@ impl Controller {
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
         let (world, outputs) = tl3_kernel::step(world, event);
+        for (index, node) in world.nodes.iter().enumerate() {
+            if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
+                || previous
+                    .nodes
+                    .get(index)
+                    .is_some_and(|node| matches!(node.phase, tl3_kernel::Phase::Planning { .. }))
+            {
+                continue;
+            }
+            let id = index.to_string();
+            let maker_findings = commit
+                .rows
+                .iter()
+                .rev()
+                .find_map(|row| match row {
+                    RowChange::Put {
+                        table,
+                        id: row_id,
+                        value,
+                    } if table == "maker_findings" && row_id == &id => Some(value),
+                    _ => None,
+                })
+                .or_else(|| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "maker_findings" && row.id == id)
+                        .map(|row| &row.value)
+                });
+            if let Some(maker_findings) = maker_findings {
+                let mut findings = self
+                    .store
+                    .worker_document(&id, "findings")?
+                    .unwrap_or(json!([]));
+                let reports = findings
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("findings must be text reports"))?;
+                for finding in maker_findings
+                    .as_array()
+                    .ok_or(Error::Invalid("invalid maker findings"))?
+                {
+                    if !reports.contains(&finding["report"]) {
+                        reports.push(finding["report"].clone());
+                    }
+                }
+                commit.rows.push(put("findings", id, findings));
+            }
+        }
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
@@ -1297,6 +1345,7 @@ impl Controller {
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
+        let mut detailed_review = false;
         let event = match observation {
             Observation::Progress { key, checkpoint } => {
                 self.progress_allowance(snapshot, &key, checkpoint, commit)?;
@@ -1556,23 +1605,57 @@ impl Controller {
                                 head: n.head.ok_or(Error::Invalid("review has no head"))?,
                             });
                     }
-                    let mut findings = self
-                        .store
-                        .worker_document(&node.0.to_string(), "findings")?
-                        .unwrap_or(json!([]));
-                    for finding in reply["blocking_findings"].as_array().unwrap() {
-                        findings
+                    if reply["verdict"] == "changes" {
+                        let mut feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let reports = feedback
                             .as_array_mut()
-                            .ok_or(Error::Invalid("findings must be a list"))?
-                            .push(json!(format!(
+                            .ok_or(Error::Invalid("invalid maker findings"))?;
+                        let mut remaining = findings::MAX_REPORT_CHARS;
+                        for finding in reply["blocking_findings"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .take(findings::MAX_REVIEW_FINDINGS)
+                        {
+                            let report = format!(
                                 "{}: {}",
-                                finding["problem"].as_str().unwrap(),
-                                finding["evidence"].as_str().unwrap()
-                            )));
+                                findings::clipped(
+                                    finding["problem"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
+                                ),
+                                findings::clipped(
+                                    finding["evidence"].as_str().unwrap(),
+                                    findings::MAX_MESSAGE_CHARS
+                                ),
+                            );
+                            let length = report.chars().count();
+                            if length > remaining {
+                                break;
+                            }
+                            remaining -= length;
+                            let goal_ids = if finding["citation"]["kind"] == "goal" {
+                                vec![finding["citation"]["id"].as_str().unwrap().to_owned()]
+                            } else {
+                                Vec::new()
+                            };
+                            reports.push(serde_json::to_value(findings::Finding {
+                                kind: findings::Kind::ReviewFinding,
+                                report,
+                                goal_ids,
+                                failed_tests: Vec::new(),
+                                outside_paths: Vec::new(),
+                                outside_paths_total: 0,
+                                ci_checks: Vec::new(),
+                            })?);
+                        }
+                        commit
+                            .rows
+                            .push(put("maker_findings", node.0.to_string(), feedback));
+                        detailed_review = true;
                     }
-                    commit
-                        .rows
-                        .push(put("findings", node.0.to_string(), findings));
                 }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
@@ -1778,7 +1861,7 @@ impl Controller {
                     (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
                         if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
                             findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
-                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) if !detailed_review => Some((
                         findings::Kind::ReviewFinding,
                         "The independent reviewer requested changes. No detailed review report was supplied.".into(),
                     )),

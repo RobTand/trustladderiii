@@ -169,6 +169,10 @@ language. `Observation::CiFailed` persists named CI evidence in the same
 transaction as its kernel fact. A bare non-infrastructure CI fact still records
 feedback, explicitly stating when the upstream supplied no check details.
 Infrastructure failures and stale replies do not add maker findings.
+Reviewer blockers supply their problem, evidence and cited goal IDs to the next
+maker run, with up to 20 blockers per review. Each problem and evidence is
+capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's
+`findings` only when the request re-plans.
 
 Production registration supplies committed repository materials. Before maker
 dispatch, the supervisor translates the accepted brief and planner checks into
@@ -430,7 +434,8 @@ registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, recor
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
 check baselines and receipts by effect key. A label write alone leaves enqueue
 uncertain. Mergify must report queue membership or the attempt's terminal result.
-An outside commit between Mergify's head check and adding `tl3-queue` can leave a stale label; the new head has no approval check, so it cannot merge.
+An outside commit between Mergify's head check and adding `tl3-queue` can leave
+a stale label; the new head has no approval check, so it cannot merge.
 The kernel has no dequeue effect, so this adapter adds none. The GitHub adapter
 owns approval checks and opening and closing PRs.
 
@@ -1060,8 +1065,10 @@ on dl380g10, sparky and sparklina. It also runs the affected Rust suites,
 including process recovery scenarios, and the worker package's offline tests. The
 `publishing` target combines local repositories, mock GitHub HTTP, recorded
 PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
-entry point with an offline model. Making uses the worker fake until ticket #12
-merges. It covers merge and cleanup, an outside commit, a free catch-up recheck,
+entry point with an offline model. Publishing scenarios use the fake maker to
+control commit and check evidence while exercising review, publication and cleanup.
+The maker scenarios separately run the real maker process. Publishing covers
+merge and cleanup, an outside commit, a free catch-up recheck,
 an unapproved merge, and lost-response recovery for GitHub writes. No test submits
 nested fleet work. After the host runs pass, generate the `workspace` campaign
 and submit it for formatting, Clippy and full workspace verification.

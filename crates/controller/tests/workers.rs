@@ -360,6 +360,11 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--review-feedback") {
+        maker::review_trial(&database.create("review_feedback"));
+        database.stop();
+        return;
+    }
     quota_resumes_same_operation(&database.create("workers_quota"));
     println!("test announced_quota_resumes_same_operation_without_failure ... ok");
     clock_stops_stalled_worker(&database.create("workers_stall"));
