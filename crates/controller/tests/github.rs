@@ -1663,6 +1663,43 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
 }
 
+fn steering_maker_worktree(root: &Path) {
+    let checkout = root.join("worktrees/6f776e6572/73616e64626f78/issue-12-node-0");
+    fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet", "--template="]);
+    fs::write(
+        checkout.join("greeting.py"),
+        "def greet(): return 'goodbye'\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "Base"]);
+}
+
 fn worker_daemon_config(
     settings: &tl3_config::Store,
     root: &Path,
@@ -1672,6 +1709,7 @@ fn worker_daemon_config(
         .join("../../workers")
         .canonicalize()
         .unwrap();
+    steering_maker_worktree(root);
     let credentials = root.join("app.json");
     let model_key = root.join("model-key");
     fs::write(
@@ -1717,6 +1755,10 @@ fn worker_daemon_config(
             package.join(".venv/bin/python").to_str().unwrap(),
         )
         .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace(
+            "/srv/tl3/worktrees",
+            root.join("worktrees").to_str().unwrap(),
+        )
         .replace(
             "command = [\"-m\", \"tl3_workers\", \"run\"]",
             &format!(
