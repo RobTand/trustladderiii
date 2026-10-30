@@ -107,6 +107,11 @@ def main():
     if source.count(old) != 1:
         raise SystemExit(f"{name}: expected exactly one mutation site")
     mutated = source.replace(old, new)
+    if args.mutant == "consume-before-apply":
+        mutated = mutated.replace(
+            "            controller.store.ingress_applied(&stored);\n            controller.store.consume_ingress(stored.sequence)?;",
+            "            controller.store.ingress_applied(&stored);",
+        )
     if args.mutant == "stop-relaxed":
         mutated = mutated.replace("stopped.load(Ordering::Acquire)", "stopped.load(Ordering::Relaxed)")
     print("".join(difflib.unified_diff(source.splitlines(True), mutated.splitlines(True), fromfile=f"a/{name}", tofile=f"b/{name}")), flush=True)
