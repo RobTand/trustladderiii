@@ -112,6 +112,7 @@ impl Fixture {
             paths: vec![],
             attempt: 1,
             round: 1,
+            question: None,
             note: None,
             question_context: None,
         }

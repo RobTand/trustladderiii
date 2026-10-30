@@ -13,18 +13,23 @@ thiserror = "2"
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
-
-tl3-worktrees = { path = "../worktrees" }
 tl3-github = { path = "../github" }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
 tokio = { version = "1", features = ["rt", "time", "net"] }
 
+tl3-worktrees = { path = "../worktrees" }
+
 [dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
 rand = "0.8"
 rsa = { version = "0.9", features = ["pem"] }
 wiremock = "0.6"
 postgres = "0.19"
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
 tempfile = "3"
+hmac = "0.12"
+hex = "0.4"
 
 [[test]]
 name = "simulation"
@@ -34,6 +39,11 @@ harness = false
 [[test]]
 name = "worktrees"
 path = "tests/worktrees.rs"
+harness = false
+
+[[test]]
+name = "github"
+path = "tests/github.rs"
 harness = false
 
 [[test]]

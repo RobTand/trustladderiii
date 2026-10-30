@@ -2800,6 +2800,9 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
  "jsonschema",
  "postgres",
  "postgresql_embedded",
@@ -2808,6 +2811,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "socket2",
  "tempfile",
  "thiserror",
