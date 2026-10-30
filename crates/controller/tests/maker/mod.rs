@@ -6,6 +6,10 @@ pub(super) fn rebase_trial(settings: &tl3_config::Store, new_edits: bool) {
     real::rebase_revisit(settings, new_edits);
 }
 
+pub(super) fn bounds_trial(settings: &tl3_config::Store) {
+    real::outside_paths_bounded(settings);
+}
+
 pub(super) fn trial(settings: &tl3_config::Store, root: &Path) {
     real::Flow::start(settings, root).write_trial(root);
 }
@@ -681,6 +685,8 @@ fn restart_after_replan(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    real::outside_paths_bounded(&database.create("maker_outside_bounds"));
+    println!("test maker_outside_paths_bounded ... ok");
     real::acceptance(&database.create("maker_real_worktrees"));
     println!("test maker_real_worktrees_and_recorded_harness ... ok");
     for new_edits in [false, true] {

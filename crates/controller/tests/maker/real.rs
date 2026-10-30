@@ -346,3 +346,68 @@ impl Executor for HeldQueue {
         Ok(Reconciliation::Found(Completion::confirmed(vec![])))
     }
 }
+
+pub(super) fn outside_paths_bounded(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start(settings, root.path());
+    for index in 0..2000 {
+        fs::write(
+            flow.worktree.join(format!("outside-{index:04}.py")),
+            "outside\n",
+        )
+        .unwrap();
+    }
+    git(&flow.worktree, &["add", "."]);
+    git(
+        &flow.worktree,
+        &["commit", "--quiet", "-m", "Thousands of outside files"],
+    );
+    let node = flow.controller.world().unwrap().nodes[0];
+    let sha = Store::open(settings)
+        .unwrap()
+        .worker_document("0", "maker_replies")
+        .unwrap()
+        .unwrap()["head"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // External reports can also contain paths longer than the host filesystem allows.
+    let mut paths = vec!["é".repeat(4097)];
+    paths.extend(
+        git(&flow.worktree, &["diff", "--name-only", &flow.base, "HEAD"])
+            .lines()
+            .map(str::to_owned),
+    );
+    assert_eq!(paths.len(), 2002);
+    flow.controller
+        .observe(
+            "many-outside-paths",
+            Observation::Checks {
+                node: NodeId(0),
+                generation: node.generation,
+                action_key: "a".repeat(64),
+                base_sha: flow.base.clone(),
+                sha,
+                changed_paths: paths,
+                failed_tests: vec![],
+                report: true,
+                pass: true,
+            },
+        )
+        .unwrap();
+    // Consume this observation before dispatching the fix round.
+    assert!(flow.controller.drive_once().unwrap());
+    let feedback = Store::open(settings)
+        .unwrap()
+        .worker_document("0", "maker_findings")
+        .unwrap()
+        .unwrap();
+    let finding = &feedback[0];
+    let paths = finding["outside_paths"].as_array().unwrap();
+    assert_eq!(paths.len(), 100, "outside path feedback must be bounded");
+    assert_eq!(paths[0].as_str().unwrap().chars().count(), 4096);
+    assert_eq!(finding["outside_paths_total"], 2001);
+    flow.until(|phase| phase == Phase::Checking);
+    let runs = requests(&flow.config);
+    assert_eq!(runs.last().unwrap()["inputs"]["feedback"][0], *finding);
+}

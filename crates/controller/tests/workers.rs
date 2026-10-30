@@ -254,6 +254,11 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--maker-bounds") {
+        maker::bounds_trial(&database.create("maker_outside_bounds"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
         maker::run(&mut database);
         database.stop();

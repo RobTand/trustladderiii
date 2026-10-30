@@ -776,3 +776,52 @@ def test_ci_feedback_summary_has_a_character_cap(maker_request):
     maker_request['inputs']['feedback'][0]['ci_checks'][0]['summary'] += 'x'
     with pytest.raises(ValidationError):
         validate('maker-input', maker_request['inputs'])
+
+
+@pytest.mark.parametrize('failure', ['killed', 'session-save'])
+def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, monkeypatch, failure):
+    root = Path(maker_request['worktree'])
+    base = git(root, 'rev-parse', 'HEAD')
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    launcher = worker_process.LAUNCH
+    injection = """
+from tl3_workers.roles import maker
+commit = maker._commit
+save = maker._save
+def crash_commit(*args):
+    commit(*args)
+    import os, signal
+    os.kill(os.getpid(), signal.SIGKILL)
+def fail_save(path, value):
+    if path.suffix == '.json':
+        raise OSError('injected session save failure')
+    save(path, value)
+"""
+    injection += ("maker._commit = crash_commit\n" if failure == 'killed'
+                  else "maker._save = fail_save\n")
+    monkeypatch.setattr(worker_process, 'LAUNCH', launcher.replace('def no_network', injection + '\ndef no_network'))
+    failed = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert failed.exit_code == (-9 if failure == 'killed' else 1), failed.stderr
+    assert all(event['event'] != 'reply' for event in failed.events)
+    head = git(root, 'rev-parse', 'HEAD')
+    assert head != base
+    monkeypatch.setattr(worker_process, 'LAUNCH', launcher)
+    maker_request['operation']['generation'] += 1
+    recovered = start_worker(tmp_path, maker_request, [turn(DONE)])
+    assert recovered.exit_code == 0, recovered.stderr
+    assert recovered.events[-1]['reply'] == {**DONE, 'head': head}
+    assert git(root, 'rev-list', '--count', f'{base}..HEAD') == '1'
+    assert git(root, 'rev-parse', 'HEAD') == head
+
+
+@pytest.mark.parametrize('paths', [['outside.py'] * 101, ['é' * 4097]])
+def test_outside_path_feedback_schema_is_bounded(maker_request, paths):
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'Files outside the footprint.',
+        'goal_ids': ['greeting'], 'outside_paths': paths,
+    }]
+    # Use distinct paths so duplicate rejection cannot substitute for the item cap.
+    if len(paths) > 1:
+        maker_request['inputs']['feedback'][0]['outside_paths'] = [f'outside-{i}.py' for i in range(101)]
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
