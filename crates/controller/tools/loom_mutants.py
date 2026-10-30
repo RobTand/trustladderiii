@@ -70,7 +70,7 @@ def main():
     print("".join(difflib.unified_diff(source.splitlines(True), mutated.splitlines(True), fromfile=f"a/{name}", tofile=f"b/{name}")), flush=True)
     if args.diff:
         return
-    if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip():
+    if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT).strip():
         raise SystemExit("mutants require a clean scratch checkout")
     path.write_text(mutated)
     try:
