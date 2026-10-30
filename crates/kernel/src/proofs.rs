@@ -406,6 +406,13 @@ proof!(
     check_apply(reply(Reply::RebaseNeedsChanges))
 );
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
+proof!(
+    apply_notice_failed,
+    check_apply(Event::NoticeFailed {
+        node: NodeId(0),
+        question: kani::any()
+    })
+);
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));

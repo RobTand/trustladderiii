@@ -9,6 +9,7 @@ pub mod executor;
 mod http;
 pub mod ingress;
 pub mod looks;
+mod notices;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -841,6 +842,19 @@ impl Controller {
                 &mut commit,
             )?;
         }
+        if completion.ack == Ack::Permanent
+            && !matches!(delivery.output, DeliveryOutput::Effect { .. })
+        {
+            self.failed_notice(
+                &snapshot,
+                &delivery,
+                completion
+                    .failure_class
+                    .as_deref()
+                    .unwrap_or("permanent_failure"),
+                &mut commit,
+            )?;
+        }
         if completion.ack == Ack::Retryable
             && state == EffectState::Intended
             && matches!(delivery.output, DeliveryOutput::Effect { .. })
@@ -1015,11 +1029,13 @@ impl Controller {
                 checks,
                 job_generation: n.job,
                 question: n.question,
+                marker_key: None,
                 note: None,
                 question_context,
                 steering: None,
                 request_text: request.source,
             };
+            self.retry_question(snapshot, &previous, &mut delivery, commit)?;
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..
@@ -1047,6 +1063,7 @@ impl Controller {
                         summary: summary.clone(),
                         signature: signature.clone(),
                         effect: None,
+                        post_key: Some(key.clone()),
                     }),
                 ));
                 delivery.note = Some(format!(
@@ -1216,7 +1233,9 @@ impl Controller {
                 ));
             } else {
                 incident.open = false;
-                self.resume_incident_look(snapshot, &incident, commit)?;
+                if !self.retry_notice(snapshot, &incident, commit)? {
+                    self.resume_incident_look(snapshot, &incident, commit)?;
+                }
                 commit
                     .rows
                     .push(put("incidents", id.into(), json!(incident)));

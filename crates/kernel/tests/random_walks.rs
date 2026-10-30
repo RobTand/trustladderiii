@@ -50,7 +50,11 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
     let n = w.nodes[i];
     let node = NodeId(if rng.below(50) == 0 { 9 } else { i as u64 });
     let head = HeadId(rng.next());
-    match rng.below(12) {
+    match rng.below(13) {
+        12 => Event::NoticeFailed {
+            node,
+            question: n.question.map_or(rng.next(), |q| q.id),
+        },
         0..=3 => match n.effect {
             Some(e) => {
                 let ack = match rng.below(12) {

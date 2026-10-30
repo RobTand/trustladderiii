@@ -74,6 +74,8 @@ pub struct Delivery {
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
+    pub marker_key: Option<String>,
+    #[serde(default)]
     pub question_context: Option<serde_json::Value>,
     #[serde(default)]
     pub steering: Option<crate::steering::Task>,
@@ -82,6 +84,9 @@ pub struct Delivery {
 }
 
 impl Delivery {
+    pub fn marker_key(&self) -> &str {
+        self.marker_key.as_deref().unwrap_or(&self.key)
+    }
     pub fn node(&self) -> NodeId {
         match self.output {
             Output::Effect { node, .. }
@@ -200,6 +205,8 @@ impl WatchProgress {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
     pub ack: Ack,
+    #[serde(default)]
+    pub failure_class: Option<String>,
     /// Progress from this read, even when it produces no kernel observations.
     #[serde(default)]
     pub progress: Option<ProgressToken>,
@@ -207,6 +214,14 @@ pub struct Completion {
 }
 
 impl Completion {
+    pub fn permanent(class: impl Into<String>) -> Self {
+        Self {
+            ack: Ack::Permanent,
+            failure_class: Some(class.into()),
+            progress: None,
+            observations: vec![],
+        }
+    }
     pub(crate) fn releases_holds(&self) -> bool {
         if self.progress.is_some() && self.observations.is_empty() {
             return false;
@@ -226,6 +241,7 @@ impl Completion {
 
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
+            failure_class: None,
             ack: Ack::Confirmed,
             progress: None,
             observations,

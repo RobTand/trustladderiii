@@ -156,7 +156,7 @@ impl Adapter {
         );
         let issue = self.runtime.block_on(client.create_request_issue(
             &repo,
-            &delivery.key,
+            delivery.marker_key(),
             since,
             &title,
             &body,
@@ -187,117 +187,18 @@ impl Executor for Adapter {
     }
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        self.fence(delivery)?;
-        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
-            return self.file_request(delivery);
-        }
-        let notice = Self::request_notice(delivery);
-        if notice.is_none()
-            && !matches!(
-                delivery.output,
-                Out::Comment {
-                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
-                    ..
-                }
-            )
-        {
-            return self.fake.execute(delivery);
-        }
-        if matches!(notice, Some(Notice::Incident { .. }))
-            && !self.operations.as_ref().is_some_and(|o| {
-                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
-                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
-                    && o.installation_id == delivery.repository.installation
-                    && o.number == delivery.issue
-            })
-        {
-            return Err(Error::Invalid(
-                "incident delivery needs the configured operations issue",
-            ));
-        }
-        let client = self.client(delivery)?;
-        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        if self
-            .runtime
-            .block_on(client.reconcile_comments(&repo, delivery.issue, &delivery.key))?
-            .is_none()
-        {
-            let input = if matches!(notice, Some(Notice::Incident { .. })) {
-                let context = delivery
-                    .question_context
-                    .as_ref()
-                    .ok_or(Error::Invalid("incident needs its request context"))?;
-                writer_input(
-                    delivery,
-                    notice,
-                    context["issue_title"]
-                        .as_str()
-                        .ok_or(Error::Invalid("incident request title missing"))?,
-                    context["request"]
-                        .as_str()
-                        .ok_or(Error::Invalid("incident request link missing"))?,
-                )?
-            } else {
-                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-                writer_input(
-                    delivery,
-                    notice,
-                    &issue.title,
-                    issue.body.as_deref().unwrap_or(""),
-                )?
-            };
-            let mut policy = self.policy.clone();
-            policy
-                .internal_terms
-                .extend([delivery.key.clone(), "TL3".into()]);
-            if let Some(sha) = &delivery.head_sha {
-                policy.internal_terms.push(sha.clone());
+        match self.execute_delivery(delivery) {
+            Err(Error::Adapter(error)) => {
+                let class = match error.downcast_ref::<tl3_github::Error>() {
+                    Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
+                    Some(tl3_github::Error::Http { status: 404 | 410 }) => "not_found",
+                    Some(tl3_github::Error::Http { status: 422 }) => "invalid_request",
+                    _ => return Err(Error::Adapter(error)),
+                };
+                Ok(Completion::permanent(class))
             }
-            policy.known_paths.extend(
-                delivery
-                    .paths
-                    .iter()
-                    .filter(|path| path.contains('/'))
-                    .cloned(),
-            );
-            let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
-                Ok(draft) => draft,
-                Err(Error::MessageRejected)
-                    if matches!(
-                        delivery.output,
-                        Out::Comment {
-                            kind: CommentKind::Clarify,
-                            ..
-                        }
-                    ) =>
-                {
-                    let fallback = "I couldn't act on your comment. Could you rephrase it?";
-                    tl3_github::message::check_prose(fallback, &policy)
-                        .map_err(|_| Error::MessageRejected)?;
-                    fallback.into()
-                }
-                Err(Error::MessageRejected) => {
-                    return Ok(Completion {
-                        progress: None,
-                        ack: Ack::Permanent,
-                        observations: vec![],
-                    });
-                }
-                Err(error) => return Err(error),
-            };
-            self.fence(delivery)?;
-            self.runtime.block_on(client.post_comment(
-                &repo,
-                delivery.issue,
-                &delivery.key,
-                &draft,
-            ))?;
+            result => result,
         }
-        if let Some(reason) = Self::close_reason(delivery) {
-            self.runtime
-                .block_on(client.close_issue(&repo, delivery.issue, reason))?;
-        }
-        Ok(Completion::confirmed(vec![]))
     }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {
@@ -389,10 +290,11 @@ impl Executor for Adapter {
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
             return Ok(
-                match self
-                    .runtime
-                    .block_on(client.reconcile_issue(&repo, &delivery.key, since))
-                {
+                match self.runtime.block_on(client.reconcile_issue(
+                    &repo,
+                    delivery.marker_key(),
+                    since,
+                )) {
                     Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
                     Ok(None) => Reconciliation::Absent,
                     Err(_) => Reconciliation::Pending,
@@ -412,10 +314,11 @@ impl Executor for Adapter {
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        match self
-            .runtime
-            .block_on(client.reconcile_comments(&repo, delivery.issue, &delivery.key))
-        {
+        match self.runtime.block_on(client.reconcile_comments(
+            &repo,
+            delivery.issue,
+            delivery.marker_key(),
+        )) {
             Ok(Some(_)) => {
                 if Self::close_reason(delivery).is_some() {
                     match self.runtime.block_on(client.issue(&repo, delivery.issue)) {
@@ -610,4 +513,116 @@ fn writer_input(
         facts,
         violations: vec![],
     })
+}
+
+impl Adapter {
+    fn execute_delivery(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.fence(delivery)?;
+        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
+            return self.file_request(delivery);
+        }
+        let notice = Self::request_notice(delivery);
+        if notice.is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
+                    ..
+                }
+            )
+        {
+            return self.fake.execute(delivery);
+        }
+        if matches!(notice, Some(Notice::Incident { .. }))
+            && !self.operations.as_ref().is_some_and(|o| {
+                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
+                    && o.installation_id == delivery.repository.installation
+                    && o.number == delivery.issue
+            })
+        {
+            return Err(Error::Invalid(
+                "incident delivery needs the configured operations issue",
+            ));
+        }
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+            .is_none()
+        {
+            let input = if matches!(notice, Some(Notice::Incident { .. })) {
+                let context = delivery
+                    .question_context
+                    .as_ref()
+                    .ok_or(Error::Invalid("incident needs its request context"))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    context["issue_title"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request title missing"))?,
+                    context["request"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request link missing"))?,
+                )?
+            } else {
+                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    &issue.title,
+                    issue.body.as_deref().unwrap_or(""),
+                )?
+            };
+            let mut policy = self.policy.clone();
+            policy
+                .internal_terms
+                .extend([delivery.key.clone(), "TL3".into()]);
+            if let Some(sha) = &delivery.head_sha {
+                policy.internal_terms.push(sha.clone());
+            }
+            policy.known_paths.extend(
+                delivery
+                    .paths
+                    .iter()
+                    .filter(|path| path.contains('/'))
+                    .cloned(),
+            );
+            let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
+                Ok(draft) => draft,
+                Err(Error::MessageRejected)
+                    if matches!(
+                        delivery.output,
+                        Out::Comment {
+                            kind: CommentKind::Clarify,
+                            ..
+                        }
+                    ) =>
+                {
+                    let fallback = "I couldn't act on your comment. Could you rephrase it?";
+                    tl3_github::message::check_prose(fallback, &policy)
+                        .map_err(|_| Error::MessageRejected)?;
+                    fallback.into()
+                }
+                Err(Error::MessageRejected) => {
+                    return Ok(Completion::permanent("message_rejected"));
+                }
+                Err(error) => return Err(error),
+            };
+            self.fence(delivery)?;
+            self.runtime.block_on(client.post_comment(
+                &repo,
+                delivery.issue,
+                delivery.marker_key(),
+                &draft,
+            ))?;
+        }
+        if let Some(reason) = Self::close_reason(delivery) {
+            self.runtime
+                .block_on(client.close_issue(&repo, delivery.issue, reason))?;
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
 }

@@ -438,6 +438,7 @@ fn permanent_incident_clear(settings: &tl3_config::Store) {
     impl Executor for Permanent {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
             Ok(Completion {
+                failure_class: None,
                 progress: None,
                 ack: tl3_kernel::Ack::Permanent,
                 observations: vec![],

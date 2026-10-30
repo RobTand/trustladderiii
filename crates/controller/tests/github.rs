@@ -778,6 +778,7 @@ fn delivery(notice: Notice) -> Delivery {
         request_text: None,
         checks: None,
         job_generation: None,
+        marker_key: None,
         note: None,
     }
 }
@@ -946,6 +947,7 @@ fn writer_checks() {
         cont: tl3_kernel::Cont::Unplanned,
         cost: 0,
         clarified: false,
+        post_failed: false,
     });
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();

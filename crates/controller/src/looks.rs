@@ -70,6 +70,8 @@ pub(crate) struct Incident {
     pub signature: String,
     #[serde(default)]
     pub effect: Option<String>,
+    #[serde(default)]
+    pub post_key: Option<String>,
 }
 
 impl Controller {
@@ -320,6 +322,7 @@ impl Controller {
                         self.complete(
                             &effect.key,
                             Completion {
+                                failure_class: None,
                                 progress: None,
                                 ack: Ack::Retryable,
                                 observations: vec![],
@@ -667,6 +670,7 @@ impl Controller {
                 summary: summary.clone(),
                 signature: signature.clone(),
                 effect: Some(state.delivery.key.clone()),
+                post_key: Some(format!("incident:{id}")),
             }),
         ));
         let mut delivery = state.delivery.clone();

@@ -117,6 +117,7 @@ impl Controller {
                     checks: None,
                     job_generation: None,
                     question: None,
+                    marker_key: None,
                     note: None,
                     question_context: None,
                     request_text: binding.source,
@@ -173,7 +174,7 @@ impl Controller {
         };
         let n = &world.nodes[node.0 as usize];
         let open_question = n.question.map(|q| {
-                let (kind, answers) = question(q.kind);
+                let (kind, answers) = question(if q.post_failed { QKind::EffectFailed } else { q.kind });
                 json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
             });
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
@@ -206,6 +207,7 @@ impl Controller {
             checks: None,
             job_generation: None,
             question: n.question,
+            marker_key: None,
             note: None,
             question_context: None,
             request_text: binding.source,
