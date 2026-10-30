@@ -890,6 +890,54 @@ pub(super) fn writer_rejection() {
             assert!(text.contains("Would you like me to stop or continue?"));
         }
     }
+    for failures in [1, usize::MAX] {
+        let api = Server::new();
+        let root = tempfile::tempdir().unwrap();
+        let calls = Arc::new(Mutex::new(vec![]));
+        let mut adapter = adapters::github::Adapter::new(
+            BTreeMap::from([(3, client(&api.uri()))]),
+            ScriptWriter {
+                calls: calls.clone(),
+                failures,
+            },
+            0,
+            Policy::default(),
+            root.path(),
+        )
+        .unwrap();
+        let mut note = delivery(Notice::MeasuresPosted);
+        note.key = "replacement-dropped:0".into();
+        note.output = Out::Comment {
+            node: NodeId(0),
+            kind: tl3_controller::executor::CommentKind::ReplacementDropped,
+        };
+        note.steering = Some(tl3_controller::steering::Task::ReplacementDropped {
+            text: CHANGE.into(),
+            outcome: Outcome::Merged,
+        });
+        let completion = adapter.execute(&note).unwrap();
+        assert_eq!(
+            completion.ack,
+            if failures == 1 {
+                tl3_kernel::Ack::Confirmed
+            } else {
+                tl3_kernel::Ack::Permanent
+            }
+        );
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            if failures == 1 { 2 } else { 3 }
+        );
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            usize::from(failures == 1),
+            "a rejected note must not use clarification's fallback"
+        );
+        if failures == 1 {
+            adapter.execute(&note).unwrap();
+            assert_eq!(api.state.lock().unwrap().posts, 1);
+        }
+    }
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let calls = Arc::new(Mutex::new(0));
@@ -1309,6 +1357,21 @@ pub(super) fn merge_pending(settings: &tl3_config::Store, point: &str) {
     fs::write(&settings_path, serde_json::to_vec(&json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})).unwrap()).unwrap();
     let mut crashes = 0;
     loop {
+        let mut connection = postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        connection
+            .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        connection
+            .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+            .unwrap();
+        drop(connection);
         let status = Command::new(env::current_exe().unwrap())
             .arg("--merge-pending-child")
             .arg(&settings_path)
@@ -1399,11 +1462,14 @@ pub(super) fn merge_pending_child(args: &[String]) {
     registry.register(Upstream::GitHub, adapter(&args[4], root));
     let mut controller = Controller::open(store, registry, bootstrap()).unwrap();
     for _ in 0..500 {
-        if !controller
+        let progressed = controller
             .drive_once_with(|point, key| {
                 // Force a lost response once so reconciliation boundaries are reachable.
                 if selected_reconcile(&args[5]) && point == Boundary::AfterDispatch {
-                    let marker = root.join("lost-response");
+                    let marker = root.join(format!(
+                        "lost-response-{:x}",
+                        Sha256::digest(key.as_bytes())
+                    ));
                     if !marker.exists() {
                         fs::write(marker, key).unwrap();
                         std::process::exit(86);
@@ -1411,8 +1477,20 @@ pub(super) fn merge_pending_child(args: &[String]) {
                 }
                 cut(&format!("{point:?}"), key);
             })
-            .unwrap()
+            .unwrap();
+        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(outcome) if outcome != Outcome::Replaced)
         {
+            assert!(
+                !controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "replacement"),
+                "closing commit must delete the saved change atomically"
+            );
+        }
+        if !progressed {
             return;
         }
     }

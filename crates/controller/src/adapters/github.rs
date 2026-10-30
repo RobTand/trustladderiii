@@ -119,7 +119,7 @@ impl Adapter {
         let Some(crate::steering::Task::FileRequest {
             text,
             comment,
-            correction,
+            correction: true,
             revert,
             since,
             comment_issue,
@@ -129,22 +129,6 @@ impl Adapter {
         };
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        if !correction {
-            if !matches!(
-                delivery.output,
-                Out::Notice {
-                    notice: Notice::FileReplacement,
-                    ..
-                }
-            ) {
-                return Err(Error::Invalid(
-                    "replacement requires FileReplacement notice",
-                ));
-            }
-            let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-            issue.body = Some(text.clone());
-            return Ok(Self::linked(delivery, issue));
-        }
         let title = format!("Correction for #{}", delivery.issue);
         let comment_path = if *comment_issue == delivery.issue {
             "issues"
@@ -196,7 +180,7 @@ impl Executor for Adapter {
             && !matches!(
                 delivery.output,
                 Out::Comment {
-                    kind: CommentKind::Clarify,
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
                     ..
                 }
             )
@@ -274,15 +258,11 @@ impl Executor for Adapter {
         // The current owner fences mutations while reading the original effect epoch.
         self.fake.0.fence(self.epoch)?;
         if let Some(crate::steering::Task::FileRequest {
-            correction, since, ..
+            correction: true,
+            since,
+            ..
         }) = &delivery.steering
         {
-            if !correction {
-                return Ok(match self.file_request(delivery) {
-                    Ok(completion) => Reconciliation::Found(completion),
-                    Err(_) => Reconciliation::Pending,
-                });
-            }
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
             return Ok(
@@ -300,7 +280,7 @@ impl Executor for Adapter {
             && !matches!(
                 delivery.output,
                 Out::Comment {
-                    kind: CommentKind::Clarify,
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
                     ..
                 }
             )
@@ -353,6 +333,19 @@ fn writer_input(
     } else {
         request
     };
+    if let Some(crate::steering::Task::ReplacementDropped { text, outcome }) = &delivery.steering {
+        let change = if *outcome == Outcome::Merged {
+            "The old version merged before your change could start. Please file your change again."
+        } else {
+            "Work on the old version ended before your change could start. Please file your change again."
+        };
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": format!("{change}\n\nYour change:\n\"{text}\""), "change_quote": text}),
+            violations: vec![],
+        });
+    }
     if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
         return Ok(WriteRequest {
             kind: MessageKind::Clarification,

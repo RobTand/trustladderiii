@@ -2,7 +2,7 @@ use crate::executor::{CommentKind, Delivery, Output};
 use crate::{Controller, Error, Repository, Request, Result, put, request, snapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tl3_kernel::{Answer, Command, Event, NodeId, QKind, World};
+use tl3_kernel::{Answer, Command, Event, NodeId, Outcome, Phase, QKind, World};
 use tl3_store::{Commit, NewEffect, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -14,6 +14,10 @@ pub enum Task {
     ClarifyComment {
         question: String,
         excerpt: String,
+    },
+    ReplacementDropped {
+        text: String,
+        outcome: Outcome,
     },
     FileRequest {
         text: String,
@@ -55,6 +59,73 @@ fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
 }
 
 impl Controller {
+    pub(crate) fn close_replacement(
+        &self,
+        snapshot: &Snapshot,
+        previous: &World,
+        world: &World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "replacement")
+        {
+            let index: usize = row
+                .id
+                .parse()
+                .map_err(|_| Error::Invalid("invalid request node"))?;
+            let Phase::Closed(outcome) = world.nodes[index].phase else {
+                continue;
+            };
+            // FileReplacement already authorizes a new request when Replaced closes.
+            if outcome == Outcome::Replaced || previous.nodes[index].phase.is_closed() {
+                continue;
+            }
+            let Task::FileRequest {
+                text,
+                correction: false,
+                ..
+            } = serde_json::from_value(row.value.clone())?
+            else {
+                return Err(Error::Invalid("invalid pending replacement"));
+            };
+            let node = NodeId(index as u64);
+            let binding = request(snapshot, node)?;
+            commit.rows.push(RowChange::Delete {
+                table: "replacement".into(),
+                id: row.id.clone(),
+            });
+            queue_comment(
+                commit,
+                Delivery {
+                    key: format!("replacement-dropped:{}", row.id),
+                    epoch: snapshot.epoch.get(),
+                    output: Output::Comment {
+                        node,
+                        kind: CommentKind::ReplacementDropped,
+                    },
+                    generation: world.nodes[index].generation,
+                    head_sha: None,
+                    repository: binding.repo,
+                    issue: binding.issue,
+                    pull_request: None,
+                    paths: vec![],
+                    attempt: 1,
+                    round: 0,
+                    checks: None,
+                    job_generation: None,
+                    question: None,
+                    note: None,
+                    question_context: None,
+                    request_text: binding.source,
+                    steering: Some(Task::ReplacementDropped { text, outcome }),
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn schedule_comment(&mut self, snapshot: &Snapshot) -> Result<bool> {
         if !snapshot
             .rows
@@ -509,6 +580,10 @@ impl Controller {
             "linked request is not authorized for intake",
         ))?;
         let event = self.prepare_intake(snapshot, &labelled, repository.clone(), commit)?;
+        // Intake owns the saved text and link for same-issue replacements.
+        if issue.number == old.issue {
+            return Ok(event);
+        }
         let node = match event {
             Some(_) => NodeId(snapshot::decode(snapshot)?.nodes.len() as u64),
             None => {

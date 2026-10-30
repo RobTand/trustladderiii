@@ -133,8 +133,22 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let change_quote = (input.kind == MessageKind::Note)
+        .then(|| {
+            input.facts["change_quote"]
+                .as_str()
+                .map(|text| format!("\"{text}\""))
+        })
+        .flatten();
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
+        if let Some(quote) = &change_quote
+            && !matches!(&reply, WriterReply::Text(text) if text.text.contains(quote))
+        {
+            input.violations =
+                vec!["Quote the owner's saved change exactly in double quotes.".into()];
+            continue;
+        }
         if input.kind == MessageKind::Clarification
             && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text)
                 && text.text.contains(&format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap())))
@@ -165,6 +179,11 @@ pub fn checked_draft(
                     )
                 } else {
                     written.to_owned()
+                };
+                let written = if let Some(quote) = &change_quote {
+                    written.replacen(quote, "your change", 1)
+                } else {
+                    written
                 };
                 message::check_prose(&written, policy).map(|_| text.text.clone())
             }

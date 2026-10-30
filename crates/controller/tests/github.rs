@@ -423,8 +423,6 @@ fn main() {
         "CreditWritten",
         "BeforeCommit",
         "AfterCommit",
-        "InternBeforeCommit",
-        "InternAfterCommit",
         "BeforeDispatch",
         "AfterDispatch",
         "BeforeReconcile",
