@@ -779,6 +779,10 @@ fn fake_stop(settings: &tl3_config::Store) {
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
     fs::write(history.join("delivery.json"), "invalid history").unwrap();
+    assert!(
+        Supervisor::new(&config, &fakes).is_ok(),
+        "startup must skip invalid history"
+    );
     run.key = "effect:0:2".into();
     run.output = Out::Effect {
         node: NodeId(0),
@@ -998,6 +1002,24 @@ fn bounded_startup(settings: &tl3_config::Store) {
     let bad_attempt = root_for(&config, &bad.key).join("attempt-00000000");
     fs::create_dir_all(&bad_attempt).unwrap();
     fs::write(bad_attempt.join("claim.json"), "broken active record").unwrap();
+    let mut foreign = run.clone();
+    foreign.key = "effect:foreign:1".into();
+    watch_run(&mut store, &foreign);
+    let foreign_attempt = root_for(&config, &foreign.key).join("attempt-00000000");
+    fs::create_dir_all(&foreign_attempt).unwrap();
+    fs::write(
+        foreign_attempt.join("claim.json"),
+        json!({"pid": 1, "start": 1, "boot": "old", "machine": "another-machine"}).to_string(),
+    )
+    .unwrap();
+    let name = root_for(&config, &run.key).file_name().unwrap().to_owned();
+    let legacy = config
+        .workers
+        .runs
+        .join(format!(".ready-{}", name.to_string_lossy()));
+    fs::write(&legacy, "stale legacy notification").unwrap();
+    let corrupt_ready = config.workers.runs.join(".ready/.ready-deadbeef");
+    fs::write(&corrupt_ready, "broken notification").unwrap();
     let mut restarted = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut source = restarted.source();
     let (tx, rx) = mpsc::channel();
@@ -1005,8 +1027,10 @@ fn bounded_startup(settings: &tl3_config::Store) {
     assert_eq!(
         source.active_runs(),
         1,
-        "bad active record is skipped independently"
+        "bad and foreign records are skipped independently"
     );
+    assert!(!legacy.exists());
+    assert!(!corrupt_ready.exists());
     assert!(rx.try_recv().is_err());
     let mut buffer = [MaybeUninit::uninit(); 1024];
     let mut reader = inotify::Reader::new(&observer, &mut buffer);
