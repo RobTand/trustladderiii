@@ -35,7 +35,7 @@ echo "Starting $runner"
 # stdin carries the one-job credential, outside Podman's command and environment.
 printf '%s\n' "$jit_config" | podman run --rm --interactive \
     --name "$container" --pull=never --cpus=4 --memory=6g --memory-swap=6g \
-    --pids-limit=1024 --network=private --http-proxy=false \
+    --pids-limit=1024 --network=private --http-proxy=false --sdnotify=ignore \
     --cap-drop=all --security-opt=no-new-privileges \
     --label io.trustladder.ci-slot="$slot" \
     "${options[@]}" "$CI_RUNNER_IMAGE"
