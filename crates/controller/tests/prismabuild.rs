@@ -1083,6 +1083,33 @@ fn completed_records_retire_only_when_superseded() {
     assert!(adapter.action_key(&other).unwrap().is_some());
 }
 
+fn retirement_refuses_active_or_unreadable_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    let queue = root.path().join("queue");
+    fs::rename(
+        queue.join(format!("ready/{key}.json")),
+        queue.join(format!("claimed/{key}.json")),
+    )
+    .unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(adapter.action_key(&delivery).unwrap().is_some());
+    let path = record_path(root.path(), &delivery.key, "job");
+    let binding = fs::read(&path).unwrap();
+    fs::write(&path, "invalid binding").unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(path.exists());
+    fs::write(&path, binding).unwrap();
+    fs::remove_file(queue.join(format!("claimed/{key}.json"))).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    assert!(!root.path().join("records/0").exists());
+}
+
 fn retirement_forgets_an_active_source() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1547,6 +1574,10 @@ fn main() {
     }
     for (name, test) in [
         ("recorded_endings", recorded_endings as fn()),
+        (
+            "retirement_refuses_active_or_unreadable_jobs",
+            retirement_refuses_active_or_unreadable_jobs,
+        ),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
         ("SIGKILL_reuses_seal", crash_reuses_seal),
@@ -1603,5 +1634,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("22 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("23 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }

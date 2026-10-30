@@ -678,7 +678,113 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     drop(c);
     drop(server.runtime);
 }
+fn publication_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Arc::new(Fixture::create(root.path()));
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    f.adapter().execute(&prepare).unwrap();
+    let sha = commit(&f.adapter().checkout(&prepare), "leaf.txt", "change\n");
+    let mut d = f.delivery(EffectKind::Push, 2);
+    d.head_sha = Some(sha.clone());
+    f.adapter().execute(&d).unwrap();
+    let server = Server::new(f);
+    let records = root.path().join("github");
+    let mut approval = d.clone();
+    approval.key = "approval".into();
+    approval.output = Out::Effect {
+        node: NodeId(0),
+        seq: 3,
+        kind: EffectKind::PostApproval,
+        head: None,
+    };
+    let mut adapter = server.adapter(&records, 1);
+    assert!(matches!(
+        adapter.reconcile(&approval).unwrap(),
+        Reconciliation::Absent
+    ));
+    server.api.state.lock().unwrap().lose_response = Some("/check-runs");
+    assert!(adapter.execute(&approval).is_err());
+    drop(adapter);
+    let mut adapter = server.adapter(&records, 1);
+    assert!(matches!(
+        adapter.reconcile(&approval).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    adapter.execute(&approval).unwrap();
+    assert_eq!(server.api.state.lock().unwrap().checks.len(), 1);
+    let mut wrong = approval.clone();
+    wrong.head_sha = Some("b".repeat(40));
+    assert!(matches!(
+        adapter.reconcile(&wrong).unwrap(),
+        Reconciliation::Absent
+    ));
+    server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(456);
+    assert!(matches!(
+        adapter.reconcile(&approval).unwrap(),
+        Reconciliation::Absent
+    ));
+    server.api.state.lock().unwrap().checks[0]["app"]["id"] = json!(123);
+    let mut open = d.clone();
+    open.key = "open".into();
+    open.output = Out::Effect {
+        node: NodeId(0),
+        seq: 4,
+        kind: EffectKind::OpenPr,
+        head: None,
+    };
+    server.api.state.lock().unwrap().lose_response = Some("/pulls");
+    assert!(adapter.execute(&open).is_err());
+    drop(adapter);
+    let mut adapter = server.adapter(&records, 1);
+    assert!(
+        matches!(adapter.reconcile(&open).unwrap(),Reconciliation::Found(Completion {observations,..}) if matches!(observations.as_slice(),[Observation::PullRequest { number:100,..}]))
+    );
+    adapter.execute(&open).unwrap();
+    assert_eq!(server.api.state.lock().unwrap().opens, 1);
+    server.api.state.lock().unwrap().fail_reads = true;
+    assert!(matches!(
+        adapter.reconcile(&open).unwrap(),
+        Reconciliation::Pending
+    ));
+    server.api.state.lock().unwrap().fail_reads = false;
+    let mut close = d.clone();
+    close.key = "close".into();
+    close.output = Out::Effect {
+        node: NodeId(0),
+        seq: 5,
+        kind: EffectKind::ClosePr,
+        head: None,
+    };
+    server.api.state.lock().unwrap().lose_response = Some("/pulls/100");
+    assert!(adapter.execute(&close).is_err());
+    assert!(matches!(
+        adapter.reconcile(&close).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    adapter.execute(&close).unwrap();
+    assert_eq!(server.api.state.lock().unwrap().closes, 1);
+    assert!(matches!(
+        adapter.reconcile(&open).unwrap(),
+        Reconciliation::Absent
+    ));
+    adapter.execute(&open).unwrap();
+    adapter.execute(&open).unwrap();
+    assert_eq!(server.api.state.lock().unwrap().reopens, 1);
+    server.api.state.lock().unwrap().pull.as_mut().unwrap()["merged_at"] =
+        json!("2026-10-30T00:00:00Z");
+    adapter.execute(&close).unwrap();
+    assert_eq!(server.api.state.lock().unwrap().closes, 1);
+    let mut newer = server.adapter(&records, 2);
+    assert!(matches!(
+        newer.reconcile(&approval).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert!(newer.execute(&approval).is_err());
+}
+
 fn main() {
+    publication_recovery();
+    println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
     for mode in ["merged", "push", "rebase", "unapproved"] {
@@ -690,5 +796,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("4 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("5 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

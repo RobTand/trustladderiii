@@ -152,3 +152,26 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_and_blockers_must_match_supplied_evidence() {
+        let inputs = json!({"head_sha": "a".repeat(40), "goals": [{"id":"goal-1"}], "standing_rules":[{"id":REPORT_RULE}]});
+        let mut reply = json!({"verdict":"approve", "head_sha":"a".repeat(40), "blocking_findings":[], "findings":[]});
+        assert!(validate_reply(&reply, &inputs).is_ok());
+        reply["head_sha"] = json!("b".repeat(40));
+        assert!(validate_reply(&reply, &inputs).is_err());
+        for (kind, id, valid) in [
+            ("goal", "goal-1", true),
+            ("standing_rule", REPORT_RULE, true),
+            ("goal", "invented", false),
+            ("standing_rule", "preference", false),
+        ] {
+            let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":kind,"id":id},"problem":"Problem","evidence":"Evidence"}],"findings":[]});
+            assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid);
+        }
+    }
+}
