@@ -190,6 +190,10 @@ impl Respond for Api {
 
             ("GET", path)
                 if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path
+                        .rsplit('/')
+                        .nth(1)
+                        .is_some_and(|issue| issue.parse::<u64>().is_ok())
                     && path.ends_with("/comments") =>
             {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
