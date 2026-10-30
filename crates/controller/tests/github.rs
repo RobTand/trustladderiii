@@ -582,6 +582,7 @@ fn delivery(notice: Notice) -> Delivery {
         attempt: 1,
         round: 0,
         question: None,
+        question_context: None,
         note: None,
     }
 }
@@ -1292,6 +1293,14 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             .expect("daemon worker test requires uv 0.10.10 on PATH or TL3_TEST_UV")
             .success()
     );
+    assert!(
+        Command::new(package.join(".venv/bin/python"))
+            .args(["-c", "import tiktoken; tiktoken.get_encoding('o200k_base')"])
+            .env("TIKTOKEN_CACHE_DIR", env::temp_dir().join("data-gym-cache"))
+            .status()
+            .unwrap()
+            .success()
+    );
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
     let credentials = root.path().join("app.json");
@@ -1351,7 +1360,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0", &json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
-        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"]}
+        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]}
     })).unwrap();
     struct Daemon(std::process::Child);
     impl Drop for Daemon {
@@ -1452,7 +1461,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         "agree"
     );
     let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 2);
+    assert_eq!(progress.len(), 3);
     assert!(progress.iter().all(|p| p.last_progress_ms.is_some()));
     let snapshot = store.load().unwrap();
     assert_eq!(

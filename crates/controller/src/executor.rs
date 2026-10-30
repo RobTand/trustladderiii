@@ -21,6 +21,8 @@ pub struct Delivery {
     pub question: Option<tl3_kernel::Question>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub question_context: Option<serde_json::Value>,
 }
 
 impl Delivery {

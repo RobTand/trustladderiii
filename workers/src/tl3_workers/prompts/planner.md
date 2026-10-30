@@ -43,7 +43,7 @@ those marked for review. Return exactly one of these proposals:
 - Can't meet, kind cant_meet, with a report explaining the obstacle and files
   already identified, or an empty files list if none are known.
 
-Do not compute or supply forecast. After your reply, code counts the brief and
+Do not compute or supply forecast or violations. Code reports rule violations to the controller, which gives the kernel the evidence for its next step. After your reply, code counts the brief and
 the complete base contents of declared files once each with o200k_base as a
 model-agnostic estimate. New files contribute zero base tokens. It sums the
 configured overhead_tokens constants, records the total and compares it with
@@ -52,6 +52,7 @@ the model context. Each declared existing file must be UTF-8 text without binary
 control bytes and at most 1,048,576 bytes. Otherwise the run fails with a diagnostic.
 The estimate will be calibrated from MLflow later. An oversized leaf keeps its
 fits=false measurement so the controller can reject it under the planning rules.
+Each proposed piece must have a smaller forecast than its parent.
 For a split, code measures the union of the pieces' files and the original brief.
 For can't meet, it measures the brief and any identified files.
 

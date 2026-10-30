@@ -41,7 +41,9 @@ def cache_tokenizer(tmp_path_factory):
     # subprocesses then use this cache while all model and tool calls stay offline.
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path_factory.mktemp("tokenizer")))
-        tiktoken.get_encoding("o200k_base")
+        from tiktoken.load import read_file_cached
+        from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
+        read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
         yield
 
 
@@ -142,14 +144,14 @@ def test_out_of_room_rejects_leaf(tmp_path, planner_request, monkeypatch):
 
     planner_request["inputs"]["must_split"] = True
     monkeypatch.chdir(planner_request["worktree"])
-    with pytest.raises(ValueError, match="must split after running out of room"):
-        check_reply(planner_request["inputs"], copy.deepcopy(LEAF))
+    reply = copy.deepcopy(LEAF)
+    check_reply(planner_request["inputs"], reply)
+    assert "Must split after running out of room." in reply["violations"]
 
 
 def test_out_of_room_leaf_is_rejected_through_protocol(tmp_path, planner_request):
     planner_request["inputs"]["must_split"] = True
-    assert_rejected(run_reply(tmp_path, planner_request, LEAF),
-                    message="must split after running out of room")
+    assert_rule_report(run_reply(tmp_path, planner_request, LEAF), "Must split")
 
 
 @pytest.mark.parametrize("proposal", [SPLIT, CANT_MEET])
@@ -165,8 +167,7 @@ def test_out_of_room_can_split_or_report_obstacle(tmp_path, planner_request, pro
 
 
 def test_protected_path_is_rejected_through_protocol(tmp_path, planner_request):
-    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}),
-                    message="declared file matches a protected path")
+    assert_rule_report(run_reply(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}), "protected path")
 
 
 def test_file_at_byte_limit_is_counted_in_full(tmp_path, planner_request):
@@ -179,7 +180,7 @@ def test_file_at_byte_limit_is_counted_in_full(tmp_path, planner_request):
 
 
 def test_local_tokenizer_matches_pinned_encoding_without_loader(monkeypatch):
-    from tl3_workers.roles.planner import _encoding
+    from tl3_workers.forecast import _encoding
 
     expected = tiktoken.get_encoding("o200k_base")
 
@@ -224,8 +225,8 @@ def test_protected_paths_are_rejected(tmp_path, planner_request, monkeypatch, pr
     else:
         reply["pieces"][1]["files"] = [path]
     monkeypatch.chdir(planner_request["worktree"])
-    with pytest.raises(ValueError, match="declared file matches a protected path"):
-        check_reply(planner_request["inputs"], reply)
+    check_reply(planner_request["inputs"], reply)
+    assert any("protected path" in report for report in reply["violations"])
 
 
 @pytest.mark.parametrize("proposal,files", [
@@ -242,7 +243,7 @@ def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files
         {"event": "progress", "unit": "model_turn"},
         {"event": "reply", "role": "planner", "reply": reply},
     ]
-    assert reply == {**proposal, "forecast": {
+    assert {key: value for key, value in reply.items() if key != "violations"} == {**proposal, "forecast": {
         "tokenizer": "o200k_base", "brief_tokens": 2, "file_tokens": files,
         "overhead_tokens": 60, "tokens": 62 + sum(files.values()),
         "fit_tokens": 100000, "context_tokens": 150000, "fits": True,
@@ -274,22 +275,26 @@ def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, plan
     assert forecast["brief_tokens"] == len(encoding.encode_ordinary("<|endoftext|>"))
 
 
-@pytest.mark.parametrize("change", [
-    {"checks": []},
-    {"checks": [LEAF["checks"][0]]},
-    {"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]},
-    {"checks": [{**LEAF["checks"][0], "goal_ids": []}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": []}]},
-    {"checks": [{**LEAF["checks"][0], "kind": "guess"}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]},
-    {"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]},
-    {"files": []},
-    {"files": ["greeting.py", "greeting.py"]},
-    {"no_design_questions": False},
-    {"lands_on_its_own": False},
+@pytest.mark.parametrize("change,reported", [
+    ({"checks": []}, True),
+    ({"checks": [LEAF["checks"][0]]}, True),
+    ({"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "goal_ids": []}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": []}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "kind": "guess"}]}, False),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]}, False),
+    ({"files": []}, True),
+    ({"files": ["greeting.py", "greeting.py"]}, False),
+    ({"no_design_questions": False}, True),
+    ({"lands_on_its_own": False}, True),
 ])
-def test_invalid_leaf_never_leaves_worker(tmp_path, planner_request, change):
-    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, **change}))
+def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, change, reported):
+    result = run_reply(tmp_path, planner_request, {**LEAF, **change})
+    if reported:
+        assert_rule_report(result)
+    else:
+        assert_rejected(result)
 
 
 @pytest.mark.parametrize("path", [
@@ -324,17 +329,21 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
     assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
 
 
-@pytest.mark.parametrize("proposal", [
-    {**SPLIT, "pieces": SPLIT["pieces"][:1]},
-    {**SPLIT, "reason": "convenience"},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]},
-    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]},
-    {**CANT_MEET, "report": ""},
-    {**CANT_MEET, "files": ["../escape"]},
+@pytest.mark.parametrize("proposal,reported", [
+    ({**SPLIT, "pieces": SPLIT["pieces"][:1]}, True),
+    ({**SPLIT, "reason": "convenience"}, False),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]}, True),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]}, True),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]}, False),
+    ({**CANT_MEET, "report": ""}, False),
+    ({**CANT_MEET, "files": ["../escape"]}, False),
 ])
-def test_invalid_alternatives_never_leave_worker(tmp_path, planner_request, proposal):
-    assert_rejected(run_reply(tmp_path, planner_request, proposal))
+def test_split_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, proposal, reported):
+    result = run_reply(tmp_path, planner_request, proposal)
+    if reported:
+        assert_rule_report(result)
+    else:
+        assert_rejected(result)
 
 
 def test_model_cannot_supply_its_own_forecast(tmp_path, planner_request):
@@ -381,3 +390,24 @@ def test_read_only_tools_through_protocol(tmp_path, planner_request):
     assert not (tmp_path / "worktree/forbidden.py").exists()
     assert (tmp_path / "worktree/greeting.py").read_text() == "hello world\n"
     assert result.events[-1]["reply"]["forecast"]["file_tokens"]["greeting.py"] == 3
+
+
+def assert_rule_report(result, reason=""):
+    assert result.exit_code == 0, result.stderr
+    violations = result.events[-1]["reply"]["violations"]
+    assert violations and any(reason in report for report in violations)
+
+
+def test_model_cannot_forge_rule_evidence(tmp_path, planner_request):
+    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "violations": []}))
+
+
+def test_split_requires_evidence_and_smaller_children(tmp_path, planner_request):
+    reply = run_reply(tmp_path, planner_request, SPLIT)
+    assert_rule_report(reply, "forecast fits")
+    assert_rule_report(reply, "smaller forecast")
+
+
+def test_fit_failure_is_reported_to_kernel(tmp_path, planner_request):
+    planner_request["inputs"]["forecast"]["fit_tokens"] = 65
+    assert_rule_report(run_reply(tmp_path, planner_request, LEAF), "does not fit")
