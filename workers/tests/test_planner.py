@@ -73,6 +73,11 @@ def planner_request(tmp_path):
                   "effort": "high", "budget_tokens": 32000},
         "key_file": str(tmp_path / "never-read-key"),
         "inputs": {
+            "must_split": False,
+            "findings": [],
+            "protected_paths": [".github/**", ".mergify.yml", "**/conftest.py",
+                                "pytest.ini", "tox.ini", "noxfile.py", "setup.cfg",
+                                "pyproject.toml"],
             "ingest": {
                 "kind": "brief", "brief": "hello world",
                 "goals": [{"description": "Return hello.", "verification": "test"},
@@ -103,10 +108,13 @@ def assert_rejected(result, phase="run", message=None):
     assert result.stderr.strip() == expected
 
 
-@pytest.mark.parametrize("cache", ["unset", "empty", "corrupt"])
+@pytest.mark.parametrize("cache", ["unset", "disabled", "empty", "corrupt"])
 def test_tokenizer_must_be_preloaded_without_network(tmp_path, planner_request, monkeypatch, cache):
     if cache == "unset":
+        monkeypatch.setenv("DATA_GYM_CACHE_DIR", os.environ["TIKTOKEN_CACHE_DIR"])
         monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
+    elif cache == "disabled":
+        monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
     else:
         directory = tmp_path / "tokenizer"
         directory.mkdir()
@@ -136,6 +144,61 @@ def test_out_of_room_rejects_leaf(tmp_path, planner_request, monkeypatch):
     monkeypatch.chdir(planner_request["worktree"])
     with pytest.raises(ValueError, match="must split after running out of room"):
         check_reply(planner_request["inputs"], copy.deepcopy(LEAF))
+
+
+def test_out_of_room_leaf_is_rejected_through_protocol(tmp_path, planner_request):
+    planner_request["inputs"]["must_split"] = True
+    assert_rejected(run_reply(tmp_path, planner_request, LEAF),
+                    message="must split after running out of room")
+
+
+@pytest.mark.parametrize("proposal", [SPLIT, CANT_MEET])
+def test_out_of_room_can_split_or_report_obstacle(tmp_path, planner_request, proposal):
+    planner_request["inputs"]["must_split"] = True
+    planner_request["inputs"]["findings"] = ["The maker exhausted its context."]
+    proposal = copy.deepcopy(proposal)
+    if proposal["kind"] == "split":
+        proposal["reason"] = "out_of_room"
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"]["kind"] == proposal["kind"]
+
+
+def test_protected_path_is_rejected_through_protocol(tmp_path, planner_request):
+    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}),
+                    message="declared file matches a protected path")
+
+
+def test_file_at_byte_limit_is_counted_in_full(tmp_path, planner_request):
+    content = (b"hello world\n" * 90_000)[:1_048_576]
+    (tmp_path / "worktree/greeting.py").write_bytes(content)
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    expected = len(tiktoken.get_encoding("o200k_base").encode_ordinary(content.decode()))
+    assert result.events[-1]["reply"]["forecast"]["file_tokens"]["greeting.py"] == expected
+
+
+def test_local_tokenizer_matches_pinned_encoding_without_loader(monkeypatch):
+    from tl3_workers.roles.planner import _encoding
+
+    expected = tiktoken.get_encoding("o200k_base")
+
+    def no_loader(*args, **kwargs):
+        raise AssertionError("planner must not call the downloading tokenizer loader")
+
+    monkeypatch.setattr(tiktoken, "get_encoding", no_loader)
+    actual = _encoding()
+    for content in ["Hello, WORLD! I'm testing.\r\n", "こんにちは 🌍 مرحبا नमस्ते",
+                    "<|endoftext|> <|endofprompt|>", "123456789\t\n  punctuation!?!"]:
+        assert actual.encode_ordinary(content) == expected.encode_ordinary(content)
+    assert actual.encode("<|endoftext|>", allowed_special="all") == [199999]
+    assert actual.encode("<|endofprompt|>", allowed_special="all") == [200018]
+
+
+@pytest.mark.parametrize("field", ["must_split", "findings", "protected_paths"])
+def test_controller_must_supply_planning_inputs(tmp_path, planner_request, field):
+    del planner_request["inputs"][field]
+    assert_rejected(run_reply(tmp_path, planner_request, LEAF), "request")
 
 
 @pytest.mark.parametrize("proposal", [LEAF, SPLIT])

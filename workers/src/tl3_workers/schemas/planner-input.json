@@ -3,6 +3,26 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
   "type": "object",
   "properties": {
+    "must_split": {
+      "type": "boolean",
+      "description": "True after a maker ran out of room. A leaf reply is rejected."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning."
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments."
+    },
     "ingest": {
       "allOf": [
         {
@@ -51,6 +71,9 @@
     }
   },
   "required": [
+    "must_split",
+    "findings",
+    "protected_paths",
     "ingest",
     "forecast"
   ],

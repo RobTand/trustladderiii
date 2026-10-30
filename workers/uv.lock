@@ -1278,6 +1278,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "jsonschema" },
     { name = "langchain-openai" },
+    { name = "tiktoken" },
 ]
 
 [package.dev-dependencies]
@@ -1290,6 +1291,7 @@ requires-dist = [
     { name = "deepagents", specifier = "==0.7.32" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "langchain-openai", specifier = "==1.7.3" },
+    { name = "tiktoken", specifier = "==0.14.0" },
 ]
 
 [package.metadata.requires-dev]
