@@ -52,6 +52,7 @@ pub(crate) struct Incident {
     pub node: NodeId,
     pub open: bool,
     pub needs_rob: bool,
+    pub blocking: bool,
     pub summary: String,
     pub signature: String,
 }
@@ -283,6 +284,25 @@ impl Controller {
                 }
                 Err(error) => {
                     eprintln!("allowance look failed for {}: {error}", state.delivery.key)
+                }
+            }
+            if state.incident.is_some() && !state.healthy {
+                let world = self.world()?;
+                let node = &world.nodes[state.delivery.node().0 as usize];
+                if node.waiting_incident && !node.incident_needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => {
+                            state.healthy = true;
+                            self.retry_held_effects();
+                            self.probe_passed(&state)?;
+                        }
+                        Ok(false) => {}
+                        Err(error) => eprintln!("upstream probe failed: {error}"),
+                    }
                 }
             }
             self.save_allowance(&state)?;

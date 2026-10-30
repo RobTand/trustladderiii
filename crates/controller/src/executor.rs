@@ -138,6 +138,10 @@ pub trait Executor {
             Reconciliation::Pending => Look::Pending,
         })
     }
+    /// A separate health probe, when an incident's failed operation has ended.
+    fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
+        Ok(false)
+    }
     /// Resume an owner-confirmed quota ending under the same operation key.
     fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
         Ok(None)

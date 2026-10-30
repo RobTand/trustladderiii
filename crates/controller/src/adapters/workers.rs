@@ -292,6 +292,18 @@ impl Executor for Supervisor {
         self.launch(delivery, false)
     }
 
+    fn probe(&mut self, _delivery: &Delivery) -> Result<bool> {
+        // A recorded failed run is not a health check. Verify the supervisor can
+        // still launch its configured worker runtime without making a model call.
+        Ok(Command::new(&self.settings.python)
+            .args(["-c", "import tl3_workers"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?
+            .success())
+    }
+
     fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
         self.launch(delivery, true).map(Some)
     }

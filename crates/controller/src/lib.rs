@@ -686,6 +686,7 @@ impl Controller {
                     r.table == "incidents"
                         && r.value["node"] == json!(NodeId(index as u64))
                         && r.value["open"] == true
+                        && r.value["blocking"] == true
                 }) {
                     let mut value = row.value.clone();
                     value["open"] = json!(false);
@@ -811,6 +812,7 @@ impl Controller {
                         node,
                         open: true,
                         needs_rob,
+                        blocking: n.waiting_incident,
                         summary: summary.into(),
                         signature: format!("{source:?}:{class}"),
                     }),
@@ -943,14 +945,20 @@ impl Controller {
                         {
                             let incident: looks::Incident =
                                 serde_json::from_value(row.value.clone())?;
-                            commit.rows.push(put(
-                                "inbox",
-                                format!("incident-clear:{}:{}", comment.id, id),
-                                json!(Observation::Kernel(Event::Fact {
-                                    node: incident.node,
-                                    fact: Fact::IncidentCleared { by_rob: true }
-                                })),
-                            ));
+                            if incident.blocking {
+                                commit.rows.push(put(
+                                    "inbox",
+                                    format!("incident-clear:{}:{}", comment.id, id),
+                                    json!(Observation::Kernel(Event::Fact {
+                                        node: incident.node,
+                                        fact: Fact::IncidentCleared { by_rob: true }
+                                    })),
+                                ));
+                            } else {
+                                let mut closed = incident;
+                                closed.open = false;
+                                commit.rows.push(put("incidents", id.into(), json!(closed)));
+                            }
                         }
                         commit.rows.push(put(
                             "github_comments",

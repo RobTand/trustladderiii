@@ -731,11 +731,7 @@ fn message_reconciliation() {
     let mut incident = delivery(Notice::Incident { needs_rob: false });
     incident.epoch = 1;
     incident.key = "notice:0:4".into();
-    adapter.execute(&incident).unwrap();
-    assert!(matches!(
-        adapter.reconcile(&incident).unwrap(),
-        Reconciliation::Found(_)
-    ));
+    assert!(adapter.execute(&incident).is_err());
     assert_eq!(api.state.lock().unwrap().posts, before);
 }
 struct ScriptWriter {

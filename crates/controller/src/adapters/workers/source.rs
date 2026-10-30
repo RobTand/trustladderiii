@@ -386,7 +386,7 @@ pub(super) fn parse_reply(
                 .filter(|v| *v > 0)
                 .ok_or(Error::Invalid("invalid quota reset"))?;
             // A quota ending is terminal and must be the final protocol event.
-            if bytes.split_inclusive(|b| *b == b'\n').last() != Some(line) {
+            if bytes.split_inclusive(|b| *b == b'\n').next_back() != Some(line) {
                 return Err(Error::Invalid("event after quota ending"));
             }
             return Ok(Observation::Quota {

@@ -400,6 +400,45 @@ fn owner_progress_contract(settings: &tl3_config::Store, upstream: Upstream) {
     }
     assert!(c.world().unwrap().valid());
 }
+fn permanent_incident_clear(settings: &tl3_config::Store) {
+    struct Permanent;
+    impl Executor for Permanent {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            Ok(Completion {
+                ack: tl3_kernel::Ack::Permanent,
+                observations: vec![],
+            })
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            Ok(Reconciliation::Absent)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(
+        settings,
+        root.path(),
+        &FakeClock::new(),
+        Upstream::Workers,
+        Permanent,
+    );
+    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    let id = incident(&mut c);
+    comment(&mut c, &id, 7, 17, 1);
+    assert_eq!(incident(&mut c), id);
+    comment(&mut c, &id, 42, 17, 2);
+    assert!(
+        status::load(&mut Reader::open(settings).unwrap())
+            .unwrap()
+            .requests[0]
+            .details
+            .open_incidents
+            .is_empty()
+    );
+    assert!(matches!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::AwaitingRob
+    ));
+}
 fn main() {
     let mut db = support::Database::start();
     stalled_runs_and_incident_controls(&db.create("stalls"));
@@ -420,6 +459,8 @@ fn main() {
     println!("test pb_owns_progress_failure ... ok");
     owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
     println!("test queue_stall_incident ... ok");
+    permanent_incident_clear(&db.create("permanent_incident"));
+    println!("test permanent_incident_clear ... ok");
     db.stop();
-    println!("7 allowance and incident scenarios passed; no skips");
+    println!("8 allowance and incident scenarios passed; no skips");
 }

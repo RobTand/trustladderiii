@@ -995,6 +995,18 @@ fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
         ),
         "retry must start only after the original process ended"
     );
+    controller.look_now().unwrap();
+    clock.0.set(7000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(controller.world().unwrap().nodes[0].waiting_incident);
+    clock.0.set(8000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(
+        !controller.world().unwrap().nodes[0].waiting_incident,
+        "a passing worker runtime probe clears the first incident"
+    );
     controller
         .observe(
             "stop-after-stall",

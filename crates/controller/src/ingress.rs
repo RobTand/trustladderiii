@@ -286,14 +286,11 @@ fn comment_number(repo: &Repository, url: &str) -> Result<u64> {
 }
 
 pub fn run(controller: &mut Controller, receiver: mpsc::Receiver<Input>) -> Result<()> {
-    drain(controller)?;
-    while controller.drive_once()? {}
-    for input in receiver {
-        drain(controller)?;
-        apply(controller, input)?;
-        while controller.drive_once()? {}
+    Sources {
+        receiver,
+        ..Sources::default()
     }
-    Ok(())
+    .run(controller)
 }
 
 fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
