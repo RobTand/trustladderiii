@@ -208,7 +208,7 @@ final commit. CI runs independently on Mergify runners.
 
 The PrismaBuild checks adapter is available for mixed registries. A
 `CheckPlan` observation records the base commit, Git repository and named checks
-in a `check_plans` world row. Maker/worktree integration supplies it before the
+in a `check_plans` world row keyed by node and exact head. Maker/worktree integration supplies it before the
 maker's completion. `Delivery::checks` carries that context and `job_generation`
 identifies the job to withdraw after the node changes generation.
 

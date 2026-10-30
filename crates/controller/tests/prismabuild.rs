@@ -438,7 +438,21 @@ fn through_controller(settings: &tl3_config::Store, outside: bool) {
             "check-plan",
             Observation::CheckPlan {
                 node: NodeId(0),
-                run: delivery.checks.unwrap(),
+                sha: delivery.head_sha.clone().unwrap(),
+                run: delivery.checks.clone().unwrap(),
+            },
+        )
+        .unwrap();
+    controller
+        .observe(
+            "stale-head-plan",
+            Observation::CheckPlan {
+                node: NodeId(0),
+                sha: "a".repeat(40),
+                run: CheckRun {
+                    repository: root.path().join("absent-old-checkout"),
+                    ..delivery.checks.unwrap()
+                },
             },
         )
         .unwrap();

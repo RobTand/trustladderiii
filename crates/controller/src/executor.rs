@@ -37,6 +37,7 @@ pub enum Observation {
     Kernel(Event),
     CheckPlan {
         node: NodeId,
+        sha: String,
         run: crate::adapters::prismabuild::CheckRun,
     },
     Checks {

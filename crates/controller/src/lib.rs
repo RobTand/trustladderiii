@@ -351,7 +351,8 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
-                delivery.checks = check_run(&snapshot, delivery.node())?;
+                delivery.checks =
+                    check_run(&snapshot, delivery.node(), delivery.head_sha.as_deref())?;
                 if let Ok(Reconciliation::Found(completion)) =
                     self.adapters.adapter(&delivery)?.reconcile(&delivery)
                 {
@@ -568,6 +569,7 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let checks = check_run(snapshot, node, head_sha.as_deref())?;
             let delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
@@ -580,7 +582,7 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
-                checks: check_run(snapshot, node)?,
+                checks,
                 job_generation: n.job,
             };
             if matches!(
@@ -636,11 +638,11 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
-            Observation::CheckPlan { node, run } => {
+            Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
                 commit
                     .rows
-                    .push(put("check_plans", node.0.to_string(), json!(run)));
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
                 return Ok(None);
             }
             Observation::Checks {
@@ -794,7 +796,7 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
     delivery.epoch = effect.epoch.get();
-    delivery.checks = check_run(snapshot, delivery.node())?;
+    delivery.checks = check_run(snapshot, delivery.node(), delivery.head_sha.as_deref())?;
     delivery.pull_request = snapshot
         .rows
         .iter()
@@ -803,11 +805,18 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     Ok(delivery)
 }
 
-fn check_run(snapshot: &Snapshot, node: NodeId) -> Result<Option<adapters::prismabuild::CheckRun>> {
+fn check_run(
+    snapshot: &Snapshot,
+    node: NodeId,
+    sha: Option<&str>,
+) -> Result<Option<adapters::prismabuild::CheckRun>> {
+    let Some(sha) = sha else {
+        return Ok(None);
+    };
     snapshot
         .rows
         .iter()
-        .find(|r| r.table == "check_plans" && r.id == node.0.to_string())
+        .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
         .map(|r| serde_json::from_value(r.value.clone()))
         .transpose()
         .map_err(Into::into)

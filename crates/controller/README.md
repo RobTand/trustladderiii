@@ -111,11 +111,12 @@ The daemon's shared ingress loop and production registry remain with #10 and
 #20. The default simulation registry still uses the fake.
 
 Before `SubmitChecks`, a maker/worktree caller supplies
-`Observation::CheckPlan { node, run: CheckRun { repository, base_sha, plan } }`.
-Send this before the maker's completion. `repository` is an absolute local Git
+`Observation::CheckPlan { node, sha, run: CheckRun { repository, base_sha, plan } }`.
+`sha` is the maker's exact head. Send this before the maker's completion. `repository` is an absolute local Git
 path. `base_sha` is the recorded full commit, not a moving branch. Each check
 names its kind and exact pytest node IDs. The controller persists this binding
-in `check_plans`, using the existing world-row store. It hydrates the delivery
+in `check_plans`, keyed by node and head. A late context for another head cannot
+replace it. This uses the existing world-row store. It hydrates the delivery
 with that context and the kernel's current head. An unbound plan stays unresolved
 with an adapter error. No store migration or kernel rule changes are needed.
 
