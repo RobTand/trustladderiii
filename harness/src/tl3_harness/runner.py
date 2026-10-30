@@ -38,7 +38,7 @@ class Reporter:
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
             else:
-                self.emit(event="collection-error")
+                self.emit(event="collection-error", message=str(report.longrepr)[:1000])
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):

@@ -45,7 +45,7 @@ def create_model(request):
     content = f"def greet(): return 'hello'\n# {mode} attempt {inputs['attempt']} round {inputs['round']}\n"
     if mode == 'rebase-edits':
         content += f"# visit {request['operation']['generation']}\n"
-    reply = {'kind': 'done' , 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
+    reply = {'kind': 'done', 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
     if mode == 'unmet':
         reply['self_check'][0] = {'goal_id': inputs['goals'][0]['id'], 'status': 'not_met', 'why': 'The interface is unresolved.'}
     return Model(responses=[

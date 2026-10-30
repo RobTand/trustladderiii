@@ -7,6 +7,7 @@ import subprocess
 from threading import Barrier, Event
 
 import httpx
+from jsonschema import ValidationError
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
@@ -768,5 +769,5 @@ def test_ci_feedback_summary_has_a_character_cap(maker_request):
     }]
     validate('maker-input', maker_request['inputs'])
     maker_request['inputs']['feedback'][0]['ci_checks'][0]['summary'] += 'x'
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError):
         validate('maker-input', maker_request['inputs'])

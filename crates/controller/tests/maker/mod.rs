@@ -242,7 +242,10 @@ impl Executor for CiFailureOnce {
                     infra: false,
                     checks: vec![tl3_controller::findings::CiFailure {
                         name: "greeting".into(),
-                        summary: "test_hello: expected hello, got goodbye".into(),
+                        summary: format!(
+                            "test_hello: expected hello, got goodbye{}",
+                            "é".repeat(2000)
+                        ),
                         url: Some("https://example.invalid/checks/42".into()),
                     }],
                 }
@@ -315,6 +318,30 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             let Input::Observation { key, observation } = input else {
                 panic!("worker observation required")
             };
+            if fail
+                && matches!(&observation, Observation::Checks { pass: false, .. })
+                && controller.world().unwrap().nodes[0].attempt == 1
+                && controller.world().unwrap().nodes[0].round == 0
+            {
+                let mut store = Store::open(settings).unwrap();
+                let materials = store.worker_materials("0").unwrap().unwrap();
+                let mut invalid = materials.clone();
+                invalid["maker"]["goals"][0]["id"] = json!(17);
+                store.put_worker_materials("0", &invalid).unwrap();
+                assert!(matches!(
+                    controller.observe(&key, observation.clone()),
+                    Err(tl3_controller::Error::Invalid(
+                        "maker goal needs a string id"
+                    ))
+                ));
+                assert!(
+                    store
+                        .worker_document("0", "maker_findings")
+                        .unwrap()
+                        .is_none()
+                );
+                store.put_worker_materials("0", &materials).unwrap();
+            }
             observe(&mut controller, &key, observation, &worktree, &base);
         }
     }
@@ -483,6 +510,15 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                         .contains("https://example.invalid/checks/42")
                 );
                 assert_eq!(finding["ci_checks"][0]["name"], "greeting");
+                assert_eq!(
+                    finding["ci_checks"][0]["summary"]
+                        .as_str()
+                        .unwrap()
+                        .chars()
+                        .count(),
+                    1000
+                );
+                assert!(finding["report"].as_str().unwrap().chars().count() <= 16000);
             }
         }
         if mode == "needs-files" {

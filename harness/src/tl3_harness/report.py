@@ -19,6 +19,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
     phases = {}
     selected = None
     collection_error = False
+    collection_message = ""
     for record in records[1:-1]:
         message = record.get("message", "")
         if not isinstance(message, str) or len(message) > 1000:
@@ -32,6 +33,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 selected = set(names)
             case {"event": "collection-error"} if len(record) == 1:
                 collection_error = True
+                collection_message = (collection_message + "\n" + message).strip()[:1000]
             case {"event": "phase", "test": str(test), "when": str(when),
                   "outcome": str(outcome), "assertion": bool(assertion), "missing": name} if len(record) == 6:
                 if (selected is None or test not in selected or when not in ("setup", "call", "teardown")
@@ -56,6 +58,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
             outcomes[test] = Outcome.MISSING
         elif collection_error:
             outcomes[test] = Outcome.ERROR
+            if messages is not None and collection_message:
+                messages[test] = collection_message
         elif selected is None:
             raise InvalidReport("missing collection report")
         elif test not in selected:
