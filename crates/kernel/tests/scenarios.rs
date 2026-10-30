@@ -31,7 +31,7 @@ impl Run {
     }
 
     fn send(&mut self, event: Event) {
-        let (w, out) = step(self.w.clone(), event.clone());
+        let (w, out) = step(self.w.clone(), event);
         assert!(w.valid(), "invalid world after {event:?}:\n{w:#?}");
         assert!(w.is_settled(), "unsettled world after {event:?}");
         for o in out {
@@ -46,7 +46,7 @@ impl Run {
     }
 
     fn node(&self) -> Node {
-        self.w.nodes[0].clone()
+        self.w.nodes[0]
     }
 
     fn phase(&self) -> Phase {
@@ -482,7 +482,7 @@ fn footprints_are_sets_with_more_than_eight_wide_file_ids() {
         .w
         .intern_footprint((0..300).rev().map(|i| FileId((1 << 40) + i)));
     run.reply(Reply::PlanLeaf {
-        footprint: files.clone(),
+        footprint: files,
         fits: true,
     });
     assert_eq!(run.node().footprint, files);
@@ -590,7 +590,7 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
             &mut w,
             node,
             Reply::PlanLeaf {
-                footprint: files.clone(),
+                footprint: files,
                 fits: true,
             },
         );

@@ -33,7 +33,7 @@ fn random_event(w: &mut World, rng: &mut Rng) -> Event {
         };
     }
     let i = rng.below(w.nodes.len() as u64) as usize;
-    let n = w.nodes[i].clone();
+    let n = w.nodes[i];
     let node = NodeId(if rng.below(50) == 0 { 9 } else { i as u64 });
     let head = HeadId(rng.next());
     match rng.below(12) {
@@ -180,14 +180,14 @@ fn random_walks_keep_every_rule() {
             } else {
                 random_event(&mut w, &mut rng)
             };
-            let witnessed = w.witness() == Some(event.clone());
+            let witnessed = w.witness() == Some(event);
             let before = w.measure();
-            let (next, out, passes) = step_with_passes(w.clone(), event.clone());
+            let (next, out, passes) = step_with_passes(w.clone(), event);
             let size = next.nodes.len().min(4);
             passes_by_size[size] = passes_by_size[size].max(passes);
             // Every intermediate world is consistent, and each internal
             // transition lowers its node's settle rank.
-            let (_, _, trace) = step_traced(w.clone(), event.clone());
+            let (_, _, trace) = step_traced(w.clone(), event);
             for (k, mid) in trace.iter().enumerate() {
                 assert!(
                     mid.consistent(),

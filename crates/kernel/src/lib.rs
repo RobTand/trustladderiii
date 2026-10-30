@@ -437,11 +437,11 @@ impl Node {
         if self.phase.is_closed() {
             return 0;
         }
-        if self.pause_move_due() {
-            if let Some(r) = self.phase.resume() {
-                // Counted as the paused Ready it is about to become.
-                return rank(Phase::Ready(r)) * 64 + 2 + 8;
-            }
+        if self.pause_move_due()
+            && let Some(r) = self.phase.resume()
+        {
+            // Counted as the paused Ready it is about to become.
+            return rank(Phase::Ready(r)) * 64 + 2 + 8;
         }
         let rank = match self.phase {
             Phase::AwaitingRob => self.question.map_or(3, |q| cont_rank(q.cont) + 1),
@@ -452,12 +452,11 @@ impl Node {
         let mut d = rank * 64 + 2 * (len - pos);
         if let Some(e) = self.effect {
             d += 1;
-            if !e.cancelling {
-                if let Some(Item::Do(k) | Item::Teardown(k)) = self.current() {
-                    if k == e.kind {
-                        d -= 2;
-                    }
-                }
+            if !e.cancelling
+                && let Some(Item::Do(k) | Item::Teardown(k)) = self.current()
+                && k == e.kind
+            {
+                d -= 2;
             }
         }
         if self.paused && !self.phase.is_stopping() {
@@ -643,7 +642,7 @@ pub const OUTBOX: usize = 5;
 /// transition of settle. A fixed array holds them, not a list on the heap,
 /// because Kani reasons about a growable list far more expensively: the merge
 /// proofs ran out of memory reading one. `step` collects them into its list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Outbox {
     items: [Option<Out>; OUTBOX],
     len: usize,
@@ -1502,10 +1501,10 @@ fn abandon_operation(m: &mut Node) {
     m.run = None;
     m.job = None;
     m.pool = false;
-    if let Some(e) = m.effect.as_mut() {
-        if e.kind.starts_operation() {
-            e.cancelling = true;
-        }
+    if let Some(e) = m.effect.as_mut()
+        && e.kind.starts_operation()
+    {
+        e.cancelling = true;
     }
 }
 
@@ -1937,12 +1936,11 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
-    if !kind.starts_operation() {
-        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
-            if k == kind {
-                m.pos += 1;
-            }
-        }
+    if !kind.starts_operation()
+        && let Some(Item::Do(k) | Item::Teardown(k)) = m.current()
+        && k == kind
+    {
+        m.pos += 1;
     }
 }
 
@@ -2413,12 +2411,12 @@ fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
 /// and files and waits in Ready, resuming at the step it reached.
 fn pause(w: &mut World, i: usize) -> bool {
     let m = &mut w.nodes[i];
-    if m.phase.holding() {
-        if let Some(r) = m.phase.resume() {
-            m.holds = false;
-            set_phase(m, Phase::Ready(r));
-            return true;
-        }
+    if m.phase.holding()
+        && let Some(r) = m.phase.resume()
+    {
+        m.holds = false;
+        set_phase(m, Phase::Ready(r));
+        return true;
     }
     if m.ticket.is_some() {
         m.ticket = None;
