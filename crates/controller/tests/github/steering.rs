@@ -426,3 +426,48 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     );
     println!("test steering_named_answer_applies_after_controller_recovery ... ok");
 }
+
+pub(super) fn linked_reconciliation() {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut adapter = adapter(&api.uri(), root.path());
+    let mut correction = delivery(Notice::FileCorrection { revert: false });
+    correction.steering = Some(tl3_controller::steering::Task::FileRequest {
+        text: "Correct the greeting.".into(),
+        comment: 16001,
+        correction: true,
+        revert: false,
+    });
+    api.state.lock().unwrap().lose_issue_reply = true;
+    assert!(adapter.execute(&correction).is_err());
+    api.state.lock().unwrap().fail_reads = true;
+    assert!(matches!(
+        adapter.reconcile(&correction).unwrap(),
+        Reconciliation::Pending
+    ));
+    api.state.lock().unwrap().fail_reads = false;
+    let Reconciliation::Found(completion) = adapter.reconcile(&correction).unwrap() else {
+        panic!("created issue was not reconciled")
+    };
+    assert!(matches!(
+        completion.observations.as_slice(),
+        [Observation::LinkedRequest {
+            number: 1000,
+            original: NodeId(0),
+            ..
+        }]
+    ));
+    adapter.execute(&correction).unwrap();
+    let state = api.state.lock().unwrap();
+    assert_eq!(state.linked.len(), 1);
+    assert!(
+        !state.linked[0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("requested a revert")
+    );
+    drop(state);
+    correction.epoch = -1;
+    assert!(adapter.execute(&correction).is_err());
+    println!("test steering_linked_issue_uncertain_post_reconciles_without_duplicate ... ok");
+}

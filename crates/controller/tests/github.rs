@@ -106,6 +106,7 @@ struct ApiState {
     empty_body: bool,
     catch_up_evidence: bool,
     linked: Vec<Value>,
+    lose_issue_reply: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -166,8 +167,14 @@ impl Respond for Api {
                 issue["body"] = payload["body"].clone();
                 issue["labels"] = json!([{"name": "tl3"}]);
                 issue["user"] = json!({"id": 99, "login": "factory[bot]"});
+                assert_eq!(payload["labels"], json!(["tl3"]));
                 state.linked.push(issue.clone());
-                ResponseTemplate::new(201).set_body_json(issue)
+                if state.lose_issue_reply {
+                    state.lose_issue_reply = false;
+                    ResponseTemplate::new(500)
+                } else {
+                    ResponseTemplate::new(201).set_body_json(issue)
+                }
             }
             ("GET", "/repos/owner/sandbox/issues") => {
                 state.catch_up_passes += 1;
@@ -367,6 +374,7 @@ fn main() {
     println!("test catch_up_preserves_evidence ... ok");
     daemon_with_workers(&database.create("daemon_workers"));
     println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
+    steering::linked_reconciliation();
     steering::commands(&database.create("steering_commands"));
     steering::answers(&database.create("steering_answers"));
     steering::replacement(&database.create("steering_replacement"));
@@ -374,7 +382,7 @@ fn main() {
     steering::queued_pause(&database.create("steering_queue"));
     steering::answer_recovery(&database.create("steering_answer_recovery"));
     database.stop();
-    println!("17 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("18 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
