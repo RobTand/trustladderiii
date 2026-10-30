@@ -108,7 +108,17 @@ journalctl --user -u tl3d.service --since '5 minutes ago' --no-pager
 The GET must return 405. The log must report production adapters, the webhook
 listener, and no source failures. Startup catch-up uses the GitHub App. It may
 recover missed events, so verify the sandbox has no previously labelled issue
-waiting before starting this procedure.
+waiting before starting this procedure. Create the `tl3` label if it's missing,
+then confirm that no issue carries it:
+
+```bash
+gh api repos/RobTand/tl3-sandbox/labels/tl3 --silent 2>/dev/null \
+  || gh api -X POST repos/RobTand/tl3-sandbox/labels -f name=tl3 -f color=1d76db \
+       -f description='TL3 request (Rob only)' --silent
+gh api 'repos/RobTand/tl3-sandbox/issues?labels=tl3&state=all&per_page=100' --jq 'length'
+```
+
+The second command must print `0`.
 
 **Rob step 1.** Enable **Active** in the GitHub App settings. The webhook URL
 already points to `https://tl2-hooks.prismaquant.org/github/events`. Keep its
@@ -138,9 +148,11 @@ curl --fail --silent http://192.168.1.107:8033/ >/dev/null
 journalctl --user -u tl3d.service --since '5 minutes ago' --no-pager
 ```
 
-Verify a second ping or redelivery after the restart. Restart the external TL2 connector through its owning user's service manager,
-then redeliver once more. Read-only inspection confirmed this unit and UID.
-Do not replace its configuration or token.
+Verify a second ping or redelivery after the restart. Restart the external TL2
+connector through its owning user's service manager, then redeliver once more.
+Read-only inspection confirmed this unit and UID. Do not replace its
+configuration or token. The service belongs to user `tl2`, so restart it only
+with Rob's OK. Rob retired TL2 on 2026-10-30, and its tunnel now serves TL3.
 
 ```bash
 sudo -n -u tl2 env XDG_RUNTIME_DIR=/run/user/30033 \
@@ -213,6 +225,17 @@ rm -f "$XDG_RUNTIME_DIR/systemd/user/tl3d.service.d/startup-check.conf"
 systemctl --user daemon-reload
 systemctl --user is-active tl3d.service
 ```
+
+Then stop GitHub's deliveries and withdraw the seed:
+
+- **Rob step:** uncheck **Active** in the GitHub App settings, so GitHub stops
+  sending webhooks.
+- Remove the `tl3` label from the seed issue:
+  `gh api -X DELETE repos/RobTand/tl3-sandbox/issues/SEED/labels/tl3`.
+- If the seed's PR is queued, dequeue it as the App with
+  `cargo run --locked -p tl3-mergify --example sandbox_gate -- dequeue PR`.
+  Then close it without merging:
+  `gh api -X PATCH repos/RobTand/tl3-sandbox/pulls/PR -f state=closed`.
 
 Restore the prior release artifacts with `deploy.py install --binaries` and,
 if needed, the timestamped 0600 config backup from this installation. Do not
