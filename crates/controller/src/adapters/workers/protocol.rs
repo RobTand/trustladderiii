@@ -172,30 +172,54 @@ fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
     static INPUT: OnceLock<jsonschema::Validator> = OnceLock::new();
     static REPLY: OnceLock<jsonschema::Validator> = OnceLock::new();
     let (cell, schema) = if reply {
-        (&REPLY, include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-reply.json"))
+        (
+            &REPLY,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+        )
     } else {
-        (&INPUT, include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-input.json"))
+        (
+            &INPUT,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-input.json"),
+        )
     };
-    let validator = cell.get_or_init(|| jsonschema::validator_for(&serde_json::from_str::<Value>(schema).unwrap()).unwrap());
-    if validator.is_valid(value) { Ok(()) } else { Err(Error::Invalid("classifier value breaks role schema")) }
+    let validator = cell.get_or_init(|| {
+        jsonschema::validator_for(&serde_json::from_str::<Value>(schema).unwrap()).unwrap()
+    });
+    if validator.is_valid(value) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("classifier value breaks role schema"))
+    }
 }
 
 pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
     classifier_schema(reply, true)?;
     let closed = inputs["state"]["closed"] == true;
     let kind = reply["kind"].as_str().unwrap();
-    if (closed && !matches!(kind, "complaint" | "remark" | "unsure")) || (!closed && kind == "complaint") {
-        return Err(Error::Invalid("classification does not apply to request state"));
+    if (closed && !matches!(kind, "complaint" | "remark" | "unsure"))
+        || (!closed && kind == "complaint")
+    {
+        return Err(Error::Invalid(
+            "classification does not apply to request state",
+        ));
     }
     if kind == "answer" {
         let question = &inputs["state"]["open_question"];
-        if question.is_null() || reply["question_id"] != question["id"]
-            || !question["answers"].as_array().is_some_and(|a| a.contains(&reply["answer"]))
-            || (reply["answer"] == "add_credit" && reply["amount"].as_u64().is_none()) {
-            return Err(Error::Invalid("classifier answer does not name its offered question"));
+        if question.is_null()
+            || reply["question_id"] != question["id"]
+            || !question["answers"]
+                .as_array()
+                .is_some_and(|a| a.contains(&reply["answer"]))
+            || (reply["answer"] == "add_credit" && reply["amount"].as_u64().is_none())
+        {
+            return Err(Error::Invalid(
+                "classifier answer does not name its offered question",
+            ));
         }
     }
-    if (kind == "change_request" || reply["answer"] == "change_request") && reply["new_text"].as_str().unwrap().trim().is_empty() {
+    if (kind == "change_request" || reply["answer"] == "change_request")
+        && reply["new_text"].as_str().unwrap().trim().is_empty()
+    {
         return Err(Error::Invalid("changed request text is empty"));
     }
     Ok(())

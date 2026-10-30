@@ -27,9 +27,23 @@ def no_network(*args, **kwargs):
 
 def create_model(request):
     marker.write_text(str(__import__("os").getpid()))
-    if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit"):
+    if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
+    if request["role"] == "classifier":
+        body = request["inputs"]["comment"]["body"]
+        replies = json.loads((Path(__file__).parent / "fixtures/steering/classifications.json").read_text())
+        reply = replies[body]
+        if reply.get("question_id") == "current":
+            reply["question_id"] = request["inputs"]["state"]["open_question"]["id"]
+        if body == "Answer the old question":
+            marker.with_suffix(".classifying").write_text("ready")
+            while not marker.with_suffix(".answer").exists():
+                time.sleep(0.01)
+        return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
+    if mode.startswith("steering") and request["role"] == "ingest" and request["inputs"]["issue"]["number"] != 12:
+        while True:
+            time.sleep(1)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}
     if request["role"] == "planner":
         reply = {"kind": "leaf", "files": ["greeting.py", "tests/test_greeting.py"],
@@ -46,7 +60,7 @@ def create_model(request):
             reply = {"kind": "cant_meet", "report": "Need a decision on the greeting.", "files": []}
     if mode == "early":
         reply = {"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."} if request["role"] == "ingest" else reply
-    if mode == "disagree" and request["role"] == "audit":
+    if mode in {"disagree", "steering-answers"} and request["role"] == "audit":
         reply = {"verdict": "disagree", "objections": ["Preserve punctuation."]}
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 

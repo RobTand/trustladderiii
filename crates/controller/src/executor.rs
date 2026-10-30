@@ -38,8 +38,16 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
-    Classified { key: String, reply: Option<serde_json::Value> },
-    LinkedRequest { repository: crate::Repository, number: u64, title: String, original: NodeId },
+    Classified {
+        key: String,
+        reply: Option<serde_json::Value>,
+    },
+    LinkedRequest {
+        repository: crate::Repository,
+        number: u64,
+        title: String,
+        original: NodeId,
+    },
     GitHubComment {
         repository: crate::Repository,
         issue: u64,

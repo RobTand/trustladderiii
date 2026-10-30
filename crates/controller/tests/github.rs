@@ -1,3 +1,5 @@
+#[path = "github/steering.rs"]
+mod steering;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use chrono::Utc;
@@ -103,6 +105,7 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    linked: Vec<Value>,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -155,9 +158,22 @@ impl Respond for Api {
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
             }
+            ("POST", "/repos/owner/sandbox/issues") => {
+                let payload: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut issue = fixture(false)["issue"].clone();
+                issue["number"] = json!(1000 + state.linked.len());
+                issue["title"] = payload["title"].clone();
+                issue["body"] = payload["body"].clone();
+                issue["labels"] = json!([{"name": "tl3"}]);
+                issue["user"] = json!({"id": 99, "login": "factory[bot]"});
+                state.linked.push(issue.clone());
+                ResponseTemplate::new(201).set_body_json(issue)
+            }
             ("GET", "/repos/owner/sandbox/issues") => {
                 state.catch_up_passes += 1;
-                ResponseTemplate::new(200).set_body_json(json!([fixture(false)["issue"]]))
+                let mut issues = state.linked.clone();
+                issues.push(fixture(false)["issue"].clone());
+                ResponseTemplate::new(200).set_body_json(issues)
             }
             ("GET", "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200)
                 .set_body_json(if state.gap {
@@ -210,6 +226,17 @@ impl Respond for Api {
                 } else {
                     json!({"check_suites": []})
                 }),
+            ("GET", path)
+                if path.starts_with("/repos/owner/sandbox/issues/1")
+                    && path.ends_with("/comments") =>
+            {
+                ResponseTemplate::new(200).set_body_json(json!([]))
+            }
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/issues/1") => {
+                let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
+                ResponseTemplate::new(200)
+                    .set_body_json(state.linked.iter().find(|v| v["number"] == number).unwrap())
+            }
             _ => panic!("unexpected mock API call {method} {path}"),
         }
     }
@@ -340,8 +367,14 @@ fn main() {
     println!("test catch_up_preserves_evidence ... ok");
     daemon_with_workers(&database.create("daemon_workers"));
     println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
+    steering::commands(&database.create("steering_commands"));
+    steering::answers(&database.create("steering_answers"));
+    steering::replacement(&database.create("steering_replacement"));
+    steering::correction(&database.create("steering_correction"));
+    steering::queued_pause(&database.create("steering_queue"));
+    steering::answer_recovery(&database.create("steering_answer_recovery"));
     database.stop();
-    println!("11 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("17 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -1304,60 +1337,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
-    let credentials = root.path().join("app.json");
-    let model_key = root.path().join("model-key");
-    fs::write(
-        &credentials,
-        serde_json::to_vec(&json!({
-            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(&model_key, "fixture-only").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    for path in [&credentials, &model_key] {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let marker = root.path().join("entered");
-    let runs = root.path().join("runs");
-    let config = include_str!("../../config/example.toml")
-        .replace("port = 5432", &format!("port = {}", settings.port))
-        .replace(
-            "database = \"tl3\"",
-            &format!("database = {:?}", settings.database),
-        )
-        .replace("user = \"tl3\"", "user = \"postgres\"")
-        .replace(
-            "connect_timeout_secs = 10",
-            &format!(
-                "password_file = {:?}\nconnect_timeout_secs = 10",
-                settings.password_file.as_ref().unwrap()
-            ),
-        )
-        .replace(
-            "/home/rob/.config/tl3/github-app.json",
-            credentials.to_str().unwrap(),
-        )
-        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
-        .replace("owner = \"RobTand\"", "owner = \"owner\"")
-        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
-        .replace("installation_id = 1", "installation_id = 3")
-        .replace("id = 24923402", "id = 42")
-        .replace(
-            "/srv/tl3/workers/.venv/bin/python",
-            package.join(".venv/bin/python").to_str().unwrap(),
-        )
-        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
-        .replace(
-            "command = [\"-m\", \"tl3_workers\", \"run\"]",
-            &format!(
-                "command = [{:?}, \"audit-blocked\", {marker:?}]",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
-            ),
-        );
-    let config_path = root.path().join("config.toml");
-    fs::write(&config_path, config).unwrap();
+    let (config_path, marker, runs) = worker_daemon_config(settings, root.path(), "audit-blocked");
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0", &json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
@@ -1497,4 +1477,70 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             .any(|line| line.contains("WorkerOutputSource failed:")),
         "{logs:?}"
     );
+}
+
+fn worker_daemon_config(
+    settings: &tl3_config::Store,
+    root: &Path,
+    mode: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap();
+    let credentials = root.join("app.json");
+    let model_key = root.join("model-key");
+    fs::write(
+        &credentials,
+        serde_json::to_vec(&json!({
+            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(&model_key, "fixture-only").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&credentials, &model_key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let marker = root.join("entered");
+    let runs = root.join("runs");
+    let config = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace(
+            "connect_timeout_secs = 10",
+            &format!(
+                "password_file = {:?}\nconnect_timeout_secs = 10",
+                settings.password_file.as_ref().unwrap()
+            ),
+        )
+        .replace(
+            "/home/rob/.config/tl3/github-app.json",
+            credentials.to_str().unwrap(),
+        )
+        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        .replace("owner = \"RobTand\"", "owner = \"owner\"")
+        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
+        .replace("installation_id = 1", "installation_id = 3")
+        .replace("id = 24923402", "id = 42")
+        .replace(
+            "/srv/tl3/workers/.venv/bin/python",
+            package.join(".venv/bin/python").to_str().unwrap(),
+        )
+        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace(
+            "command = [\"-m\", \"tl3_workers\", \"run\"]",
+            &format!(
+                "command = [{:?}, {mode:?}, {marker:?}]",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+            ),
+        );
+    let config_path = root.join("config.toml");
+    fs::write(&config_path, config).unwrap();
+    (config_path, marker, runs)
 }

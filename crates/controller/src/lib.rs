@@ -6,9 +6,9 @@ pub mod executor;
 mod http;
 pub mod ingress;
 mod snapshot;
-pub mod steering;
 pub mod status;
 pub mod status_web;
+pub mod steering;
 
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
@@ -136,6 +136,32 @@ impl Controller {
             store.commit(&commit)?;
         } else {
             snapshot::decode(&snapshot)?;
+        }
+        let snapshot = store.load()?;
+        let mut backfill = Commit::new(
+            format!("steering:backfill:{}", snapshot.revision.get()),
+            json!({"comment_backfill": true}),
+            &snapshot,
+        );
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "github_comments" && r.value.get("classification").is_none())
+        {
+            if !snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "unclassified_comments" && r.id == row.id)
+            {
+                backfill.rows.push(put(
+                    "unclassified_comments",
+                    row.id.clone(),
+                    row.value.clone(),
+                ));
+            }
+        }
+        if !backfill.rows.is_empty() {
+            store.commit(&backfill)?;
         }
         Ok(Self {
             store,
@@ -315,12 +341,13 @@ impl Controller {
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
-                || (!delivery.is_classifier() && match delivery.output {
-                    Out::Effect { node, seq, .. } => world.nodes
-                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
-                    .effect_cancelling(seq),
-                    Out::Notice { .. } => false,
-                });
+                || (!delivery.is_classifier()
+                    && match delivery.output {
+                        Out::Effect { node, seq, .. } => world.nodes
+                            [node.index().ok_or(Error::Invalid("node index overflow"))?]
+                        .effect_cancelling(seq),
+                        Out::Notice { .. } => false,
+                    });
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
@@ -410,11 +437,18 @@ impl Controller {
             }
             let active = effect.state == EffectState::Confirmed
                 && if delivery.is_classifier() {
-                    snapshot.rows.iter().any(|r| r.table == "comment_jobs" && r.id == delivery.key)
-                } else { match delivery.output {
-                    Out::Effect { kind, .. } => node.operation_pending(kind, delivery.generation),
-                    Out::Notice { .. } => false,
-                }};
+                    snapshot
+                        .rows
+                        .iter()
+                        .any(|r| r.table == "comment_jobs" && r.id == delivery.key)
+                } else {
+                    match delivery.output {
+                        Out::Effect { kind, .. } => {
+                            node.operation_pending(kind, delivery.generation)
+                        }
+                        Out::Notice { .. } => false,
+                    }
+                };
             let mut commit = Commit::new(
                 format!("look:{}:{}", row.id, snapshot.revision.get()),
                 json!({"look": row.id}),
@@ -427,11 +461,7 @@ impl Controller {
                     Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {
-                        Completion::confirmed(vec![Observation::Kernel(Event::Reply {
-                            node: delivery.node(),
-                            generation: delivery.generation,
-                            reply: Reply::RunFailed,
-                        })])
+                        adapters::workers::failed(&delivery)
                     }
                     Ok(Reconciliation::Absent | Reconciliation::Pending) => continue,
                     Err(error) => {
@@ -492,7 +522,8 @@ impl Controller {
             to: EffectState::Cancelled,
         });
         if let Out::Effect { node, seq, .. } = delivery.output
-            && !delivery.is_classifier() {
+            && !delivery.is_classifier()
+        {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -556,7 +587,8 @@ impl Controller {
             to: state,
         });
         if let Out::Effect { node, seq, .. } = delivery.output
-            && !delivery.is_classifier() {
+            && !delivery.is_classifier()
+        {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -783,9 +815,17 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
-            Observation::Classified { key, reply } => return self.classified(snapshot, world, &key, reply, commit),
-            Observation::LinkedRequest { repository, number, title, original } => {
-                return self.linked_request(snapshot, world, repository, number, title, original, commit);
+            Observation::Classified { key, reply } => {
+                return self.classified(snapshot, world, &key, reply, commit);
+            }
+            Observation::LinkedRequest {
+                repository,
+                number,
+                title,
+                original,
+            } => {
+                return self
+                    .linked_request(snapshot, world, repository, number, title, original, commit);
             }
             Observation::GitHubComment {
                 repository,
@@ -807,8 +847,11 @@ impl Controller {
                         .iter()
                         .any(|row| row.table == "github_comments" && row.id == id)
                     {
-                        let value = json!({"repository": repository, "issue": issue, "comment": comment});
-                        commit.rows.push(put("github_comments", id.clone(), value.clone()));
+                        let value =
+                            json!({"repository": repository, "issue": issue, "comment": comment});
+                        commit
+                            .rows
+                            .push(put("github_comments", id.clone(), value.clone()));
                         commit.rows.push(put("unclassified_comments", id, value));
                     }
                 }

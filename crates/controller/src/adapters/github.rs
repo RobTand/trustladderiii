@@ -103,24 +103,59 @@ impl Adapter {
                 ..
             } => Some(notice),
             Out::Notice {
-                notice: Notice::Incident { .. } | Notice::FileReplacement | Notice::FileCorrection { .. },
+                notice:
+                    Notice::Incident { .. } | Notice::FileReplacement | Notice::FileCorrection { .. },
                 ..
             }
             | Out::Effect { .. } => None,
         }
     }
     fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
-        Completion::confirmed(vec![Observation::LinkedRequest { repository: delivery.repository.clone(), number: issue.number, title: issue.title, original: delivery.node() }])
+        Completion::confirmed(vec![Observation::LinkedRequest {
+            repository: delivery.repository.clone(),
+            number: issue.number,
+            title: issue.title,
+            original: delivery.node(),
+        }])
     }
     fn file_request(&mut self, delivery: &Delivery) -> Result<Completion> {
-        let Some(crate::steering::Task::FileRequest { text, comment, correction, revert }) = &delivery.steering else { unreachable!() };
+        let Some(crate::steering::Task::FileRequest {
+            text,
+            comment,
+            correction,
+            revert,
+        }) = &delivery.steering
+        else {
+            unreachable!()
+        };
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        let title = format!("{} for #{}", if *correction { "Correction" } else { "Replacement" }, delivery.issue);
-        let body = format!("{text}\n\n{} #{}, authorized by the owner's [comment](https://github.com/{repo}/issues/{}#issuecomment-{comment}).{}",
-            if *correction { "Corrects" } else { "Replaces" }, delivery.issue, delivery.issue,
-            if *revert { "\n\nThe owner requested a revert as part of this correction." } else { "" });
-        let issue = self.runtime.block_on(client.create_request_issue(&repo, &delivery.key, &title, &body))?;
+        let title = format!(
+            "{} for #{}",
+            if *correction {
+                "Correction"
+            } else {
+                "Replacement"
+            },
+            delivery.issue
+        );
+        let body = format!(
+            "{text}\n\n{} #{}, authorized by the owner's [comment](https://github.com/{repo}/issues/{}#issuecomment-{comment}).{}",
+            if *correction { "Corrects" } else { "Replaces" },
+            delivery.issue,
+            delivery.issue,
+            if *revert {
+                "\n\nThe owner requested a revert as part of this correction."
+            } else {
+                ""
+            }
+        );
+        let issue = self.runtime.block_on(client.create_request_issue(
+            &repo,
+            &delivery.key,
+            &title,
+            &body,
+        ))?;
         Ok(Self::linked(delivery, issue))
     }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
@@ -205,11 +240,16 @@ impl Executor for Adapter {
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-            return Ok(match self.runtime.block_on(client.reconcile_issue(&repo, &delivery.key)) {
-                Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
-                Ok(None) => Reconciliation::Absent,
-                Err(_) => Reconciliation::Pending,
-            });
+            return Ok(
+                match self
+                    .runtime
+                    .block_on(client.reconcile_issue(&repo, &delivery.key))
+                {
+                    Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
+                    Ok(None) => Reconciliation::Absent,
+                    Err(_) => Reconciliation::Pending,
+                },
+            );
         }
         if Self::request_notice(delivery).is_none() {
             return self.fake.reconcile(delivery);
@@ -260,8 +300,11 @@ fn writer_input(
         request
     };
     let (kind, facts) = match notice {
-        Notice::ClarifyComment { question } => (MessageKind::Note, json!({"issue_title": title, "request": request,
-            "change": format!("{} Reply to question {question} on this issue.", delivery.note.as_deref().ok_or(Error::Invalid("comment clarification missing"))?)})),
+        Notice::ClarifyComment { question } => (
+            MessageKind::Note,
+            json!({"issue_title": title, "request": request,
+            "change": format!("{} Reply to question {question} on this issue.", delivery.note.as_deref().ok_or(Error::Invalid("comment clarification missing"))?)}),
+        ),
         Notice::Ask { question } => {
             let binding = delivery
                 .question

@@ -2226,6 +2226,11 @@ fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outb
         return; // a repeated command
     }
     w.nodes[i].last_cmd = id;
+    if w.nodes[i].phase.is_closed()
+        && !matches!(command, Command::Complaint { .. } | Command::ClarifyComment)
+    {
+        return;
+    }
     match command {
         Command::ClarifyComment => {
             let question = w.next_question;

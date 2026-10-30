@@ -336,27 +336,55 @@ impl GitHub {
         .await
     }
 
-    pub async fn reconcile_issue(&self, repo: &str, effect_key: &str) -> Result<Option<Issue>, Error> {
+    pub async fn reconcile_issue(
+        &self,
+        repo: &str,
+        effect_key: &str,
+    ) -> Result<Option<Issue>, Error> {
         let marker = Self::marker(effect_key);
-        let issues: Vec<Issue> = self.list(
-            format!("{}/issues", repo_path(repo)?),
-            vec![("state".into(), "all".into())], None,
-        ).await?;
-        Ok(issues.into_iter().filter(|issue| {
-            issue.pull_request.is_none() && issue.user.login == format!("{}[bot]", self.0.slug)
-                && issue.body.as_deref().is_some_and(|body| body.lines().any(|line| line == marker))
-        }).min_by_key(|issue| issue.number))
+        let issues: Vec<Value> = self
+            .list(
+                format!("{}/issues", repo_path(repo)?),
+                vec![("state".into(), "all".into())],
+                None,
+            )
+            .await?;
+        let found = issues
+            .into_iter()
+            .filter(|issue| {
+                issue.get("pull_request").is_none()
+                    && issue["user"]["login"] == format!("{}[bot]", self.0.slug)
+                    && issue["body"]
+                        .as_str()
+                        .is_some_and(|body| body.lines().any(|line| line == marker))
+            })
+            .min_by_key(|issue| issue["number"].as_u64());
+        found
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| Error::Response)
     }
 
     /// A lost POST response is reconciled by marker before another create.
-    pub async fn create_request_issue(&self, repo: &str, effect_key: &str, title: &str, body: &str) -> Result<Issue, Error> {
+    pub async fn create_request_issue(
+        &self,
+        repo: &str,
+        effect_key: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<Issue, Error> {
         let body = marked_body(effect_key, body)?;
         let _guard = self.0.comments.lock().await;
         if let Some(issue) = self.reconcile_issue(repo, effect_key).await? {
             return Ok(issue);
         }
-        self.request(Method::POST, format!("{}/issues", repo_path(repo)?), vec![],
-            Some(json!({"title": title, "body": body, "labels": ["tl3"]}))).await
+        self.request(
+            Method::POST,
+            format!("{}/issues", repo_path(repo)?),
+            vec![],
+            Some(json!({"title": title, "body": body, "labels": ["tl3"]})),
+        )
+        .await
     }
 
     /// GitHub leaves an existing label unchanged.

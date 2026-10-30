@@ -429,8 +429,16 @@ proof!(
         by_rob: kani::any()
     }))
 );
-proof!(apply_clarify_comment, check_apply(command(Command::ClarifyComment)));
-proof!(apply_complaint, check_apply(command(Command::Complaint { revert: kani::any() })));
+proof!(
+    apply_clarify_comment,
+    check_apply(command(Command::ClarifyComment))
+);
+proof!(
+    apply_complaint,
+    check_apply(command(Command::Complaint {
+        revert: kani::any()
+    }))
+);
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
 proof!(apply_resume, check_apply(command(Command::Resume)));
