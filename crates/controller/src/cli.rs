@@ -3,7 +3,6 @@ use crate::{
 };
 use serde::Deserialize;
 use std::{
-    fs,
     io::{self, BufRead},
     path::PathBuf,
 };
@@ -35,13 +34,16 @@ fn arguments(daemon: bool) -> Result<(tl3_config::Config, Option<PathBuf>, bool)
         }
     }
     let path = path.ok_or(Error::Invalid("--config FILE is required"))?;
-    let config = tl3_config::Config::parse(&fs::read_to_string(path)?)?;
+    let config = tl3_config::Config::load(path)?;
     Ok((config, simulation, drain))
 }
 
 pub fn status() -> Result<()> {
     let (config, _, _) = arguments(false)?;
-    print!("{}", status::render(&mut Store::open(&config.store)?)?);
+    print!(
+        "{}",
+        status::render(&mut Store::open_read_only(&config.store)?)?
+    );
     Ok(())
 }
 

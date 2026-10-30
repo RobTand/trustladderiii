@@ -122,14 +122,7 @@ impl Registry {
         self.0.insert(upstream, Box::new(executor));
     }
 
-    pub(crate) fn adapter(
-        &mut self,
-        delivery: &Delivery,
-        epoch: i64,
-    ) -> Result<&mut (dyn Executor + '_)> {
-        if delivery.epoch != epoch {
-            return Err(crate::Error::Invalid("effect epoch is fenced"));
-        }
+    pub(crate) fn adapter(&mut self, delivery: &Delivery) -> Result<&mut (dyn Executor + '_)> {
         match self.0.get_mut(&upstream(delivery.output)) {
             Some(adapter) => Ok(adapter.as_mut()),
             None => Err(crate::Error::Invalid("missing upstream adapter")),

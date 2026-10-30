@@ -22,4 +22,4 @@ pub fn simulation(root: &Path) -> Result<Registry> {
     Ok(adapters)
 }
 
-pub use record::delivery_counts;
+pub use record::{delivery_counts, delivery_epochs};

@@ -448,7 +448,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
             .unwrap()
             .get::<_, i64>(0),
-        1
+        2
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
