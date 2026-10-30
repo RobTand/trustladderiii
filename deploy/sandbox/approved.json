@@ -105,7 +105,7 @@
     "main": null
   },
   "files": {
-    ".mergify.yml": "aa9d569c679a33cf9fc9ba0dd531b7a46eac25fae6039aa5aefdde8a6e293a34",
+    ".mergify.yml": "a348e1553d2b4bbad452bdbb326b704fdd422e888ed5e7917700eb60994adb6c",
     ".github/CODEOWNERS": "cb9f7d98a46af0716ba25e0f5163f780caaac65b6a6f10e89cf814a80e8db7e8",
     ".github/workflows/tests.yml": "6136e52f425d8e74432a3a5022d67d6492344cea296588a6665ed5cfae582f1d"
   }

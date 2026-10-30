@@ -14,7 +14,7 @@ extra rulesets, bypass actors, and protections. Rule ordering and GitHub's root
 ruleset identifiers and timestamps do not affect the comparison. App identifiers
 inside rules and protections remain significant.
 
-`files/` holds the reviewed copies deployed by sandbox PR #15. The bootstrap
+`files/` holds the reviewed copies deployed by sandbox PR #15 and recovery #23. The bootstrap
 merge was explicitly authorized because Mergify reads configuration from the
 default branch. Later changes go through TL3 approval and the queue label.
 Update the approved copies and hashes in the same reviewed change as any intended
@@ -71,13 +71,10 @@ an embedded disposable Postgres. No installed database is required.
 
 The first live run exposed an interaction with GitHub rulesets. Mergify injects
 main's required checks into draft merge conditions by default, including the
-original-only TL3 approval check. Recovery PR #23 proposes
-`branch_protection_injection_mode: none`; the explicit queue approval and draft
-CI conditions remain in place, and GitHub still enforces both original checks.
-Its recovery merge requires Rob's own code-owner review. Until that PR merges,
-the approved copy remains the deployed config and the checker still passes,
-but a successful queue merge is blocked. Do not approve a draft to work around
-this problem. No main ruleset bypass is needed.
+original-only TL3 approval check. Recovery PR #23 merged after Rob's review and
+adds `branch_protection_injection_mode: none`. Explicit queue approval and draft
+CI conditions remain in place. The approved copy includes that recovery.
+Successful queue-merge trials now wait on sandbox CI. See [the trial procedure](RUN_TRIALS.md).
 
 `crates/controller/tests/sandbox_gate.rs` replays the recorded bootstrap merge
 through the production adapter. The merge commit has no check runs, so the

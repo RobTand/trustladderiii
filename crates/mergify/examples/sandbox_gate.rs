@@ -128,12 +128,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let repo = "RobTand/tl3-sandbox";
     match operation.as_str() {
         "open" => {
-            let pull = github.open_pull_request(repo, &NewPullRequest {
-                title: head.ok_or("title required")?,
-                head: subject,
-                base: "main".into(),
-                body: "Correct the live-trial configuration deadlock from RobTand/trustladderiii#17. Keep TL3 approval on the original head and sandbox CI on the draft. GitHub still enforces both checks on the original PR, with no ruleset bypass. Requires coordinator review before bootstrap recovery.".into(),
-            }).await?;
+            let request = trial_pull_request(
+                subject,
+                head.ok_or("title required")?,
+                args.next().ok_or("trial body required")?,
+            );
+            let pull = github.open_pull_request(repo, &request).await?;
             println!("sandbox PR {}", pull.number);
         }
         "approve" => {
@@ -197,7 +197,12 @@ async fn main() {
 }
 
 fn trial_pull_request(branch: String, title: String, body: String) -> NewPullRequest {
-    todo!("use the caller's trial description")
+    NewPullRequest {
+        head: branch,
+        base: "main".into(),
+        title,
+        body,
+    }
 }
 
 #[cfg(test)]
@@ -213,7 +218,13 @@ mod tests {
         );
         assert_eq!(request.head, "tl3/issue-17-node-201");
         assert_eq!(request.base, "main");
-        assert_eq!(request.title, "Verify the approved head while main advances");
-        assert_eq!(request.body, "Merge a separate approved PR, then confirm this head is unchanged.");
+        assert_eq!(
+            request.title,
+            "Verify the approved head while main advances"
+        );
+        assert_eq!(
+            request.body,
+            "Merge a separate approved PR, then confirm this head is unchanged."
+        );
     }
 }

@@ -25,7 +25,7 @@ def snapshots():
     after = copy.deepcopy(before)
     after["pull"].update(merged=True, merge_commit_sha="merged")
     after["main"] = "merged"
-    after["head-checks"].append(check("Mergify Merge Queue", 637950,
+    after["head-checks"].append(check("Mergify Merge Queue", 10562,
                                       "Merged via merge queue"))
     return before, draft, after
 
