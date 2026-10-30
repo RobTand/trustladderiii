@@ -1,0 +1,22 @@
+# Match PrismaBuild's serial, in-place queue. Enqueue only by explicit command.
+merge_queue:
+  mode: serial
+  max_parallel_checks: 1
+  reset_on_external_merge: always
+  status_comments: outcomes
+  queue_controls_comment: false
+
+queue_rules:
+  - name: default
+    queue_conditions:
+      - base = main
+      - check-success = Rust
+      - check-success = Python
+    merge_conditions:
+      - check-success = Rust
+      - check-success = Python
+    merge_method: merge
+    update_method: merge
+    batch_size: 1
+    max_checks_retries: 0
+    checks_timeout: 30 minutes
