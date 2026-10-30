@@ -751,13 +751,26 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     fs::write(root.path().join("entered.release"), "go").unwrap();
     wait(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
     assert!(!attempt.join("exit.json").exists());
-    source.poll_once(&mut store, &tx).unwrap();
     assert!(
         rx.try_recv().is_err(),
         "discard a valid reply without a recorded exit"
     );
+    // The retry may start before the source drains the previous pidfd event.
     supervisor.execute(&run).unwrap();
     assert!(!failed(&terminal(&mut supervisor, &run)));
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    let Input::Observation {
+        key,
+        observation: Observation::WorkerReply { .. },
+    } = rx.try_recv().unwrap()
+    else {
+        panic!("missing retried worker reply")
+    };
+    assert!(key.ends_with(":worker:1:0"));
+    assert!(rx.try_recv().is_err());
     assert_eq!(attempts(&root_for(&config, &run.key)), 2);
 }
 

@@ -96,6 +96,17 @@ impl WorkerOutputSource {
         Ok(())
     }
 
+    fn retire(&mut self, run: Run) -> Result<()> {
+        if let Some(delivery) = &run.delivery {
+            self.active.remove(delivery);
+        }
+        for wd in run.watches {
+            self.watches.remove(&wd);
+            io(inotify::remove_watch(self.inotify.as_ref().unwrap(), wd))?;
+        }
+        Ok(())
+    }
+
     fn initialize(&mut self, store: &mut Store) -> Result<BTreeSet<PathBuf>> {
         if self.inotify.is_some() {
             return Ok(BTreeSet::new());
@@ -208,6 +219,9 @@ impl WorkerOutputSource {
                         if let Some(value) = read(&path)? {
                             let delivery: Delivery = serde_json::from_value(value)?;
                             let root = run_root(&self.root, &delivery.key);
+                            if let Some(previous) = self.runs.remove(&root) {
+                                self.retire(previous)?;
+                            }
                             self.add(root.clone())?;
                             dirty.insert(root);
                             fs::remove_file(path)?;
@@ -226,13 +240,7 @@ impl WorkerOutputSource {
             if keep {
                 self.runs.insert(root, run);
             } else {
-                if let Some(delivery) = &run.delivery {
-                    self.active.remove(delivery);
-                }
-                for wd in run.watches {
-                    self.watches.remove(&wd);
-                    io(inotify::remove_watch(self.inotify.as_ref().unwrap(), wd))?;
-                }
+                self.retire(run)?;
             }
         }
         Ok(true)
