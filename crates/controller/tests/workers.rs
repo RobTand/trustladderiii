@@ -347,6 +347,11 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--review-feedback") {
+        maker::review_trial(&database.create("review_feedback"));
+        database.stop();
+        return;
+    }
     for wrapped in [false, true] {
         linked_materials(
             &database.create(&format!("linked_materials_{wrapped}")),

@@ -62,6 +62,17 @@ impl Flow {
             Bootstrap::from_config(&config).unwrap(),
         )
         .unwrap();
+        if mode == "review-feedback" {
+            let mut store = Store::open(settings).unwrap();
+            let mut commit =
+                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+            commit.rows.push(tl3_store::RowChange::Put {
+                table: "goals".into(),
+                id: "0".into(),
+                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
+            });
+            store.commit(&commit).unwrap();
+        }
         let (sender, receiver) = mpsc::channel();
         let checks = checks_source.spawn(sender.clone());
         thread::spawn(move || source.run(sender).unwrap());
@@ -83,6 +94,11 @@ impl Flow {
     fn until(&mut self, done: impl Fn(Phase) -> bool) {
         loop {
             let world = self.controller.world().unwrap();
+            assert!(
+                world.nodes.iter().all(|node| !node.waiting_incident),
+                "fixture raised an incident: {:?}",
+                world.nodes
+            );
             if let Some(node) = world.nodes.first()
                 && done(node.phase)
             {
@@ -449,4 +465,73 @@ pub(super) fn recorded_failure_feedback(settings: &tl3_config::Store) {
         runs.last().unwrap()["inputs"]["feedback"][0]["failed_tests"][0]["message"],
         message
     );
+}
+
+pub(super) fn review_feedback(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start_mode(settings, root.path(), "review-feedback", false);
+    flow.until(|phase| phase == Phase::Making);
+    flow.until(|phase| phase == Phase::Checking);
+    let runs = requests(&flow.config);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[1]["inputs"]["round"], 1);
+    let feedback = &runs[1]["inputs"]["feedback"];
+    let feedback = feedback.as_array().unwrap();
+    assert!(
+        feedback.len() >= 3,
+        "blocking findings must have individual feedback entries"
+    );
+    for (index, problem, evidence, goal_ids) in [
+        (
+            0,
+            "The greeting lacks context.",
+            "greeting.py returns only hello.",
+            json!(["greeting"]),
+        ),
+        (
+            1,
+            "The report stream is overwritten.",
+            "The reporter replaces stdout.",
+            json!([]),
+        ),
+        (2, "Problem 0", "Evidence 0", json!(["greeting"])),
+    ] {
+        let report = feedback[index]["report"].as_str().unwrap();
+        assert!(
+            report.contains(problem) && report.contains(evidence),
+            "maker feedback missing {problem} or {evidence}: {report}"
+        );
+        assert_eq!(feedback[index]["kind"], "review_finding");
+        assert_eq!(feedback[index]["goal_ids"], goal_ids);
+    }
+    assert!(feedback.len() <= 20, "review feedback must be bounded");
+    let report: String = feedback
+        .iter()
+        .map(|finding| finding["report"].as_str().unwrap())
+        .collect();
+    assert!(!report.contains("Optional style note"));
+    assert!(!report.contains(&"é".repeat(1001)));
+    assert!(!report.contains(&"界".repeat(1001)));
+    assert!(report.chars().count() <= 16000);
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .worker_document("0", "findings")
+            .unwrap()
+            .is_none()
+    );
+
+    flow.until(|phase| matches!(phase, Phase::Planning { .. }));
+    assert!(flow.controller.world().unwrap().nodes[0].replanned);
+    let findings = Store::open(settings)
+        .unwrap()
+        .worker_document("0", "findings")
+        .unwrap()
+        .unwrap();
+    assert!(findings.as_array().unwrap().iter().any(|finding| {
+        finding.as_str().is_some_and(|text| {
+            text.contains("The greeting lacks context.")
+                && text.contains("greeting.py returns only hello.")
+        })
+    }));
 }

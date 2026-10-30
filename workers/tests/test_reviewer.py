@@ -373,3 +373,12 @@ def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, sessi
             runtime.run(review_request, events.append)
     assert not events
     assert len(observed) == 1
+
+
+@pytest.mark.parametrize("length,valid", [(1000, True), (1001, False)])
+def test_review_check_message_bound(review_request, length, valid):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+
+    review_request["inputs"]["checks"][0]["tests"][0]["message"] = "é" * length
+    assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"]) == valid
