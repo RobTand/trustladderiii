@@ -61,6 +61,7 @@ impl Clock for FakeClock {
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "RobTand".into(),
             name: "tl3-sandbox".into(),

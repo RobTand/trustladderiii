@@ -21,6 +21,7 @@ use tl3_store::{Commit, EffectState, EffectTransition, Epoch, Reader, RowChange,
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "RobTand".into(),
             name: "tl3-sandbox".into(),
@@ -614,15 +615,15 @@ fn write_outage_goes_idle(settings: &tl3_config::Store) {
         )
         .unwrap();
     drain(&mut controller);
-    assert_eq!(calls.get(), 2, "the next observation retries exactly once");
+    assert_eq!(calls.get(), 1, "GitHub news cannot retry a worker write");
     let mut next = labelled();
     next.delivery = "next-input".into();
     controller.intake(next).unwrap();
     drain(&mut controller);
-    assert_eq!(calls.get(), 3, "the next intake retries exactly once");
-    controller.retry_held_effects();
+    assert_eq!(calls.get(), 1, "intake cannot retry a worker write");
+    controller.retry_held_effects(Upstream::Workers);
     drain(&mut controller);
-    assert_eq!(calls.get(), 4, "a look retries exactly once");
+    assert_eq!(calls.get(), 2, "a worker look retries exactly once");
     drop(controller);
     controller_lock_barrier(settings);
     let mut registry = adapters::simulation(root.path()).unwrap();
@@ -635,7 +636,7 @@ fn write_outage_goes_idle(settings: &tl3_config::Store) {
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     drain(&mut controller);
-    assert_eq!(calls.get(), 5, "a restart retries exactly once");
+    assert_eq!(calls.get(), 3, "a restart retries exactly once");
 }
 
 struct DeferredWorker(adapters::workers::Fake);
@@ -1175,7 +1176,7 @@ fn adapter_errors_are_isolated(settings: &tl3_config::Store) {
         "an adapter outage must not spin the daemon"
     );
     fault.set(Fault::Healthy);
-    controller.retry_held_effects();
+    controller.retry_held_effects(Upstream::Workers);
     drain(&mut controller);
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,

@@ -31,6 +31,11 @@ script = json.loads(Path(sys.argv[1]).read_text())
 model = FakeMessagesListChatModel(responses=[AIMessage(**turn) for turn in script])
 mode = sys.argv[2] if len(sys.argv) > 2 else ''
 def create_model(request):
+    if mode == 'quota':
+        import httpx
+        from openai import RateLimitError
+        response = httpx.Response(429, headers={'retry-after': '600'}, request=httpx.Request('POST', 'http://model.invalid/v1'))
+        raise RateLimitError('secret provider text', response=response, body=None)
     if mode == 'fail-with-secret':
         raise RuntimeError('fixture-secret-value ' + request['key_file'])
     if mode == 'noisy':
