@@ -11,7 +11,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::Write,
-    os::unix::ffi::{OsStrExt, OsStringExt},
+    os::unix::ffi::OsStringExt,
     path::{Component, Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{Arc, Mutex, OnceLock, Weak},

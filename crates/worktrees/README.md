@@ -30,7 +30,8 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-The controller refreshes local `refs/heads/main` before branch creation or rebase. This adapter does not fetch,
+The controller refreshes local `refs/heads/main` before branch creation or rebase.
+This adapter does not fetch,
 choose effect identities, persist controller state, retry network failures, or mark
 a new head approved. Every new head still needs checks and review.
 
@@ -61,17 +62,17 @@ the orphan's gitlink before repairing the registration. It preserves working fil
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
-Removal refuses tracked edits and untracked files. Ignored build files are allowed. It recovers a
-missing registration before removing a checkout. Repeating removal or branch
+Removal refuses tracked edits and untracked files. Ignored build files are allowed.
+It recovers a missing registration before removing a checkout. Repeating removal or branch
 deletion after success has no effect.
 
-Rebase requires a clean checkout. Ignored build files are allowed. A dirty checkout is
-rejected without changing its files. An interrupted rebase for the requested branch
+Rebase requires a clean checkout. Ignored build files are allowed. A dirty checkout
+is rejected without changing its files. An interrupted rebase for the requested branch
 is aborted before retrying. A conflicting rebase captures the unmerged paths,
 aborts, and verifies a clean checkout at the old head before returning. Filesystem
 or Git failures during abort return `Recovery` so the controller retains the
-resource and reports the problem. There is no automatic conflict resolution. A per-checkout marker recovers detached
-rebases interrupted before or after the atomic branch and base update.
+resource and reports the problem. There is no automatic conflict resolution.
+A per-checkout marker recovers detached rebases interrupted before or after the atomic branch and base update.
 
 Pushes use immutable commit ids and explicit refs. Ordinary pushes refuse divergent
 remote history. `push_rebased` requires the previously published head from the

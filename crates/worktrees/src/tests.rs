@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::ffi::OsStrExt;
 use tempfile::TempDir;
 
 const TOKEN: &str = "tl3_FAKE_INSTALLATION_SECRET_7x9";
