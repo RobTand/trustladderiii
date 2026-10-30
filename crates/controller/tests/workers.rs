@@ -120,6 +120,7 @@ fn delivery() -> Delivery {
         note: None,
         question: None,
         question_context: None,
+        steering: None,
     }
 }
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {

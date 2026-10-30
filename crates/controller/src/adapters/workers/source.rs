@@ -370,8 +370,15 @@ pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observati
         {
             return Err(Error::Invalid("invalid worker event"));
         }
-        protocol::map_reply(role, &value["reply"])?;
+        if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
+            protocol::validate_classification(inputs, &value["reply"])?;
+        } else {
+            protocol::map_reply(role, &value["reply"])?;
+        }
         reply = Some(value["reply"].clone());
+    }
+    if delivery.is_classifier() {
+        return Ok(Observation::Classified { key: delivery.key.clone(), reply: Some(reply.ok_or(Error::Invalid("worker reply is missing"))?) });
     }
     Ok(Observation::WorkerReply {
         node: delivery.node(),

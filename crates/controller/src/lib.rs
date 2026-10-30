@@ -6,6 +6,7 @@ pub mod executor;
 mod http;
 pub mod ingress;
 mod snapshot;
+pub mod steering;
 pub mod status;
 pub mod status_web;
 
@@ -306,17 +307,20 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        if self.schedule_comment(&snapshot)? {
+            return Ok(true);
+        }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
-                || match delivery.output {
+                || (!delivery.is_classifier() && match delivery.output {
                     Out::Effect { node, seq, .. } => world.nodes
                         [node.index().ok_or(Error::Invalid("node index overflow"))?]
                     .effect_cancelling(seq),
                     Out::Notice { .. } => false,
-                };
+                });
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
@@ -405,10 +409,12 @@ impl Controller {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
-                && match delivery.output {
+                && if delivery.is_classifier() {
+                    snapshot.rows.iter().any(|r| r.table == "comment_jobs" && r.id == delivery.key)
+                } else { match delivery.output {
                     Out::Effect { kind, .. } => node.operation_pending(kind, delivery.generation),
                     Out::Notice { .. } => false,
-                };
+                }};
             let mut commit = Commit::new(
                 format!("look:{}:{}", row.id, snapshot.revision.get()),
                 json!({"look": row.id}),
@@ -485,7 +491,8 @@ impl Controller {
             from: effect.state,
             to: EffectState::Cancelled,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output {
+        if let Out::Effect { node, seq, .. } = delivery.output
+            && !delivery.is_classifier() {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -548,7 +555,8 @@ impl Controller {
             from,
             to: state,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output {
+        if let Out::Effect { node, seq, .. } = delivery.output
+            && !delivery.is_classifier() {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -562,6 +570,7 @@ impl Controller {
         }
         if completion.ack == Ack::Retryable
             && state == EffectState::Intended
+            && !delivery.is_classifier()
             && matches!(delivery.output, Out::Effect { .. })
         {
             // The kernel assigns a fresh sequence to its retry. Retire the old
@@ -687,7 +696,7 @@ impl Controller {
             } else {
                 None
             };
-            let delivery = Delivery {
+            let mut delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
                 output,
@@ -702,7 +711,9 @@ impl Controller {
                 question: n.question,
                 note: None,
                 question_context,
+                steering: None,
             };
+            self.steering_delivery(snapshot, commit, &mut delivery)?;
             if matches!(
                 output,
                 Out::Effect {
@@ -772,6 +783,10 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
+            Observation::Classified { key, reply } => return self.classified(snapshot, world, &key, reply, commit),
+            Observation::LinkedRequest { repository, number, title, original } => {
+                return self.linked_request(snapshot, world, repository, number, title, original, commit);
+            }
             Observation::GitHubComment {
                 repository,
                 issue,
@@ -792,11 +807,9 @@ impl Controller {
                         .iter()
                         .any(|row| row.table == "github_comments" && row.id == id)
                     {
-                        commit.rows.push(put(
-                            "github_comments",
-                            id,
-                            json!({"repository": repository, "issue": issue, "comment": comment}),
-                        ));
+                        let value = json!({"repository": repository, "issue": issue, "comment": comment});
+                        commit.rows.push(put("github_comments", id.clone(), value.clone()));
+                        commit.rows.push(put("unclassified_comments", id, value));
                     }
                 }
                 return Ok(None);

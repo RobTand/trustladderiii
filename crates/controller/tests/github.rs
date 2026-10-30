@@ -583,6 +583,7 @@ fn delivery(notice: Notice) -> Delivery {
         round: 0,
         question: None,
         question_context: None,
+        steering: None,
         note: None,
     }
 }

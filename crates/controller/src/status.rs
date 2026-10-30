@@ -222,6 +222,7 @@ fn effect_wait(kind: EffectKind) -> &'static str {
             Role::Plan => "planner to start",
             Role::Make => "writer to start",
             Role::Review => "reviewer to start",
+            Role::Classify => "comment classifier to start",
         },
         EffectKind::SubmitChecks => "checks to be submitted",
         EffectKind::StartRebase => "branch update to start",

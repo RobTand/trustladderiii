@@ -23,6 +23,7 @@ impl Executor for Fake {
                 kind: EffectKind::StartRun(role),
                 ..
             } => match role {
+                Role::Classify => vec![Observation::Classified { key: delivery.key.clone(), reply: Some(serde_json::json!({"kind": "remark"})) }],
                 Role::Ingest => vec![Observation::Kernel(Event::Reply {
                     node,
                     generation,

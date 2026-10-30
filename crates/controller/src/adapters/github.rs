@@ -98,15 +98,30 @@ impl Adapter {
                     notice @ (Notice::Ask { .. }
                     | Notice::MeasuresPosted
                     | Notice::Summary(_)
-                    | Notice::Note(_)),
+                    | Notice::Note(_)
+                    | Notice::ClarifyComment { .. }),
                 ..
             } => Some(notice),
             Out::Notice {
-                notice: Notice::Incident { .. } | Notice::FileReplacement,
+                notice: Notice::Incident { .. } | Notice::FileReplacement | Notice::FileCorrection { .. },
                 ..
             }
             | Out::Effect { .. } => None,
         }
+    }
+    fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
+        Completion::confirmed(vec![Observation::LinkedRequest { repository: delivery.repository.clone(), number: issue.number, title: issue.title, original: delivery.node() }])
+    }
+    fn file_request(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let Some(crate::steering::Task::FileRequest { text, comment, correction, revert }) = &delivery.steering else { unreachable!() };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let title = format!("{} for #{}", if *correction { "Correction" } else { "Replacement" }, delivery.issue);
+        let body = format!("{text}\n\n{} #{}, authorized by the owner's [comment](https://github.com/{repo}/issues/{}#issuecomment-{comment}).{}",
+            if *correction { "Corrects" } else { "Replaces" }, delivery.issue, delivery.issue,
+            if *revert { "\n\nThe owner requested a revert as part of this correction." } else { "" });
+        let issue = self.runtime.block_on(client.create_request_issue(&repo, &delivery.key, &title, &body))?;
+        Ok(Self::linked(delivery, issue))
     }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
         match delivery.output {
@@ -126,6 +141,9 @@ impl Adapter {
 impl Executor for Adapter {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
+        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
+            return self.file_request(delivery);
+        }
         let Some(notice) = Self::request_notice(delivery) else {
             return self.fake.execute(delivery);
         };
@@ -184,6 +202,15 @@ impl Executor for Adapter {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.fake.0.fence(self.epoch)?;
+        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
+            let client = self.client(delivery)?;
+            let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+            return Ok(match self.runtime.block_on(client.reconcile_issue(&repo, &delivery.key)) {
+                Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
+                Ok(None) => Reconciliation::Absent,
+                Err(_) => Reconciliation::Pending,
+            });
+        }
         if Self::request_notice(delivery).is_none() {
             return self.fake.reconcile(delivery);
         }
@@ -233,6 +260,8 @@ fn writer_input(
         request
     };
     let (kind, facts) = match notice {
+        Notice::ClarifyComment { question } => (MessageKind::Note, json!({"issue_title": title, "request": request,
+            "change": format!("{} Reply to question {question} on this issue.", delivery.note.as_deref().ok_or(Error::Invalid("comment clarification missing"))?)})),
         Notice::Ask { question } => {
             let binding = delivery
                 .question
@@ -324,10 +353,10 @@ fn writer_input(
                 .collect();
             (
                 MessageKind::Question,
-                json!({"issue_title": title, "request": request, "obstacle": obstacle,
+                json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
                 "options": options, "recommended_option": 0,
                 "recommendation_reason": "This option gives your request a clear next step.",
-                "how_to_answer": "Reply to this question on the issue with your chosen option and any requested details."}),
+                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")}),
             )
         }
         Notice::Summary(outcome) => (
@@ -352,7 +381,7 @@ fn writer_input(
                 Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
-                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
+                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } | Notice::ClarifyComment { .. } | Notice::FileCorrection { .. } => unreachable!(),
             }}),
         ),
     };

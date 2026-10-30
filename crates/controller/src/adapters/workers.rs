@@ -33,13 +33,13 @@ impl ActiveRuns {
         self.0
             .lock()
             .unwrap()
-            .entry(delivery.node().0.to_string())
+            .entry(if delivery.is_classifier() { format!("comment:{}", delivery.node().0) } else { delivery.node().0.to_string() })
             .or_default()
             .insert(delivery.key.clone());
     }
     fn remove(&self, delivery: &Delivery) {
         let mut nodes = self.0.lock().unwrap();
-        let node = delivery.node().0.to_string();
+        let node = if delivery.is_classifier() { format!("comment:{}", delivery.node().0) } else { delivery.node().0.to_string() };
         if let Some(keys) = nodes.get_mut(&node) {
             keys.remove(&delivery.key);
             if keys.is_empty() {
@@ -119,9 +119,11 @@ impl Supervisor {
 
     fn request(&self, delivery: &Delivery, role: &str, store: &mut Store) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let mut inputs = store
-            .worker_materials(&node)?
-            .ok_or(Error::Invalid("worker materials are missing"))?;
+        let mut inputs = if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
+            inputs.clone()
+        } else {
+            store.worker_materials(&node)?.ok_or(Error::Invalid("worker materials are missing"))?
+        };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "planner" {
@@ -139,7 +141,7 @@ impl Supervisor {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("audit needs an ingest reply"))?;
-        } else if let Some(audit) = store.worker_document(&node, "audits")?
+        } else if role == "ingest" && let Some(audit) = store.worker_document(&node, "audits")?
             && audit["verdict"] == "disagree"
         {
             inputs["audit_objections"] = audit["objections"].clone();
@@ -148,7 +150,9 @@ impl Supervisor {
             inputs["forecast"] = forecast;
         }
         protocol::validate_inputs(role, &inputs)?;
-        let ladder = if role == "ingest" {
+        let ladder = if role == "classifier" {
+            &self.models.comment_classifier
+        } else if role == "ingest" {
             &self.models.ingest
         } else if role == "audit" {
             &self.models.audit
@@ -226,7 +230,7 @@ impl Executor for Supervisor {
         let root = self.root(&delivery.key);
         fs::create_dir_all(root.join("worktree"))?;
         let request = self.request(delivery, role, &mut store)?;
-        if role != "audit" {
+        if role != "audit" && role != "classifier" {
             let materials = store
                 .worker_materials(&delivery.node().0.to_string())?
                 .ok_or(Error::Invalid("worker materials missing"))?;
@@ -326,6 +330,9 @@ pub(super) fn latest(root: &Path) -> Result<Option<(i64, PathBuf)>> {
 }
 
 pub(super) fn failed(delivery: &Delivery) -> Completion {
+    if delivery.is_classifier() {
+        return Completion::confirmed(vec![Observation::Classified { key: delivery.key.clone(), reply: None }]);
+    }
     Completion::confirmed(vec![Observation::Kernel(Event::Reply {
         node: delivery.node(),
         generation: delivery.generation,
