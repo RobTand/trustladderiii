@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod cli;
+pub mod clock;
 pub mod executor;
 mod snapshot;
 pub mod status;
@@ -90,15 +91,27 @@ struct Request {
 pub enum Boundary {
     BeforeDispatch,
     AfterDispatch,
+    BeforeReconcile,
+    AfterReconcile,
 }
 
 pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
+    clock: Box<dyn clock::Clock>,
 }
 impl Controller {
-    pub fn open(mut store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
+    pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
+        Self::open_with_clock(store, adapters, bootstrap, clock::SystemClock)
+    }
+
+    pub fn open_with_clock(
+        mut store: Store,
+        adapters: Registry,
+        bootstrap: Bootstrap,
+        clock: impl clock::Clock + 'static,
+    ) -> Result<Self> {
         store.claim_controller()?;
         let snapshot = store.load()?;
         if snapshot.rows.is_empty() {
@@ -122,7 +135,12 @@ impl Controller {
             store,
             adapters,
             bootstrap,
+            clock: Box::new(clock),
         })
+    }
+
+    pub fn now(&self) -> std::time::SystemTime {
+        self.clock.now()
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
@@ -288,7 +306,10 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
-                    let result = match self.adapters.adapter(&delivery)?.reconcile(&delivery) {
+                    hook(Boundary::BeforeReconcile, &effect.key);
+                    let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                    hook(Boundary::AfterReconcile, &effect.key);
+                    let result = match reconciled {
                         Ok(result) => result,
                         Err(error) => {
                             eprintln!("adapter reconciliation failed for {}: {error}", effect.key);
@@ -345,9 +366,10 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
-                if let Ok(Reconciliation::Found(completion)) =
-                    self.adapters.adapter(&delivery)?.reconcile(&delivery)
-                {
+                hook(Boundary::BeforeReconcile, &delivery.key);
+                let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                hook(Boundary::AfterReconcile, &delivery.key);
+                if let Ok(Reconciliation::Found(completion)) = reconciled {
                     if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                         continue;
                     }

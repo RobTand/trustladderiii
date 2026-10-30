@@ -12,6 +12,7 @@ tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 
 [dev-dependencies]
+loom = "0.7"
 tl3-worktrees = { path = "../worktrees" }
 postgres = "0.19"
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
@@ -21,4 +22,9 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"
+harness = false
+
+[[test]]
+name = "crash_safety"
+path = "tests/crash_safety.rs"
 harness = false
