@@ -633,7 +633,7 @@ impl Outbox {
         false
     }
 
-    fn drain_into(&self, out: &mut Outbox) {
+    fn drain_into(&self, out: &mut Vec<Out>) {
         out.extend(self.items.iter().flatten().copied());
     }
 }
