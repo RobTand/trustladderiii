@@ -130,6 +130,8 @@ impl Controller {
             paths: vec![],
             attempt: 1,
             round: 0,
+            checks: None,
+            job_generation: None,
             question: n.question,
             note: None,
             question_context: None,

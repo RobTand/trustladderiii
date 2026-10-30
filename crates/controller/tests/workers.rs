@@ -121,6 +121,8 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        checks: None,
+        job_generation: None,
         question: None,
         question_context: None,
         steering: None,

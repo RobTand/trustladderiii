@@ -889,5 +889,38 @@ pub(super) fn writer_rejection() {
             assert!(text.contains("Would you like me to stop or continue?"));
         }
     }
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let calls = Arc::new(Mutex::new(0));
+    let mut adapter = adapters::github::Adapter::new(
+        BTreeMap::from([(3, client(&api.uri()))]),
+        BrokenWriter(calls.clone()),
+        0,
+        Policy::default(),
+        root.path(),
+    )
+    .unwrap();
+    let note = delivery(Notice::MeasuresPosted);
+    assert_eq!(
+        adapter.execute(&note).unwrap().ack,
+        tl3_kernel::Ack::Confirmed
+    );
+    adapter.execute(&note).unwrap();
+    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert!(
+        api.state.lock().unwrap().comments[0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("Could you rephrase it?")
+    );
     println!("test steering_writer_reruns_then_posts_checked_fallback ... ok");
+}
+
+struct BrokenWriter(Arc<Mutex<usize>>);
+impl Writer for BrokenWriter {
+    fn draft(&mut self, _: &str, _: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+        *self.0.lock().unwrap() += 1;
+        Err(tl3_controller::Error::Invalid("fixture failed writer run"))
+    }
 }
