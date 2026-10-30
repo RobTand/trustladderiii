@@ -290,7 +290,8 @@ impl Controller {
                                     }),
                                 )?;
                             }
-                            // PB alone judges progress-contract failure and loss.
+                            // PrismaBuild owns its progress contract. Worktrees
+                            // has no progress contract for this look to judge.
                             Upstream::PrismaBuild | Upstream::Worktrees => {}
                         }
                     }
