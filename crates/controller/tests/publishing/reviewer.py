@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 from tl3_workers import runtime
 
 record = Path(sys.argv[1])
+mode = sys.argv[2]
 
 
 def model(request):
@@ -19,10 +20,15 @@ def model(request):
     assert any(rule["id"] == "test-report-integrity" for rule in inputs["standing_rules"])
     assert all(check["custody"] == "in-process" for check in inputs["checks"])
     assert Path(request["worktree"], "value.py").read_text() == "def value(): return 2\n"
+    first = not record.exists()
     with record.open("a") as output:
         output.write(json.dumps(request) + "\n")
     reply = {"verdict": "approve", "head_sha": inputs["head_sha"],
-             "blocking_findings": [], "findings": []}
+             "blocking_findings": [], "findings": [{"problem": "Optional style concern", "evidence": "This does not break a goal or rule."}]}
+    if mode == "changes" and first:
+        reply = {"verdict": "changes", "blocking_findings": [{
+            "citation": {"kind": "goal", "id": inputs["goals"][0]["id"]},
+            "problem": "Check the result once more.", "evidence": "A fixture requests one fix round."}], "findings": []}
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 

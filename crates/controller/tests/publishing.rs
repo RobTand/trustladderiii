@@ -91,7 +91,14 @@ impl Executor for Workers {
                 Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
                 Observation::Made { sha, .. } => {
                     let checkout = self.fixture.adapter().checkout(d);
-                    *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                    if fs::read_to_string(checkout.join("value.py")).unwrap()
+                        == "def value(): return 2\n"
+                    {
+                        git(&checkout, &["commit", "--allow-empty", "-m", "fix round"]);
+                        *sha = git(&checkout, &["rev-parse", "HEAD"]);
+                    } else {
+                        *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                    }
                 }
                 _ => {}
             }
@@ -235,6 +242,15 @@ impl Respond for Api {
             }
             ("GET", "/issues/42/comments") => json!(s.comments),
             ("POST", "/issues/42/comments") => {
+                if body["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Your change was merged.")
+                {
+                    assert!(
+                        git(&self.fixture.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty()
+                    );
+                }
                 s.operations.push("comment".into());
                 let c = json!({"id":s.comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"});
                 s.comments.push(c.clone());
@@ -594,7 +610,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .collect();
     assert_eq!(
         reviews.len(),
-        if matches!(mode, "push" | "rebase") {
+        if matches!(mode, "push" | "rebase" | "changes") {
             2
         } else {
             1
@@ -640,7 +656,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let state = server.api.state.lock().unwrap();
     assert!(state.closed);
     assert_eq!(state.opens, 1);
-    assert_eq!(state.checks.len(), reviews.len());
+    assert_eq!(
+        state.checks.len(),
+        if mode == "changes" { 1 } else { reviews.len() }
+    );
+    let at = |name: &str| state.operations.iter().position(|op| op == name).unwrap();
+    assert!(at("approve") < at("open") && at("open") < at("enqueue"));
     assert!(state.comments.iter().any(|c| {
         c["body"]
             .as_str()
@@ -787,7 +808,7 @@ fn main() {
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
-    for mode in ["merged", "push", "rebase", "unapproved"] {
+    for mode in ["merged", "push", "rebase", "unapproved", "changes"] {
         lifecycle(
             &database.create(&format!("publishing_{mode}")),
             &python,
@@ -796,5 +817,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("5 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("6 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
