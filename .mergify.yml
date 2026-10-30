@@ -23,4 +23,4 @@ queue_rules:
       min: 1
       max: 4
     max_checks_retries: 0
-    checks_timeout: 30 minutes
+    checks_timeout: 60 minutes
