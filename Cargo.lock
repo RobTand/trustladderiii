@@ -2642,6 +2642,7 @@ dependencies = [
  "postgresql_embedded",
  "serde",
  "serde_json",
+ "socket2",
  "tempfile",
  "thiserror",
  "tl3-config",

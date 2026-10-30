@@ -18,6 +18,7 @@ fn webhook() -> Input {
         repo: "tl3-sandbox".into(),
         installation: 1,
         number: 42,
+        title: "Loom ingress fixture".into(),
         actor: 24923402,
         label: "tl3".into(),
     })

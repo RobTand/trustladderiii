@@ -20,7 +20,7 @@ use tl3_controller::{
     executor::{Delivery, Observation},
 };
 use tl3_kernel::{Command as Control, Event, NodeId, Out, Outcome, Phase};
-use tl3_store::{Commit, EffectState, Epoch, InternKind, Revision, Store};
+use tl3_store::{Commit, EffectState, Epoch, InternKind, Reader, Revision, Store};
 
 const POINTS: &[&str] = &[
     "InternBeforeCommit",
@@ -78,6 +78,7 @@ fn issue(seed: u64) -> LabelledIssue {
         repo: "tl3-sandbox".into(),
         installation: 1,
         number: 42,
+        title: "Crash simulation fixture".into(),
         actor: 24923402,
         label: "tl3".into(),
     }
@@ -239,7 +240,7 @@ struct Durable {
     events: Vec<tl3_store::EventRecord>,
 }
 fn durable(settings: &tl3_config::Store) -> Durable {
-    let mut store = Store::open_read_only(settings).unwrap();
+    let mut store = Reader::open(settings).unwrap();
     Durable {
         snapshot: store.load().unwrap(),
         effects: store.effects().unwrap(),
@@ -364,7 +365,7 @@ fn emission_coverage(
     for files in final_world.file_sets() {
         world.intern_footprint(files.iter().copied());
     }
-    let mut store = Store::open_read_only(settings).unwrap();
+    let mut store = Reader::open(settings).unwrap();
     let mut coverage = BTreeMap::new();
     for record in store.events_after(Revision::ZERO, u32::MAX).unwrap() {
         let Some(value) = record.receipt.result.get("kernel_event") else {
@@ -426,7 +427,7 @@ fn verify_cuts(
         !killed.is_empty(),
         "save point {selected} was never reached"
     );
-    let mut store = Store::open_read_only(settings).unwrap();
+    let mut store = Reader::open(settings).unwrap();
     if matches!(
         selected,
         "EventWritten"
@@ -546,7 +547,7 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
         }
     }
     let coverage = emission_coverage(&mut controller, settings);
-    let effects = Store::open_read_only(settings).unwrap().effects().unwrap();
+    let effects = Reader::open(settings).unwrap().effects().unwrap();
     let mut outputs = vec![];
     let mut observed = BTreeSet::new();
     let mut resources = BTreeMap::new();
@@ -639,6 +640,7 @@ fn main() {
     upstreams::verify_contracts();
     let mut database = support::Database::start();
     let mut total = 0;
+    let mut restart_check = None;
     let mut kinds = BTreeSet::new();
     let filter = env::var("TL3_SIM_SCENARIO").ok();
     let point_filter = env::var("TL3_SIM_POINT").ok();
@@ -680,6 +682,7 @@ fn main() {
                 &baseline,
                 &format!("seed={seed} scenario={scenario} point={point}"),
             );
+            restart_check = Some((settings.clone(), durable(&settings)));
             total += kills.len();
             println!(
                 "seed={seed} scenario={scenario} point={point}: {} SIGKILL cuts, recovered equal to baseline",
@@ -714,6 +717,13 @@ fn main() {
         }
     }
     println!("effect/phase coverage: {kinds:?}");
+    let (settings, before) = restart_check.unwrap();
+    database.restart();
+    assert_eq!(
+        durable(&settings),
+        before,
+        "Postgres restart changed the recovered records"
+    );
     database.stop();
     println!(
         "{total} real SIGKILL cuts passed in {:.2}s; seed={seed}; no skips",
