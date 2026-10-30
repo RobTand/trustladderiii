@@ -1292,6 +1292,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         tl3_store::Store::open(settings).unwrap(),
         registry,
         Bootstrap {
+            operations: None,
             repos: vec![repository()],
             rob: 1,
             slots: 1,
@@ -1460,7 +1461,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             );
             return;
         }
-        controller.retry_held_effects();
+        controller.retry_held_effects(Upstream::PrismaBuild);
         controller
             .observe(
                 "recovered-tool",
