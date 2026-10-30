@@ -27,7 +27,7 @@ use tl3_controller::{
     },
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Control, EffectKind, Event, NodeId, Out, Phase};
+use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Out, Phase};
 use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -477,8 +477,12 @@ fn source_thread_delivers_once_and_restarts_idle() {
         .find(|p| p.extension().is_some_and(|v| v == "job"))
         .unwrap();
     fs::write(job, "historical record must not be read").unwrap();
-    let restarted = fixture_with_bell(root.path(), "done", &bell.url);
+    let mut restarted = fixture_with_bell(root.path(), "done", &bell.url);
     let running = restarted.source().spawn(sender);
+    let mut unannounced = delivery.clone();
+    unannounced.key = "effect:0:8".into();
+    // A different adapter writes a job without this source's channel. Idle waits must not rescan it.
+    adapter.execute(&unannounced).unwrap();
     assert!(matches!(
         receiver.recv_timeout(Duration::from_millis(1250)),
         Err(mpsc::RecvTimeoutError::Timeout)
@@ -490,6 +494,19 @@ fn source_thread_delivers_once_and_restarts_idle() {
         ),
         "idle source must not poll the bell"
     );
+    restarted.execute(&unannounced).unwrap();
+    bell.request().reply(1, serde_json::json!([]));
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+        tl3_controller::cli::Input::Observation {
+            observation: Observation::Checks {
+                report: true,
+                pass: true,
+                ..
+            },
+            ..
+        }
+    ));
     drop(running);
     let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
     assert_eq!(
@@ -497,7 +514,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
             .lines()
             .filter(|line| line.contains("--endings"))
             .count(),
-        1
+        2
     );
 }
 fn finish(root: &Path, key: &str, mode: &str) {

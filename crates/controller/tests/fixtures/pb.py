@@ -50,7 +50,7 @@ def finish(key, request):
         report["head"] = "a" * 40
     if mode == "bad_report":
         report = {"invalid": True}
-    raw = "" if mode == "no_report" else "TL3_CHECKS " + json.dumps(report) + "\n"
+    raw = "" if mode in ("no_report", "withdrawn") else "TL3_CHECKS " + json.dumps(report) + "\n"
     log = root / f"{key}.stdout"
     log.write_text(raw)
     save(root / f"{key}.ending", {"schema": "prismabuild.endings.v1", "complete": True,
