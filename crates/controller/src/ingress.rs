@@ -91,6 +91,7 @@ impl Sources {
             }
             drain(controller)?;
             apply(controller, input)?;
+            controller.look_due()?;
             while controller.drive_once()? {}
         }
         for exit in self.exits {

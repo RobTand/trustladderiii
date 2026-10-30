@@ -205,6 +205,12 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
     assert!(node.waiting_incident);
     assert!(!node.incident_needs_rob);
     let id = incident(&mut c);
+    let message = c
+        .effect(&format!("notice:{}", id.replace('.', ":")))
+        .unwrap()
+        .unwrap();
+    assert_eq!(message.payload["repository"]["name"], "tl3");
+    assert_eq!(message.payload["issue"], 17);
     // The fake GitHub receipt proves the incident was sent to the operations target.
     let deliveries = adapters::delivered_notes(root.path()).unwrap();
     assert!(deliveries.iter().any(|text| text.contains(&id)));

@@ -192,8 +192,8 @@ impl Supervisor {
     }
 }
 
-impl Executor for Supervisor {
-    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+impl Supervisor {
+    fn launch(&mut self, delivery: &Delivery, resume_quota: bool) -> Result<Completion> {
         let mut store = self.fence(delivery)?;
         let role = match delivery.output {
             Out::Effect {
@@ -214,8 +214,15 @@ impl Executor for Supervisor {
         };
         match inspect(&self.root(&delivery.key), delivery)? {
             Reconciliation::Found(completion) => {
-                self.active.remove(delivery);
-                return Ok(completion);
+                if !resume_quota
+                    || !matches!(
+                        completion.observations.as_slice(),
+                        [Observation::Quota { .. }]
+                    )
+                {
+                    self.active.remove(delivery);
+                    return Ok(completion);
+                }
             }
             Reconciliation::Pending => {
                 self.active.add(delivery);
@@ -270,6 +277,16 @@ impl Executor for Supervisor {
         let name = root.file_name().unwrap().to_string_lossy();
         write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
         Ok(Completion::confirmed(vec![]))
+    }
+}
+
+impl Executor for Supervisor {
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        self.launch(delivery, false)
+    }
+
+    fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
+        self.launch(delivery, true).map(Some)
     }
 
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {

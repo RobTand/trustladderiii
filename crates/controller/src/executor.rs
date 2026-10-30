@@ -138,6 +138,10 @@ pub trait Executor {
             Reconciliation::Pending => Look::Pending,
         })
     }
+    /// Resume an owner-confirmed quota ending under the same operation key.
+    fn resume_after_quota(&mut self, _delivery: &Delivery) -> Result<Option<Completion>> {
+        Ok(None)
+    }
     /// Success proves that the exact stalled attempt has ended.
     fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
         Err(crate::Error::Invalid("adapter cannot stop a stalled run"))

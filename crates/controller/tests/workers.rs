@@ -207,6 +207,8 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    quota_resumes_same_operation(&database.create("workers_quota"));
+    println!("test announced_quota_resumes_same_operation_without_failure ... ok");
     clock_stops_stalled_worker(&database.create("workers_stall"));
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     simulation(&database.create("workers_sim"));
@@ -248,7 +250,7 @@ fn main() {
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     database.stop();
-    println!("20 required worker supervisor and planning scenarios passed; no skips");
+    println!("21 required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -968,6 +970,95 @@ fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
     controller
         .observe(
             "stop-after-stall",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
+    ));
+}
+
+fn quota_resumes_same_operation(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "quota-once");
+    materials(&mut Store::open(settings).unwrap());
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        supervisor.clone(),
+    );
+    let initial = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(initial)));
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    let snapshot = controller.snapshot().unwrap();
+    let original: Delivery = serde_json::from_value(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches")
+            .unwrap()
+            .value
+            .clone(),
+    )
+    .unwrap();
+    let completion = terminal(&mut supervisor, &original);
+    let reset = match completion.observations.as_slice() {
+        [Observation::Quota { reset_ms, .. }] => *reset_ms,
+        other => panic!("expected quota ending: {other:?}"),
+    };
+    while controller.drive_once().unwrap() {}
+    clock.0.set(reset - 1);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .worker_progress(None)
+            .unwrap()[0]
+            .attempt,
+        0
+    );
+    clock.0.set(reset);
+    controller.look_due().unwrap();
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.run_failures, 0);
+    assert_eq!(node.generation, original.generation);
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .worker_progress(None)
+            .unwrap()[0]
+            .attempt,
+        1
+    );
+    controller
+        .observe(
+            "stop-after-quota",
             Observation::Kernel(Event::Command {
                 node: NodeId(0),
                 id: 1,

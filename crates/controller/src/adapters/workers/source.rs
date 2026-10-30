@@ -373,6 +373,23 @@ pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observati
         if progress(&value) {
             continue;
         }
+        if value.as_object().is_some_and(|o| o.len() == 3)
+            && value["event"] == "quota"
+            && value["role"] == role
+        {
+            let reset_ms = value["reset_ms"]
+                .as_u64()
+                .filter(|v| *v > 0)
+                .ok_or(Error::Invalid("invalid quota reset"))?;
+            // A quota ending is terminal and must be the final protocol event.
+            if bytes.split_inclusive(|b| *b == b'\n').last() != Some(line) {
+                return Err(Error::Invalid("event after quota ending"));
+            }
+            return Ok(Observation::Quota {
+                key: delivery.key.clone(),
+                reset_ms,
+            });
+        }
         if !value.as_object().is_some_and(|o| o.len() == 3)
             || value["event"] != "reply"
             || value["role"] != role

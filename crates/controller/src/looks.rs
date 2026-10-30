@@ -16,12 +16,16 @@ pub(crate) struct AllowanceState {
     progress: Option<String>,
     progress_ms: u64,
     quota_ms: Option<u64>,
+    #[serde(default)]
+    last_quota_ms: Option<u64>,
     stopping: bool,
     pub incident: Option<String>,
     #[serde(default)]
     healthy: bool,
     #[serde(default)]
     found: Option<String>,
+    #[serde(default)]
+    failure: Option<String>,
 }
 
 impl AllowanceState {
@@ -32,10 +36,12 @@ impl AllowanceState {
             progress: None,
             progress_ms: now,
             quota_ms: None,
+            last_quota_ms: None,
             stopping: false,
             incident: None,
             healthy: false,
             found: None,
+            failure: None,
         }
     }
 }
@@ -133,7 +139,32 @@ impl Controller {
                 self.save_allowance(&state)?;
                 continue;
             }
-            if state.quota_ms.take().is_some() {
+            if state.quota_ms.is_some() {
+                let effect = self
+                    .store
+                    .effect(&state.delivery.key)?
+                    .expect("quota effect");
+                if effect.state == EffectState::Confirmed {
+                    let mut delivery = state.delivery.clone();
+                    delivery.epoch = self.store.load()?.epoch.get();
+                    if let Some(completion) = self
+                        .adapters
+                        .adapter(&delivery)?
+                        .resume_after_quota(&delivery)?
+                    {
+                        self.look_observations(&delivery, completion)?;
+                        state.progress = None;
+                        state.progress_ms = now;
+                        state.due_ms = Some(now.saturating_add(
+                            u64::from(self.allowance(&delivery).silence_secs) * 1000,
+                        ));
+                    } else {
+                        return Err(crate::Error::Invalid(
+                            "adapter cannot resume a quota ending",
+                        ));
+                    }
+                }
+                state.quota_ms = None;
                 self.held_effects.remove(&state.delivery.key);
                 self.save_allowance(&state)?;
                 continue;
@@ -171,7 +202,7 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    if self.held_effects.contains(&effect.key)
+                    if self.held_effects.contains_key(&effect.key)
                         && effect.state != EffectState::Cancelling
                         && matches!(state.delivery.output, Out::Effect { .. })
                     {
@@ -203,6 +234,7 @@ impl Controller {
                         match upstream(state.delivery.output) {
                             Upstream::Workers => {
                                 state.stopping = true;
+                                state.failure = Some("no_progress".into());
                                 self.save_allowance(&state)?;
                                 self.finish_stall(&mut state)?;
                                 continue;
@@ -350,6 +382,27 @@ impl Controller {
         Ok(())
     }
 
+    pub(crate) fn failure_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        class: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            state.failure = Some(class.into());
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+
     pub(crate) fn progress_allowance(
         &self,
         snapshot: &Snapshot,
@@ -396,8 +449,12 @@ impl Controller {
             .find(|r| r.table == "allowances" && r.id == key)
         {
             let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            if state.last_quota_ms.is_some_and(|old| old >= reset_ms) {
+                return Ok(());
+            }
+            state.last_quota_ms = Some(reset_ms);
             state.quota_ms = Some(reset_ms);
-            state.due_ms = (reset_ms > self.now_ms()).then_some(reset_ms);
+            state.due_ms = Some(reset_ms.max(self.now_ms()));
             commit
                 .rows
                 .push(put("allowances", key.into(), json!(state)));
@@ -429,7 +486,7 @@ impl Controller {
         node: NodeId,
         id: &str,
         commit: &mut Commit,
-    ) -> Result<Upstream> {
+    ) -> Result<(Upstream, String)> {
         let cause = snapshot
             .rows
             .iter()
@@ -449,9 +506,12 @@ impl Controller {
             commit
                 .rows
                 .push(put("allowances", state.delivery.key.clone(), json!(state)));
-            Ok(upstream)
+            Ok((
+                upstream,
+                state.failure.unwrap_or_else(|| "operation_failed".into()),
+            ))
         } else {
-            Ok(Upstream::GitHub)
+            Ok((Upstream::GitHub, "operation_failed".into()))
         }
     }
 
@@ -516,12 +576,30 @@ impl Controller {
     }
 }
 
-pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, now: u64) -> Result<bool> {
+pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result<bool> {
     let state = snapshot
         .rows
         .iter()
         .find(|r| r.table == "allowances" && r.id == key)
         .map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()))
         .transpose()?;
-    Ok(state.is_some_and(|s| s.quota_ms.is_some_and(|reset| reset > now)))
+    Ok(state.is_some_and(|s| s.quota_ms.is_some()))
+}
+
+pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
+    match error {
+        crate::Error::Quota { .. } => "quota",
+        crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            "permission"
+        }
+        crate::Error::Io(_) => "transport",
+        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_github::Error>() {
+            Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
+            Some(tl3_github::Error::Http { status: 500..=599 }) => "upstream_server",
+            Some(tl3_github::Error::Response) => "invalid_response",
+            _ => "transport",
+        },
+        crate::Error::MessageRejected => "message_rejected",
+        _ => "setup",
+    }
 }

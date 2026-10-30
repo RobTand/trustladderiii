@@ -14,7 +14,7 @@ pub mod status_web;
 use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
     Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
@@ -139,7 +139,7 @@ pub struct Controller {
     bootstrap: Bootstrap,
     github_translators: Vec<ingress::Translation>,
     clock: Box<dyn clock::Clock>,
-    held_effects: BTreeSet<String>,
+    held_effects: BTreeMap<String, String>,
     allowances: tl3_config::Allowances,
 }
 impl Controller {
@@ -178,7 +178,7 @@ impl Controller {
             bootstrap,
             github_translators: Vec::new(),
             clock: Box::new(clock),
-            held_effects: BTreeSet::new(),
+            held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
         })
     }
@@ -392,7 +392,8 @@ impl Controller {
                             if let Error::Quota { retry_after } = &error {
                                 self.defer_quota(&effect.key, *retry_after)?;
                             }
-                            self.held_effects.insert(effect.key.clone());
+                            self.held_effects
+                                .insert(effect.key.clone(), looks::failure_class(&error).into());
                             progressed = true;
                             continue;
                         }
@@ -427,7 +428,7 @@ impl Controller {
                                 self.cancel_absent(effect, &delivery)?;
                                 return Ok(true);
                             }
-                            if !self.held_effects.contains(&effect.key) {
+                            if !self.held_effects.contains_key(&effect.key) {
                                 self.transition(effect, EffectState::Intended)?;
                                 progressed = true;
                             }
@@ -454,7 +455,9 @@ impl Controller {
                 .store
                 .effect(&delivery.key)?
                 .ok_or(Error::Invalid("missing watched effect"))?;
-            if effect.state.is_pending() {
+            if effect.state.is_pending()
+                || looks::quota_waiting(&snapshot, &delivery.key, self.now_ms())?
+            {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
@@ -504,10 +507,13 @@ impl Controller {
                     ));
                 }
             }
-            commit.rows.push(RowChange::Delete {
-                table: "watches".into(),
-                id: row.id.clone(),
-            });
+            let quota = commit.rows.iter().any(|row| matches!(row, RowChange::Put { table, value, .. } if table == "inbox" && value.get("Quota").is_some()));
+            if !quota {
+                commit.rows.push(RowChange::Delete {
+                    table: "watches".into(),
+                    id: row.id.clone(),
+                });
+            }
             self.store.commit(&commit)?;
             return Ok(true);
         }
@@ -527,6 +533,11 @@ impl Controller {
             from: effect.state,
             to,
         });
+        if to == EffectState::Uncertain
+            && let Some(class) = self.held_effects.get(&effect.key)
+        {
+            self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
+        }
         self.store.commit(&commit)?;
         Ok(())
     }
@@ -785,7 +796,7 @@ impl Controller {
             } = output
             {
                 let id = format!("{}.{}", snapshot.revision.get() + 1, index);
-                let source = self.attach_incident(snapshot, node, &id, commit)?;
+                let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
                 let summary = if needs_rob {
                     "Work needs Rob to clear a recurring problem."
                 } else {
@@ -800,7 +811,7 @@ impl Controller {
                         open: true,
                         needs_rob,
                         summary: summary.into(),
-                        signature: format!("{source:?}:infrastructure"),
+                        signature: format!("{source:?}:{class}"),
                     }),
                 ));
                 delivery.note = Some(format!(

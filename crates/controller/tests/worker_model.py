@@ -27,6 +27,12 @@ def no_network(*args, **kwargs):
 
 def create_model(request):
     marker.write_text(str(__import__("os").getpid()))
+    if mode == "quota-once" and not marker.with_suffix(".quota").exists():
+        import httpx
+        from openai import RateLimitError
+        marker.with_suffix(".quota").write_text("announced")
+        response = httpx.Response(429, headers={"retry-after": "600"}, request=httpx.Request("POST", "http://model.invalid/v1"))
+        raise RateLimitError("private provider text", response=response, body=None)
     if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
