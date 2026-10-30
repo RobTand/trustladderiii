@@ -15,6 +15,7 @@ use tl3_store::Reader;
 const HANDLERS: usize = 4;
 const MAX_CONNECTIONS: usize = 8;
 const MAX_HEADERS: usize = 8 * 1024;
+const SEND_BUFFER: usize = 32 * 1024;
 // Socket deadlines protect the page from stuck clients. They never decide
 // whether TL3's work has ended, so the work wait principle does not apply.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
@@ -123,6 +124,7 @@ fn connection_error(error: &tl3_store::DatabaseError) -> bool {
 }
 
 fn handle(stream: &mut TcpStream, reader: &Mutex<StatusReader>) -> io::Result<()> {
+    socket2::SockRef::from(&*stream).set_send_buffer_size(SEND_BUFFER)?;
     let (code, body, head) = match read_request(stream) {
         Err((code, head)) => (code, "Invalid HTTP request.\n".into(), head),
         Ok(request) => {

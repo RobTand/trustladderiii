@@ -60,9 +60,10 @@ an empty database reports "database not initialized". Status never runs migratio
 or creates request data. After a connection failure, the page reopens its single
 reader and retries once. Failed reads return a generic 503.
 
-The std-only HTTP server uses four handler threads and caps accepted open
+The synchronous HTTP server uses four handler threads and caps accepted open
 connections at eight, including queued clients. Extra connections close immediately.
 Reading headers and writing each response have separate two-second total deadlines.
+Each socket requests a 32 KiB send buffer to bound queued replies.
 Response writes use chunks and the remaining deadline, so trickle readers cannot
 keep a handler indefinitely. Accept errors are logged and skipped; file-table
 exhaustion also backs off briefly. Each 503 logs its cause to stderr without
