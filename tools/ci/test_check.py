@@ -76,6 +76,31 @@ class DiscoveryTests(unittest.TestCase):
             ))
             self.assertFalse(any("unittest" in call.args for call in run.call_args_list))
 
+    def test_python_project_without_tests_checks_its_lock_instead_of_pytest(self):
+        # A deployment environment pins its own interpreter and has no tests to run.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifests = {
+                "workers/pyproject.toml": '[project]\nname = "workers"\n',
+                "deploy/service/pyproject.toml":
+                    '[project]\nname = "service"\nrequires-python = ">=3.12,<3.13"\n',
+                "deploy/service/uv.lock": "version = 1\n",
+            }
+            for name, content in manifests.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            files = list(map(Path, manifests)) + [Path("workers/tests/test_worker.py")]
+            with patch.object(check, "ROOT", root), patch.object(check, "run") as run:
+                check.python(files)
+            by_directory = {}
+            for call in run.call_args_list:
+                directory = call.kwargs.get("cwd", root).relative_to(root)
+                by_directory.setdefault(directory, []).append(call.args)
+            self.assertIn("pytest", by_directory[Path("workers")][0])
+            self.assertEqual(by_directory[Path("deploy/service")],
+                             [("uv", "lock", "--check", "--project", ".")])
+
     def test_python_rejects_manifest_without_project_before_running_checks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
