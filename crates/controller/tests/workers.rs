@@ -1091,7 +1091,7 @@ fn retirement(settings: &tl3_config::Store) {
         )
         .unwrap();
     let settings_path = root.path().join("settings.json");
-    fs::write(&settings_path, serde_json::to_vec(settings).unwrap()).unwrap();
+    fs::write(&settings_path, serde_json::to_vec(&json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})).unwrap()).unwrap();
     let mut child = Command::new(env::current_exe().unwrap())
         .arg("--retire-child")
         .arg(&settings_path)

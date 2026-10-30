@@ -160,38 +160,39 @@ impl WorkerOutputSource {
             tv_sec: 0,
             tv_nsec: 0,
         }))?);
-        let mut events = Vec::new();
+        let mut ready_names = BTreeSet::new();
+        let mut overflow = false;
         let mut buffer = [MaybeUninit::uninit(); 16384];
         let mut reader = inotify::Reader::new(self.inotify.as_ref().unwrap(), &mut buffer);
         loop {
             match reader.next() {
-                Ok(event) => events.push((
-                    event.wd(),
-                    event.events(),
-                    event.file_name().map(|n| n.to_string_lossy().into_owned()),
-                )),
+                Ok(event) => {
+                    overflow |= event.events().contains(inotify::ReadFlags::QUEUE_OVERFLOW);
+                    let Some(name) = event.file_name() else {
+                        continue;
+                    };
+                    let name = name.to_string_lossy();
+                    if event.wd() == self.root_watch {
+                        if ready_name(&name) {
+                            ready_names.insert(name.into_owned());
+                        }
+                    } else if relevant_file(&name)
+                        && let Some(root) = self.watches.get(&event.wd())
+                    {
+                        dirty.insert(root.clone());
+                    }
+                }
                 Err(rustix::io::Errno::AGAIN) => break,
                 Err(rustix::io::Errno::INTR) => continue,
                 Err(error) => return Err(std::io::Error::from(error).into()),
             }
         }
-        for (wd, flags, name) in events {
-            if flags.contains(inotify::ReadFlags::QUEUE_OVERFLOW) {
-                self.rescan(store)?;
-                dirty.extend(self.runs.keys().cloned());
-                continue;
-            }
-            if wd != self.root_watch {
-                if let Some(root) = self.watches.get(&wd)
-                    && name.as_deref().is_some_and(relevant_file)
-                {
-                    dirty.insert(root.clone());
-                }
-                continue;
-            }
-            if let Some(name) = name
-                && let Some(root) = self.ready(&name)?
-            {
+        if overflow {
+            self.rescan(store)?;
+            dirty.extend(self.runs.keys().cloned());
+        }
+        for name in ready_names {
+            if let Some(root) = self.ready(&name)? {
                 dirty.insert(root);
             }
         }
@@ -216,7 +217,7 @@ impl WorkerOutputSource {
     }
 
     fn ready(&mut self, name: &str) -> Result<Option<PathBuf>> {
-        if !name.starts_with(".ready-") || !name[7..].bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !ready_name(name) {
             return Ok(None);
         }
         let path = self.root.join(".ready").join(name);
@@ -393,4 +394,33 @@ fn relevant_file(name: &str) -> bool {
         name,
         "claim.json" | "process.json" | "stdout.jsonl" | "exit.json"
     )
+}
+
+fn ready_name(name: &str) -> bool {
+    name.strip_prefix(".ready-")
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_evidence_files_dirty_an_attempt() {
+        for name in ["claim.json", "process.json", "stdout.jsonl", "exit.json"] {
+            assert!(relevant_file(name));
+        }
+        for name in [
+            "request.json",
+            "stderr.log",
+            "supervisor.py",
+            "exit.json.tmp",
+            "noise",
+        ] {
+            assert!(!relevant_file(name));
+        }
+        assert!(ready_name(".ready-0123abcdef"));
+        assert!(!ready_name(".ready-"));
+        assert!(!ready_name(".ready-0123.42-1.tmp"));
+    }
 }

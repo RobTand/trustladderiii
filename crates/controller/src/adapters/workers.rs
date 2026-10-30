@@ -44,6 +44,12 @@ impl ActiveRuns {
             }
         }
     }
+    fn remove_key(&self, key: &str) {
+        self.0.lock().unwrap().retain(|_, keys| {
+            keys.remove(key);
+            !keys.is_empty()
+        });
+    }
     fn keys(&self, node: &str) -> Vec<String> {
         self.0
             .lock()
@@ -153,6 +159,36 @@ impl Supervisor {
         Ok(())
     }
 
+    fn retire_run(&self, key: &str, store: &mut Store) -> Result<()> {
+        let root = self.root(key);
+        if let Some((_, attempt)) = latest(&root)? {
+            cancel(&attempt.join("claim.json"))?;
+            cancel(&attempt.join("process.json"))?;
+            process::kill_and_wait(&attempt.join("process.json"))?;
+            process::kill_and_wait(&attempt.join("claim.json"))?;
+        }
+        match fs::remove_dir_all(&root) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        // Keep the progress row as the durable cleanup queue until unlink is durable.
+        let name = root.file_name().unwrap().to_string_lossy();
+        remove_ready(&self.settings.runs.join(format!(".ready-{name}")))?;
+        remove_ready(
+            &self
+                .settings
+                .runs
+                .join(".ready")
+                .join(format!(".ready-{name}")),
+        )?;
+        File::open(&self.settings.runs)?.sync_all()?;
+        File::open(self.settings.runs.join(".ready"))?.sync_all()?;
+        store.forget_worker(key)?;
+        self.active.remove_key(key);
+        Ok(())
+    }
+
     fn stop_node(&self, delivery: &Delivery) -> Result<()> {
         for key in self.active.keys(&delivery.node().0.to_string()) {
             self.stop_run(&key, delivery.epoch)?;
@@ -203,10 +239,15 @@ impl Executor for Supervisor {
             }
             Reconciliation::Absent => {}
         }
-        let root = self.root(&delivery.key);
-        fs::create_dir_all(root.join("worktree"))?;
         let request = self.request(delivery, role, &mut store)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
+        store.claim_worker(
+            &delivery.key,
+            &delivery.node().0.to_string(),
+            delivery.epoch,
+            attempt_number,
+        )?;
+        fs::create_dir_all(root.join("worktree"))?;
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
         write(&attempt.join("request.json"), &request)?;
@@ -218,12 +259,6 @@ impl Executor for Supervisor {
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
-        store.claim_worker(
-            &delivery.key,
-            &delivery.node().0.to_string(),
-            delivery.epoch,
-            attempt_number,
-        )?;
         let mut child = Command::new(&self.settings.python)
             .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
@@ -255,31 +290,9 @@ impl Executor for Supervisor {
 
     fn retire(&mut self, store: &mut Store) -> Result<()> {
         for key in store.retired_workers()? {
-            let root = self.root(&key);
-            if let Some((_, attempt)) = latest(&root)? {
-                cancel(&attempt.join("claim.json"))?;
-                cancel(&attempt.join("process.json"))?;
-                process::kill_and_wait(&attempt.join("process.json"))?;
-                process::kill_and_wait(&attempt.join("claim.json"))?;
+            if let Err(error) = self.retire_run(&key, store) {
+                eprintln!("worker retirement retained {key}: {error}");
             }
-            match fs::remove_dir_all(&root) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-            // Keep the progress row as the durable cleanup queue until unlink is durable.
-            let name = root.file_name().unwrap().to_string_lossy();
-            remove_ready(&self.settings.runs.join(format!(".ready-{name}")))?;
-            remove_ready(
-                &self
-                    .settings
-                    .runs
-                    .join(".ready")
-                    .join(format!(".ready-{name}")),
-            )?;
-            File::open(&self.settings.runs)?.sync_all()?;
-            File::open(self.settings.runs.join(".ready"))?.sync_all()?;
-            store.forget_worker(&key)?;
         }
         Ok(())
     }
