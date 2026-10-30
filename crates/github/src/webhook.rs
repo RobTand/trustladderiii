@@ -40,6 +40,12 @@ pub enum Event {
         after: String,
         actor: Actor,
     },
+    PullRequestUnlabeled {
+        context: Context,
+        pull_request: PullRequest,
+        label: Label,
+        actor: Actor,
+    },
     PullRequestUpdated {
         context: Context,
         action: String,
@@ -52,6 +58,10 @@ pub enum Event {
         merge_group: MergeGroup,
     },
     CheckRunCompleted {
+        context: Context,
+        check_run: CheckRun,
+    },
+    CheckRunUpdated {
         context: Context,
         check_run: CheckRun,
     },
@@ -157,7 +167,11 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
         ("issues", "labeled")
             | ("issue_comment", "created")
             | ("pull_request" | "merge_group", _)
-            | ("check_run" | "check_suite", "completed")
+            | (
+                "check_run",
+                "created" | "in_progress" | "rerequested" | "completed"
+            )
+            | ("check_suite", "completed")
     );
     if !relevant {
         return Ok(Delivery {
@@ -229,6 +243,12 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             after: field(&value, "after")?,
             actor: field(&value, "sender")?,
         },
+        ("pull_request", "unlabeled") => Event::PullRequestUnlabeled {
+            context,
+            pull_request: field(&value, "pull_request")?,
+            label: field(&value, "label")?,
+            actor: field(&value, "sender")?,
+        },
         ("pull_request", _) => Event::PullRequestUpdated {
             context,
             action: action.into(),
@@ -241,6 +261,10 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             merge_group: field(&value, "merge_group")?,
         },
         ("check_run", "completed") => Event::CheckRunCompleted {
+            context,
+            check_run: field(&value, "check_run")?,
+        },
+        ("check_run", _) => Event::CheckRunUpdated {
             context,
             check_run: field(&value, "check_run")?,
         },

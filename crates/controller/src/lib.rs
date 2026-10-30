@@ -269,6 +269,14 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        if let Observation::Queue(fact) = &observation {
+            let identity = fact.identity();
+            if snapshot.rows.iter().any(|row| (row.table == "queue_facts" && row.id == identity)
+                || (row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
+                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity)))) {
+                return Ok(());
+            }
+        }
         if let Observation::GitHubComment {
             repository,
             comment,
@@ -311,20 +319,63 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "retiring_effects")
+        {
+            match self.retire_effect(&snapshot, row) {
+                Ok(()) => return Ok(true),
+                Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
+            }
+        }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = serde_json::from_value(row.value.clone())?;
-            let mut world = snapshot::decode(&snapshot)?;
-            let mut commit =
-                Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-            if let Some(event) = self.translate(&snapshot, &mut world, observation, &mut commit)? {
-                self.apply(&snapshot, world, event, &mut commit)?;
+            let mut waiting_for_queue = false;
+            if let Observation::Queue(fact) = &observation
+                && fact.needs_queue_ack()
+                && let Some(node) = fact.node(&snapshot)?
+            {
+                for effect in &snapshot.pending_effects {
+                    let delivery = hydrate(effect, &snapshot)?;
+                    if delivery.node() == node
+                        && matches!(
+                            delivery.output,
+                            Out::Effect {
+                                kind: tl3_kernel::EffectKind::Enqueue,
+                                ..
+                            }
+                        )
+                        && matches!(effect.state, EffectState::Sent | EffectState::Uncertain)
+                    {
+                        // Queue facts can beat a lost enqueue response. Confirm that key first.
+                        hook(Boundary::BeforeReconcile, &delivery.key);
+                        let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                        hook(Boundary::AfterReconcile, &delivery.key);
+                        if let Ok(Reconciliation::Found(completion)) = reconciled {
+                            self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        waiting_for_queue = true;
+                    }
+                }
             }
-            commit.rows.push(RowChange::Delete {
-                table: "inbox".into(),
-                id: row.id.clone(),
-            });
-            self.store.commit(&commit)?;
-            return Ok(true);
+            if !waiting_for_queue {
+                let mut world = snapshot::decode(&snapshot)?;
+                let mut commit =
+                    Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
+                if let Some(event) =
+                    self.translate(&snapshot, &mut world, observation, &mut commit)?
+                {
+                    self.apply(&snapshot, world, event, &mut commit)?;
+                }
+                commit.rows.push(RowChange::Delete {
+                    table: "inbox".into(),
+                    id: row.id.clone(),
+                });
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
         }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
@@ -413,7 +464,21 @@ impl Controller {
         // An acknowledged start can outlive its dispatch. Its authoritative
         // record must also be read after a restart or a missed notification.
         let snapshot = self.store.load()?;
-        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+        let watch_keys: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "watches")
+            .map(|row| row.id.clone())
+            .collect();
+        for key in watch_keys {
+            let snapshot = self.store.load()?;
+            let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "watches" && row.id == key)
+            else {
+                continue;
+            };
             let mut delivery: Delivery = serde_json::from_value(row.value.clone())?;
             let world = snapshot::decode(&snapshot)?;
             let node = &world.nodes[delivery
@@ -438,9 +503,7 @@ impl Controller {
                 &snapshot,
             );
             if active {
-                delivery.epoch = effect.epoch.get();
-                delivery.checks =
-                    check_run(&snapshot, delivery.node(), delivery.head_sha.as_deref())?;
+                delivery = hydrate(&effect, &snapshot)?;
                 hook(Boundary::BeforeReconcile, &delivery.key);
                 let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                 hook(Boundary::AfterReconcile, &delivery.key);
@@ -464,7 +527,20 @@ impl Controller {
                         continue;
                     }
                 };
-                if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
+                if completion.ack != Ack::Confirmed {
+                    continue;
+                }
+                if completion.observations.is_empty() {
+                    let progress_changed = record_progress(
+                        &snapshot,
+                        &mut commit,
+                        &row.id,
+                        completion.progress.as_ref(),
+                    )?;
+                    if progress_changed {
+                        // Recording a look must not schedule another look by itself.
+                        self.store.commit(&commit)?;
+                    }
                     continue;
                 }
                 for (index, observation) in completion.observations.iter().enumerate() {
@@ -479,11 +555,32 @@ impl Controller {
                 table: "watches".into(),
                 id: row.id.clone(),
             });
+            queue_retirement(&mut commit, &delivery);
             self.store.commit(&commit)?;
             return Ok(true);
         }
-        self.adapters.retire(&mut self.store)?;
+        self.adapters.retire(&mut self.store);
         Ok(progressed)
+    }
+
+    fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
+        let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+        if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+            self.adapters
+                .adapter(&delivery)?
+                .retire_delivery(&delivery)?;
+        }
+        let mut commit = Commit::new(
+            format!("retire:{}:{}", row.id, snapshot.revision.get()),
+            json!({"retired": row.id}),
+            snapshot,
+        );
+        commit.rows.push(RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
+        self.store.commit(&commit)?;
+        Ok(())
     }
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
@@ -600,6 +697,7 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
+            queue_retirement(&mut commit, &delivery);
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Intended,
@@ -607,6 +705,7 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
             for (index, observation) in completion.observations.iter().enumerate() {
                 commit.rows.push(put(
                     "inbox",
@@ -772,6 +871,42 @@ impl Controller {
                 });
             }
         }
+        let closed: BTreeSet<_> = world
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| matches!(node.phase, tl3_kernel::Phase::Closed(_)))
+            .map(|(index, _)| NodeId(index as u64))
+            .collect();
+        let closed_fact = |value: &Value| -> Result<bool> {
+            let fact: adapters::mergify::QueueFact = serde_json::from_value(value.clone())?;
+            Ok(fact
+                .node(snapshot)?
+                .is_some_and(|node| closed.contains(&node)))
+        };
+        let mut rows = Vec::new();
+        for row in std::mem::take(&mut commit.rows) {
+            if let RowChange::Put { table, value, .. } = &row
+                && table == "queue_facts"
+                && closed_fact(value)?
+            {
+                continue;
+            }
+            rows.push(row);
+        }
+        commit.rows = rows;
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            if closed_fact(&row.value)? {
+                commit.rows.push(RowChange::Delete {
+                    table: "queue_facts".into(),
+                    id: row.id.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -819,6 +954,55 @@ impl Controller {
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
         let event = match observation {
+            Observation::Queue(fact) => {
+                let identity = fact.identity();
+                if snapshot
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "queue_facts" && row.id == identity)
+                {
+                    return Ok(None);
+                }
+                let Some(node) = fact.node(snapshot)? else {
+                    return Ok(None);
+                };
+                use adapters::mergify::Evidence;
+                let current = &world.nodes[node.0 as usize];
+                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && (!matches!(fact.evidence, Evidence::Merged { .. })
+                        || current.merged.is_some())
+                {
+                    return Ok(None);
+                }
+                let value = json!(&fact);
+                if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =
+                    &fact.evidence
+                {
+                    let observed = self.head(node, head)?;
+                    if world.nodes[node.0 as usize].head != Some(observed) {
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                }
+                let fact = match fact.evidence {
+                    Evidence::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
+                    },
+                    Evidence::CiFailed { infra, .. } => Fact::CiFailed { infra },
+                    Evidence::Conflict { .. } => Fact::Conflict,
+                    Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
+                    Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
+                    Evidence::PushByOther { head } => Fact::PushByOther {
+                        head: self.head(node, &head)?,
+                    },
+                };
+                commit.rows.push(put("queue_facts", identity, value));
+                Event::Fact { node, fact }
+            }
             Observation::GitHubComment {
                 repository,
                 issue,
@@ -1281,6 +1465,48 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
+    if executor::upstream(delivery.output) == executor::Upstream::Mergify {
+        commit.rows.push(put(
+            "retiring_effects",
+            delivery.key.clone(),
+            json!(delivery),
+        ));
+    }
+}
+
+fn record_progress(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    key: &str,
+    token: Option<&executor::ProgressToken>,
+) -> Result<bool> {
+    let Some(token) = token else { return Ok(false) };
+    let Some(row) = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "watches" && row.id == key)
+    else {
+        return Ok(false);
+    };
+    let previous: Option<executor::WatchProgress> = row
+        .value
+        .get("progress")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()?;
+    let progress = executor::WatchProgress {
+        previous: previous.as_ref().map(|progress| progress.current.clone()),
+        current: token.clone(),
+    };
+    if previous.as_ref() == Some(&progress) {
+        return Ok(false);
+    }
+    let mut value = row.value.clone();
+    value["progress"] = json!(progress);
+    commit.rows.push(put("watches", key.into(), value));
+    Ok(true)
 }
 
 fn check_run(

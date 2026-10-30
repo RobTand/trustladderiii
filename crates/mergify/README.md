@@ -81,8 +81,9 @@ check as evidence when a format changes.
 Only GitHub's `merged_at` confirms `Merged`. `Observation.unapproved_merge` is
 true when that merged PR's head differs from `approved_head`, even without a
 Mergify check. The controller must record that merge truthfully, raise an incident,
-and tell Rob. Checking the actual merge tree and its CI remains the controller's
-responsibility under the [state table](../../docs/state-table.md).
+and tell Rob. `merged_via_queue` recognizes the selected successful Mergify check
+reporting a queue merge. The controller uses that evidence for queue CI and reads
+merge-commit checks for outside merges under the [state table](../../docs/state-table.md).
 
 ## Verification
 

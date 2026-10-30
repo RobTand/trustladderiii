@@ -81,6 +81,10 @@ struct Throttle {
 pub struct GitHub(Arc<Inner>);
 
 impl GitHub {
+    pub fn app_slug(&self) -> &str {
+        &self.0.slug
+    }
+
     pub fn new(
         config: AppConfig,
         installation: u64,
@@ -621,6 +625,15 @@ impl GitHub {
         }
     }
 
+    pub async fn issue_events(&self, repo: &str, number: u64) -> Result<Vec<IssueActivity>, Error> {
+        self.list(
+            format!("{}/issues/{number}/events", repo_path(repo)?),
+            vec![],
+            None,
+        )
+        .await
+    }
+
     pub async fn catch_up(
         &self,
         served: &[ServedRepo],
@@ -647,6 +660,7 @@ impl GitHub {
                 .list(format!("{path}/issues/comments"), query, None)
                 .await?;
             let mut labels = Vec::new();
+            let mut closed = Vec::new();
             let mut pull_requests = Vec::new();
             for page in 1.. {
                 let pulls: Vec<PullRequest> = self
@@ -704,6 +718,19 @@ impl GitHub {
                         .and_then(Value::as_str)
                         .and_then(|value| value.parse::<DateTime<Utc>>().ok())
                         .is_some_and(|created_at| created_at < since);
+                    if event.get("event").and_then(Value::as_str) == Some("closed") {
+                        if id.is_none() {
+                            continue;
+                        }
+                        let Some(number) = event["issue"]["number"].as_u64() else {
+                            continue;
+                        };
+                        let activity: PullClosed =
+                            serde_json::from_value(event.clone()).map_err(|_| Error::Response)?;
+                        if activity.created_at >= since {
+                            closed.push((number, activity));
+                        }
+                    }
                     if matches!(
                         event.get("event").and_then(Value::as_str),
                         Some("labeled" | "unlabeled")
@@ -713,6 +740,9 @@ impl GitHub {
                             .and_then(|issue| issue.get("number"))
                             .and_then(Value::as_u64)
                             .ok_or(Error::Response)?;
+                        if event["actor"].is_null() {
+                            continue;
+                        }
                         let event: LabelChange =
                             serde_json::from_value(event).map_err(|_| Error::Response)?;
                         if event.created_at >= since {
@@ -736,6 +766,7 @@ impl GitHub {
                 issues,
                 comments,
                 labels,
+                closed,
                 pull_requests,
                 check_runs,
                 check_suites,

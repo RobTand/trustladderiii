@@ -116,8 +116,8 @@ same transaction, so it cannot also resend the superseded effect.
 `executor::Executor` exposes `execute` and `reconcile`. `Delivery` carries the
 key, epoch, kernel output, operation generation, repository, issue, PR, exact
 SHA, paths, attempt and round. The PR binding is refreshed before dispatch.
-`Completion` carries an acknowledgement and observations. An asynchronous start
-can acknowledge immediately. Late replies and webhooks enter through `tl3d`'s
+`Completion` carries an acknowledgement, observations and an optional progress
+token from the upstream read. An asynchronous start can acknowledge immediately. Late replies and webhooks enter through `tl3d`'s
 ingress. Source threads send `cli::Input` values on one
 `std::sync::mpsc::Sender<Input>` to the thread that owns the `Controller`.
 That thread applies intake or calls `observe`, then drains `drive_once`.
@@ -273,6 +273,51 @@ read-only status and configuration permissions. The review campaign generator
 in `crates/controller/tools/review_manifest.py` adds kernel tests and three
 representative Kani proofs. Generate it from a clean detached worktree at the
 final commit. CI runs independently on Mergify runners.
+
+### Mergify queue facts
+
+The Mergify replacement registers as one executor. Enqueue converges by label,
+but confirmation requires the queue's own record. A persistent baseline prevents
+an earlier terminal queue check from confirming a fresh effect key. Receipts
+prevent a confirmed key from adding the label again after a person removes it.
+An applied marker also protects the interval before queue confirmation.
+A new retry removes an existing label before adding it again.
+An epoch fence covers mutations; reconciliation can still read old effects.
+Removing a terminal effect's watch durably queues its retirement. The executor's
+idempotent retirement deletes intent, applied and receipt files. A crash retries
+cleanup from the retirement row, after the key has left reconciliation.
+
+The controller registers the Mergify translator in
+`controller/src/adapters/mergify.rs` through `register_github_translator`.
+It translates durable webhook and catch-up deliveries on the controller thread.
+Only updates to `Mergify Merge Queue` from the Mergify app and merge groups
+trigger queue reads of open nodes. Check suites do not identify that queue check.
+If GitHub records a merge of the approved head before its queue check finishes,
+merge evidence waits for the completed check-run event or catch-up. Other merged
+heads report immediately. Closed nodes without a recorded merge also accept the
+final check event. No timer drives the read.
+Each look returns a public progress token containing merge time, merge commit and
+the queue check's ID, status, conclusion and title. The watch durably keeps the
+previous and current tokens, even when the read produces no kernel fact. Ticket
+#15 compares them for stalls. Unchanged reads stop committing after the comparison
+is recorded. Retirement logs cleanup errors and continues driving other work.
+Person actions use issue-event IDs in both paths.
+Merge identities use the actual PR head, and failure identities use the Mergify
+check ID. The controller resolves repository and PR bindings and commits a
+`queue_facts` row with each kernel fact. The row suppresses later observations
+of that fact, including after restart. A closed node's queue rows are pruned.
+The kernel's recorded merge prevents a repeated merge after pruning.
+There is no store migration.
+
+A terminal queue notification can arrive before the enqueue response. The
+controller reconciles that pending effect key before applying CI, conflict or
+person-dequeue facts. This keeps a fact from being consumed while the kernel
+still awaits enqueue confirmation. Enqueue watches also refresh the PR binding,
+which can arrive after the watch was created.
+
+The synchronous GitHub adapter, Mergify adapter and ingress share a Tokio runtime
+with two worker threads. Cloned HTTP clients can share pooled connections, whose
+background tasks must keep running while another source reads them.
 
 The PrismaBuild checks adapter is available for mixed registries. A
 `CheckPlan` observation records the base commit, Git repository and named checks
