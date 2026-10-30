@@ -31,10 +31,8 @@
       "additionalProperties": false
     },
     "role": {
-      "enum": [
-        "ingest",
-        "audit"
-      ]
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
     },
     "model": {
       "type": "object",

@@ -1,7 +1,7 @@
 """Run one role with the TL3 Deep Agents profile."""
 
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import nullcontext
 from importlib.resources import files
 import json
 from pathlib import Path
@@ -101,8 +101,7 @@ def build_agent(model: BaseChatModel, role, worktree=None):
 def run(request, emit: Callable[[dict], None]):
     role = ROLES[request["role"]]
     model = create_model(request)
-    with ExitStack() as resources:
-        worktree = resources.enter_context(Worktree(request["worktree"])) if role.tools else None
+    with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
         agent = build_agent(model, role, worktree)
         reply = _run_agent(agent, request, emit)
     validate(role.reply_schema, reply)

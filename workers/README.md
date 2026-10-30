@@ -50,7 +50,8 @@ document. Fields not described by the schemas are errors.
 `operation.node` and `generation` are nonnegative integers. `kind` is a nonempty
 string, preserved as supervisor metadata. The worker does not interpret it or
 perform stale-operation checks. The supervisor associates the process with the
-operation. `role` selects the prompt and schemas. No operation ID is added to
+operation. `role` is a lowercase name matching `[a-z][a-z0-9_]*` and selects the prompt
+and schemas. An unknown role fails before model construction. No operation ID is added to
 events, matching ticket #24.
 
 `key_file` and `worktree` are absolute paths. The worker changes its working
@@ -232,16 +233,14 @@ For example, to add `planner`:
    For an extra semantic check, define `check_reply(inputs, reply)` in that
    module and pass it as `check_reply=check_reply`. It runs after schema
    validation and raises `ValueError` to fail the run before emitting a reply.
-3. Add one registration line, `"planner",`, to `ROLE_MODULES` in
-   `src/tl3_workers/roles/__init__.py`.
-4. Regenerate the request schema's enum with the standard-library-only command
-   `python3 tools/sync_role_schema.py` from `workers/`. Commit that generated
-   change. `--check` exits 1 if the enum differs. No runtime, CLI, build config,
-   or shared prompt changes are needed. When parallel role branches meet,
-   keep their registration lines and regenerate the enum.
-5. Add the role's tests in its own test module. Run them through PrismaBuild.
-   `test_registry_matches_protocol_role_enum` checks the packaged schema
-   against the independent registry and checks each role's packaged resources.
+3. Add the role's tests in its own test module. Run them through PrismaBuild.
+   `test_discovered_roles_have_prompts_and_schemas_without_orphans` checks every
+   discovered role's packaged resources and rejects orphan schema files.
+
+The registry discovers modules in `roles/` automatically, excluding `base.py`
+and names beginning with `_`. The module filename must match `ROLE.name`.
+Adding a role changes only that role's module, prompt, two schemas and tests.
+No shared registry or request schema edit is needed.
 
 ## Confined file tools
 
@@ -250,20 +249,37 @@ The available names and arguments are:
 
 | Tool | Arguments and result |
 |---|---|
-| `list` | `path="."`. Direct children with relative `path` and `is_dir`. |
-| `read` | `path`, `offset=0`, `limit=200`. UTF-8 text, paged by lines. |
-| `glob` | `pattern`, `path="."`. Relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. |
-| `grep` | `pattern`, `path="."`. Literal text search below a directory, with relative paths, one-based line numbers, and matching text. Non-UTF-8 files are skipped. |
+| `list` | `path="."`, `offset=0`. A page of direct children with relative `path` and `is_dir`. |
+| `read` | `path`, `offset=0`, `limit=200`, `column=0`. UTF-8 text, paged by zero-based lines and character columns. |
+| `glob` | `pattern`, `path="."`, `offset=0`. A page of relative file and directory paths. `*` matches one segment, `**` recurses, and dotfiles are included. |
+| `grep` | `pattern`, `path="."`, `offset=0`. A page of literal text matches below a directory, with relative paths, one-based line numbers, and matching text. Non-UTF-8 files are skipped. |
 | `write` | `path`, `content`. Create or overwrite UTF-8 text, creating parents. |
 | `edit` | `path`, `old`, `new`, `replace_all=false`. Exact replacement. `old` must be nonempty and unique unless `replace_all` is true. |
 
 `READ_TOOLS` and `WRITE_TOOLS` group the names for checks. Each role still writes
-its own descriptions. Unknown tool names and empty descriptions fail graph
+its own descriptions. `TOOL_FACTORIES` maps each name to its factory. Unknown tool names and empty descriptions fail graph
 creation. A rejected file operation returns an error tool result, so the agent
-can correct its call without changing protocol v1 progress events.
+can correct its call without changing protocol v1 progress events. TL3's static
+validation errors pass through, including non-unique edits and missing files.
+Operating system exception text stays hidden because it can reveal host paths.
+
+Output caps live in `OUTPUT_LIMITS`. Read returns at most 200 lines, 2,048
+UTF-8 bytes per line and 16,384 bytes in total, including its notice. A smaller
+`limit` still applies. A truncated read reports the next line `offset` and
+character `column`. Use both to continue, including within a long line.
+
+List and glob return `entries`, `next_offset` and `message`. Grep returns
+`matches`, `next_offset` and `message`. A null `next_offset` ends the results.
+List and glob cap each page at 200 entries. Grep caps it at 100 matches and
+clips each text preview to 2,048 UTF-8 bytes, with a notice directing the model
+to `read`. Each collection page also fits a 16,384-byte JSON budget, including
+metadata. A truncated page names the continuation offset in its message. If
+one entry exceeds the byte budget, the message asks for a narrower path or
+pattern.
 
 All tool paths and glob patterns must be relative. Absolute paths, NULs,
-backslashes, and any `..` segment are rejected. `.` selects the root directory.
+backslashes, and any `..` or `.git` segment are rejected. Enumeration omits
+`.git` files and directories at every depth. `.` selects the root directory.
 No shell expands paths or patterns. A run holds an open worktree directory
 descriptor. Each operation opens path components relative to directory
 descriptors with `O_NOFOLLOW`, including the final file. This checks paths at
@@ -284,7 +300,8 @@ The built-in `glob` and `grep` are absent; those names refer only to TL3 tools.
 
 No role can declare shell, network, delete, or delegation tools. The model
 transport still connects to the configured proxy. Ticket #33 can extend the
-tool factory at `TOOL_NAMES` and `build_tools` with a PrismaBuild test tool.
+`TOOL_FACTORIES` table with one PrismaBuild test tool entry, without changing
+`build_tools` or file confinement.
 It must submit admitted work rather than expose `execute` or a local shell.
 
 ## Verification

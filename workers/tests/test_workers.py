@@ -120,6 +120,15 @@ def test_invalid_request_fails_before_model_loading(request_doc, field, value):
     assert result.stderr.strip() == "tl3_workers: request failed"
 
 
+def test_unknown_role_passes_schema_but_fails_without_loading_model(request_doc):
+    request_doc["role"] = "future_role"
+    validate("request", request_doc)
+    result = run_real_entrypoint(request_doc)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == "tl3_workers: request failed"
+
+
 @pytest.mark.parametrize("raw", ['{} {}', '{"protocol":1,"protocol":1}', '{', 'NaN'])
 def test_invalid_request_json(request_doc, raw):
     result = run_real_entrypoint(request_doc, raw=raw)

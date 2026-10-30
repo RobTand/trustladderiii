@@ -1,7 +1,7 @@
 from dataclasses import replace
 from importlib.resources import files
 import json
-from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -12,31 +12,55 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.contracts import schema
-from tl3_workers.roles import ROLE_MODULES, ROLES
-from tl3_workers.tools import READ_TOOLS, TOOL_NAMES, WRITE_TOOLS
+from tl3_workers import roles
+from tl3_workers.roles import ROLES
+from tl3_workers.tools import READ_TOOLS, TOOL_FACTORIES, WRITE_TOOLS
 
 
 REPLY = {"verdict": "agree", "objections": []}
 
 
-def test_registry_matches_protocol_role_enum():
-    assert schema("request")["properties"]["role"]["enum"] == list(ROLES)
-    assert len(ROLE_MODULES) == len(ROLES)
+def test_discovered_roles_have_prompts_and_schemas_without_orphans():
+    modules = {path.name.removesuffix(".py") for path in files(roles).iterdir()
+               if path.name.endswith(".py") and not path.name.startswith("_")
+               and path.name != "base.py"}
+    assert set(ROLES) == modules
+    expected_schemas = {"request.json"}
+    role_pattern = schema("request")["properties"]["role"]
+    assert "enum" not in role_pattern
     for name, role in ROLES.items():
+        Draft202012Validator(role_pattern).validate(name)
         assert role.name == name
+        assert role.input_schema == name + "-input"
+        assert role.reply_schema == name + "-reply"
         assert files("tl3_workers").joinpath("prompts", role.prompt).read_text().strip()
-        Draft202012Validator.check_schema(schema(role.input_schema))
-        Draft202012Validator.check_schema(schema(role.reply_schema))
-        assert role.tools.keys() <= TOOL_NAMES
+        for resource in (role.input_schema, role.reply_schema):
+            Draft202012Validator.check_schema(schema(resource))
+            expected_schemas.add(resource + ".json")
+        assert role.tools.keys() <= TOOL_FACTORIES.keys()
+    actual_schemas = {path.name for path in files("tl3_workers").joinpath("schemas").iterdir()
+                      if path.name.endswith(".json")}
+    assert actual_schemas == expected_schemas
 
 
-def test_role_enum_generator_is_current():
-    script = Path(__file__).resolve().parents[1] / "tools/sync_role_schema.py"
-    result = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True)
+def test_new_module_is_discovered_without_registration(tmp_path):
+    package = tmp_path / "tl3_workers"
+    shutil.copytree(files("tl3_workers"), package, ignore=shutil.ignore_patterns("__pycache__"))
+    (package / "roles/fixture.py").write_text(
+        'from .base import Role\n'
+        'ROLE = Role(name="fixture", prompt="fixture.md", '
+        'input_schema="fixture-input", reply_schema="fixture-reply")\n'
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", "from tl3_workers.roles import ROLES; "
+         "assert ROLES['fixture'].name == 'fixture'; "
+         "assert {'ingest', 'audit'} <= ROLES.keys()"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("names", [READ_TOOLS, WRITE_TOOLS, TOOL_NAMES])
+@pytest.mark.parametrize("names", [READ_TOOLS, WRITE_TOOLS, frozenset(TOOL_FACTORIES)])
 def test_registered_role_gets_exactly_its_tools_and_descriptions(tmp_path, monkeypatch, names):
     observed = []
     descriptions = {name: f"Role-owned instructions for {name}." for name in sorted(names)}
