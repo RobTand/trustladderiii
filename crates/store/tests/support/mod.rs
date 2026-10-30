@@ -93,11 +93,19 @@ impl Database {
         }
     }
 
+    #[allow(
+        dead_code,
+        reason = "Used by status tests; this fixture is shared with worker tests"
+    )]
     pub fn restart(&mut self) {
         self.stop();
         self.resume();
     }
 
+    #[allow(
+        dead_code,
+        reason = "Used by status tests; this fixture is shared with worker tests"
+    )]
     pub fn resume(&mut self) {
         self.runtime
             .block_on(self.postgres.start())

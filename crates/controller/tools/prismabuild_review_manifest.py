@@ -19,7 +19,7 @@ common = {
     "demand": {"mem_gb": 6},
     "priority": -10,
     "env": {
-        "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
         "RUSTUP_HOME": "/home/rob/.rustup",
         "CARGO_HOME": "/home/rob/.cargo",
         "KANI_HOME": "/home/rob/.kani",
@@ -34,7 +34,7 @@ rows = [{
     **common,
     "tags": [host],
     "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-prismabuild",
-             "--all-targets", "--locked"],
+             "-p", "tl3-store", "--all-targets", "--locked"],
 } for host in ("dl380g10", "sparky", "sparklina")]
 rows.append({
     **common,

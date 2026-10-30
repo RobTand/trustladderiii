@@ -21,6 +21,8 @@ pub struct Delivery {
     pub checks: Option<crate::adapters::prismabuild::CheckRun>,
     #[serde(default)]
     pub job_generation: Option<u64>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 impl Delivery {
@@ -34,6 +36,12 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    WorkerReply {
+        node: NodeId,
+        generation: u64,
+        role: String,
+        reply: serde_json::Value,
+    },
     Kernel(Event),
     CheckPlan {
         node: NodeId,
