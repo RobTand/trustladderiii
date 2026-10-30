@@ -210,27 +210,30 @@ impl WorkerOutputSource {
                     "worker inotify queue overflow; restart source to rebuild active runs",
                 ));
             }
-            if wd == self.root_watch {
-                if let Some(name) = name {
-                    let path = self.root.join(&name);
-                    if name.starts_with(".ready-")
-                        && name[7..].bytes().all(|b| b.is_ascii_hexdigit())
-                    {
-                        if let Some(value) = read(&path)? {
-                            let delivery: Delivery = serde_json::from_value(value)?;
-                            let root = run_root(&self.root, &delivery.key);
-                            if let Some(previous) = self.runs.remove(&root) {
-                                self.retire(previous)?;
-                            }
-                            self.add(root.clone())?;
-                            dirty.insert(root);
-                            fs::remove_file(path)?;
-                        }
-                    }
+            if wd != self.root_watch {
+                if let Some(root) = self.watches.get(&wd) {
+                    dirty.insert(root.clone());
                 }
-            } else if let Some(root) = self.watches.get(&wd) {
-                dirty.insert(root.clone());
+                continue;
             }
+            let Some(name) = name else {
+                continue;
+            };
+            if !name.starts_with(".ready-") || !name[7..].bytes().all(|b| b.is_ascii_hexdigit()) {
+                continue;
+            }
+            let path = self.root.join(&name);
+            let Some(value) = read(&path)? else {
+                continue;
+            };
+            let delivery: Delivery = serde_json::from_value(value)?;
+            let root = run_root(&self.root, &delivery.key);
+            if let Some(previous) = self.runs.remove(&root) {
+                self.retire(previous)?;
+            }
+            self.add(root.clone())?;
+            dirty.insert(root);
+            fs::remove_file(path)?;
         }
         for root in dirty {
             let Some(mut run) = self.runs.remove(&root) else {
