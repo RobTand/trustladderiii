@@ -96,3 +96,14 @@ def test_test_tool_preserves_harness_identifiers_results_and_action_key(tmp_path
     assert evidence["totals"]["failed"] == 1
     assert evidence["tests"] == [{"test": "test_greeting.py::test_hello", "outcome": "failed"}]
     assert "fixture-failure-secret" not in summary.read_text()
+
+
+def test_unchanged_activity_does_not_rewrite_summary(tmp_path, monkeypatch):
+    from tl3_workers.memory import Summary
+    summary = Summary({"memory": {"summary_file": str(tmp_path / "memory.json")}})
+    summary.file("file.py", False)
+    writes = []
+    monkeypatch.setattr(summary, "save", lambda: writes.append(True))
+    summary.file("file.py", False)
+    summary.tool("recall", {"query": "decisions"}, {"results": []})
+    assert not writes

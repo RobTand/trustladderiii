@@ -229,6 +229,16 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--memory-review") {
+        let mut database = Database::start();
+        match args.get(2).map(String::as_str) {
+            Some("wiring") => retirement_review::recall_key_request_wiring(&database.create("memory_wiring")),
+            Some("feed") => retirement_review::feed_retirement_end_to_end(&database.create("memory_feed")),
+            _ => retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory")),
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-rebase") {
         prepare_workers();
         let mut database = Database::start();
@@ -386,6 +396,9 @@ fn main() {
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
     bounded_startup(&database.create("workers_bounded"));
     println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
+    retirement_review::recall_key_request_wiring(&database.create("memory_wiring"));
+    retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory"));
+    retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
     retirement_review::summaries_and_states(&database.create("retirement_summaries"));

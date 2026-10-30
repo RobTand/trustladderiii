@@ -324,3 +324,50 @@ impl Feed {
         let _ = self.0.try_send(());
     }
 }
+
+fn stored_json_bytes(_value: &Value) -> usize {
+    todo!("measure Postgres jsonb text bytes")
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn size_includes_postgres_jsonb_spaces() {
+        assert_eq!(stored_json_bytes(&json!({"a": [1, 2]})), r#"{"a": [1, 2]}"#.len());
+    }
+
+    macro_rules! secret_case {
+        ($name:ident, $secret:expr) => {
+            #[test]
+            fn $name() {
+                assert_eq!(safe_text($secret), "[redacted]", "secret must be removed");
+            }
+        };
+    }
+    secret_case!(github_app_token, "ghs_fixture1234567890");
+    secret_case!(github_user_token, "ghu_fixture1234567890");
+    secret_case!(github_refresh_token, "ghr_fixture1234567890");
+    secret_case!(github_installation_token, "ghp_fixture1234567890");
+    secret_case!(github_oauth_token, "gho_fixture1234567890");
+    secret_case!(github_fine_grained_token, "github_pat_fixture1234567890");
+    secret_case!(aws_token, "AKIAIOSFODNN7EXAMPLE");
+    secret_case!(slack_token, "xoxb-fixture1234567890");
+    secret_case!(slack_user_token, "xoxp-fixture1234567890");
+    secret_case!(huggingface_token, "hf_fixture1234567890");
+    secret_case!(gitlab_token, "glpat-fixture1234567890");
+    secret_case!(model_token, "sk-fixture1234567890");
+    secret_case!(hex_token, "f9c83a01b647de2390abc81456fed279");
+    secret_case!(postgres_credentials, "postgres://user:fixture-pass@db.invalid/tl3");
+    secret_case!(prefixed_api_key, "SERVICE_API_KEY=fixture-value");
+    secret_case!(prefixed_secret, "SERVICE_SECRET_VALUE=fixture-value");
+    secret_case!(prefixed_token, "SERVICE_TOKEN=fixture-value");
+
+    #[test]
+    fn sensitive_suffixes() {
+        for key in ["service_key", "SERVICE_KEY", "service_token", "service_secret", "dbpassword"] {
+            assert!(sensitive_key(key), "sensitive key {key}");
+        }
+    }
+}

@@ -7,7 +7,7 @@ use std::{
     fs,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU16, Ordering},
     },
 };
 use tl3_controller::memory;
@@ -22,9 +22,21 @@ struct Retain {
     documents: Arc<Mutex<BTreeMap<String, Value>>>,
     unavailable: Arc<AtomicBool>,
     lose_ack: Arc<AtomicBool>,
+    status: Arc<AtomicU16>,
+    require_auth: Arc<AtomicBool>,
 }
 impl Respond for Retain {
     fn respond(&self, request: &Request) -> ResponseTemplate {
+        let status = self.status.load(Ordering::SeqCst);
+        if status != 0 {
+            return ResponseTemplate::new(status);
+        }
+        if self.require_auth.load(Ordering::SeqCst)
+            && request.headers.get("authorization").map(|v| v.as_bytes())
+                != Some(b"Bearer fixture-hindsight-authentication".as_slice())
+        {
+            return ResponseTemplate::new(401);
+        }
         if self.unavailable.load(Ordering::SeqCst) {
             return ResponseTemplate::new(503);
         }
@@ -308,6 +320,7 @@ fn failed_run_without_summary_is_retained_and_size_is_bounded() {
 #[test]
 fn authenticated_retain_loads_a_runtime_key_without_recording_it() {
     let f = Fixture::new();
+    f.retain.require_auth.store(true, Ordering::SeqCst);
     let key = f.scratch.path().join("fixture-hindsight-key");
     fs::write(&key, "fixture-hindsight-authentication\n").unwrap();
     #[cfg(unix)]
@@ -338,4 +351,97 @@ fn authenticated_retain_loads_a_runtime_key_without_recording_it() {
     assert!(
         !String::from_utf8_lossy(&requests[0].body).contains("fixture-hindsight-authentication")
     );
+}
+
+fn connection(f: &Fixture) -> postgres::Client {
+    postgres::Config::new().host(&f.settings.host).port(f.settings.port)
+        .dbname(&f.settings.database).user(&f.settings.user)
+        .password("tl3-disposable-test-password").connect(postgres::NoTls).unwrap()
+}
+
+fn rendered_status(f: &Fixture) -> String {
+    let mut reader = tl3_store::Reader::open(&f.settings).unwrap();
+    tl3_controller::status::render_html(&tl3_controller::status::load(&mut reader).unwrap())
+}
+
+fn rejected_key(status: u16) {
+    let f = Fixture::new();
+    for role in ["audit", "maker"] {
+        let attempt = f.attempt(role, json!({}), json!({"ok": true}));
+        memory::queue_attempt(&mut f.store(), role, &attempt).unwrap();
+    }
+    f.retain.status.store(status, Ordering::SeqCst);
+    let error = memory::flush(&mut f.store(), &f.hindsight()).unwrap_err();
+    assert!(error.to_string().contains(&status.to_string()), "retain error must keep HTTP status: {error}");
+    assert_eq!(f._runtime.block_on(f.server.received_requests()).unwrap().len(), 1,
+        "a rejected key stops the pass");
+    memory::flush(&mut f.store(), &f.hindsight()).unwrap_err();
+    let status = rendered_status(&f);
+    assert_eq!(status.matches("Hindsight rejected TL3&#39;s key").count(), 1, "one operations incident");
+    assert_eq!(f.store().pending_memories(0).unwrap().len(), 2);
+}
+
+#[test]
+fn unauthorized_stops_pass_and_raises_one_incident() { rejected_key(401); }
+#[test]
+fn forbidden_stops_pass_and_raises_one_incident() { rejected_key(403); }
+
+#[test]
+fn permanent_4xx_is_parked_with_status_and_counted() {
+    let f = Fixture::new();
+    let attempt = f.attempt("audit", json!({}), json!({"ok": true}));
+    memory::queue_attempt(&mut f.store(), "bad-record", &attempt).unwrap();
+    f.retain.status.store(422, Ordering::SeqCst);
+    let _ = memory::flush(&mut f.store(), &f.hindsight());
+    assert!(f.store().pending_memories(0).unwrap().is_empty(), "4xx record must leave retry set");
+    let row = connection(&f).query_one("SELECT to_jsonb(m)->>'http_status' FROM tl3_memory_outbox m", &[]).unwrap();
+    assert_eq!(row.get::<_, Option<String>>(0).as_deref(), Some("422"));
+    assert!(rendered_status(&f).contains("Parked: 1"));
+    assert_eq!(f.flush(), 0);
+}
+
+#[test]
+fn outbox_cap_parks_oldest_without_losing_record() {
+    let f = Fixture::new();
+    let _store = f.store();
+    let mut db = connection(&f);
+    db.execute("INSERT INTO tl3_memory_outbox (operation_id, item) SELECT 'seed-' || n, '{}'::jsonb FROM generate_series(1, 10000) n", &[]).unwrap();
+    f.store().queue_memory("newest", &json!({"content": "keep me"})).unwrap();
+    let mut store = f.store();
+    let mut after = 0;
+    let mut active = Vec::new();
+    loop {
+        let batch = store.pending_memories(after).unwrap();
+        if batch.is_empty() { break; }
+        for (seq, id, _) in batch { after = seq; active.push(id); }
+    }
+    assert_eq!(active.len(), 10000, "outbox retry set is capped");
+    assert!(!active.contains(&"seed-1".into()), "oldest record is parked first");
+    assert!(active.contains(&"newest".into()));
+    assert_eq!(db.query_one("SELECT count(*) FROM tl3_memory_outbox", &[]).unwrap().get::<_, i64>(0), 10001,
+        "parking preserves records for operations");
+    assert!(rendered_status(&f).contains("Pending: 10000"));
+    assert!(rendered_status(&f).contains("Parked: 1"));
+}
+
+#[test]
+fn nul_bytes_are_removed_before_postgres_jsonb() {
+    let f = Fixture::new();
+    let attempt = f.attempt("audit", json!({"goals": ["good\0goal"]}), json!({"summary": "good\0reply"}));
+    memory::queue_attempt(&mut f.store(), "nul", &attempt).expect("NUL bytes must not prevent memory queueing");
+    let rows = f.store().pending_memories(0).unwrap();
+    let record: Value = serde_json::from_str(rows[0].2["content"].as_str().unwrap()).unwrap();
+    assert_eq!(record["inputs"]["goals"][0], "goodgoal");
+    assert_eq!(record["reply"]["summary"], "goodreply");
+}
+
+#[test]
+fn record_limit_uses_postgres_jsonb_text_size() {
+    let f = Fixture::new();
+    let values: Vec<_> = (0..32).map(|n| (format!("field{n}"), json!({"nested": (0..32).collect::<Vec<_>>() }))).collect();
+    let input = Value::Object(values.into_iter().collect());
+    let attempt = f.attempt("audit", input.clone(), input);
+    memory::queue_attempt(&mut f.store(), "jsonb-size", &attempt).expect("Postgres stored size must fit its constraint");
+    let size: i32 = connection(&f).query_one("SELECT octet_length(item::text) FROM tl3_memory_outbox", &[]).unwrap().get(0);
+    assert!(size <= 32768);
 }
