@@ -262,18 +262,50 @@ impl Controller {
         let snapshot = self.store.load()?;
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
             let observation: Observation = serde_json::from_value(row.value.clone())?;
-            let mut world = snapshot::decode(&snapshot)?;
-            let mut commit =
-                Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-            if let Some(event) = self.translate(&snapshot, &mut world, observation, &mut commit)? {
-                self.apply(&snapshot, world, event, &mut commit)?;
+            let mut waiting_for_queue = false;
+            if let Observation::Queue(fact) = &observation
+                && fact.needs_queue_ack()
+                && let Some(node) = fact.node(&snapshot)?
+            {
+                for effect in &snapshot.pending_effects {
+                    let delivery = hydrate(effect, &snapshot)?;
+                    if delivery.node() == node
+                        && matches!(
+                            delivery.output,
+                            Out::Effect {
+                                kind: tl3_kernel::EffectKind::Enqueue,
+                                ..
+                            }
+                        )
+                        && matches!(effect.state, EffectState::Sent | EffectState::Uncertain)
+                    {
+                        // Queue facts can beat a lost enqueue response. Confirm that key first.
+                        if let Ok(Reconciliation::Found(completion)) =
+                            self.adapters.adapter(&delivery)?.reconcile(&delivery)
+                        {
+                            self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        waiting_for_queue = true;
+                    }
+                }
             }
-            commit.rows.push(RowChange::Delete {
-                table: "inbox".into(),
-                id: row.id.clone(),
-            });
-            self.store.commit(&commit)?;
-            return Ok(true);
+            if !waiting_for_queue {
+                let mut world = snapshot::decode(&snapshot)?;
+                let mut commit =
+                    Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
+                if let Some(event) =
+                    self.translate(&snapshot, &mut world, observation, &mut commit)?
+                {
+                    self.apply(&snapshot, world, event, &mut commit)?;
+                }
+                commit.rows.push(RowChange::Delete {
+                    table: "inbox".into(),
+                    id: row.id.clone(),
+                });
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
         }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
@@ -668,24 +700,9 @@ impl Controller {
                 {
                     return Ok(None);
                 }
-                let Some(binding) = snapshot.rows.iter().find(|row| {
-                    row.table == "pull_requests"
-                        && row.value["number"].as_u64() == Some(fact.number)
-                        && row
-                            .id
-                            .parse::<u64>()
-                            .ok()
-                            .and_then(|id| request(snapshot, NodeId(id)).ok())
-                            .is_some_and(|request| request.repo == fact.repository)
-                }) else {
+                let Some(node) = fact.node(snapshot)? else {
                     return Ok(None);
                 };
-                let node = NodeId(
-                    binding
-                        .id
-                        .parse()
-                        .map_err(|_| Error::Invalid("invalid PR binding"))?,
-                );
                 use adapters::mergify::Evidence;
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =

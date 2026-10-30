@@ -198,7 +198,7 @@ fn drain(controller: &mut Controller) {
     }
     panic!("controller did not settle");
 }
-fn queued(settings: &tl3_config::Store, api: &Server, root: &Path) -> Controller {
+fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bool) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
     let mut controller =
@@ -236,7 +236,14 @@ fn queued(settings: &tl3_config::Store, api: &Server, root: &Path) -> Controller
             break;
         }
     }
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        if confirmed {
+            Phase::Queued
+        } else {
+            Phase::Publishing
+        }
+    );
     assert_eq!(api.state.lock().unwrap().posts, 1);
     controller
 }
@@ -304,10 +311,29 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
+fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
+    let api = Server::new();
+    api.state.lock().unwrap().lag = true;
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), false);
+    api.state.lock().unwrap().checks = fixture("failed", "checks");
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    deliver(settings, &api, "check_run", &body);
+    ingress::drain(&mut controller).unwrap();
+    controller.drive_once().unwrap();
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    controller.drive_once().unwrap();
+    assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    controller.drive_once().unwrap();
+    assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert_kernel_facts(settings, 1);
+}
 fn watched_merge(settings: &tl3_config::Store) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path());
+    let mut controller = queued(settings, &api, root.path(), true);
     api.state.lock().unwrap().merged(false);
     drain(&mut controller);
     assert_eq!(
@@ -327,7 +353,7 @@ fn merged(
 ) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path());
+    let mut controller = queued(settings, &api, root.path(), true);
     api.state.lock().unwrap().merged(unapproved);
     if !checks_passed {
         api.state.lock().unwrap().merge_checks = json!([]);
@@ -387,7 +413,7 @@ fn merged(
 fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path());
+    let mut controller = queued(settings, &api, root.path(), true);
     let head = api.state.lock().unwrap().pull["head"]["sha"].clone();
     {
         let mut state = api.state.lock().unwrap();
@@ -432,7 +458,7 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
 fn person_actions(settings: &tl3_config::Store, action: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path());
+    let mut controller = queued(settings, &api, root.path(), true);
     let mut body = pull_event(&api, action);
     match action {
         "unlabeled" => {
@@ -483,7 +509,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
 fn ignored_events(settings: &tl3_config::Store) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path());
+    let mut controller = queued(settings, &api, root.path(), true);
     let translator = Translator::new(api.clients()).unwrap();
     for action in ["closed", "synchronize", "unlabeled"] {
         let mut body = pull_event(&api, action);
@@ -682,6 +708,7 @@ fn main() {
     merged(&database.create("unapproved"), true, true, true);
     merged(&database.create("missing_merge_ci"), false, true, false);
     watched_merge(&database.create("watched"));
+    terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
     println!("test merged, catch-up, restart and unapproved head ... ok");
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
@@ -694,5 +721,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("13 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("14 Mergify scenarios passed; no skips; no live upstream calls");
 }

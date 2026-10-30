@@ -82,6 +82,29 @@ pub enum Evidence {
     },
 }
 impl QueueFact {
+    pub(crate) fn node(&self, snapshot: &Snapshot) -> Result<Option<NodeId>> {
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "pull_requests" && row.value["number"].as_u64() == Some(self.number)
+        }) {
+            let node = NodeId(
+                row.id
+                    .parse()
+                    .map_err(|_| Error::Invalid("invalid PR binding"))?,
+            );
+            if crate::request(snapshot, node)?.repo == self.repository {
+                return Ok(Some(node));
+            }
+        }
+        Ok(None)
+    }
+    pub(crate) fn needs_queue_ack(&self) -> bool {
+        matches!(
+            self.evidence,
+            Evidence::CiFailed { .. }
+                | Evidence::Conflict { .. }
+                | Evidence::DequeuedByPerson { .. }
+        )
+    }
     pub(crate) fn identity(&self) -> String {
         let evidence = match &self.evidence {
             Evidence::Merged { head, .. } => format!("merged:{head}"),

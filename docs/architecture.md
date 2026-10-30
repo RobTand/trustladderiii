@@ -215,3 +215,13 @@ Merge identities use the actual PR head, and failure identities use the Mergify
 check ID. The controller resolves repository and PR bindings and commits a
 `queue_facts` row with each kernel fact. The row suppresses later observations
 of that fact, including after restart. There is no store migration.
+
+A terminal queue notification can arrive before the enqueue response. The
+controller reconciles that pending effect key before applying CI, conflict or
+person-dequeue facts. This keeps a fact from being consumed while the kernel
+still awaits enqueue confirmation. Enqueue watches also refresh the PR binding,
+which can arrive after the watch was created.
+
+The synchronous GitHub adapter, Mergify adapter and ingress share a Tokio runtime
+with two worker threads. Cloned HTTP clients can share pooled connections, whose
+background tasks must keep running while another source reads them.
