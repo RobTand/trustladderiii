@@ -70,8 +70,6 @@ impl Database {
                 ("shared_buffers".into(), "16MB".into()),
                 ("max_parallel_workers".into(), "0".into()),
                 ("max_worker_processes".into(), "0".into()),
-                ("fsync".into(), "on".into()),
-                ("synchronous_commit".into(), "on".into()),
             ]),
             ..Settings::default()
         };
@@ -538,6 +536,23 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
 fn durability_settings(settings: &tl3_config::Store) {
     let _store = Store::open(settings).unwrap();
     let mut client = raw(settings);
+    client
+        .batch_execute("ALTER DATABASE durability_settings SET synchronous_commit = 'off'")
+        .unwrap();
+    assert_eq!(
+        raw(settings)
+            .query_one("SHOW synchronous_commit", &[])
+            .unwrap()
+            .get::<_, &str>(0),
+        "off"
+    );
+    client.batch_execute("CREATE FUNCTION test_check_durable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('synchronous_commit') <> 'on' THEN RAISE EXCEPTION 'commit must flush WAL'; END IF; RETURN NEW; END $$; CREATE TRIGGER test_check_durable BEFORE INSERT ON tl3_events FOR EACH ROW EXECUTE FUNCTION test_check_durable()").unwrap();
+    let mut durable = Store::open(settings).unwrap();
+    let snapshot = durable.load().unwrap();
+    durable
+        .commit(&Commit::new("durable", json!(null), &snapshot))
+        .unwrap();
+    drop(durable);
     client
         .batch_execute("ALTER SYSTEM SET fsync = 'off'")
         .unwrap();
