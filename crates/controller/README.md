@@ -92,9 +92,8 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
-`adapters::simulation_with_workers` replaces ingest and audit with Python worker
-processes and returns a `WorkerOutputSource`. Other roles remain on the worker
-fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
+processes and returns a `WorkerOutputSource`. Making and review remain on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
@@ -138,8 +137,8 @@ This is the safe path because nobody proved a successful process exit.
 No clock or liveness threshold makes this decision.
 
 `Store::worker_progress` reads the last progress for every run, optionally
-filtered by request node. `Store::worker_document` reads briefs, goals and audit
-replies. Replaying output does not refresh progress time. These reads do not
+filtered by request node. `Store::worker_document` reads briefs, goals, audit
+replies, plans and findings. Replaying output does not refresh progress time. These reads do not
 claim controller ownership. `tl3_worker_progress` records `run_key`, `node_id`,
 `epoch`, `attempt`, `started_ms`, `output_offset`, `unit`, and nullable
 `last_progress_ms`. A start row exists before the first progress event.
@@ -176,7 +175,7 @@ For #11, #12 and #13, update each boundary together:
 - Extend `lib.rs` `valid_role` and the document names in `translate`.
 - Add process scenarios for accepted replies, invalid output, recovery and stop.
 
-Ticket #11 replaces `IngestDone { size: 1 }`. The forecaster owns sizing.
+The forecaster supplies the size for `IngestDone`.
 Until these boundaries support a role, its starts and stops use the worker fake.
 
 Worker tests resolve `TL3_TEST_UV` first, then `uv` on PATH. Missing uv fails

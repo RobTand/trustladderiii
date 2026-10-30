@@ -146,8 +146,10 @@ before the controller acts on an early end.
 The brief has a schema limit of 80,000 Unicode characters, an approximation of
 20,000 tokens at four characters per token. Actual counts vary by tokenizer
 and language. The prompt also requests at most about 20,000 tokens. This is a
-brief limit, not request sizing. The reply contains no request size, forecast
-or credit. The controller's forecaster in #11 computes those later.
+brief limit, not request sizing. The model supplies no request size, forecast or credit. When the controller
+supplies forecast settings, worker code appends a measured forecast before
+emitting the reply. The controller converts it to request size; the kernel
+initializes credit.
 
 Audit receives the original issue and repository material plus either ingest
 reply as `inputs.ingest`. It returns one of these objects:
