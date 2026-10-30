@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -34,18 +34,18 @@ Agreed:
 - **Scope never grows.** A split divides the parent's acceptance criteria among its children, and nothing else changes scope. Anything new found along the way becomes a finding, not scope.
 - **Bound rework by progress, not by size.** Rob doesn't want hard limits, because some tasks will be massive. Rework spends progress credit, and only merged work earns it back, so a request can grow as large as its delivered work justifies. Rob agreed to this on 2026-10-29. The state table has the details.
 
-Proposed:
+Agreed for the fit limit (Q4); the rest is proposed:
 
 - Split into the largest piece that fits, not the smallest.
 - Every split has at least 2 children, and there is no upper limit.
 - Code measures each child's forecast. Every child must be smaller than its parent, except when the split is by repo.
 - A node is a leaf when four things hold:
-  - **It fits:** forecast peak context is under about 100k of the 150k.
+  - **It fits:** forecast peak context is under about 100k of the 150k. The 100k is a starting value, tuned later from MLflow data. Slice one can't split yet, so it asks Rob to narrow a request that doesn't fit (Q4).
   - **It is checkable:** each measure has a check.
   - **It is decided:** no design questions remain.
   - **It lands alone:** it is one reviewable change that keeps main passing on its own, in one repo.
 - A leaf that runs out of room partway through stops at about 85% of its context and splits.
-- Work that spans several repos splits by repo first, whatever its size.
+- Work that spans several repos splits by repo first, whatever its size. That kind of request comes after slice two (Q1, Q35).
 
 ## Similar work
 
@@ -68,17 +68,17 @@ Proposed rules:
    - **Delivered (merged or done):** the waiting nodes are released.
    - **Abandoned, stopped or replaced:** each waiting node gets an event, and its owner replans.
    - **Waiting on Rob or on an incident:** the waiting nodes stay blocked, and the status view shows the reason.
-5. **Admission is fair.** From slice two, the gate grants slots by effective priority, then by how much a leaf unblocks, then by age. At least one grant in every eight goes to the oldest leaf that can run. A newer leaf never takes a file an older eligible leaf is waiting for, and paused leaves reserve nothing. Admissions are counted, not timed. Slice one has a single slot, served first come, first served. The state table has the exact rule.
+5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one has a single slot, served first come, first served, which is the same rule when nothing waits on anything. The state table has the exact rule.
 
 ### Priority inheritance
 
-Proposed. Rob raised this on 2026-10-29, and TL2 had the same directive. A node's effective priority is the highest of its own priority and that of every node waiting on it, directly or further along the chain. The wait graph has no cycles, so the boost always stops.
+Agreed, in counting form (Q30, Q36, Q37). Rob raised this on 2026-10-29, and TL2 had the same directive. There are no manual priorities in slices one and two, so a node's rank is simply the number of other nodes waiting on it, directly or further along the chain. A predecessor that many nodes wait on ranks high, which is the inheritance. The wait graph has no cycles, so the count is always finite.
 
-The boost applies at three points:
+The rank applies at three points:
 
 - **Admission:** a ready predecessor gets the next free slot.
 - **The merge queue:** a predecessor's PR can be given a higher Mergify queue priority.
-- **Incidents:** a blocked predecessor's incident is ranked by its effective priority.
+- **Incidents:** a blocked predecessor's incident is ranked by its rank.
 
 ## Review
 
@@ -92,13 +92,13 @@ Agreed on 2026-10-29. Rob asked for self-review, adversarial review against pred
 
 **Self-review** is the last step of the maker's run. The maker reports each measure as met, with evidence, or says it can't be met and why. The kernel checks machine evidence itself and never takes the maker's word for it. An early "can't meet" costs less than a review round.
 
-**The owner reviews.** Agreed: whoever set a measure owns its review. A parent owns its children's review, and it decides what happens when a child fails. The review runs as an independent session, separate from both the maker and the planner. Rob said on 2026-10-29 that the agent doing the work should try to verify its own completion, and that another agent will always verify it independently. That agent can be the same type or a different one. MLflow records which pairs of maker and reviewer catch the most. The reviewer:
+**The owner reviews.** Agreed: whoever set a measure owns its review. A parent owns its children's review, and it decides what happens when a child fails. The review runs as an independent session, separate from both the maker and the planner. Rob said on 2026-10-29 that the agent doing the work should try to verify its own completion, and that another agent will always verify it independently. That agent can be the same type or a different one. By default the reviewer's model comes from a different family than the maker's (Q22). MLflow records which pairs of maker and reviewer catch the most. The reviewer:
 
 - sees the measures, the diff and the check evidence, but not the maker's reasoning, and tries to show that a measure isn't met;
 - can block only on the leaf's measures and the repo's standing measures. Anything else becomes a finding, which doesn't block. That keeps review from moving the goalposts.
 - approves an exact commit. TL3 then posts its approval check on that commit, and Mergify requires that check from TL3's GitHub App.
 
-**Checks must be able to fail.** Proposed after review round 2. A check that only passes proves nothing, but demanding that every check fail on the old code would reject the normal case, because existing tests pass there. So each check is one of three kinds:
+**Checks must be able to fail.** Proposed after review round 2, and agreed by Rob on 2026-10-30 (Q40). A check that only passes proves nothing, but demanding that every check fail on the old code would reject the normal case, because existing tests pass there. So each check is one of three kinds:
 
 - **Demonstrating:** a new test that fails on the old code with only the new tests added, by a real assertion rather than a setup error, and passes on the new code.
 - **Regression:** existing tests that must still pass. Failures that already happen on the old code are excused.
@@ -120,12 +120,14 @@ TL3 owns the test harness, and test configuration is protected, so the code unde
 3. **Second attempt.** If the fix fails review, the leaf tries again with a bigger budget for that attempt. This spends 1 progress credit.
 4. **Third attempt.** Rob said on 2026-10-29 that a failed review can also send the work back on a different model. If the second attempt fails, the third runs on the next model in the maker's ladder, which is set in config. It spends 1 more credit.
 
+The ladder (Q22): attempts 1 and 2 use the default maker model, with attempt 2 at maximum effort and budget. Attempt 3 switches to the strongest model from a different family. The exact models come from what CLIProxyAPI serves, and the model trials adjust them.
+
 Proposed:
 
 - **How a new attempt starts.** It runs in a fresh session, beginning from the leaf's branch, with the measures, the brief and every finding so far. Each attempt gets its own single fix round.
 - **One re-plan.** If the third attempt fails, TL3 re-plans the leaf once with everything it has learned, for 1 credit. The new plan starts again at attempt 1.
 - **The reviewer resumes its own session** for the re-review in round 1, so it checks exactly what it asked for.
-- **Approval binds to the exact commit reviewed.** CI must also pass on the exact tree being merged. Any new commit, including one from a clean rebase, goes through the checks and the review again. Round 3 showed that identical changed lines can behave differently once the code around them moves. The first three rechecks per leaf are free, and later ones spend credit. Only TL3's app can push to TL3's branches, and Mergify must not rewrite a queued PR.
+- **Approval binds to the exact commit reviewed.** Agreed by Rob on 2026-10-30 (Q41). CI must also pass on the exact tree being merged. Any new commit, including one from a clean rebase, goes through the checks and the review again. Round 3 showed that identical changed lines can behave differently once the code around them moves. The first three rechecks per leaf are free, and later ones spend credit. Only TL3's app can push to TL3's branches, and Mergify must not rewrite a queued PR.
 - **Effort is tracked.** MLflow records the effort level of every attempt, which shows over time whether raising it rescues anything.
 - **If the re-planned leaf fails too, the owner decides.** It has seen every attempt and has three choices:
   - **Split the leaf** into smaller leaves, if the attempts made partial progress.
@@ -166,7 +168,7 @@ Rob added later the same day: "I want as much resolved WITHOUT ME as possible. I
 - **for something only he can do**, such as a permission, a login or a payment;
 - **when a request's credit runs out**, which means attempts keep failing without anything merging.
 
-Everything else, TL3 decides and tells him in a note. That includes climbing the attempt ladder, re-planning, a PR he closed or took out of the queue, and a commit someone else pushed. The state table lists every question and the answers each one offers.
+Everything else, TL3 decides itself. It sends him a note only when something changes a request's course: a stop, a pause, a merge TL3 didn't approve, a re-plan, a PR he closed or took out of the queue, or a commit someone else pushed. Routine steps such as fix rounds, new attempts, model switches and rebases show only in the status view (Q8). The state table lists every question and the answers each one offers.
 
 A message to Rob must make sense without any context. It contains:
 
@@ -180,9 +182,13 @@ It leaves out internal names and IDs, file paths, logs and TL3's own vocabulary 
 
 Rob's answer arrives as an event. The request waits for it with no timer, and only the affected chain of work pauses while it waits. The channel is an adapter. Discord is planned for this and will be set up later. Until then, Rob answers in comments on the request's issue.
 
+Rob will often just comment rather than answer a question. An agent reads each of his comments on an active request and classifies it: change the request, stop, pause, resume, an answer, or a remark that needs no action. When it is unsure, TL3 asks him one short question (Q15). A comment on a closed request that says something is wrong files a linked correction request, which carries his authorization and can include a revert (Q21).
+
+Incidents often span several requests, so until Discord exists they go to one pinned "TL3 operations" issue in TL3's own repo. Questions about a request stay on that request's issue (Q17).
+
 ### Escalation reports
 
-Proposed. The report is the interface between levels:
+Agreed (Q31). The report is the interface between levels:
 
 - **What it contains.** It names the receiver's measures that are affected, and only measures the receiver set. It says what can be delivered instead, and what that means for the receiver's ongoing work as the sender sees it. It may recommend a response.
 - **What it leaves out.** It never carries diffs, logs, transcripts or anything about grandchildren. It is capped at about 2k tokens.
@@ -192,7 +198,7 @@ Proposed. The report is the interface between levels:
 
 ## After merge
 
-Proposed. Rob asked on 2026-10-29 for two steps after a merge: delete the git worktree, and run a postmortem. The postmortem should:
+Agreed (Q32); the judge's postmortem and the model trials arrive in slice three. Rob asked on 2026-10-29 for two steps after a merge: delete the git worktree, and run a postmortem. The postmortem should:
 
 - grade work against a rubric;
 - suggest system prompt changes and point out issues that could have been avoided;
@@ -222,11 +228,11 @@ TL3 adds dimensions for its own steps:
 
 **Scope.** Every node gets one postmortem when it ends: a leaf when it merges or is abandoned, and a parent after integration. Each postmortem sees only that node's own materials, the same insulation that escalation uses. Code grades every run. The judge grades every node that needed a fix round, a later attempt or an escalation, plus a random share of the clean ones, and that share is logged.
 
-**Ranking models and effort levels.** Grades alone can't rank them. TL1 graded everything and still couldn't compare models, because every role ran at a single effort level and nothing varied. TL3 sends a logged, random share of runs to a candidate model or effort level, starting at 1 in 10 and never on top-priority work. Later attempts, with a bigger budget or another model, don't count as comparisons by themselves, because they only happen after a failure. Results reach Rob as proposals, and he picks models and effort levels.
+**Ranking models and effort levels.** Grades alone can't rank them. TL1 graded everything and still couldn't compare models, because every role ran at a single effort level and nothing varied. TL3 sends a logged, random share of runs to a candidate model or effort level, starting at 1 in 10 and never on work that other work is waiting on. Later attempts, with a bigger budget or another model, don't count as comparisons by themselves, because they only happen after a failure. Results reach Rob as proposals, and he picks models and effort levels.
 
 **The retro skill** is loaded into the postmortem worker. Its categories map onto the things TL3 can change: navigation, automated checks, coding standards, bloated steering files, tool economy, instructions that have no effect, and information access. One of its rules decides where a recommendation goes: a mechanical mistake gets an automated check, not more prompt text.
 
-- **A prompt or skill edit** becomes a new version in MLflow's prompt registry. A version reaches production only after Rob approves it, and TL3 records his approval with the version. It then runs on a trial share first and becomes the default if its grades hold up.
+- **A prompt or skill edit** becomes a new version in MLflow's prompt registry. Until slice three, role prompts live in TL3's own repo, protected and changed only through reviewed PRs, while MLflow traces every run (Q23). A version reaches production only after Rob approves it, and TL3 records his approval with the version. It then runs on a trial share first and becomes the default if its grades hold up.
 - **An automated check, coding standard or navigation doc for a served repo** becomes a request on that repo and goes through the normal pipeline.
 - **A tool change, a brief change, or a new or changed phase** becomes a design proposal for TL3, built deliberately rather than changed while running.
 
@@ -252,7 +258,7 @@ Three rules keep the recursion from running away:
 2. **Grades rest on facts the loop can't game.** Those facts are merges, CI results, escaped defects and Rob's decisions. Each role also has a frozen benchmark that the loop never sees, and a change that does worse on it is rejected. This is also why the rubric belongs to the constitution: a TL3 that could edit its own rubric could grade its way to success.
 3. **TL3 can change itself, but it can't change itself into something that breaks its laws.** Kani's proofs run as required checks, so a change that breaks a law can't merge. A running TL3 never edits its own live code. Changes deploy as releases, with the upgrade rules in the state table.
 
-**Earned autonomy.** Every change starts out needing Rob's approval. Once a kind of change has a clean record, for example ten approved prompt edits that held up in trials, Rob can let that kind apply on its own. It still sits behind the trial share and automatic rollback. Rolling back to the last good version never needs approval. Each kind of change climbs its own trust ladder, and only Rob moves it up.
+**Earned autonomy.** Agreed (Q33). Every change starts out needing Rob's approval. Once a kind of change has a clean record, for example ten approved prompt edits that held up in trials, Rob can let that kind apply on its own. It still sits behind the trial share and automatic rollback. Rolling back to the last good version never needs approval. Each kind of change climbs its own trust ladder, and only Rob moves it up.
 
 **Limits.**
 
@@ -282,7 +288,7 @@ Rob ruled out hard size limits on 2026-10-29. Progress credit bounds rework inst
 - how often Rob is asked, and whether his answer changed anything or only said "keep going";
 - the credit spent per merged piece.
 
-Proposed: after the first 25 requests, Rob reviews these numbers.
+Agreed (Q6): after the first 25 requests, Rob reviews these numbers.
 
 - If "keep going" is his usual answer, the reserve grows.
 - If stuck work runs too long before he hears about it, the reserve shrinks.
@@ -292,7 +298,7 @@ Proposed: after the first 25 requests, Rob reviews these numbers.
 Proposed:
 
 - **One PR per leaf.**
-- **At most W leaves in flight per repo,** starting at 2 and later adapting to measured capacity. Slice one uses 1. W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
+- **At most W leaves in flight per repo,** starting at 2 in slice two and later adapting to measured capacity (Q29). Slice one uses 1. W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
 - **Plan just in time.** A repo's next node gets planned when fewer than W leaves are waiting for a slot.
 - **Leaves span one repo.** A request that touches several repos splits into one child per repo, so no lock ever spans two gates.
 - **The parent checks the combined result.** After its last child closes, the parent runs its own acceptance check.
@@ -395,13 +401,13 @@ Decided by Rob on 2026-10-29:
 - **CLIProxyAPI:** TL3 uses the existing key for now.
 - **Sandbox:** `RobTand/tl3-sandbox` is private, with a small Python project. Its tests pass on PrismaBuild. CI and Mergify get wired in once the GitHub App and the runners exist.
 
-Proposed, to complete the design:
+Proposed to complete the design, and agreed where a decision is cited:
 
-- **Findings.** A finding stays on its node. Its node's postmortem marks it either "worth a request" or noise. The curator merges findings marked worth a request across nodes, and Rob sees one plain-language proposal per finding. Only his approval turns a finding into a new request, so findings can't recreate TL1's flood of issues.
+- **Findings.** A finding stays on its node. Its node's postmortem marks it either "worth a request" or noise. The curator merges findings marked worth a request across nodes, and Rob sees one plain-language proposal per finding. Only his approval turns a finding into a new request, so findings can't recreate TL1's flood of issues (Q14).
 - **Stopping a request.** The teardown order is the Stopping phase in `docs/state-table.md`.
-- **Root measures.** After the audit agrees, TL3 posts them to the issue in plain language, and planning starts. If Rob changes the request at any point, the current request stops as replaced, and a new request linked to the same issue starts from his new text.
+- **Root measures.** After the audit agrees, TL3 posts them to the issue in plain language as a note, and planning starts without waiting for Rob's approval (Q3). If Rob changes the request at any point, the current request stops as replaced, and a new request linked to the same issue starts on its own from his new text, under his original label (Q14).
 - **Intake trust.**
-  - Only issues carrying TL3's label enter, and the label event must come from Rob or a user he allows.
+  - Only issues Rob labels `tl3` enter. Labels added by anyone else are ignored, and Rob may allow other people later (Q2).
   - Every agent treats issue text, comments and repo content as material to work on, never as instructions.
   - Agents hold no secrets.
 - **Agent sandbox.**
@@ -409,18 +415,87 @@ Proposed, to complete the design:
   - Its only tools are files, search, PrismaBuild and Hindsight recall. It has no general shell, and commands run only on PrismaBuild, inside the containment profile.
   - Its network reaches CLIProxyAPI and nothing else.
 - **Incidents.**
-  - An incident is raised on every second failure of the same step, or when an outside service stalls.
-  - It carries a plain-language summary and shows in the status view.
+  - An incident is raised on every second failure of the same step, or when an outside service stalls (Q7).
+  - It carries a plain-language summary, shows in the status view, and goes on the pinned "TL3 operations" issue (Q17).
   - Dependent work waits while the rest carries on, and a leaf waiting on an incident gives back its slot.
   - Rob is asked only when the incident needs something only he can do, such as a login, a credential, a payment, hardware, or a step that keeps failing after its first incident.
 
+Settled in the grilling:
+
+- **Kinds of request.** Slices one and two take only code changes in one repo (Q1), and a code change is done when its PR merges with every goal confirmed (Q12). Research questions, reviews of existing PRs and work spanning several repos each get their own grilling and definition of done after slice two is solid (Q35).
+- **The decomposition trial.** Before slice two's splitting goes live, a dry run decomposes a handful of real requests, changing no code, to calibrate the fit limit and the forecast (Q34).
+- **W, the fit limit and the starting credit reserve:** 2 per repo in slice two (Q29), 100k (Q4), and 3 (Q6).
+- **The status view:** a read-only web page on the LAN plus a `tl3 status` command (Q24).
+
 Still open:
 
-- **Kinds of request.** For each kind of request, define how it ends: a code change, a research question, an existing PR, and work spanning several repos. Rob deferred this.
-- **The decomposition trial.**
 - **Discord** as the channel for escalations to Rob, set up later. Until then, comments on the request's issue.
 - **These can wait, because the defaults work:**
-  - W, the fit limit and the starting credit reserve;
   - scheduling that accounts for quota, and turbo mode;
-  - backups;
-  - the status view's layout.
+  - backups.
+
+## Decisions from the grilling
+
+On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the recommended answer each time except Q28 and Q30, where his own answer is recorded. Q36 to Q39 followed from his answer to Q30.
+
+**Scope and intake**
+
+- **Q1 Kinds of request:** slices one and two take only code changes in one repo.
+- **Q2 Who starts a request:** only Rob's `tl3` label. Labels added by anyone else are ignored, and he may allow other people later.
+- **Q3 Goals without sign-off:** once the audit agrees, TL3 posts the goals to the issue as a note and starts without waiting.
+- **Q4 Size of one change:** the largest piece whose forecast fits in about 100k of the 150k context, tuned later from MLflow data. Slice one asks Rob to narrow anything bigger.
+- **Q12 Done:** the PR merges, the checks and the independent review confirm every goal, and TL3 posts a plain-language summary and closes the issue. An unmet goal means it isn't done, unless Rob accepts it as is, which comes in slice two.
+- **Q13 Repos:** slice one serves only `tl3-sandbox`. Slice two adds one real repo, which Rob picks then. TL3's own repo comes only after slice two.
+- **Q14 Requests TL3 files:** a replacement from "change the request" starts on its own under Rob's label. Findings become requests only once he approves them.
+- **Q15 Rob's comments:** an agent classifies each comment of his on an active request as a change, stop, pause, resume, answer or remark, and asks one short question when unsure.
+- **Q21 Complaints after close:** a comment from Rob saying something is wrong with closed work files a linked correction request. It carries his authorization and can include a revert.
+- **Q35 Other kinds of request:** research questions, reviews of existing PRs and multi-repo work each get their own grilling and definition of done after slice two.
+
+**Guarding the checks**
+
+- **Q5 Protected config:** CI and Mergify config need Rob's approval. Test configuration needs a second, independent review aimed only at weakened checks, plus a note to Rob.
+- **Q16 Test configuration:** the files that decide which tests run or how results are reported: pytest's settings, `conftest.py`, tox and nox files, and test scripts CI calls. The tests themselves don't count.
+- **Q40 Checks:** every goal is checked as demonstrating, regression or behavior-preserving. TL3 runs the tests itself, and a missing or skipped test fails.
+- **Q41 Approval:** an approval covers one exact commit. Any new commit, including a clean catch-up onto main, is tested and reviewed again. The first 3 catch-ups per piece are free, and later ones cost credit.
+
+**Failures, credit and Rob's attention**
+
+- **Q6 Credit:** starting credit is the request's size in pieces plus a reserve of 3. The first 3 rechecks after rebases are free. The numbers are reviewed after the first 25 requests.
+- **Q7 Repeated failures:** every second failure of the same step raises an incident. A passing health check can clear the first, and only Rob can clear a later one.
+- **Q8 Notes:** only when something changes a request's course, such as a stop, a pause, a merge TL3 didn't approve or a re-plan. Routine steps show only in the status view.
+- **Q17 Incidents:** they go to one pinned "TL3 operations" issue in TL3's repo until Discord exists. Questions about a request stay on its issue.
+- **Q22 Model ladder:** attempts 1 and 2 use the default maker model, attempt 2 at maximum effort and budget. Attempt 3 uses the strongest model from a different family. Reviewers default to a different family from the maker.
+- **Q31 Escalation reports:** only the impact on the parent's goals, at most about 2,000 tokens. The parent can pull the evidence for one goal per escalation.
+
+**Order of work**
+
+- **Q29 W:** 2 changes in flight per repo in slice two, tuned later.
+- **Q30 What runs first:** Rob: "we should be pulling work off that blocks the most other work. I don't really care about starvation." So there is no rule against starvation.
+- **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
+- **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later.
+- **Q38 Shared files:** the age rule goes. Whichever piece unblocks more gets the file, with ties going to the older piece.
+- **Q39 Agent pool:** the same ordering. Postmortems run only on spare capacity.
+
+**Proofs**
+
+- **Q9 When they run:** as a required Mergify check on changes to the kernel or its proofs, plus a nightly full run.
+- **Q10 Bounds:** 2 to 3 requests, W of at most 2, and abstract commit ids. They rise to 3 or more requests when slice two allows more than one change per repo.
+- **Q18 Where they run:** as Mergify CI on the fleet's runners, at most 8 at a time.
+- **Q27 Changing the rules:** the state table is the single source of truth. A rule change needs Rob's approval, including a rule that comes from a bug Kani or a test finds. A clarification doesn't.
+
+**Building and proving slice one**
+
+- **Q11 Slice one is done** when 10 real sandbox issues merge with no question to Rob, and a fault-injection run recovers every time.
+- **Q19 Seed issues:** 12 on the sandbox, for Rob to label.
+- **Q20 Fault drills:** kill the controller mid-step, kill a worker, drop webhooks, make CI flaky, force a conflict and lose a PrismaBuild worker. A reboot is simulated by restarting every TL3 service.
+- **Q23 Prompts:** in TL3's repo, protected and changed only through reviewed PRs. MLflow traces every run, and its prompt registry takes over in slice three.
+- **Q24 Status view:** a read-only web page on the LAN, served from dl380g10, plus `tl3 status`.
+- **Q25 Where the controller runs:** the controller and Postgres stay on dl380g10 despite its kernel bug. This is revisited if crashes keep happening.
+- **Q26 GitHub App:** the manifest is prepared so Rob only clicks "create". It is installed on `tl3-sandbox` first.
+- **Q28 Committing:** Rob asked for a private GitHub repo, `RobTand/trustladderiii`, rather than local commits only.
+
+**Slice three and later**
+
+- **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. The judge grades everything that needed a fix, a retry or an escalation, plus a random share of clean work. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
+- **Q33 Earned autonomy:** a kind of change applies without Rob only after he grants that kind, following a clean record. Rolling back never needs approval.
+- **Q34 Decomposition dry run:** before splits go live, a dry run decomposes real requests without changing code, to calibrate the fit limit and the forecast.
