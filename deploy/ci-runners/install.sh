@@ -36,6 +36,14 @@ install -d -m 700 "$HOME/.local/lib/tl3-ci-runners" "$HOME/.config/tl3-ci-runner
 install -d -m 755 "$HOME/.config/systemd/user"
 install -C -m 700 "$here/runner-slot.sh" "$HOME/.local/lib/tl3-ci-runners/runner-slot.sh"
 install -C -m 644 "$here/$prefix@.service" "$HOME/.config/systemd/user/$prefix@.service"
+# The shared tag can change under either profile. Move every installed pin
+# before removing any old image, while preserving each profile's CPU placement.
+previous_images=("$previous_image")
+for installed_config in "$HOME/.config/tl3-ci-runners/"*.env; do
+    [[ -f "$installed_config" ]] || continue
+    previous_images+=("$(sed -n 's/^CI_RUNNER_IMAGE=//p' "$installed_config")")
+    sed -i "s/^CI_RUNNER_IMAGE=.*/CI_RUNNER_IMAGE=$image/" "$installed_config"
+done
 config="$HOME/.config/tl3-ci-runners/runner.env"
 if [[ "$profile" == sandbox ]]; then
     config="$HOME/.config/tl3-ci-runners/$prefix.env"
@@ -51,9 +59,15 @@ systemctl --user daemon-reload
 for ((slot=1; slot<=slots; slot++)); do
     systemctl --user enable --now "$prefix@$slot.service"
 done
-if [[ -n "$previous_image" && "sha256:${previous_image#sha256:}" != "$image" ]]; then
-    # An active slot can still own this image. Never force removal or prune.
+declare -A seen_images=()
+for previous_image in "${previous_images[@]}"; do
+    previous_image="sha256:${previous_image#sha256:}"
+    [[ "$previous_image" =~ ^sha256:[a-f0-9]{64}$ && "$previous_image" != "$image" ]] || continue
+    [[ ! ${seen_images[$previous_image]+x} ]] || continue
+    seen_images[$previous_image]=1
+    # Every installed environment now pins $image. Active containers may
+    # still own an old image, so never force removal or prune.
     podman image rm "$previous_image" \
         || echo "Previous image $previous_image is still referenced; remove it after idle slots restart" >&2
-fi
+done
 printf 'Installed image %s; requested %s active slots\n' "$image" "$slots"

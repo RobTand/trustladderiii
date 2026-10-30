@@ -1,10 +1,11 @@
 # Run the sandbox queue trials
 
-Phase A prepares these commands; it does not run them. Run phase B only after
-the coordinator merges the sandbox configuration PR adding
-`merge_bot_account: RobTand`. Keep `branch_protection_injection_mode: none`.
-Sandbox PR #28 has installed CI on fleet runners. No successful queue merge
-under the new configuration is claimed here.
+Phase B ran after sandbox PR #29 merged with `merge_bot_account: RobTand`
+and `branch_protection_injection_mode: none`. Sandbox PR #28 installed fleet CI.
+[The trial results](TRIALS.md#phase-b-queue-trials) record the successful queue
+merge of sandbox #30, separate draft #32, the missing-approval refusal and cleanup.
+The separate main-advancement trial remains unrun. The commands below are the
+runbook for those trials, not a claim that every listed trial has run.
 
 Rob told the coordinator on 2026-10-30, “Everything that you want approved is
 approved.” The coordinator explicitly applies that consent to Mergify merging

@@ -106,9 +106,11 @@ before setting container CPU placement.
 The installer rebuilds through Podman's cache, installs the scripts and unit,
 records the immutable local image ID, reloads systemd, and enables one slot.
 Rerunning it converges on the same files without restarting an active job.
-After a successful retag it removes only the previous image ID, without force.
-If a container still references that image, removal is deferred. Remove that
-same ID after the idle-slot rollout. Never use `podman image prune`, since other
+After a successful retag it updates the image ID in every installed profile's
+environment file, preserving each profile's CPU placement. It then removes only
+previous image IDs that no environment file references, without force. If a
+container still references an old image, removal is deferred. Remove that same
+ID after the idle-slot rollout. Never use `podman image prune`, since other
 projects have untagged images in the same store.
 Use `install.sh 0` to install without starting slots. This does not stop slots
 that are already active.
@@ -164,7 +166,7 @@ The unit files reproduce the installed units on dl380g10. TL3 keeps
 The sandbox uses `~/.config/tl3-ci-runners/tl3-ci-runner-sandbox.env` and
 passes `%i %p`. Both units disable start limiting and use the same restart
 backoff and notifications. A sandbox reinstall preserves its CPU placement
-and does not edit TL3's environment or unit.
+and updates only the image ID in TL3's environment, leaving its unit untouched.
 `install.sh 0 sandbox` updates files without enabling additional slots.
 Reinstalling does not restart active services.
 

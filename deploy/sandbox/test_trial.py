@@ -83,12 +83,13 @@ class TrialTests(unittest.TestCase):
 
     def test_advancement_rejects_rewritten_or_substituted_original(self):
         before, draft, after = snapshots()
-        for field, value in (("head", {"sha": "rewritten", "ref": "tl3/trial"}),
-                             ("number", 999)):
+        for field, value, message in (
+                ("head", {"sha": "rewritten", "ref": "tl3/trial"}, "advanced: approved head changed"),
+                ("number", 999, "advanced: original PR changed")):
             advanced = copy.deepcopy(before)
             advanced["main"] = "main-advanced"
             advanced["pull"][field] = value
-            self.assertTrue(verify(before, draft, after, advanced))
+            self.assertEqual(verify(before, draft, after, advanced), [message])
 
 
 if __name__ == "__main__":
