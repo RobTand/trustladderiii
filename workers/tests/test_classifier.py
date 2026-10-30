@@ -90,6 +90,7 @@ def test_every_kind_through_protocol(tmp_path, request_doc, body, closed, reply)
     ("cleanup_cant_finish", ["retry", "mark_handled"], "Fixed the cause. Retry.", "retry", {}),
     ("cleanup_cant_finish", ["retry", "mark_handled"], "I handled that cleanup step.", "mark_handled", {}),
     ("unclear_answer", ["retry", "mark_handled"], "I meant retry.", "retry", {}),
+    ("audit_disagreement", ["continue", "change_request", "stop"], "My answer is unclear.", "unclear", {}),
     ("audit_disagreement", ["continue", "change_request", "stop"], "For question-7, stop.", "stop", {}),
 ])
 def test_offered_answers_through_protocol(tmp_path, request_doc, kind, answers, body, answer, data):

@@ -12,6 +12,21 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
     }
 }
 
+pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'static str> {
+    use crate::executor::{CommentKind, Output};
+    match delivery.output {
+        Output::Comment {
+            kind: CommentKind::Classify,
+            ..
+        } => Some("classifier"),
+        Output::Effect {
+            kind: tl3_kernel::EffectKind::StartRun(r),
+            ..
+        } => role(r),
+        _ => None,
+    }
+}
+
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
     static INGEST: OnceLock<jsonschema::Validator> = OnceLock::new();
     static PLANNER: OnceLock<jsonschema::Validator> = OnceLock::new();
@@ -78,6 +93,9 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
 }
 
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
+    if role == "classifier" {
+        return classifier_schema(inputs, false);
+    }
     static VALIDATORS: OnceLock<(
         jsonschema::Validator,
         jsonschema::Validator,
@@ -184,6 +202,64 @@ fn forecast(reply: &Value) -> Result<(u64, u64)> {
     Ok((tokens, fit))
 }
 
+fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
+    static INPUT: OnceLock<jsonschema::Validator> = OnceLock::new();
+    static REPLY: OnceLock<jsonschema::Validator> = OnceLock::new();
+    let (cell, schema) = if reply {
+        (
+            &REPLY,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
+        )
+    } else {
+        (
+            &INPUT,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-input.json"),
+        )
+    };
+    let validator = cell.get_or_init(|| {
+        jsonschema::validator_for(&serde_json::from_str::<Value>(schema).unwrap()).unwrap()
+    });
+    if validator.is_valid(value) {
+        Ok(())
+    } else {
+        Err(Error::Invalid("classifier value breaks role schema"))
+    }
+}
+
+pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<()> {
+    classifier_schema(reply, true)?;
+    let closed = inputs["state"]["closed"] == true;
+    let kind = reply["kind"].as_str().unwrap();
+    if (closed && !matches!(kind, "complaint" | "remark" | "unsure"))
+        || (!closed && kind == "complaint")
+    {
+        return Err(Error::Invalid(
+            "classification does not apply to request state",
+        ));
+    }
+    if kind == "answer" {
+        let question = &inputs["state"]["open_question"];
+        if question.is_null()
+            || reply["question_id"] != question["id"]
+            || (reply["answer"] != "unclear"
+                && !question["answers"]
+                    .as_array()
+                    .is_some_and(|a| a.contains(&reply["answer"])))
+            || (reply["answer"] == "add_credit" && reply["amount"].as_u64().is_none())
+        {
+            return Err(Error::Invalid(
+                "classifier answer does not name its offered question",
+            ));
+        }
+    }
+    if (kind == "change_request" || reply["answer"] == "change_request")
+        && reply["new_text"].as_str().unwrap().trim().is_empty()
+    {
+        return Err(Error::Invalid("changed request text is empty"));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Result<()> {
     if let Some(forecast) = reply.get("forecast") {
         let overhead = settings["overhead_tokens"].as_object().and_then(|values| {
@@ -206,3 +282,72 @@ pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Res
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod classifier_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn classifier_rejects_unsafe_or_unoffered_answers() {
+        let mut inputs = json!({"comment": {"author": "owner", "body": "continue"}, "state": {
+            "phase": "AwaitingRob", "closed": false,
+            "open_question": {"id": "17", "kind": "out_of_credit", "answers": ["add_credit", "change_request", "stop"]}
+        }});
+        validate_inputs("classifier", &inputs).unwrap();
+        for amount in [1, 100] {
+            validate_classification(&inputs, &json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": amount})).unwrap();
+        }
+        for reply in [
+            json!({"kind": "answer", "question_id": "16", "answer": "stop"}),
+            json!({"kind": "answer", "question_id": "17", "answer": "continue"}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 0}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 101}),
+            json!({"kind": "answer", "question_id": "17", "answer": "add_credit", "amount": 1.0}),
+            json!({"kind": "change_request", "new_text": " "}),
+            json!({"kind": "pause", "extra": true}),
+            json!({"kind": "complaint", "summary": "Broken", "revert": true}),
+        ] {
+            assert!(validate_classification(&inputs, &reply).is_err(), "{reply}");
+        }
+        inputs["state"]["closed"] = json!(true);
+        inputs["state"]["open_question"] = Value::Null;
+        for kind in ["pause", "resume", "stop"] {
+            assert!(validate_classification(&inputs, &json!({"kind": kind})).is_err());
+        }
+        for revert in [false, true] {
+            validate_classification(
+                &inputs,
+                &json!({"kind": "complaint", "summary": "Broken", "revert": revert}),
+            )
+            .unwrap();
+        }
+        assert!(
+            validate_classification(&inputs, &json!({"kind": "complaint", "summary": "Broken"}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unsure_is_one_nonempty_line_of_at_most_300_characters() {
+        let inputs = json!({"state": {"closed": false}});
+        validate_classification(
+            &inputs,
+            &json!({"kind": "unsure", "question": "é".repeat(300)}),
+        )
+        .unwrap();
+        for question in [
+            "".into(),
+            " ".into(),
+            "é".repeat(301),
+            "First?\nSecond?".into(),
+            "First?\rSecond?".into(),
+            "First?\u{2028}Second?".into(),
+        ] {
+            assert!(
+                validate_classification(&inputs, &json!({"kind": "unsure", "question": question}))
+                    .is_err()
+            );
+        }
+    }
+}

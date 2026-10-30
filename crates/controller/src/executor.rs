@@ -1,14 +1,59 @@
 use serde::{Deserialize, Serialize};
-use tl3_kernel::{Ack, Event, NodeId, Out};
+use tl3_kernel::{Ack, EffectKind, Event, HeadId, NodeId, Notice};
 
 use crate::Result;
+
+/// Deliveries include ingress work that never enters the kernel.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Output {
+    Effect {
+        node: NodeId,
+        seq: u64,
+        kind: EffectKind,
+        head: Option<HeadId>,
+    },
+    Notice {
+        node: NodeId,
+        notice: Notice,
+    },
+    Comment {
+        node: NodeId,
+        kind: CommentKind,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum CommentKind {
+    Classify,
+    Clarify,
+    FileCorrection,
+}
+
+impl From<tl3_kernel::Out> for Output {
+    fn from(output: tl3_kernel::Out) -> Self {
+        match output {
+            tl3_kernel::Out::Effect {
+                node,
+                seq,
+                kind,
+                head,
+            } => Self::Effect {
+                node,
+                seq,
+                kind,
+                head,
+            },
+            tl3_kernel::Out::Notice { node, notice } => Self::Notice { node, notice },
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Adapter tickets add the payload fields their clients need here.
 pub struct Delivery {
     pub key: String,
     pub epoch: i64,
-    pub output: Out,
+    pub output: Output,
     pub generation: u64,
     pub head_sha: Option<String>,
     pub repository: crate::Repository,
@@ -27,12 +72,18 @@ pub struct Delivery {
     pub note: Option<String>,
     #[serde(default)]
     pub question_context: Option<serde_json::Value>,
+    #[serde(default)]
+    pub steering: Option<crate::steering::Task>,
+    #[serde(default)]
+    pub request_text: Option<String>,
 }
 
 impl Delivery {
     pub fn node(&self) -> NodeId {
         match self.output {
-            Out::Effect { node, .. } | Out::Notice { node, .. } => node,
+            Output::Effect { node, .. }
+            | Output::Notice { node, .. }
+            | Output::Comment { node, .. } => node,
         }
     }
 }
@@ -40,6 +91,15 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Classified {
+        key: String,
+        reply: Option<serde_json::Value>,
+    },
+    LinkedRequest {
+        repository: crate::Repository,
+        issue: tl3_github::Issue,
+        original: NodeId,
+    },
     Queue(crate::adapters::mergify::QueueFact),
     GitHubComment {
         repository: crate::Repository,
@@ -171,11 +231,15 @@ pub enum Upstream {
     Worktrees,
 }
 
-pub fn upstream(output: Out) -> Upstream {
+pub fn upstream(output: Output) -> Upstream {
     use tl3_kernel::EffectKind::*;
     match output {
-        Out::Notice { .. } => Upstream::GitHub,
-        Out::Effect { kind, .. } => match kind {
+        Output::Comment {
+            kind: CommentKind::Classify,
+            ..
+        } => Upstream::Workers,
+        Output::Comment { .. } | Output::Notice { .. } => Upstream::GitHub,
+        Output::Effect { kind, .. } => match kind {
             StartRun(_) | StopRun => Upstream::Workers,
             SubmitChecks | WithdrawJob => Upstream::PrismaBuild,
             StartRebase | PrepareWorktree | Push | RemoveWorktree => Upstream::Worktrees,

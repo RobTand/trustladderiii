@@ -10,9 +10,10 @@ use tl3_controller::{
     Repository,
     adapters::prismabuild::{Adapter, Check, CheckRun, Kind, Settings},
     cli::Input,
+    executor::Output as Out,
     executor::{Delivery, Executor, Observation},
 };
-use tl3_kernel::{EffectKind, NodeId, Out};
+use tl3_kernel::{EffectKind, NodeId};
 use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 
 fn git(repo: &Path, args: &[&str]) -> String {
@@ -78,6 +79,8 @@ fn fixture(root: &Path) -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        steering: None,
+        request_text: None,
         question_context: None,
         question: None,
         job_generation: Some(1),
