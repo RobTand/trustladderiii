@@ -112,7 +112,10 @@ def _score(case, message):
     if isinstance(reply, dict):
         destructive = reply.get('kind') in ('stop', 'change_request') or (
             reply.get('kind') == 'answer' and reply.get('answer') in ('stop', 'change_request'))
-        row['destructive'] = case['expected']['kind'] in {'remark', 'unsure'} and destructive
+        expected = case['expected']
+        same_kind = reply.get('kind') == expected['kind'] and (
+            reply.get('kind') != 'answer' or reply.get('answer') == expected['answer'])
+        row['destructive'] = destructive and not same_kind
     try:
         if message.tool_calls or message.invalid_tool_calls:
             raise ValueError('classifier requested tools')
@@ -149,13 +152,15 @@ def evaluate(cases, request, *, model_factory=None):
             row = _score(case, message)
         rows.append(row)
         print(f"classifier evaluation: {len(rows)}/{len(cases)}", file=sys.stderr, flush=True)
-    by_kind = {}
+    by_kind, by_category = {}, {}
     for row in rows:
-        score = by_kind.setdefault(row['expected']['kind'], {'correct': 0, 'total': 0})
-        score['total'] += 1
-        score['correct'] += int(row['correct'])
-    for score in by_kind.values():
-        score['accuracy'] = score['correct'] / score['total']
+        for groups, key in [(by_kind, row['expected']['kind']), (by_category, row['category'])]:
+            score = groups.setdefault(key, {'correct': 0, 'total': 0})
+            score['total'] += 1
+            score['correct'] += int(row['correct'])
+    for groups in [by_kind, by_category]:
+        for score in groups.values():
+            score['accuracy'] = score['correct'] / score['total']
     usage = {key: sum(row['usage'][key] for row in rows if row['usage'] is not None)
              for key in ['prompt_tokens', 'completion_tokens', 'total_tokens']}
     complete = all(row['usage'] is not None for row in rows)
@@ -165,7 +170,7 @@ def evaluate(cases, request, *, model_factory=None):
         'model': request['model'], 'cases_sha256': hashlib.sha256(
             json.dumps(cases, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
         'prompt_sha256': hashlib.sha256(prompt).hexdigest(),
-        'by_kind': by_kind, 'usage': usage, 'usage_complete': complete,
+        'by_kind': by_kind, 'by_category': by_category, 'usage': usage, 'usage_complete': complete,
         'destructive_misses': [row['id'] for row in rows if row['destructive']],
         'misses': misses, 'results': rows, 'passed': not misses and complete,
         'mlflow': 'not wired; retain this report for later import',
@@ -173,7 +178,9 @@ def evaluate(cases, request, *, model_factory=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        'Exit codes: 0: all cases pass; 1: ordinary misses; '
+        '2: setup or report failure; 3: destructive misses or missing usage.'))
     parser.add_argument('--config', required=True, type=Path)
     parser.add_argument('--cases', type=Path, help='defaults to the packaged labelled set')
     parser.add_argument('--output', type=Path, help='also save the JSON report here')
@@ -185,6 +192,8 @@ def main(argv=None):
         if args.output:
             args.output.write_text(document)
         print(document, end='')
+        if report['destructive_misses'] or not report['usage_complete']:
+            return 3
         return 0 if report['passed'] else 1
     except Exception:
         print('classifier evaluation failed; details suppressed', file=sys.stderr)

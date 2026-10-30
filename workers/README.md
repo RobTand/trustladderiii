@@ -392,18 +392,21 @@ questions, complaint summaries, guidance and replacement text is checked by the
 existing contract, not by exact string matching. This does not judge whether
 free wording preserves every detail of the comment.
 
-Stdout is one JSON report with accuracy per expected kind, every miss, every
-case result, model settings, prompt and set hashes, and token usage. LangChain
+Stdout is one JSON report with accuracy per expected kind in `by_kind` and per
+comment category in `by_category`, every miss, every case result, model settings,
+prompt and set hashes, and token usage. LangChain
 maps the proxy's streamed `usage` fields to input, output and total tokens;
 the report names them `prompt_tokens`, `completion_tokens` and `total_tokens`.
 Missing usage is recorded as null per case. Totals then cover only cases with
 usage, and `usage_complete` is false. A report never claims a pass with missing
 usage. Stderr shows progress counts without provider diagnostics.
 
-A stop or change_request on a remark or unsure label is a destructive miss,
-including either kind returned as an answer. The report flags it even if the
-reply fails the state contract. Exit 0 means every label matched and every
-usage record arrived. Exit 1 means a miss or missing usage; exit 2 means setup
-or report writing failed. `--output FILE` also saves the full JSON report.
+A stop or change_request is a destructive miss unless the label expects that
+same kind. This includes either kind returned as an answer, which must match
+both the labelled kind and answer choice. The report flags destructive misses
+even if the reply fails the state contract. Exit 0 means every label matched
+and every usage record arrived. Exit 1 means ordinary misses. Exit 2 means
+setup or report writing failed. Exit 3 means any destructive miss or missing
+usage. `--output FILE` also saves the full JSON report.
 Retain it with the PrismaBuild logs. MLflow is not wired in this checkout;
 the report remains available for import when that integration lands.
