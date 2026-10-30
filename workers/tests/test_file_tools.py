@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 
@@ -379,3 +380,25 @@ def test_read_preserves_line_offsets_and_crlf_at_byte_boundary(tree, ending):
             )
         else:
             assert first == body + ending + "\n[Truncated. Continue with offset=1, column=0.]"
+
+
+def test_concurrent_enumerations_each_see_every_entry(tree):
+    # Models make parallel tool calls, which Deep Agents runs in threads.
+    root, _ = tree
+    names = [f"file{index:02}.py" for index in range(40)]
+    for name in names:
+        (root / name).write_text("needle\n")
+    with Worktree(root) as worktree:
+        tools = tools_for(worktree, READ_TOOLS)
+
+        def enumerate_root(_):
+            listed = [entry["path"] for entry in tools["list"].invoke({})["entries"]]
+            globbed = tools["glob"].invoke({"pattern": "*.py"})["entries"]
+            grepped = {match["path"] for match in tools["grep"].invoke({"pattern": "needle"})["matches"]}
+            return listed, globbed, grepped
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            for listed, globbed, grepped in pool.map(enumerate_root, range(400)):
+                assert listed == sorted(names + ["src"])
+                assert globbed == names
+                assert grepped == set(names)
