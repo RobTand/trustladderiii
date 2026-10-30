@@ -7,3 +7,9 @@ publish = false
 [lints.rust]
 unsafe_code = "forbid"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }

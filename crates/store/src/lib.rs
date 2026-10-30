@@ -72,6 +72,22 @@ impl Store {
         Ok(store)
     }
 
+    /// Hold a session advisory lock for the sole controller writer. Status readers
+    /// use ordinary connections. Dropping this connection releases ownership.
+    pub fn claim_controller(&mut self) -> Result<()> {
+        if !self
+            .client
+            .query_one(
+                "SELECT pg_try_advisory_lock($1)",
+                &[&0x544c33434f4e5452_i64],
+            )?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::Invalid("another controller owns this database"));
+        }
+        Ok(())
+    }
+
     fn migrate(&mut self) -> Result<()> {
         let mut tx = self.client.transaction()?;
         tx.query_one(
