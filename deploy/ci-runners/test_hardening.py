@@ -61,6 +61,8 @@ class Hardening(unittest.TestCase):
         for notify, podman in zip(*[iter(self.events.read_text().splitlines())] * 2):
             self.assertIn("RESTART_RESET=1", notify)
             self.assertTrue(podman.startswith("podman run "))
+            self.assertIn("--sdnotify=ignore", podman,
+                          "job containers must not receive the host notification socket")
         print("ten quick exits: 10/10; registration resets: 10/10; start limit disabled")
 
     def test_registration_error_records_status_only(self):
