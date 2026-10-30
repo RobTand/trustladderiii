@@ -1,6 +1,5 @@
 """Real maker graph with a scripted model, recorded checks and fake recall."""
 import json
-import os
 from pathlib import Path
 import runpy
 import socket
