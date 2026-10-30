@@ -786,6 +786,7 @@ def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, mo
     root = Path(maker_request['worktree'])
     base = git(root, 'rev-parse', 'HEAD')
     maker_request['session_file'] = str(tmp_path / 'session.json')
+    maker_request['inputs']['context_size'] = 150000
     launcher = worker_process.LAUNCH
     if fix_round:
         accepted = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
