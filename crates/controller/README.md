@@ -148,7 +148,7 @@ response marks a gap, which is retried at the next receiver event. Catch-up stor
 transaction, including PRs and check results. Comment URLs compare repository
 names without case and use the trailing issue number. Rob's comments on issues
 and PRs enter `github_comments` in both paths, deduplicated by repository,
-installation and comment id. Ticket #14 classifies them.
+installation and comment id. The steering controller classifies them.
 
 Headers have a two-second total read deadline. Body reads get a separate total
 budget of at least two seconds, scaled at 1 MiB/s by the declared length and
@@ -190,13 +190,17 @@ rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
-Three rejected drafts return a permanent acknowledgement, so recovery does not
-restart the writer loop. A worker transport error stays uncertain.
+Three rejected comment clarifications post a fixed, checked request to rephrase.
+Other rejected notices fail permanently and post nothing. Writer transport errors
+leave the delivery unconfirmed.
+The reply uses the original effect marker, so recovery does not restart the
+writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13. Incident notices use the operations issue. Replacement notices stay on the fake
-until their ticket supplies a new request, not another comment.
+PR effects still use this module's fake until ticket #13. Incident notices use
+the operations issue. Replacements start a new request on the same issue from
+Rob's text. Corrections create linked issues with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
 It rejects both `:line` and `:line:column` suffixes.
@@ -636,6 +640,11 @@ For each new worker role, update these boundaries together:
 - Extend `lib.rs` `valid_role` and the document names in `translate`.
 - Add process scenarios for accepted replies, invalid output, recovery and stop.
 
+The classifier uses the supervisor's `classifier` mapping and the same schema validation,
+model configuration and output source. It has a separate comment job because
+it can run while request work continues or after the request closes. Its reply
+becomes `Observation::Classified`, rather than a reply to the request's current run.
+
 The forecaster supplies the size for `IngestDone`.
 Until these boundaries support a role, its starts and stops use the worker fake.
 
@@ -648,6 +657,72 @@ the three host actions, including controller and store process scenarios.
 After they pass, generate the portable full check with
 `python3 crates/controller/tools/worker_review_manifest.py workspace`.
 Submit each generated manifest with `pbcampaign.py --detach`.
+
+## Steering by comment
+
+`steering.rs` queues each stored comment from the configured actor once. Startup
+queues comments stored before steering was installed too. A durable `comment_jobs`
+row owns one classification per request at a time. The job stores the phase and
+open question shown to the classifier. A reply keeps that question's ID even if the question
+changes while the worker runs. Completed classifications leave the watch set and
+the pending queue. Stored comments retain the result while the request is open.
+After closure and delivery of any reply or correction, the controller deletes the
+comment row. Its retirement event keeps the comment ID for indexed deduplication.
+No timer scans comment history.
+
+Pause, resume, stop, change and named answers enter the kernel as its existing
+commands. The controller assigns their sequence when applying the comment.
+The classification, job retirement and command commit together. Remarks and
+stale answers emit no command. `Output::Comment` carries ingress work directly
+to adapters, without a kernel effect or notice.
+
+An unsure comment gets one short question through the writer's `clarification`
+message kind, checker and marker reconciliation. A failed classification retries
+twice with distinct attempt keys. After that, a checked question quotes a short
+excerpt and asks Rob to rephrase. Rejected writer drafts receive their violations
+for up to two reruns. Exhaustion posts a fixed, checked request to rephrase.
+`comment_questions` tracks the conversation by the original comment key. The next comment is classified with that conversation as
+context. Completed conversations leave the pending set. An explicit unclear
+answer to a kernel question becomes its existing `Answer::Unclear`; the kernel
+allows one clarification. Comment uncertainty never changes a kernel question.
+
+The existing `FileReplacement` notice starts a replacement on the same issue
+after closing as Replaced. The closure commit records Rob's new text in a
+`replacement_pending` row keyed by the old request. Intake or the next drive
+starts the new request from that row and deletes both replacement rows in the
+same commit. A late merge still corrects the old request and does not cancel
+the pending replacement. Startup needs no GitHub read. The issue stays open,
+and intake, status and comment routing use its latest request. A complaint on a
+closed request files a correction directly from the comment pipeline, keyed by comment ID. The closed node receives no event.
+Only corrections create a new issue. The GitHub adapter uses a stable marker, the
+`tl3` label and a link to Rob's authorizing comment. A correction records his request for a revert.
+Marker reconciliation recovers an issue created before an acknowledgement.
+Its issue query is bounded by the authorizing comment's timestamp and sorts by
+creation time. The same timestamp remains attached through retries and recovery.
+Both paths use the same authorized intake as a labelled request. The new ingest
+reads the replacement text or the correction issue's text and inherits the original repository snapshot
+through the durable request link. Links point to earlier requests, so chains
+terminate at the original materials. No SQL migration is needed. Store versions
+1 through 5 and `crates/kernel` are unchanged from main.
+
+The GitHub integration target drives `tl3d`, signed recorded webhook fixtures,
+the Python worker with a fake model, and a local REST server. It covers command
+deduplication, actor authorization, remarks, questions, stale answers, classifier
+reattachment, replacements, corrections and a queued PR merging while paused.
+In simulation, a `hold-merges` file in the fake records directory lets the
+Mergify fake retain a queued PR until the test supplies merge evidence.
+
+Generate ticket 14's three host checks from a clean commit:
+
+```bash
+python3 crates/controller/tools/steering_review_manifest.py hosts > /tmp/tl3-steering-hosts.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-steering-hosts.json
+```
+
+The `steering` selection runs the GitHub target, including steering races,
+on all three hosts. The `writer` selection runs the Python writer tests once.
+The `workspace` selection generates the portable full check. Inspect each
+terminal result, logs and CAS receipt. No kernel rule or proof changes.
 
 ## Planning evidence
 

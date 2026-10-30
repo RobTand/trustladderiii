@@ -1,3 +1,4 @@
+use tl3_controller::executor::Output as Out;
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 #[path = "../../store/tests/support/mod.rs"]
@@ -17,7 +18,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation, Upstream},
     status,
 };
-use tl3_kernel::{Command, EffectKind, Event, NodeId, Out, Phase};
+use tl3_kernel::{Command, EffectKind, Event, NodeId, Phase};
 use tl3_store::{EffectState, Reader, Store};
 
 #[derive(Clone)]

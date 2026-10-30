@@ -1,10 +1,11 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{EffectKind, NodeId, Out};
+use tl3_kernel::{EffectKind, NodeId};
 use tl3_kernel::{Event, Reply};
 
 pub struct Fake(Records);

@@ -1,3 +1,4 @@
+use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
 #[path = "workers/retirement.rs"]
@@ -26,7 +27,7 @@ use tl3_controller::{
     cli::Input,
     executor::{Delivery, Executor, Observation, Reconciliation},
 };
-use tl3_kernel::{EffectKind, Event, NodeId, Out, Phase, Reply, Role};
+use tl3_kernel::{EffectKind, Event, NodeId, Phase, Reply, Role};
 use tl3_store::{Commit, EffectState, EffectTransition, NewEffect, RowChange, Store};
 
 fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
@@ -126,6 +127,8 @@ fn delivery() -> Delivery {
         job_generation: None,
         question: None,
         question_context: None,
+        steering: None,
+        request_text: None,
     }
 }
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {

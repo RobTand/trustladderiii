@@ -1,3 +1,4 @@
+use crate::executor::Output as Out;
 use crate::{
     Controller, Result,
     executor::{Completion, Delivery, Look, Observation, Upstream, upstream},
@@ -6,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, UNIX_EPOCH};
-use tl3_kernel::{Ack, Event, Fact, NodeId, Out};
+use tl3_kernel::{Ack, Event, Fact, NodeId};
 use tl3_store::{Commit, EffectState, NewEffect, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -937,7 +938,7 @@ impl Controller {
             .max_by_key(|s| {
                 let seq = match s.delivery.output {
                     Out::Effect { seq, .. } => seq,
-                    Out::Notice { .. } => unreachable!(),
+                    Out::Notice { .. } | Out::Comment { .. } => unreachable!(),
                 };
                 (s.delivery.generation, seq)
             });

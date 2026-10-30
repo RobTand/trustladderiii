@@ -95,6 +95,11 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         for (index, node) in world.nodes.iter().enumerate() {
             let id = NodeId(index as u64);
             let request = request(&snapshot, id)?;
+            if crate::latest_request(&snapshot, &request.repo, request.issue)
+                .is_some_and(|r| r.id != index.to_string())
+            {
+                continue;
+            }
             let title = plain(&request.title);
             let title = if title.is_empty() {
                 "title not recorded"
