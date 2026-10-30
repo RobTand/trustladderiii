@@ -114,15 +114,21 @@ an upgrade and refuses upgrades with Sent, Uncertain, or Cancelling deliveries.
 `crates/controller/tools/verify-loom.sh` enables `cfg(loom)` only in the
 controller crate. Setting `RUSTFLAGS=--cfg loom` for every dependency would also
 replace Tokio's runtime internals, including the runtime used by Postgres and
-HTTP. `TL3_LOOM=1` avoids that dependency-wide change.
+HTTP. The optional `loom` Cargo feature enables the controller's shims through its
+build script. Default production builds do not include the Loom dependency.
 
-The five models call real code:
+The models call real code:
 
 - `Sources::register` and `Sources::run` apply inputs to a real controller and
   Postgres store. Two sources interleave distinct deliveries and repeated issue
   labels. Acknowledgements from committed intake events end the finite model.
-- `WebhookControl::gap` and `stop` preserve queue order. The current source uses
-  messages, replacing the atomics described in ticket #71.
+- Two durable webhook sources call the production request handler, including
+  `receive_ingress`, then wake `Sources::run`. The model checks application
+  before consumption, duplicate delivery suppression, and an empty pending queue.
+- `WebhookControl::gap` and `stop` preserve queue order. An HTTP model also calls
+  `Control::stop_with` and `accept_connections` with accept errors and a simulated
+  wake. It checks that stop precedes the wake and publishes earlier state through
+  release/acquire. The model opens no sockets.
 - `WorkerOutputSource::poll_once` reads actual partial JSONL output, persists
   progress and declared waits, and emits ingress inputs. A concurrent consumer
   checks persistence before publication. Restart rereads the same output and
@@ -131,18 +137,26 @@ The five models call real code:
   consumes the registration notification, and calls its real `poll` and client
   watcher against a local HTTP bell and recorded queue files. Separate models
   cover a reset and HTTP 503. Each checks that a live record emits no look, an
-  ending emits one look per batch, and removal leaves no awaited wait.
+  ending emits one look per batch, and removal leaves no awaited wait. The live
+  queue record exists before registration, since `poll` may select the watcher
+  while registration notifications remain queued.
 
-The full controller model exhausts a preemption bound of zero after the bound
-of one proved too slow. It still explores blocking source interleavings. The
-worker, bell, and control models exhaust a bound of one. The shared runner has
+The controller models exhaust a preemption bound of zero. They still explore
+blocking source interleavings. The earlier controller model took about 34 minutes
+at bound one on dl380g10. Set `TL3_LOOM_NIGHTLY=1` when submitting
+`verify-loom.sh` through PrismaBuild to opt into a nightly bound-one controller
+lane. The default lane stays at bound zero. `TL3_LOOM_BOUND=N` overrides the bound
+for the shared model runner, including focused bell reruns. The worker, bell,
+and webhook control models normally use bound one. HTTP stop uses bound two. The shared runner has
 a 10,000-branch limit that fails rather than skips an unfinished execution. The model body and I/O actors
 use 8 MiB stacks because Loom's default coroutine stack cannot run these library
 calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
 HTTP, Tokio scheduling, and socket deadlines remain external operations. A sixth
 model checks that the channel shim rejects sends after receiver drop. Loom 0.7
-does not model receiver timeouts or sender disconnection; the finite controller
-model ends through an explicitly acknowledged source error. Ordinary channel
+does not model the timed-look branch: Loom 0.7.2's `recv_timeout` is
+`unimplemented!`. The models keep the controller out of that branch. Loom also
+does not model sender disconnection, so the finite controller models end through
+an explicitly acknowledged source error. Ordinary channel
 tests cover standard-library disconnection. The
 worker fixture serializes file append steps against individual source passes;
 it includes an incomplete line and checks every resulting input. These models
@@ -152,8 +166,10 @@ interleaving. The process suites and SIGKILL simulation cover process loss.
 `loom_mutants.py MUTANT` changes one production site in a scratch checkout,
 prints its diff, runs the relevant model, and requires the expected assertion
 or Loom deadlock. It restores the source afterward. `--diff` only prints the
-patch. Mutants cover input loss, a lost gap, progress replay, progress without
-persistence, wait registration, the awaited key, and reset or outage rereads.
+patch. Mutants cover input loss, wake before durable receipt, consumption before
+application, missing owner drain, a lost gap, stop loss and reordering, relaxed
+stop atomics, progress replay, progress without persistence, wait registration,
+the awaited key, and reset or outage rereads.
 Run mutations through PrismaBuild, just like the green suite.
 
 ## Fleet verification
