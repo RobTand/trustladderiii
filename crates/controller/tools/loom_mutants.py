@@ -11,6 +11,12 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
 MUTANTS = {
+    "persistence": (
+        "crates/controller/src/adapters/workers/source.rs",
+        '                    store.record_worker_progress(\n                        &delivery.key,\n                        *number,\n                        run.offset\n                            .try_into()\n                            .map_err(|_| Error::Invalid("worker output offset overflow"))?,\n                        value["unit"].as_str().unwrap(),\n                        wait.as_ref(),\n                    )?;',
+        "                    // Mutant: publish without recording durable progress.",
+        "loom_worker_", "progress published before persistence",
+    ),
     "ingress": (
         "crates/controller/src/ingress.rs",
         "            apply(controller, input)?;",
