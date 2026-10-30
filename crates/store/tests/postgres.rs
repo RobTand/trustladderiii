@@ -33,6 +33,7 @@ fn main() {
         ("read_only_reader", read_only_reader),
         ("reader_schema_versions", reader_schema_versions),
         ("arrival_within_transaction", arrival_within_transaction),
+        ("ingress_retirement", ingress_retirement),
     ];
     for (name, test) in &cases {
         let settings = database.create(name);
@@ -812,4 +813,91 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
         Reader::open(settings).err().unwrap().to_string(),
         "database not initialized"
     );
+}
+
+fn ingress_retirement(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    store
+        .register_ingress_translators(&["first", "second"])
+        .unwrap();
+    let payload = b"{ \"zen\": \"raw bytes\" }";
+    for n in 0..103 {
+        assert!(
+            store
+                .receive_ingress("github-webhook", &format!("delivery-{n}"), "ping", payload)
+                .unwrap()
+        );
+    }
+    assert!(
+        !store
+            .receive_ingress("github-webhook", "delivery-0", "ping", payload)
+            .unwrap()
+    );
+    let batch = store.pending_ingress().unwrap();
+    assert_eq!(batch.len(), 100);
+    assert_eq!(batch[0].payload, payload);
+    let mut last = 0;
+    for stored in batch {
+        last = stored.sequence;
+        store.consume_ingress(last).unwrap();
+    }
+    store.advance_translator("first", last).unwrap();
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        100,
+        "second still needs these rows"
+    );
+    store.advance_translator("second", last).unwrap();
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        3,
+        "last cursor retired the first batch"
+    );
+    for stored in store.pending_ingress().unwrap() {
+        last = stored.sequence;
+        store.advance_translator("first", last).unwrap();
+        store.advance_translator("second", last).unwrap();
+        assert!(
+            !store.ingress_after(last - 1).unwrap().is_empty(),
+            "intake has not consumed it yet"
+        );
+        store.consume_ingress(last).unwrap();
+    }
+    assert!(store.ingress_after(0).unwrap().is_empty());
+    drop(store);
+    let mut store = Store::open(settings).unwrap();
+    store
+        .register_ingress_translators(&["first", "second", "later"])
+        .unwrap();
+    assert_eq!(
+        store.translator_cursor("later").unwrap(),
+        last,
+        "new consumers start at the durable intake position even after deletion"
+    );
+    store
+        .receive_ingress("github-webhook", "recent", "ping", payload)
+        .unwrap();
+    let recent = store.pending_ingress().unwrap()[0].sequence;
+    assert_eq!(store.ingress_after(last).unwrap().len(), 1);
+    store.consume_ingress(recent).unwrap();
+    store
+        .register_ingress_translators(&["first", "second", "later", "latest"])
+        .unwrap();
+    assert_eq!(
+        store.translator_cursor("latest").unwrap(),
+        recent,
+        "late consumers skip retained history too"
+    );
+    store.advance_translator("first", recent).unwrap();
+    store.advance_translator("second", recent).unwrap();
+    assert_eq!(store.ingress_after(0).unwrap().len(), 1);
+    store.advance_translator("later", recent).unwrap();
+    assert!(store.ingress_after(0).unwrap().is_empty());
+    store
+        .receive_ingress("github-webhook", "without-translators", "ping", payload)
+        .unwrap();
+    let sequence = store.pending_ingress().unwrap()[0].sequence;
+    store.register_ingress_translators(&[]).unwrap();
+    store.consume_ingress(sequence).unwrap();
+    assert!(store.ingress_after(0).unwrap().is_empty());
 }

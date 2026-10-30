@@ -124,6 +124,12 @@ That thread applies intake or calls `observe`, then drains `drive_once`.
 `observe` stays the controller entry point for those observations. Adapters do
 not reach the controller. `ingress.rs` owns this loop and the stdin source. GitHub
 webhooks use a separate durable ingress table before notifying the same loop.
+One ingress connection inserts both webhooks and catch-up rows. Sequence cursors
+require this single writer so commit order follows allocation order. Ingress
+stores only the event name, delivery id and raw payload. Replay parses current
+event types and skips incompatible rows with a delivery-id log. Intake and every
+registered translator must pass a row before a cursor transaction deletes it.
+New translators start at the current intake position; catch-up supplies recent state.
 Reconciliation returns Found, Absent or Pending. Absent promises that a prior
 attempt has ended. Transport errors carry no such promise.
 

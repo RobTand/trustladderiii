@@ -446,7 +446,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
         store
             .receive_catch_up(
                 "rollback",
-                &[("one".into(), json!([])), ("".into(), json!([]))],
+                &[("one".into(), b"[]".to_vec()), ("".into(), b"[]".to_vec())],
                 &json!("must not advance")
             )
             .is_err()
@@ -880,6 +880,17 @@ fn receiver_limits(settings: &tl3_config::Store) {
         ("Transfer-Encoding: chunked", 400),
         ("Content-Length: 1\r\nContent-Length: 1", 400),
         ("Content-Length: -1", 400),
+        ("Content-Length: +5", 400),
+        ("Content-Length: 05", 400),
+        ("Content-Length: 00", 400),
+        ("Content-Length: \u{a0}5", 400),
+        ("Content-Length: 999999999999999999999999999999999999", 413),
+        ("Transfer-Encoding: chunked\r\nContent-Length: 5", 400),
+        ("Content-Length: 5\r\nTransfer-Encoding: chunked", 400),
+        (
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked",
+            400,
+        ),
         ("", 411),
     ] {
         assert!(
@@ -907,6 +918,19 @@ fn receiver_limits(settings: &tl3_config::Store) {
         ),
         202
     );
+    let mut large = fixture(false);
+    large["padding"] = json!("x".repeat(3 * 1024 * 1024));
+    assert_eq!(post(address, "multi-read", false, large, true), 202);
+    let body = br#"{"zen":"first request only"}"#;
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
+    mac.update(body);
+    let signature = hex::encode(mac.finalize().into_bytes());
+    let mut pipelined = format!("POST /github/events HTTP/1.1\r\nHost: first\r\nHost: second\r\nContent-Length:\t{} \t\r\nX-GitHub-Event: ping\r\nX-GitHub-Delivery: pipeline-first\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len()).into_bytes();
+    pipelined.extend_from_slice(body);
+    pipelined.extend_from_slice(b"POST /github/events HTTP/1.1\r\nContent-Length: 0\r\nX-GitHub-Delivery: pipeline-second\r\n\r\n");
+    let reply = raw_http(address, &pipelined);
+    assert!(reply.starts_with("HTTP/1.1 202"), "{reply}");
+    assert_eq!(reply.matches("HTTP/1.1").count(), 1);
     control.stop();
     handle.join().unwrap().unwrap();
     assert_eq!(
@@ -915,7 +939,7 @@ fn receiver_limits(settings: &tl3_config::Store) {
             .pending_ingress()
             .unwrap()
             .len(),
-        6
+        8
     );
 }
 struct WaitingSource(mpsc::Receiver<()>);
@@ -1105,53 +1129,76 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let pending = store.pending_ingress().unwrap();
     assert_eq!(pending.len(), 7);
-    for (_, payload) in &pending[..4] {
-        let GitHubDelivery::Webhook(delivery) = serde_json::from_value(payload.clone()).unwrap()
-        else {
-            panic!("webhook missing");
-        };
-        assert!(delivery.event.is_some(), "{}", delivery.event_name);
-        assert_eq!(delivery.payload, event_fixture(&delivery.event_name));
+    for stored in &pending[..4] {
+        let payload: Value = serde_json::from_slice(&stored.payload).unwrap();
+        assert_eq!(payload, event_fixture(&stored.event_name));
+        assert!(
+            payload.get("Webhook").is_none(),
+            "only raw evidence is stored"
+        );
     }
     let mut controller = controller(settings, root.path(), &api.uri());
+    let calls = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    controller.register_github_translator("retry-test", FailsOnce(true));
+    assert!(ingress::drain(&mut controller).is_err());
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    assert_eq!(
+        store
+            .translator_cursor("github-translator:retry-test")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.ingress_after(0).unwrap().len(),
+        7,
+        "failed consumer retains evidence"
+    );
     drain(&mut controller);
+    assert!(
+        store.ingress_after(0).unwrap().is_empty(),
+        "last cursor retires evidence"
+    );
     let rows = controller.snapshot().unwrap().rows;
     let comments: Vec<_> = rows
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 1);
-    assert_eq!(comments[0].value["issue"], 25);
+    assert_eq!(comments.len(), 2);
+    assert!(comments.iter().any(|row| row.value["issue"] == 25));
     assert!(store.pending_ingress().unwrap().is_empty());
-    // Register after intake has consumed the deliveries. A new consumer still sees all seven.
-    let calls = Arc::new(Mutex::new(vec![]));
-    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
-    drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 7);
-    drain(&mut controller);
-    assert_eq!(calls.lock().unwrap().len(), 7);
-    controller.register_github_translator("retry-test", FailsOnce(true));
-    assert!(ingress::drain(&mut controller).is_err());
-    assert!(
-        store
-            .ingress_cursor("github-translator:retry-test")
-            .unwrap()
-            .is_none()
-    );
+    let later = Arc::new(Mutex::new(vec![]));
+    controller.register_github_translator("later", RecordingTranslator(later.clone()));
     drain(&mut controller);
     assert!(
-        store
-            .ingress_cursor("github-translator:retry-test")
-            .unwrap()
-            .is_some()
+        later.lock().unwrap().is_empty(),
+        "a new translator skips history"
     );
+    assert_eq!(calls.lock().unwrap().len(), 7);
+    let (address, control, handle) = start_receiver(settings);
+    assert_eq!(
+        post_event(
+            address,
+            "recent",
+            "ping",
+            json!({"zen": "recent state"}),
+            true
+        ),
+        202
+    );
+    control.stop();
+    handle.join().unwrap().unwrap();
+    drain(&mut controller);
+    assert_eq!(later.lock().unwrap().len(), 1);
+    assert_eq!(calls.lock().unwrap().len(), 8);
+    assert!(store.ingress_after(0).unwrap().is_empty());
     drop(controller);
     let mut restored = self::controller(settings, root.path(), &api.uri());
     restored.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
     drain(&mut restored);
     assert_eq!(
         calls.lock().unwrap().len(),
-        7,
+        8,
         "consumer cursor survives restart"
     );
     assert_eq!(
@@ -1175,11 +1222,29 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
     let mut store = Store::open(settings).unwrap();
+    let mut older = fixture(false);
+    older["issue"].as_object_mut().unwrap().remove("title");
+    store
+        .receive_ingress(
+            "github-webhook",
+            "older-shape",
+            "issues",
+            &serde_json::to_vec(&older).unwrap(),
+        )
+        .unwrap();
+    store
+        .receive_ingress(
+            "github-catch-up",
+            "older-catch-up",
+            "catch-up",
+            br#"{"CatchUp":{"repository":{}}}"#,
+        )
+        .unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
     let pending = store.pending_ingress().unwrap();
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.len(), 3);
     let GitHubDelivery::CatchUp { changes, .. } =
-        serde_json::from_value(pending[0].1.clone()).unwrap()
+        serde_json::from_slice(&pending[2].payload).unwrap()
     else {
         panic!("catch-up missing");
     };
@@ -1202,4 +1267,11 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
         .collect();
     assert_eq!(comments.len(), 3);
     assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert_eq!(calls.lock().unwrap().len(), 1, "older shapes were skipped");
+    assert!(
+        store.ingress_after(0).unwrap().is_empty(),
+        "skipped rows retire too"
+    );
+    drain(&mut controller);
+    assert_eq!(calls.lock().unwrap().len(), 1);
 }

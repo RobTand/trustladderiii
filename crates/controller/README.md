@@ -121,14 +121,16 @@ requires `Content-Length`. Socket reads finish before reaching the receiver
 thread, so a stalled client cannot hold delivery persistence or catch-up.
 Accept errors are logged and skipped. Response writes have a total deadline too.
 
-The library verifies the HMAC before parsing. The receiver stores the parsed
-`GitHubDelivery::Webhook` under the delivery id in `tl3_ingress` before returning
-202. It retains both the typed event and the verified JSON payload, including
-unknown event names. PR updates, check runs, check suites and merge groups remain
-available for their owning adapters. Persistence errors log their `Display`,
+The library verifies the HMAC before parsing. The receiver stores
+the event name, delivery id and unchanged raw bytes in `tl3_ingress` before returning
+202. Replay parses them into the current `GitHubDelivery::Webhook` type, including
+unknown event names. Rows that no longer parse log their delivery id and advance
+every consumer past the row, so an older payload cannot crash-loop startup.
+PR updates, check runs, check suites and merge groups remain available for their owning adapters. Persistence errors log their `Display`,
 reopen the ingress connection and retry once. Only a failed retry returns 503.
-Delivery ids remain unique after consumption. A crash between applying an input
-and advancing its consumer cursor replays the same intake or observation key.
+Delivery ids remain unique while retained. After retirement, repeated deliveries
+still use the same durable intake and observation keys. A crash between applying
+an input and advancing its consumer cursor replays the same intake or observation key.
 
 `Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
 to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
@@ -139,6 +141,17 @@ transaction, including PRs and check results. Comment URLs compare repository
 names without case and use the trailing issue number. Rob's comments on issues
 and PRs enter `github_comments` in both paths, deduplicated by repository,
 installation and comment id. Ticket #14 classifies them.
+
+Headers have a two-second total read deadline. Body reads get a separate total
+budget of at least two seconds, scaled at 1 MiB/s by the declared length and
+capped at 25 seconds for GitHub's 25 MiB limit. The listener is loopback-only
+behind `cloudflared`. Failed reads never trigger catch-up because their bytes
+are unauthenticated. Ticket #15 will read GitHub's failed-delivery records on a look.
+
+One ingress connection inserts webhooks and catch-up rows in commit order.
+Sequence cursors depend on this single-writer invariant: a concurrent inserter
+could allocate a lower sequence and commit it after consumers had passed it.
+The controller's separate connection advances cursors and retires rows.
 
 ### Register a delivery translator
 
@@ -157,12 +170,15 @@ webhook and catch-up overlap. Translators never call the kernel.
 
 `ingress::drain` reads the stored deliveries in arrival order, calls the
 translator on the controller thread, applies its inputs and then persists its
-`github-translator:<name>` cursor. Each translator has an independent cursor.
-A new name starts at the first stored delivery, even if intake or another
-translator already consumed it. Reusing the name after restart resumes it.
+`github-translator:<name>` sequence in `tl3_ingress_consumers`. Each translator has
+an independent cursor. A new name starts at intake's current durable position,
+skipping consumed history even if another translator still retains it. Pending
+deliveries and catch-up supply recent state. Reusing the name after restart resumes it.
 An error leaves that delivery's cursor unchanged. Inputs must be idempotent
-because a crash after applying them can replay the delivery. Legacy translated
-inbox rows from earlier #10 builds still drain normally.
+because a crash after applying them can replay the delivery. Intake and cursor advances delete rows in the same transaction once intake and
+every registered translator have passed them. No clock drives retirement. The
+registered set is reconciled before each drain, so removed translators stop retaining
+rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
@@ -203,7 +219,7 @@ python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-revi
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
 ```
 
-The manifest pins the controller and GitHub test targets to `dl380g10`, `sparky`
+The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
 and `sparklina`. Controller targets include the status page and process tests.
 After they pass, submit the full workspace `tools/verify.sh` command shown above
 once with `--anywhere`. Record every action key and result in the PR body.
