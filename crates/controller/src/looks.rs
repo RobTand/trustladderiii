@@ -252,6 +252,12 @@ impl Controller {
                     } else {
                         false
                     };
+                    if changed {
+                        state.progress_ms = now;
+                        state.due_ms = Some(now.saturating_add(
+                            u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+                        ));
+                    }
                     // The typed watch row is the sole token store.
                     completion.progress = None;
                     if token_only {

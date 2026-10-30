@@ -15,7 +15,7 @@ use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
     Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,

@@ -25,6 +25,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "owner".into(),
             name: "sandbox".into(),
