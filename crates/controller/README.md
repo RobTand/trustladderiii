@@ -363,6 +363,15 @@ The manifest runs controller, GitHub, Mergify and store tests on `dl380g10`,
 See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
 inputs. Real queue payload confirmation remains the sandbox trial on #17.
 
+The systematic [crash simulation](../../docs/crash-simulation.md) uses real
+SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
+default `merge` smoke scenario covers all thirteen save points. Set
+`TL3_SIM_FULL=1` for the full matrix and effect-and-phase coverage assertion.
+Its seed and optional scenario and save-point filters appear in failure output.
+Generate the required three-host and two-portable campaign with
+`python3 crates/controller/tools/crash_manifest.py`. All execution still goes
+through PrismaBuild.
+
 For PR #64's receiver and status review evidence, create a clean detached worktree
 at the final commit. From that worktree, submit the three host checks:
 

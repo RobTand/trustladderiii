@@ -22,6 +22,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
 tl3-worktrees = { path = "../worktrees" }
 
 [dev-dependencies]
+loom = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rand = "0.8"
 rsa = { version = "0.9", features = ["pem"] }
@@ -35,6 +36,11 @@ hex = "0.4"
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"
+harness = false
+
+[[test]]
+name = "crash_safety"
+path = "tests/crash_safety.rs"
 harness = false
 
 [[test]]
