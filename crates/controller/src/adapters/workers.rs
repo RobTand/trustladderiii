@@ -13,13 +13,46 @@ use crate::{
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::Write,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
 };
 use tl3_kernel::{EffectKind, Event, Out, Reply};
 use tl3_store::Store;
+
+#[derive(Clone, Default)]
+pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>);
+impl ActiveRuns {
+    fn add(&self, delivery: &Delivery) {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(delivery.node().0.to_string())
+            .or_default()
+            .insert(delivery.key.clone());
+    }
+    fn remove(&self, delivery: &Delivery) {
+        let mut nodes = self.0.lock().unwrap();
+        let node = delivery.node().0.to_string();
+        if let Some(keys) = nodes.get_mut(&node) {
+            keys.remove(&delivery.key);
+            if keys.is_empty() {
+                nodes.remove(&node);
+            }
+        }
+    }
+    fn keys(&self, node: &str) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .get(node)
+            .map(|keys| keys.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
 
 #[derive(Clone)]
 pub struct Supervisor {
@@ -27,12 +60,28 @@ pub struct Supervisor {
     models: tl3_config::Models,
     store: tl3_config::Store,
     fake_root: PathBuf,
+    active: ActiveRuns,
 }
 
 impl Supervisor {
     pub fn new(config: &tl3_config::Config, fake_root: &Path) -> Result<Self> {
         fs::create_dir_all(&config.workers.runs)?;
+        let active = ActiveRuns::default();
+        for entry in fs::read_dir(&config.workers.runs)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let root = entry.path();
+            if let Some(value) = read(&root.join("delivery.json"))? {
+                let delivery: Delivery = serde_json::from_value(value)?;
+                if matches!(inspect(&root, &delivery)?, Reconciliation::Pending) {
+                    active.add(&delivery);
+                }
+            }
+        }
         Ok(Self {
+            active,
             settings: config.workers.clone(),
             models: config.models.clone(),
             store: config.store.clone(),
@@ -41,7 +90,11 @@ impl Supervisor {
     }
 
     pub fn source(&self) -> WorkerOutputSource {
-        WorkerOutputSource::new(self.settings.runs.clone(), self.store.clone())
+        WorkerOutputSource::new(
+            self.settings.runs.clone(),
+            self.store.clone(),
+            self.active.clone(),
+        )
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<Store> {
@@ -101,14 +154,8 @@ impl Supervisor {
     }
 
     fn stop_node(&self, delivery: &Delivery) -> Result<()> {
-        for entry in fs::read_dir(&self.settings.runs)? {
-            let path = entry?.path();
-            if let Some(value) = read(&path.join("delivery.json"))? {
-                let run: Delivery = serde_json::from_value(value)?;
-                if run.node() == delivery.node() {
-                    self.stop_run(&run.key, delivery.epoch)?;
-                }
-            }
+        for key in self.active.keys(&delivery.node().0.to_string()) {
+            self.stop_run(&key, delivery.epoch)?;
         }
         Ok(())
     }
@@ -127,7 +174,7 @@ impl Executor for Supervisor {
                 ..
             } => {
                 self.stop_node(delivery)?;
-                return Ok(Completion::confirmed(vec![]));
+                return Fake::new(&self.fake_root).execute(delivery);
             }
             _ => return Err(Error::Invalid("unsupported worker effect")),
         };
@@ -136,7 +183,10 @@ impl Executor for Supervisor {
         };
         match inspect(&self.root(&delivery.key), delivery)? {
             Reconciliation::Found(completion) => return Ok(completion),
-            Reconciliation::Pending => return Ok(Completion::confirmed(vec![])),
+            Reconciliation::Pending => {
+                self.active.add(delivery);
+                return Ok(Completion::confirmed(vec![]));
+            }
             Reconciliation::Absent => {}
         }
         let root = self.root(&delivery.key);
@@ -154,25 +204,30 @@ impl Executor for Supervisor {
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
-        let mut child = Command::new(&self.settings.uv)
-            .args(["run", "--locked", "--project"])
-            .arg(&self.settings.package)
-            .args(["--python", "3.14+gil", "python"])
+        store.claim_worker(
+            &delivery.key,
+            &delivery.node().0.to_string(),
+            delivery.epoch,
+            attempt_number,
+        )?;
+        let mut child = Command::new(&self.settings.python)
             .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(errors)
             .spawn()?;
-        loop {
-            if read(&attempt.join("claim.json"))?.is_some() {
-                break;
-            }
-            if child.try_wait()?.is_some() {
-                return Ok(failed(delivery));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut ready)?;
+        if ready != "claimed\n" {
+            reap(child);
+            return Err(Error::Invalid(
+                "worker launcher did not claim the attempt; inspect launcher.log",
+            ));
         }
+        self.active.add(delivery);
+        let name = root.file_name().unwrap().to_string_lossy();
+        write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
         reap(child);
         Ok(Completion::confirmed(vec![]))
     }
@@ -188,7 +243,7 @@ impl Executor for Supervisor {
                 ..
             } => {
                 self.stop_node(delivery)?;
-                Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                Fake::new(&self.fake_root).reconcile(delivery)
             }
             _ => Fake::new(&self.fake_root).reconcile(delivery),
         }

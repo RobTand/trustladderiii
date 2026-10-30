@@ -25,13 +25,9 @@ use tl3_store::Store;
 fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
-    config.workers.package = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../workers")
-        .canonicalize()
-        .unwrap();
+    config.workers.python = worker_package().join(".venv/bin/python");
     config.workers.runs = root.join("runs");
     config.workers.command = vec![
-        "python".into(),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/worker_model.py")
             .to_str()
@@ -44,6 +40,26 @@ fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::
     fs::write(&config.models.key_file, "fixture-only").unwrap();
     config.models.base_url = "http://model.invalid/v1".parse().unwrap();
     config
+}
+
+fn worker_package() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap()
+}
+
+fn prepare_workers() {
+    let uv = env::var_os("TL3_TEST_UV").unwrap_or_else(|| "uv".into());
+    let status = Command::new(&uv)
+        .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
+        .arg(worker_package())
+        .status()
+        .expect("worker tests require uv 0.10.10: set TL3_TEST_UV or install uv on PATH");
+    assert!(
+        status.success(),
+        "worker venv sync failed; uv must provide Python 3.14 and the locked worker dependencies"
+    );
 }
 
 fn materials(store: &mut Store) {
@@ -150,6 +166,7 @@ fn main() {
             thread::park();
         }
     }
+    prepare_workers();
     let mut database = Database::start();
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
@@ -252,7 +269,8 @@ fn simulation(settings: &tl3_config::Store) {
     assert!(
         progress
             .iter()
-            .all(|p| p.last_progress_ms > 0 && p.unit == "model_turn")
+            .all(|p| p.last_progress_ms.is_some_and(|ms| ms >= p.started_ms)
+                && p.unit == "model_turn")
     );
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut replay = supervisor.source();
@@ -270,7 +288,10 @@ fn simulation(settings: &tl3_config::Store) {
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
     for entry in fs::read_dir(&config.workers.runs).unwrap() {
-        assert_eq!(attempts(&entry.unwrap().path()), 1);
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            assert_eq!(attempts(&path), 1);
+        }
     }
 }
 fn attempts(root: &Path) -> usize {
@@ -355,6 +376,7 @@ fn killed_controller(settings: &tl3_config::Store) {
     let records: Vec<_> = fs::read_dir(&config.workers.runs)
         .unwrap()
         .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
         .collect();
     assert_eq!(records.len(), 2, "one ingest and one audit");
     assert!(records.iter().all(|p| attempts(p) == 1));
@@ -510,6 +532,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
     let runs: Vec<_> = fs::read_dir(&config.workers.runs)
         .unwrap()
         .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
         .collect();
     assert_eq!(
         runs.len(),
@@ -537,10 +560,7 @@ fn late_launcher(settings: &tl3_config::Store) {
         supervisor.reconcile(&delivery).unwrap(),
         Reconciliation::Absent
     ));
-    let status = Command::new(&config.workers.uv)
-        .args(["run", "--locked", "--project"])
-        .arg(&config.workers.package)
-        .args(["--python", "3.14+gil", "python"])
+    let status = Command::new(&config.workers.python)
         .arg(attempt.join("supervisor.py"))
         .arg(&attempt)
         .status()

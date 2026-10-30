@@ -352,8 +352,11 @@ impl Controller {
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {
                         Some(Completion::confirmed(vec![Observation::Kernel(
-                            Event::Reply { node: delivery.node(), generation: delivery.generation,
-                                reply: Reply::RunFailed },
+                            Event::Reply {
+                                node: delivery.node(),
+                                generation: delivery.generation,
+                                reply: Reply::RunFailed,
+                            },
                         )]))
                     }
                     Err(error) => {

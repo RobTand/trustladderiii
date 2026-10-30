@@ -298,6 +298,7 @@ pub struct WorkerProgress {
     pub attempt: i64,
     pub output_offset: i64,
     pub unit: String,
-    /// Database observation time, in Unix milliseconds. None exists until progress arrives.
-    pub last_progress_ms: i64,
+    /// Database observation time of this attempt claim, in Unix milliseconds.
+    pub started_ms: i64,
+    pub last_progress_ms: Option<i64>,
 }

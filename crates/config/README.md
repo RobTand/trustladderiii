@@ -71,7 +71,7 @@ world's capacity requires a snapshot migration.
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.
 
-`workers` configures the uv executable, installed worker project, durable run
+`workers` configures the Python interpreter, installed worker project, durable run
 root, and Python argument list. These paths are absolute. Keep the run root
 across controller restarts. The default command runs protocol v1 with Python
 3.14 through uv. Tests replace the command with a fixture launcher that changes

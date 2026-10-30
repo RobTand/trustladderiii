@@ -101,7 +101,9 @@ pub fn delivered_notes(root: &Path) -> Result<Vec<String>> {
         let path = entry?.path();
         if path.extension().is_some_and(|x| x == "json") {
             let record: Record = serde_json::from_slice(&fs::read(path)?)?;
-            if let Some(note) = record.note { notes.push(note); }
+            if let Some(note) = record.note {
+                notes.push(note);
+            }
         }
     }
     Ok(notes)

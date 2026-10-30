@@ -541,7 +541,6 @@ fn sent_but_absent(settings: &tl3_config::Store) {
             .any(|event| event.receipt.result["kernel_event"]["Reply"]["reply"] == "RunFailed"),
         "absence of an unacknowledged start must retry delivery without failing the run"
     );
-
 }
 
 struct DeferredWorker(adapters::workers::Fake);

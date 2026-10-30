@@ -10,6 +10,7 @@ CREATE TABLE tl3_worker_progress (
     attempt bigint NOT NULL,
     output_offset bigint NOT NULL,
     unit text NOT NULL,
-    last_progress_ms bigint NOT NULL
+    started_ms bigint NOT NULL,
+    last_progress_ms bigint
 );
 CREATE INDEX tl3_worker_progress_node ON tl3_worker_progress (node_id, last_progress_ms DESC);

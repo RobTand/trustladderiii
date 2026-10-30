@@ -48,9 +48,11 @@ def main():
         if not publish(root / "process.json", identity(), exclusive=True):
             return
         command = json.loads((root / "command.json").read_text())
-        os.execvp(command[0], command)
+        os.execv(sys.executable, [sys.executable, *command])
     if not publish(root / "claim.json", identity(), exclusive=True):
         return
+    print("claimed", flush=True)
+    sys.stdout.close()
     with (root / "request.json").open("rb") as request, \
          (root / "stdout.jsonl").open("wb", buffering=0) as output, \
          (root / "stderr.log").open("ab", buffering=0) as errors:

@@ -117,7 +117,6 @@ silence_secs = 60
 no_progress_secs = 120
 
 [workers]
-uv = "/home/rob/.local/bin/uv"
-package = "/srv/tl3/workers"
+python = "/srv/tl3/workers/.venv/bin/python"
 runs = "/srv/tl3/worker-runs"
-command = ["python", "-m", "tl3_workers", "run"]
+command = ["-m", "tl3_workers", "run"]

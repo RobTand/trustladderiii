@@ -82,27 +82,34 @@ pub(super) fn alive(path: &Path) -> Result<bool> {
     }
 }
 
-pub(super) fn kill_and_wait(path: &Path) -> Result<()> {
+pub(super) fn pidfd(path: &Path) -> Result<Option<std::os::fd::OwnedFd>> {
     let Some(value) = read(path)? else {
-        return Ok(());
+        return Ok(None);
     };
     if value["cancelled"] == true {
-        return Ok(());
+        return Ok(None);
     }
     let identity: Identity = serde_json::from_value(value)?;
     if !matches(&identity)? {
-        return Ok(());
+        return Ok(None);
     }
     let pid = Pid::from_raw(identity.pid).ok_or(Error::Invalid("invalid worker pid"))?;
     let fd = match pidfd_open(pid, PidfdFlags::empty()) {
         Ok(fd) => fd,
-        Err(rustix::io::Errno::SRCH) => return Ok(()),
+        Err(rustix::io::Errno::SRCH) => return Ok(None),
         Err(e) => return Err(std::io::Error::from(e).into()),
     };
     // Recheck after opening the pidfd, so PID reuse can never target another run.
     if !matches(&identity)? {
-        return Ok(());
+        return Ok(None);
     }
+    Ok(Some(fd))
+}
+
+pub(super) fn kill_and_wait(path: &Path) -> Result<()> {
+    let Some(fd) = pidfd(path)? else {
+        return Ok(());
+    };
     match pidfd_send_signal(&fd, Signal::KILL) {
         Ok(()) | Err(rustix::io::Errno::SRCH) => {}
         Err(e) => return Err(std::io::Error::from(e).into()),

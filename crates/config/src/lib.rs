@@ -51,25 +51,18 @@ pub struct Config {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workers {
-    pub uv: PathBuf,
-    pub package: PathBuf,
+    pub python: PathBuf,
     pub runs: PathBuf,
-    /// Python argv after uv has selected the package environment.
+    /// Arguments passed to the configured worker Python.
     pub command: Vec<String>,
 }
 
 impl Default for Workers {
     fn default() -> Self {
         Self {
-            uv: PathBuf::from("/home/rob/.local/bin/uv"),
-            package: PathBuf::from("/srv/tl3/workers"),
+            python: PathBuf::from("/srv/tl3/workers/.venv/bin/python"),
             runs: PathBuf::from("/srv/tl3/worker-runs"),
-            command: vec![
-                "python".into(),
-                "-m".into(),
-                "tl3_workers".into(),
-                "run".into(),
-            ],
+            command: vec!["-m".into(), "tl3_workers".into(), "run".into()],
         }
     }
 }
@@ -355,8 +348,7 @@ impl Config {
             }
         }
         for (field, path) in [
-            ("workers.uv", &self.workers.uv),
-            ("workers.package", &self.workers.package),
+            ("workers.python", &self.workers.python),
             ("workers.runs", &self.workers.runs),
         ] {
             absolute(field, path)?;

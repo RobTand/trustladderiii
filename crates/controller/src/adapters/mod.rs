@@ -35,4 +35,3 @@ pub fn simulation_with_workers(
     registry.register(Upstream::Workers, supervisor);
     Ok((registry, source))
 }
-
