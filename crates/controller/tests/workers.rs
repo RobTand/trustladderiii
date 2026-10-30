@@ -1664,9 +1664,45 @@ fn overflow(settings: &tl3_config::Store) {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
+    let events: Vec<_> = rx.try_iter().collect();
     assert_eq!(
-        rx.try_iter().count(),
+        events
+            .iter()
+            .filter(|input| matches!(
+                input,
+                Input::Observation {
+                    observation: Observation::WorkerReply { .. },
+                    ..
+                }
+            ))
+            .count(),
         2,
-        "ingress survives the overflow and emits each reply once"
+        "overflow recovery emits each reply once"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|input| matches!(
+                input,
+                Input::Observation {
+                    observation: Observation::Progress { .. },
+                    ..
+                }
+            ))
+            .count(),
+        2,
+        "each run retains its progress observation"
+    );
+    let keys: std::collections::BTreeSet<_> = events
+        .iter()
+        .filter_map(|input| match input {
+            Input::Observation { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        keys.len(),
+        events.len(),
+        "overflow recovery never replays an event"
     );
 }
