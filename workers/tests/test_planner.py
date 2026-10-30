@@ -6,6 +6,7 @@ import pytest
 import tiktoken
 
 from tl3_workers.contracts import validate
+import worker_process
 from worker_process import start_worker
 
 
@@ -39,6 +40,21 @@ def cache_tokenizer():
     # Provision public tokenizer data before the per-test socket denial. Worker
     # subprocesses then use this cache while all model and tool calls stay offline.
     tiktoken.get_encoding("o200k_base")
+
+
+@pytest.fixture(autouse=True)
+def tool_capable_fake(monkeypatch):
+    # The shared launcher uses the tool-less fake needed by ingest and audit.
+    # Adapt only that fake; production tool binding and dispatch still run.
+    setup = '''
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+def bind_tools(self, tools, **kwargs):
+    assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep'}
+    assert all(tool.description for tool in tools)
+    return self
+FakeMessagesListChatModel.bind_tools = bind_tools
+'''
+    monkeypatch.setattr(worker_process, "LAUNCH", setup + worker_process.LAUNCH)
 
 
 @pytest.fixture
