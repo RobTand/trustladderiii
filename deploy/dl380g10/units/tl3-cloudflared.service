@@ -1,0 +1,15 @@
+[Unit]
+Description=TL3 Cloudflare webhook tunnel
+After=tl3d.service
+ConditionPathExists=%h/.config/tl3/secrets/cloudflared-token
+
+[Service]
+Type=exec
+UMask=0077
+LoadCredential=token:%h/.config/tl3/secrets/cloudflared-token
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token-file %d/token
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

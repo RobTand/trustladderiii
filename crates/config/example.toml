@@ -3,6 +3,12 @@
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
 
+# Q17: set after deployment creates or reconciles the operations issue.
+# [operations]
+# owner = "RobTand"
+# repo = "trustladderiii"
+# issue = 123
+
 [store]
 host = "127.0.0.1"
 port = 5432

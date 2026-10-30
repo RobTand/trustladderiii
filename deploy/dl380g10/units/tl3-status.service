@@ -1,0 +1,17 @@
+[Unit]
+Description=TL3 LAN status page
+Requires=tl3-postgres.service
+After=tl3-postgres.service
+
+[Service]
+Type=exec
+UMask=0077
+LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
+RuntimeDirectory=tl3-status
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service status
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

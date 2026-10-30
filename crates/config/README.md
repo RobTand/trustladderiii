@@ -10,6 +10,12 @@ On Unix, each secret target must be a regular file with owner-read permission
 and no group or other permissions. These checks never read the secret bytes.
 They follow symlinks and do not replace runtime file-open checks.
 
+`Config::load_status(path)` parses the same config and checks only the store
+credential's metadata. It lets status run before model and App credentials are
+available. Controller startup still uses full `Config::load`.
+Optional `[operations]` holds `owner`, `repo`, and a positive `issue` number for
+the Q17 operations issue. It does not add a served repository.
+
 The example passes offline validation. Model names, maximum effort and output
 budget, the app installation id, and the container digest are
 deployment placeholders. Validation checks their shape, not service availability.
