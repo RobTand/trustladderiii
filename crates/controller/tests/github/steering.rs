@@ -118,8 +118,8 @@ impl Daemon {
         stdin.flush().unwrap();
     }
     fn restart(&mut self) {
-        self.chilself.kill().unwrap();
-        self.chilself.wait().unwrap();
+        self.child.kill().unwrap();
+        self.child.wait().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
             .arg("--config")
             .arg(self.root.path().join("config.toml"))
@@ -136,7 +136,7 @@ impl Daemon {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let stderr = chilself.stderr.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             for line in BufReader::new(stderr).lines() {
