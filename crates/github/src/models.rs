@@ -181,6 +181,7 @@ pub struct RepoChanges {
     pub issues: Vec<Issue>,
     pub comments: Vec<Comment>,
     pub labels: Vec<(u64, LabelChange)>,
+    #[serde(default)]
     pub closed: Vec<(u64, PullClosed)>,
     pub pull_requests: Vec<PullRequest>,
     pub check_runs: Vec<CheckRun>,

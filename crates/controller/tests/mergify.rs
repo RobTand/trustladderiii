@@ -864,11 +864,19 @@ fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
     api.state.lock().unwrap().checks = fixture("running", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("in_progress");
-    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
-    body["check_run"]["status"] = json!("in_progress");
-    body["check_run"]["conclusion"] = Value::Null;
-    api.state.lock().unwrap().checks[0]["status"] = json!("in_progress");
-    api.state.lock().unwrap().checks[0]["conclusion"] = Value::Null;
+    body["check_run"] = api
+        .state
+        .lock()
+        .unwrap()
+        .checks()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == tl3_mergify::QUEUE_CHECK)
+        .unwrap()
+        .clone();
+    assert_eq!(body["check_run"]["status"], "in_progress");
+    assert!(body["check_run"]["conclusion"].is_null());
     deliver(settings, &api, "check_run", &body);
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
