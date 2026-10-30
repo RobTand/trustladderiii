@@ -60,6 +60,14 @@ def finish(key, request):
                        "stdout": {"path": str(log), "bytes": len(raw.encode()),
                                   "sha256": hashlib.sha256(raw.encode()).hexdigest()}}}]})
 
+def gate(stage):
+    if (root / "publish_stage").exists() and (root / "publish_stage").read_text() == stage:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.connect(str(root / "publish.sock"))
+            connection.sendall(f"{os.getpid()}\n".encode())
+            if connection.recv(1) != b"!":
+                raise SystemExit("publisher gate closed")
+
 if "--seal-only" in args:
     checkout = Path(args[args.index("--cwd") + 1])
     raw = (checkout / "request.json").read_bytes()
@@ -70,13 +78,6 @@ elif "--publish-sealed" in args or "--finish" in args:
     key = args[1]
     if "--publish-sealed" in args and (root / "fail_publish").exists():
         raise SystemExit(1)
-    def gate(stage):
-        if "--publish-sealed" in args and (root / "publish_stage").exists() and (root / "publish_stage").read_text() == stage:
-            with socket.socket(socket.AF_UNIX) as connection:
-                connection.connect(str(root / "publish.sock"))
-                connection.sendall(f"{os.getpid()}\n".encode())
-                if connection.recv(1) != b"!":
-                    raise SystemExit("publisher gate closed")
     gate("before")
     request = json.loads((root / f"{key}.request").read_text())
     if not any((root / state / f"{key}.json").exists() for state in ("ready", "done", "failed", "withdrawn")):
@@ -104,6 +105,7 @@ elif "--endings" in args:
     path = root / f"{key}.ending"
     if path.exists():
         ending = json.loads(path.read_text())
+        gate("ending")
         if (root / "cleanup_pending").exists():
             ending["complete"] = False
         print(json.dumps(ending))

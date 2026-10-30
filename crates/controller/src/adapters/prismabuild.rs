@@ -483,11 +483,12 @@ impl Executor for Adapter {
                         .block_on(self.client.read(&job.action))
                         .map_err(adapter_error)?
                     else {
-                        // Authoritative absence also ends a source watch for a cancelled seal.
-                        write(
-                            &record_path(&self.settings.records, &job.delivery, "done"),
-                            &Completion::confirmed(vec![]),
-                        )?;
+                        // Share marker ownership with an ending already in flight on the source.
+                        let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
+                        let done = record_path(&self.settings.records, &job.delivery, "done");
+                        if !done.try_exists()? {
+                            write(&done, &Completion::confirmed(vec![]))?;
+                        }
                         let _ = self.keys.send(job.delivery.node());
                         continue;
                     };

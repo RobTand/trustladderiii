@@ -195,7 +195,9 @@ impl Source {
                     // Hold the lock through delivery and marker fsync, and discard cached
                     // jobs removed by teardown while the result tool was running.
                     let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
-                    if !record_path(&self.settings.records, &job.delivery, "job").try_exists()? {
+                    if !record_path(&self.settings.records, &job.delivery, "job").try_exists()?
+                        || self.done(job).is_file()
+                    {
                         self.active.as_mut().unwrap().remove(&key);
                         self.tool_errors.remove(&key);
                         continue;

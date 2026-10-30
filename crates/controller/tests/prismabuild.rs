@@ -1125,6 +1125,66 @@ fn retirement_forgets_an_active_source() {
     assert!(!root.path().join("queue/publications").exists());
 }
 
+fn cancellation_keeps_an_inflight_ending_from_replacing_its_marker() {
+    use std::os::unix::net::UnixListener;
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let listener = UnixListener::bind(root.path().join("queue/publish.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(root.path().join("queue/publish_stage"), "ending").unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let connection = loop {
+        match listener.accept() {
+            Ok((connection, _)) => break connection,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("ending gate: {error}"),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "source did not read ending"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut connection = BufReader::new(connection);
+    let mut ready = String::new();
+    connection.read_line(&mut ready).unwrap();
+    fs::remove_file(root.path().join(format!("queue/done/{key}.json"))).unwrap();
+    let mut withdrawal = delivery.clone();
+    withdrawal.output = Out::Effect {
+        node: delivery.node(),
+        seq: 99,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    withdrawal.job_generation = Some(delivery.generation);
+    assert!(matches!(
+        adapter.reconcile(&withdrawal).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
+    connection.get_mut().write_all(b"!").unwrap();
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(running);
+    let completion: Completion =
+        serde_json::from_slice(&fs::read(record_path(root.path(), &delivery.key, "done")).unwrap())
+            .unwrap();
+    assert!(
+        completion.observations.is_empty(),
+        "an obsolete source result must not replace cancellation's marker"
+    );
+}
+
 fn endings_outlive_queue_rows() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1515,6 +1575,10 @@ fn main() {
         ("abandoned_inputs_are_removed", abandoned_inputs_are_removed),
         ("endings_outlive_queue_rows", endings_outlive_queue_rows),
         (
+            "cancellation_keeps_inflight_ending_marker",
+            cancellation_keeps_an_inflight_ending_from_replacing_its_marker,
+        ),
+        (
             "retirement_forgets_an_active_source",
             retirement_forgets_an_active_source,
         ),
@@ -1539,5 +1603,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("21 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("22 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
