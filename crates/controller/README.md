@@ -125,9 +125,11 @@ advances attempts. Each attempt has a conversation outside the worktree under
 it. A fitting `needs_files` resumes at round 0 within the same attempt and plan.
 The resume decision checks the stored reply against the delivery attempt and
 re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
-A checkpoint keyed by the operation generation records the starting commit for each
+A checkpoint records the starting commit for each
 Making visit, including rebase-needs-changes revisits in the same attempt and round.
-A retry counts commits since that checkpoint, including a commit left by a crash.
+The controller records the generation of the last accepted maker reply. Until it
+accepts a reply, retries retain the checkpoint across new generations and count
+commits left by a crash or a failed session save. An accepted reply ends the visit.
 Each attempt stores one checkpoint with its generation and head; visits replace it
 so retries cannot accumulate checkpoint files.
 Only clean, resumable completions save conversation history. Out-of-room runs

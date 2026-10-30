@@ -86,6 +86,7 @@ def _starting_head(request, session):
     generation = request['operation']['generation']
     if checkpoint and checkpoint.exists():
         saved = read_json(checkpoint.read_text())
+        # RunFailed advances the generation, but only an accepted reply ends a visit.
         if saved['generation'] > request.get('last_accepted_generation', -1):
             return saved['head']
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()

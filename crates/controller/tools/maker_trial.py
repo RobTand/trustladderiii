@@ -24,7 +24,7 @@ def main():
         assert results[0].verdict == Verdict.PASS
         assert trial["changed_paths"] == ["greeting.py"]
         failures = run_checks(Path(trial["repository"]), trial["base"], trial["base"],
-                              (Check("hello", Kind.REGRESSION,
+                              (Check("hello", Kind.DEMONSTRATING,
                                      ("test_greeting.py::test_hello",)),), container=image)
         assert failures[0].verdict == Verdict.FAIL
         assert "goodbye" in failures[0].tests[0].message
