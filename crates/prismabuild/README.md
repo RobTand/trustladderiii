@@ -127,3 +127,11 @@ OPENBLAS_NUM_THREADS=1
 
 Check `pbwait.py`, the terminal record, logs and CAS receipt before reporting
 success. CI runs on Mergify runners, outside PrismaBuild submission.
+
+The controller adapter adds `seal(&SubmitAction)`, `seal_at_priority` and
+`publish(&ActionKey)`. Sealing calls PB's `--seal-only` and publishes no runnable
+work. Persist its key durably before calling `publish`, which uses only
+`--publish-sealed KEY --detach`. This reuses the retained CAS request across a
+crash or runtime update. Publication validates that PB returned the requested
+key. Priority is publication policy, outside action identity; the controller
+uses -10 for its development trial. The ordinary `submit` interface is unchanged.

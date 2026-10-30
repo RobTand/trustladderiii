@@ -268,9 +268,16 @@ impl Executor for Adapter {
                 ..
             } => {
                 let job = self.submit(delivery)?;
-                self.runtime
-                    .block_on(self.client.publish(&job.action))
-                    .map_err(adapter_error)?;
+                if self
+                    .runtime
+                    .block_on(self.client.read(&job.action))
+                    .map_err(adapter_error)?
+                    .is_none()
+                {
+                    self.runtime
+                        .block_on(self.client.publish(&job.action))
+                        .map_err(adapter_error)?;
+                }
                 Ok(Completion::confirmed(vec![]))
             }
             Out::Effect {
@@ -326,13 +333,18 @@ impl Executor for Adapter {
                 ..
             } => {
                 for job in self.targets(delivery)? {
-                    if self
+                    let Some(record) = self
                         .runtime
                         .block_on(self.client.read(&job.action))
                         .map_err(adapter_error)?
-                        .is_none()
-                    {
+                    else {
                         continue;
+                    };
+                    if matches!(record.state, ActionState::Queued | ActionState::Claimed) {
+                        self.fence(delivery.epoch)?;
+                        self.runtime
+                            .block_on(self.client.withdraw(&job.action, "controller withdrawal"))
+                            .map_err(adapter_error)?;
                     }
                     if self
                         .runtime

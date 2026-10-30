@@ -24,7 +24,8 @@ def finish(key, request):
     old_key = original.stem
     text = original.read_text().replace(old_key, key)
     value = json.loads(text)
-    for link in value.get("attempt_history", []):
+    history = value.get("withdrawn_attempt") or value
+    for link in history.get("attempt_history", []):
         relative = link["outcome"]
         source = recordings / relative.replace(key, old_key)
         save(root / relative, json.loads(source.read_text().replace(old_key, key)))

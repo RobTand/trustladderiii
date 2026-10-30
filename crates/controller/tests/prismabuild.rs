@@ -93,6 +93,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
             node: NodeId(0),
             seq: 5,
             kind: EffectKind::SubmitChecks,
+            head: None,
         },
         generation: 4,
         head_sha: Some(head),
@@ -215,6 +216,7 @@ fn pending_and_withdrawal() {
         node: NodeId(0),
         seq: 6,
         kind: EffectKind::WithdrawJob,
+        head: None,
     };
     assert!(adapter.execute(&withdraw).unwrap().observations.is_empty());
     assert!(matches!(

@@ -63,6 +63,7 @@ fn fixture(root: &Path) -> Delivery {
             node: NodeId(0),
             seq: 62,
             kind: EffectKind::SubmitChecks,
+            head: None,
         },
         generation: 1,
         head_sha: Some(head),

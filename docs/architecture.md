@@ -197,3 +197,28 @@ read-only status and configuration permissions. The review campaign generator
 in `crates/controller/tools/review_manifest.py` adds kernel tests and three
 representative Kani proofs. Generate it from a clean detached worktree at the
 final commit. CI runs independently on Mergify runners.
+
+The PrismaBuild checks adapter is available for mixed registries. A
+`CheckPlan` observation records the base commit, Git repository and named checks
+in a `check_plans` world row. Maker/worktree integration supplies it before the
+maker's completion. `Delivery::checks` carries that context and `job_generation`
+identifies the job to withdraw after the node changes generation.
+
+The adapter freezes a clean head checkout, bundles both commits and snapshots
+that bundle with a trusted harness copy. It seals without publication, fsyncs
+the effect's action key in its private durable directory, then publishes that
+exact CAS request. That directory is scoped to one store and its single
+controller owner. A durable epoch fence rejects old writes. Results still
+reconcile by their original key and epoch. Existing PB records prevent repeated
+publication, including failed and withdrawn actions. PB owns stalls; the
+adapter sets a tests progress contract and max attempts 1, with no duration
+limit.
+
+`prismabuild::Source` runs on its own thread with a `Sender<Input>`. It watches
+only the adapter's saved action keys, rescans on bell reset and retries failed
+per-key reads. It verifies cleaned endings and report-log digests before
+sending checks evidence. Sources never touch the controller. The common daemon
+loop remains ticket #10's work; this ticket supplies the one-line registration
+`adapter.source().spawn(sender)` for that loop. The controller translates the
+changed-file evidence through repository-scoped path interning and supplies
+`in_footprint` to the kernel. No kernel transition or store schema changed.
