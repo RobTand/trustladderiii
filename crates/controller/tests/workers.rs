@@ -222,7 +222,7 @@ fn main() {
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
     maker::run(&mut database);
     database.stop();
-    println!("14 required worker supervisor scenarios passed; no skips");
+    println!("22 required worker supervisor and maker scenarios passed; no skips");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real

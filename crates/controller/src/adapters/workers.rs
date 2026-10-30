@@ -125,6 +125,25 @@ impl Supervisor {
             .ok_or(Error::Invalid("worker materials are missing"))?;
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
         let worktree = if role == "maker" {
+            if !inputs.is_object() || !inputs["plan"].is_object() {
+                return Err(Error::Invalid("maker materials need a plan object"));
+            }
+            if let Some(findings) = store.worker_document(&node, "maker_findings")? {
+                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
+                feedback
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid maker feedback"))?
+                    .extend(
+                        findings
+                            .as_array()
+                            .ok_or(Error::Invalid("invalid maker findings"))?
+                            .iter()
+                            .cloned(),
+                    );
+                if !feedback.as_array().unwrap().is_empty() {
+                    inputs["feedback"] = feedback;
+                }
+            }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
             inputs["plan"]["files"] = json!(delivery.paths);
@@ -176,7 +195,10 @@ impl Supervisor {
                     .join(&node)
                     .join(format!("attempt-{}.json", delivery.attempt))
             );
-            request["resume_session"] = json!(delivery.round == 1);
+            let needs_files = store
+                .worker_document(&node, "maker_replies")?
+                .is_some_and(|reply| reply["kind"] == "needs_files" && reply["fits"] == true);
+            request["resume_session"] = json!(delivery.round == 1 || needs_files);
         }
         Ok(request)
     }

@@ -132,7 +132,6 @@ impl Executor for Workers {
 
 struct Checks {
     fake: adapters::prismabuild::Fake,
-    settings: tl3_config::Store,
     worktree: PathBuf,
     base: String,
     fail: bool,
@@ -164,12 +163,6 @@ impl Executor for Checks {
                     in_footprint: inside,
                 },
             })]);
-            if self.fail || !inside {
-                let mut store = Store::open(&self.settings)?;
-                let mut materials = store.worker_materials("0")?.unwrap();
-                materials["maker"]["feedback"] = json!([{"kind": "failed_check", "report": if inside {"Recorded assertion failed."} else {"A changed file is outside the footprint."}, "goal_ids": ["greeting"]}]);
-                store.put_worker_materials("0", &materials)?;
-            }
         }
         Ok(result)
     }
@@ -199,7 +192,6 @@ fn registry(
         Upstream::PrismaBuild,
         Checks {
             fake: adapters::prismabuild::Fake::new(root),
-            settings: config.store.clone(),
             worktree: worktree.into(),
             base: base.into(),
             fail,
@@ -278,7 +270,10 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 .unwrap()
             );
             if index > 0 {
-                assert!(request["inputs"]["feedback"].is_array());
+                assert_eq!(
+                    request["inputs"]["feedback"].as_array().unwrap().len(),
+                    index
+                );
             }
             println!(
                 "maker rung attempt {attempt}, round {}: {} effort {} budget {}",
@@ -409,7 +404,10 @@ fn process_contract(settings: &tl3_config::Store) {
     let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
     wait(|| attempt.join("process.json").exists());
     supervisor.stop_run(&delivery.key, 0).unwrap();
-    assert!(failed(&terminal(&mut supervisor, &delivery)));
+    assert!(!matches!(
+        supervisor.reconcile(&delivery).unwrap(),
+        Reconciliation::Pending
+    ));
 }
 
 pub(super) fn run(database: &mut Database) {

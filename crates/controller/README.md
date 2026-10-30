@@ -100,8 +100,11 @@ the audit's objections. Missing materials block dispatch.
 
 Maker materials use a `maker` object in that same per-node record. It contains
 the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
-accumulated `feedback`. A fix round requires feedback. Ingress supplies the
-brief slice and findings; the supervisor supplies authoritative `plan.files`,
+accumulated `feedback`. A fix round requires feedback. The controller records
+failed checks, review requests and can't-meet reports in `maker_findings` in the
+same transaction as the kernel reply. The supervisor adds these to supplied
+findings on every subsequent attempt. Ingress supplies the brief slice and
+detailed findings; the supervisor supplies authoritative `plan.files`,
 `attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
 endpoint from the delivery and config. Other roles can also use named objects
 in the materials record; the flat ingest/audit format still works.

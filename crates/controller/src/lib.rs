@@ -848,6 +848,65 @@ impl Controller {
                 return Ok(None);
             }
         };
+        if let Event::Reply {
+            node,
+            generation,
+            reply,
+        } = event
+            && let Some(n) = world.nodes.get(node.0 as usize)
+            && n.run == Some(generation)
+            && n.generation == generation
+        {
+            let finding = match (n.phase, reply) {
+                (
+                    tl3_kernel::Phase::Checking,
+                    Reply::ChecksDone {
+                        report,
+                        pass,
+                        in_footprint,
+                    },
+                ) if !report || !pass || !in_footprint => Some((
+                    "failed_check",
+                    format!(
+                        "Attempt {}, round {}: checks reported report={report}, pass={pass}, in_footprint={in_footprint}.",
+                        n.attempt, n.round
+                    ),
+                )),
+                (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                    "review_finding",
+                    "The independent reviewer requested changes. See the supplied findings.".into(),
+                )),
+                (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
+                    "review_finding",
+                    commit
+                        .rows
+                        .iter()
+                        .find_map(|row| match row {
+                            RowChange::Put { table, value, .. } if table == "maker_replies" => {
+                                Some(value.to_string())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "The maker could not meet the goals.".into()),
+                )),
+                _ => None,
+            };
+            if let Some((kind, report)) = finding
+                && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+            {
+                let inputs = materials.get("maker").unwrap_or(&materials);
+                if let Some(goals) = inputs["goals"].as_array() {
+                    let mut findings = self
+                        .store
+                        .worker_document(&node.0.to_string(), "maker_findings")?
+                        .unwrap_or(json!([]));
+                    findings.as_array_mut().ok_or(Error::Invalid("invalid maker findings"))?.push(json!({"kind": kind, "report": report, "goal_ids": goals.iter().map(|goal| goal["id"].clone()).collect::<Vec<_>>()}));
+                    commit
+                        .rows
+                        .push(put("maker_findings", node.0.to_string(), findings));
+                }
+            }
+        }
         Ok(Some(event))
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {

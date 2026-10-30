@@ -253,7 +253,10 @@ impl Store {
         node: &str,
         document: &str,
     ) -> Result<Option<serde_json::Value>> {
-        if !matches!(document, "briefs" | "goals" | "audits" | "maker_replies") {
+        if !matches!(
+            document,
+            "briefs" | "goals" | "audits" | "maker_replies" | "maker_findings"
+        ) {
             return Err(Error::Invalid("unknown worker document"));
         }
         Ok(self
