@@ -68,3 +68,18 @@ suites use sockets and child processes, so the shared brief requires all three
 hosts. Pass the Rust paths and bound `CARGO_BUILD_JOBS=2` and
 `RUST_TEST_THREADS=2` as in the Mergify client README. The controller suite starts
 an embedded disposable Postgres. No installed database is required.
+
+The first live run exposed an interaction with GitHub rulesets. Mergify injects
+main's required checks into draft merge conditions by default, including the
+original-only TL3 approval check. Recovery PR #23 proposes
+`branch_protection_injection_mode: none`; the explicit queue approval and draft
+CI conditions remain in place, and GitHub still enforces both original checks.
+Its recovery merge requires Rob's own code-owner review. Until that PR merges,
+the approved copy remains the deployed config and the checker still passes,
+but a successful queue merge is blocked. Do not approve a draft to work around
+this problem. No main ruleset bypass is needed.
+
+`crates/controller/tests/sandbox_gate.rs` replays the recorded bootstrap merge
+through the production adapter. The merge commit has no check runs, so the
+adapter correctly reports `checks_passed: false` for that outside-queue merge.
+The recordings are REST responses; they are not synthetic webhook events.

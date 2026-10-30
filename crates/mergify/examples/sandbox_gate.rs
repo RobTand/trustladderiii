@@ -3,7 +3,8 @@ use chrono::Utc;
 use serde_json::json;
 use std::{fs, path::PathBuf};
 use tl3_github::{
-    AppConfig, CheckConclusion, CheckStatus, ClientOptions, GitHub, NewCheckRun, NewPullRequest,
+    AppConfig, CheckConclusion, CheckStatus, ClientOptions, CloseReason, GitHub, NewCheckRun,
+    NewPullRequest,
 };
 use tl3_mergify::Mergify;
 
@@ -164,6 +165,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             println!("branch creation HTTP {}", response.status());
             response.error_for_status()?;
+        }
+        "close-issue" => {
+            github
+                .close_issue(repo, subject.parse()?, CloseReason::NotPlanned)
+                .await?;
+            println!("trial issue closed");
         }
         "delete" => github.delete_branch(repo, &subject).await?,
         "queue" => {

@@ -1,0 +1,87 @@
+[
+  {
+    "id": 124106215958,
+    "name": "Mergify Merge Queue",
+    "head_sha": "fd72475205a6d41b4f8106f2122e0aa3cc5c8f51",
+    "external_id": "queue:21",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Dequeued \u2014 checks failed",
+      "summary": "### \u274c Left the queue \u00b7 `Sandbox tests` failed\n\n1 min in the queue, less than a minute of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 30 Oct, 14:03 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u274c **Checks failed** \u00b7 draft #24\n- \ud83d\udeab **Left the queue** 14:04 \u00b7 `fd72475`\n\n**Not proven to be this pull request's failure.** It failed on top of the pull requests ahead of it, and was not tested alone.\n\n**Reason**\n\nThe merge conditions cannot be satisfied due to failing checks\n\n- `Sandbox tests`\n\nFailing checks:\n- \u274c [`Sandbox tests`](https://github.com/RobTand/tl3-sandbox/actions/runs/41068556046/job/124106316804) ([job log](https://github.com/RobTand/tl3-sandbox/actions/runs/41068556046/job/124106316804))\n\n**To get back in the queue**\n\n- Push a fix: the pull request is queued again once its queue conditions match.\n- If the failure is a flake, comment `@mergifyio queue` to queue it again as it is.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = Sandbox tests`\n- [ ] any of \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`:\n  - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n  - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n  - [ ] `check-success = @tl3-robtand/TL3 approval`\n- [ ] any of \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`:\n  - [ ] `check-neutral = @github-actions/Sandbox tests`\n  - [ ] `check-skipped = @github-actions/Sandbox tests`\n  - [ ] `check-success = @github-actions/Sandbox tests`\n\n<details>\n<summary>3 merge conditions met</summary>\n\n- [x] `#review-threads-unresolved = 0` \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n- [x] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=21) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null
+    }
+  },
+  {
+    "id": 124106188536,
+    "name": "Rule: Queue TL3-approved PRs (queue)",
+    "head_sha": "fd72475205a6d41b4f8106f2122e0aa3cc5c8f51",
+    "external_id": "",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "The pull request is queued to be merged",
+      "summary": "[#21](/RobTand/tl3-sandbox/pull/21) is queued for merge on branch **main** (8901bcc).\n\n**Stacked behind 1 pull request queued ahead of this batch**, not part of it. These checks run on a tip that also carries its commits, so a failure here can come from it as much as from [#21](/RobTand/tl3-sandbox/pull/21).\n\n**Queued ahead of this batch:**\n\n- [#17](/RobTand/tl3-sandbox/pull/17)\n\n**Required conditions of queue rule** `default` **for merge:**\n\nNo extra conditions.\n\n**Required conditions to stay in the queue:**\n\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [X] `label = tl3-queue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `base = main`\n    - [X] `check-success = @tl3-robtand/TL3 approval`\n    - [X] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `label = tl3-queue`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @tl3-robtand/TL3 approval`\n      - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n      - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @github-actions/Sandbox tests`\n      - [ ] `check-neutral = @github-actions/Sandbox tests`\n      - [ ] `check-skipped = @github-actions/Sandbox tests`",
+      "text": null
+    }
+  },
+  {
+    "id": 124104477732,
+    "name": "Mergify Merge Queue",
+    "head_sha": "fd72475205a6d41b4f8106f2122e0aa3cc5c8f51",
+    "external_id": "engine:21",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Waiting for queue conditions to match",
+      "summary": "### Queue entry conditions\n\n- [ ] any of [\ud83d\udd00 queue conditions]:\n  - [ ] all of [\ud83d\udccc queue conditions of queue rule `default`]:\n    - [ ] `check-success = @tl3-robtand/TL3 approval`\n    - [ ] `label = tl3-queue`\n    - [ ] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n      - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n      - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n      - [ ] `check-success = @tl3-robtand/TL3 approval`\n    - [X] `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `base = main`\n    - [X] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n      - [X] `check-success = @github-actions/Sandbox tests`\n      - [ ] `check-neutral = @github-actions/Sandbox tests`\n      - [ ] `check-skipped = @github-actions/Sandbox tests`\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] any of [\ud83d\udccc queue -> configuration change requirements]:\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of [\ud83d\udccc queue requirement]:\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n\n---\nYou can queue this pull request now with `@Mergifyio queue`: it will enter the merge queue once these conditions match.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJhbGwgb2YiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEB0bDMtcm9idGFuZC9UTDMgYXBwcm92YWwiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoibGFiZWwgPSB0bDMtcXVldWUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBAdGwzLXJvYnRhbmQvVEwzIGFwcHJvdmFsIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXNraXBwZWQgPSBAdGwzLXJvYnRhbmQvVEwzIGFwcHJvdmFsIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAdGwzLXJvYnRhbmQvVEwzIGFwcHJvdmFsIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiByZXBvc2l0b3J5IHJ1bGVzZXQgcnVsZSBgVEwzIG1haW4gbWVyZ2UgZ2F0ZWAifSx7ImRlc2NyaXB0aW9uIjoiI3Jldmlldy10aHJlYWRzLXVucmVzb2x2ZWQgPSAwIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiByZXBvc2l0b3J5IHJ1bGVzZXQgcnVsZSBgVEwzIG1haW4gbWVyZ2UgZ2F0ZWAifSx7ImRlc2NyaXB0aW9uIjoiYmFzZSA9IG1haW4iLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItY29kZS1vd25lci1yZXZpZXctc2F0aXNmaWVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiByZXBvc2l0b3J5IHJ1bGVzZXQgcnVsZSBgVEwzIG1haW4gbWVyZ2UgZ2F0ZWAifSx7ImRlc2NyaXB0aW9uIjoiZ2l0aHViLXJldmlldy1hcHByb3ZlZCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGVlMSBHaXRIdWIgcmVwb3NpdG9yeSBydWxlc2V0IHJ1bGUgYFRMMyBtYWluIG1lcmdlIGdhdGVgIn0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAZ2l0aHViLWFjdGlvbnMvU2FuZGJveCB0ZXN0cyIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBAZ2l0aHViLWFjdGlvbnMvU2FuZGJveCB0ZXN0cyIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1za2lwcGVkID0gQGdpdGh1Yi1hY3Rpb25zL1NhbmRib3ggdGVzdHMiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRlZTEgR2l0SHViIHJlcG9zaXRvcnkgcnVsZXNldCBydWxlIGBUTDMgbWFpbiBtZXJnZSBnYXRlYCJ9XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSBjb25kaXRpb25zIG9mIHF1ZXVlIHJ1bGUgYGRlZmF1bHRgIn1dLCJub3RlIjoiXHVkODNkXHVkZDAwIHF1ZXVlIGNvbmRpdGlvbnMifSx7ImRlc2NyaXB0aW9uIjoiLWNsb3NlZCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiItY29uZmxpY3QiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiLWRyYWZ0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1tZXJnaWZ5LWNvbmZpZ3VyYXRpb24tY2hhbmdlZCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9Db25maWd1cmF0aW9uIGNoYW5nZWQiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEBtZXJnaWZ5L0NvbmZpZ3VyYXRpb24gaGFzIGJlZW4gZGVsZXRlZCIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSAtPiBjb25maWd1cmF0aW9uIGNoYW5nZSByZXF1aXJlbWVudHMifSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stbmV1dHJhbCA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1za2lwcGVkID0gQG1lcmdpZnkvTWVyZ2lmeSBNZXJnZSBQcm90ZWN0aW9ucyIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvTWVyZ2lmeSBNZXJnZSBQcm90ZWN0aW9ucyIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9XX0\"></span>",
+      "text": null
+    }
+  },
+  {
+    "id": 124104472360,
+    "name": "Mergify Merge Protections",
+    "head_sha": "fd72475205a6d41b4f8106f2122e0aa3cc5c8f51",
+    "external_id": "21",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "No merge protections matched",
+      "summary": "This pull request does not match any conditions of the merge protections.",
+      "text": null
+    }
+  },
+  {
+    "id": 124104468031,
+    "name": "Summary",
+    "head_sha": "fd72475205a6d41b4f8106f2122e0aa3cc5c8f51",
+    "external_id": "21",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "1 rule matches",
+      "summary": "### \u2705 Rule: Queue TL3\\-approved PRs (queue)\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [X] `label = tl3-queue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `base = main`\n    - [X] `check-success = @tl3-robtand/TL3 approval`\n    - [X] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `label = tl3-queue`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @tl3-robtand/TL3 approval`\n      - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n      - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @github-actions/Sandbox tests`\n      - [ ] `check-neutral = @github-actions/Sandbox tests`\n      - [ ] `check-skipped = @github-actions/Sandbox tests`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]

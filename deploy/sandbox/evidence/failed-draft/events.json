@@ -1,0 +1,22 @@
+[
+  {
+    "id": 34697786572,
+    "event": "closed",
+    "actor": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "label": null,
+    "created_at": "2026-10-30T14:04:45Z"
+  },
+  {
+    "id": 34697789196,
+    "event": "head_ref_deleted",
+    "actor": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "label": null,
+    "created_at": "2026-10-30T14:04:46Z"
+  }
+]
