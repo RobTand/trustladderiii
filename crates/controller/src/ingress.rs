@@ -210,6 +210,7 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
                     apply(controller, input)?;
                 }
             }
+            controller.store.ingress_applied(&stored);
             controller.store.consume_ingress(stored.sequence)?;
         }
     }

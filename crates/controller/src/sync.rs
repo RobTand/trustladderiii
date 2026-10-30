@@ -77,3 +77,19 @@ pub(crate) mod mpsc {
         }
     }
 }
+
+#[cfg(all(test, loom))]
+mod tests {
+    use super::mpsc;
+    #[test]
+    fn loom_dropped_receiver_does_not_retain_messages() {
+        loom::model(|| {
+            let (sender, receiver) = mpsc::channel();
+            let other = sender.clone();
+            let send = loom::thread::spawn(move || other.send(1));
+            drop(receiver);
+            let _ = send.join().unwrap();
+            assert!(sender.send(2).is_err());
+        });
+    }
+}

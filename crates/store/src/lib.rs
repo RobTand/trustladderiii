@@ -66,6 +66,13 @@ pub enum SavePoint {
     AfterCommit,
     InternBeforeCommit,
     InternAfterCommit,
+    ReceiveIngressBeforeCommit,
+    ReceiveIngressAfterCommit,
+    ConsumeIngressBeforeCommit,
+    ConsumeIngressAfterCommit,
+    ReceiveCatchUpBeforeCommit,
+    ReceiveCatchUpAfterCommit,
+    IngressApplied,
 }
 
 type BoundaryHook = Box<dyn FnMut(SavePoint, &str, &serde_json::Value) + Send>;
@@ -114,8 +121,6 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-// Ingress receipt, catch-up, consumer registration and cursor/retirement writes
-// are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
     pub fn reconnect(&mut self) -> Result<()> {
@@ -176,10 +181,26 @@ impl Store {
         event_name: &str,
         payload: &[u8],
     ) -> Result<bool> {
-        Ok(self.client.execute(
+        let mut tx = self.client.transaction()?;
+        let inserted = tx.execute(
             "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ($1, $2, $3, $4) ON CONFLICT (source, delivery_key) DO NOTHING",
             &[&source, &key, &event_name, &payload],
-        )? == 1)
+        )? == 1;
+        let key = format!("ingress:{source}:{key}");
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::ReceiveIngressBeforeCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
+        tx.commit()?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::ReceiveIngressAfterCommit,
+            &key,
+            &serde_json::Value::Null,
+        );
+        Ok(inserted)
     }
 
     pub fn pending_ingress(&mut self) -> Result<Vec<Ingress>> {
@@ -192,14 +213,55 @@ impl Store {
     /// Call only after every input in the delivery has reached the controller store.
     pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
         let mut tx = self.client.transaction()?;
+        let row = tx.query_opt(
+            "SELECT source, delivery_key FROM tl3_ingress WHERE sequence = $1",
+            &[&sequence],
+        )?;
+        let key = row.map(|row| {
+            format!(
+                "consume-ingress:{}:{}",
+                row.get::<_, String>(0),
+                row.get::<_, String>(1)
+            )
+        });
         tx.execute(
             "UPDATE tl3_ingress SET consumed = true WHERE sequence = $1",
             &[&sequence],
         )?;
         tx.execute("UPDATE tl3_ingress_consumers SET sequence = GREATEST(sequence, $1) WHERE name = 'intake'", &[&sequence])?;
         retire_ingress(&mut tx)?;
+        if let Some(key) = &key {
+            boundary(
+                &mut self.boundary_hook,
+                SavePoint::ConsumeIngressBeforeCommit,
+                key,
+                &serde_json::Value::Null,
+            );
+        }
         tx.commit()?;
+        if let Some(key) = &key {
+            boundary(
+                &mut self.boundary_hook,
+                SavePoint::ConsumeIngressAfterCommit,
+                key,
+                &serde_json::Value::Null,
+            );
+        }
         Ok(())
+    }
+
+    /// The controller has applied every translated input, but has not consumed its delivery.
+    pub fn ingress_applied(&mut self, ingress: &Ingress) {
+        let key = format!(
+            "ingress-applied:{}:{}",
+            ingress.source, ingress.delivery_key
+        );
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::IngressApplied,
+            &key,
+            &serde_json::Value::Null,
+        );
     }
 
     pub fn ingress_cursor(&mut self, source: &str) -> Result<Option<serde_json::Value>> {
@@ -227,7 +289,20 @@ impl Store {
             )?;
         }
         tx.execute("INSERT INTO tl3_ingress_cursors (source, cursor) VALUES ($1, $2) ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor", &[&source, cursor])?;
+        let key = format!("catch-up:{source}");
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::ReceiveCatchUpBeforeCommit,
+            &key,
+            cursor,
+        );
         tx.commit()?;
+        boundary(
+            &mut self.boundary_hook,
+            SavePoint::ReceiveCatchUpAfterCommit,
+            &key,
+            cursor,
+        );
         Ok(())
     }
 

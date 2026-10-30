@@ -12,7 +12,7 @@ Postgres and the upstream records survive every cut.
 ## Crash model
 
 `cargo test -p tl3-controller --test crash_safety --locked` defaults to the
-`merge` smoke scenario, with separate passes for all thirteen save points.
+`merge` smoke scenario, with separate passes for all twenty save points.
 Set `TL3_SIM_FULL=1` to run all eleven scenarios and require all sixteen
 effect-kind and emitting-phase pairs. The smoke run skips that matrix-wide
 coverage assertion. Explicit scenario and save-point filters still restrict a replay.
@@ -45,7 +45,7 @@ recovery. Those are expected differences, not missing work.
 ## Save points
 
 `Store::set_boundary_hook` covers controller writes, including initialization,
-intake, observation arrival and consumption, delivery transitions, acknowledgements,
+intake, ingress receipt and consumption, catch-up, observation arrival and consumption, delivery transitions, acknowledgements,
 cancelled absence, watch results, and epoch upgrades.
 
 | Point | Cut |
@@ -63,8 +63,15 @@ cancelled absence, watch results, and epoch upgrades.
 | `AfterDispatch` | Upstream returned, acknowledgement is not committed |
 | `BeforeReconcile` | Upstream record has not been read |
 | `AfterReconcile` | Read or duplicate deletion happened, result is not committed |
+| `ReceiveIngressBeforeCommit` | Webhook receipt is uncommitted |
+| `ReceiveIngressAfterCommit` | Receipt is durable before its caller gets a result |
+| `ConsumeIngressBeforeCommit` | Consumption, intake cursor, and retirement are uncommitted |
+| `ConsumeIngressAfterCommit` | Consumption and retirement are durable |
+| `ReceiveCatchUpBeforeCommit` | Catch-up deliveries and cursor are uncommitted |
+| `ReceiveCatchUpAfterCommit` | Catch-up deliveries and cursor are durable |
+| `IngressApplied` | Translated inputs committed, delivery not yet consumed |
 
-Schema migrations and read-only transactions are outside this controller
+Translator registration and translator cursors, schema migrations, and read-only transactions are outside this controller
 save-point matrix. The existing store suite covers migration behavior.
 
 ## Scenarios and replay
@@ -104,12 +111,44 @@ epoch, reopens the fake, and attempts an older write. The controller loop never
 reaches that older-epoch dispatch. The store re-epochs Intended effects during
 an upgrade and refuses upgrades with Sent, Uncertain, or Cancelling deliveries.
 
-`ingress_loom.rs` is a placeholder. Its two model sources exchange `cli::Input`
-values over a loom channel, but it runs no controller, ingress, or worker source
-code. The checks describe the intended publication and source-order rules only.
-A standard-channel test checks disconnection because loom 0.7 does not model it.
-Ticket #71 will model the real ingress and worker source after #64 and #60 merge.
-The current loom model does not cover the controller's concurrent code.
+`crates/controller/tools/verify-loom.sh` enables `cfg(loom)` only in the
+controller crate. Setting `RUSTFLAGS=--cfg loom` for every dependency would also
+replace Tokio's runtime internals, including the runtime used by Postgres and
+HTTP. `TL3_LOOM=1` avoids that dependency-wide change.
+
+The five models call real code:
+
+- `Sources::register` and `Sources::run` apply inputs to a real controller and
+  Postgres store. Two sources interleave distinct deliveries and repeated issue
+  labels. Acknowledgements from committed intake events end the finite model.
+- `WebhookControl::gap` and `stop` preserve queue order. The current source uses
+  messages, replacing the atomics described in ticket #71.
+- `WorkerOutputSource::poll_once` reads actual partial JSONL output, persists
+  progress and declared waits, and emits ingress inputs. A concurrent consumer
+  checks persistence before publication. Restart rereads the same output and
+  must emit no repeated progress.
+- The PrismaBuild source races durable wait registration with its node snapshot,
+  consumes the registration notification, and calls its real `poll` and client
+  watcher against a local HTTP bell and recorded queue files. Separate models
+  cover a reset and HTTP 503. Each checks that a live record emits no look, an
+  ending emits one look per batch, and removal leaves no awaited wait.
+
+Every model exhausts a preemption bound of one, with a 10,000-branch limit that
+fails rather than skips an unfinished execution. The model body and I/O actors
+use 8 MiB stacks because Loom's default coroutine stack cannot run these library
+calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
+HTTP, Tokio scheduling, and socket deadlines remain external operations. The
+worker fixture serializes file append steps against individual source passes;
+it includes an incomplete line and checks every resulting input. These models
+check source publication and registration schedules, not every possible OS I/O
+interleaving. The process suites and SIGKILL simulation cover process loss.
+
+`loom_mutants.py MUTANT` changes one production site in a scratch checkout,
+prints its diff, runs the relevant model, and requires the expected assertion
+or Loom deadlock. It restores the source afterward. `--diff` only prints the
+patch. Mutants cover input loss, a lost gap, progress replay, progress without
+persistence, wait registration, the awaited key, and reset or outage rereads.
+Run mutations through PrismaBuild, just like the green suite.
 
 ## Fleet verification
 
@@ -119,9 +158,16 @@ and `sparklina`. One portable action sets `TL3_SIM_FULL=1` for the full matrix.
 The other runs `verify.sh` with a separate seed and the smoke default, including
 workspace formatting, Clippy, all Rust tests, and the kernel build without
 default features. The host and workspace actions also run the existing
-controller scenarios, worker process scenarios, and placeholder ingress tests.
+controller scenarios, worker process scenarios, and channel-disconnection tests.
 The portable full action runs only `crash_safety`.
 The simulation prints its own elapsed time and number of real process kills.
 
 The crash matrix uses a small seeded footprint. The tracer's existing 80-file
 case remains in the controller suite and runs in every placement too.
+
+Ticket #71's focused final campaign comes from
+`python3 crates/controller/tools/loom_manifest.py`. Its three pinned actions run
+the bounded models and all twenty crash save points on `dl380g10`, `sparky`, and
+`sparklina`. The portable action runs `crates/controller/tools/verify.sh`.
+The workspace script also runs the bounded loom suite. Each action reserves two
+CPUs and 6 GiB, bounds build and native threads, and preserves PB affinity.
