@@ -88,12 +88,12 @@ impl Database {
         }
     }
 
-    pub fn restart(&self) {
+    pub fn restart(&mut self) {
         self.stop();
         self.resume();
     }
 
-    pub fn resume(&self) {
+    pub fn resume(&mut self) {
         self.runtime
             .block_on(self.postgres.start())
             .expect("start embedded Postgres again");

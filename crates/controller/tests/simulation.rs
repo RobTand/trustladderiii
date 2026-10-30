@@ -67,7 +67,7 @@ fn main() {
     retry_uses_the_kernels_new_key(&database.create("retry"));
     println!("test restart_without_duplicate_deliveries ... ok");
     let settings = database.create("status");
-    status_page_and_command(&settings, &database);
+    status_page_and_command(&settings, &mut database);
     println!("test status_page_and_command ... ok");
     database.stop();
     println!(
@@ -505,7 +505,7 @@ fn http(address: std::net::SocketAddr, method: &str, path: &str) -> (String, Str
     (headers.to_ascii_lowercase(), body.into())
 }
 
-fn status_page_and_command(settings: &tl3_config::Store, database: &Database) {
+fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database) {
     let root = tempfile::tempdir().unwrap();
     let records = root.path().join("upstreams");
     let mut controller = open(settings, &records);
