@@ -319,7 +319,7 @@ impl Executor for Supervisor {
         }
         match self.reconcile(delivery)? {
             Reconciliation::Found(c) => Ok(Look::Found(c)),
-            Reconciliation::Absent => Ok(Look::Healthy),
+            Reconciliation::Absent => Ok(Look::Absent),
             Reconciliation::Pending => {
                 let row = Store::open(&self.store)?
                     .worker_progress(Some(&delivery.node().0.to_string()))?

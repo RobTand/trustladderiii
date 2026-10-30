@@ -423,6 +423,12 @@ impl Controller {
         {
             let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
             state.failure = Some(class.into());
+            state.healthy = false;
+            if state.quota_ms.is_none() {
+                state.due_ms = Some(self.now_ms().saturating_add(
+                    u64::from(self.allowance(&state.delivery).silence_secs) * 1000,
+                ));
+            }
             commit
                 .rows
                 .push(put("allowances", key.into(), json!(state)));
