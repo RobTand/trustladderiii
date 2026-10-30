@@ -2,7 +2,7 @@
 mod support;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -301,9 +301,15 @@ fn deliver(settings: &tl3_config::Store, _api: &Server, event: &str, body: &Valu
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let handle = thread::spawn(move || source.run(sender));
-    assert_eq!(post(address, "recorded-1", event, body), 202);
-    assert_eq!(post(address, "recorded-1", event, body), 202);
-    assert_eq!(post(address, "recorded-2", event, body), 202);
+    let identity = format!(
+        "{event}-{}",
+        hex::encode(Sha256::digest(serde_json::to_vec(body).unwrap()))
+    );
+    let first = format!("{identity}-1");
+    let second = format!("{identity}-2");
+    assert_eq!(post(address, &first, event, body), 202);
+    assert_eq!(post(address, &first, event, body), 202);
+    assert_eq!(post(address, &second, event, body), 202);
     control.stop();
     handle.join().unwrap().unwrap();
     drop(receiver);
@@ -1138,8 +1144,30 @@ fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path(), true);
     api.state.lock().unwrap().merged(true);
+    if path == "current_unapproved" {
+        controller
+            .observe(
+                "outside-push",
+                tl3_controller::executor::Observation::Queue(adapters::mergify::QueueFact {
+                    repository: bootstrap().repos[0].clone(),
+                    number: 100,
+                    evidence: adapters::mergify::Evidence::PushByOther {
+                        head: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                    },
+                }),
+            )
+            .unwrap();
+        assert!(controller.drive_once().unwrap());
+        let node = controller.world().unwrap().nodes[0];
+        assert_ne!(
+            node.head, node.approved,
+            "the current head is not the approved head"
+        );
+    }
     match path {
-        "webhook" => deliver(settings, &api, "pull_request", &pull_event(&api, "closed")),
+        "webhook" | "current_unapproved" => {
+            deliver(settings, &api, "pull_request", &pull_event(&api, "closed"))
+        }
         "catchup" => catch_up(settings, &api, &mut controller),
         "watch" => (),
         _ => unreachable!(),
@@ -1443,7 +1471,7 @@ fn main() {
         }
     }
     stalled_merge_progress(&database.create("stalled_progress"));
-    for path in ["webhook", "catchup", "watch"] {
+    for path in ["webhook", "catchup", "watch", "current_unapproved"] {
         unapproved_merge_does_not_wait(&database.create(&format!("unapproved_{path}")), path);
     }
     retirement_does_not_block(&database.create("retire_error"), false);

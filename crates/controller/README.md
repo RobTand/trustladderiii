@@ -327,8 +327,8 @@ is no queue evidence. It uses the same merge-commit CI fallback as an outside me
 If the merged head equals the node's current approved head and the Mergify queue
 check is not final, no merge fact is emitted yet. Its completed check-run event
 or catch-up supplies the final evidence. A merge of any other head is reported
-immediately, even while the queue check runs, so the kernel raises its incident. Only the queue check from the Mergify app triggers check-event
-reads; check suites and other check runs are ignored.
+immediately, even while the queue check runs, so the kernel raises its incident.
+Only the queue check from the Mergify app triggers check-event reads; check suites and other check runs are ignored.
 
 A reconciliation completion includes `executor::ProgressToken::Mergify` even
 when it has no observations. The public `mergify::Progress` contains GitHub's
@@ -339,8 +339,8 @@ and `current` tokens. `changed()` compares them. The first read has no previous
 token. Repeated identical reads leave equal tokens and cause no further commits.
 Progress bookkeeping does not schedule another look. The driver still visits
 other watches in the same pass. The comparison survives restart and leaves with
-the watch, so it does not retain finished history. Retirement errors are logged and retried on a later drive;
-they do not stop inbox or effect processing. Only Mergify retirement calls an
+the watch, so it does not retain finished history. Retirement errors are logged
+and retried on a later drive. They do not stop inbox or effect processing. Only Mergify retirement calls an
 adapter because only this adapter owns per-effect files requiring retirement.
 
 Ticket #15 owns allowances and scheduled looks. On an unchanged authoritative
