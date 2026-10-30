@@ -29,7 +29,9 @@ for host, seed, mode in [
     row = {
         "cwd": str(root),
         "argv": ["bash", "crates/controller/tools/verify.sh"] if mode == "verify" else [
-            "cargo", "test", "-p", "tl3-controller", "--all-targets", "--locked"
+            "cargo", "test", "-p", "tl3-controller",
+            *(["--test", "crash_safety"] if mode == "full" else ["--all-targets"]),
+            "--locked",
         ],
         "cpus": 2,
         "demand": {"mem_gb": 6},

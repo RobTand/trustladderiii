@@ -59,10 +59,8 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    let stat = match fs::read_to_string(format!("/proc/{}/stat", identity.pid)) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e.into()),
+    let Some(stat) = read_stat(Path::new(&format!("/proc/{}/stat", identity.pid)))? else {
+        return Ok(false);
     };
     let fields: Vec<_> = stat
         .rsplit_once(')')
@@ -137,4 +135,44 @@ fn temporary(path: &Path) -> PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+fn read_stat(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(stat) => Ok(Some(stat)),
+        // Procfs can lose the task after open and return ESRCH on the first read.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_stat;
+    use std::{
+        fs::File,
+        os::fd::AsRawFd,
+        path::Path,
+        process::{Command, Stdio},
+    };
+
+    #[test]
+    fn vanished_process_stat_is_absent() {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
+        drop(child.stdin.take());
+        assert!(child.wait().unwrap().success());
+        // Keep the proc inode open across reaping to force the ESRCH read path.
+        let own_descriptor = format!("/proc/self/fd/{}", stat.as_raw_fd());
+        assert_eq!(read_stat(Path::new(&own_descriptor)).unwrap(), None);
+    }
 }

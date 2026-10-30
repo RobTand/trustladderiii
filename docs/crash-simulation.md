@@ -118,8 +118,9 @@ Three run the default smoke scenario with the host tags `dl380g10`, `sparky`,
 and `sparklina`. One portable action sets `TL3_SIM_FULL=1` for the full matrix.
 The other runs `verify.sh` with a separate seed and the smoke default, including
 workspace formatting, Clippy, all Rust tests, and the kernel build without
-default features. All five include the existing controller scenarios and the
-placeholder ingress tests.
+default features. The host and workspace actions also run the existing
+controller scenarios, worker process scenarios, and placeholder ingress tests.
+The portable full action runs only `crash_safety`.
 The simulation prints its own elapsed time and number of real process kills.
 
 The crash matrix uses a small seeded footprint. The tracer's existing 80-file
