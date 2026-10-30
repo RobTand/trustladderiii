@@ -3,8 +3,11 @@ import json
 import pytest
 import tiktoken
 
-from test_workers import BRIEF, request_doc as request_doc
+import test_workers
+from test_workers import BRIEF
 from worker_process import start_worker
+
+request_doc = test_workers.request_doc
 
 
 @pytest.fixture(scope="session", autouse=True)
