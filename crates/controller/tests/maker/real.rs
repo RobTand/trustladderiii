@@ -279,6 +279,10 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         let runs = requests(&flow.config);
         let run = &runs[1];
         assert_eq!(run["operation"]["generation"], revisit.generation);
+        let errors =
+            fs::read_to_string(root_for(&flow.config, &key).join("attempt-00000000/stderr.log"))
+                .unwrap();
+        assert!(errors.contains("done requires code changes"), "{errors}");
     }
     observe(
         &mut flow.controller,
@@ -288,10 +292,7 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         &flow.base,
     );
     if new_edits {
-        assert_eq!(
-            flow.controller.world().unwrap().nodes[0].phase,
-            Phase::Checking
-        );
+        flow.until(|phase| phase == Phase::Checking);
     }
     flow.controller
         .observe(

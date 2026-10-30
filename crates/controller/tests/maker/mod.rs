@@ -328,8 +328,9 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 let mut invalid = materials.clone();
                 invalid["maker"]["goals"][0]["id"] = json!(17);
                 store.put_worker_materials("0", &invalid).unwrap();
+                controller.observe(&key, observation.clone()).unwrap();
                 assert!(matches!(
-                    controller.observe(&key, observation.clone()),
+                    controller.drive_once(),
                     Err(tl3_controller::Error::Invalid(
                         "maker goal needs a string id"
                     ))
