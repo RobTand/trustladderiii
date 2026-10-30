@@ -152,9 +152,15 @@ impl Supervisor {
             inputs["tests"] =
                 json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
             inputs["hindsight"] = json!({"endpoint": self.hindsight.endpoint});
+            let encoded = |name: &str| {
+                name.to_ascii_lowercase()
+                    .bytes()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            };
             self.worktrees
-                .join(&delivery.repository.owner)
-                .join(&delivery.repository.name)
+                .join(encoded(&delivery.repository.owner))
+                .join(encoded(&delivery.repository.name))
                 .join(format!(
                     "issue-{}-node-{}",
                     delivery.issue,

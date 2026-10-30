@@ -109,8 +109,9 @@ detailed findings; the supervisor supplies authoritative `plan.files`,
 endpoint from the delivery and config. Other roles can also use named objects
 in the materials record; the flat ingest/audit format still works.
 
-The maker uses `worktrees_root/OWNER/REPO/issue-ISSUE-node-NODE`, matching #61's
-worktree adapter. It never uses an empty per-run directory as a checkout.
+The maker uses `worktrees_root/HEX_OWNER/HEX_REPO/issue-ISSUE-node-NODE`, matching
+#61's worktree adapter. Owner and repository are lowercase UTF-8 encoded as hex.
+It never uses an empty per-run directory as a checkout.
 Until #61 merges, the maker acceptance fixture creates that git worktree itself.
 Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
 advances attempts. Each attempt has a conversation outside the worktree under

@@ -61,7 +61,7 @@ fn fixture(
     let base = git(&repository, &["rev-parse", "HEAD"]);
     let worktree = config
         .worktrees_root
-        .join("RobTand/tl3-sandbox/issue-42-node-0");
+        .join("726f6274616e64/746c332d73616e64626f78/issue-42-node-0");
     fs::create_dir_all(worktree.parent().unwrap()).unwrap();
     git(
         &repository,
