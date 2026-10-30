@@ -117,6 +117,7 @@ struct ApiState {
     linked: Vec<Value>,
     lose_issue_reply: bool,
     forbidden_question: bool,
+    question_status: Option<u16>,
     forbidden_filing: bool,
 }
 #[derive(Clone)]
@@ -202,11 +203,11 @@ impl Respond for Api {
                 if path.starts_with("/repos/owner/sandbox/issues/")
                     && path.ends_with("/comments") =>
             {
-                if state.forbidden_question
+                if (state.forbidden_question || state.question_status.is_some())
                     && original_path.contains("/sandbox/")
                     && String::from_utf8_lossy(&request.body).contains("recommend option")
                 {
-                    return ResponseTemplate::new(403);
+                    return ResponseTemplate::new(state.question_status.unwrap_or(403));
                 }
                 state.posts += 1;
                 let mut comment = fixture(true)["comment"].clone();

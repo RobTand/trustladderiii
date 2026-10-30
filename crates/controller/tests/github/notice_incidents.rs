@@ -132,6 +132,15 @@ pub(super) fn run(db: &mut support::Database) {
     for name in [
         "rejected_ask",
         "question_403",
+        "question_401",
+        "question_404",
+        "question_410",
+        "question_422",
+        "stale_ask",
+        "probe_ask",
+        "ask_state",
+        "status_ask",
+        "question_dialogue",
         "lost_summary",
         "incident_no_loop",
         "dropped_change",
@@ -153,6 +162,9 @@ pub(super) fn run(db: &mut support::Database) {
     assert_eq!(failures, 0, "notice incident scenarios failed");
     for name in [
         "rejected_ask",
+        "question_403",
+        "incident_no_loop",
+        "probe_ask",
         "lost_summary",
         "dropped_change",
         "lost_note",
@@ -185,19 +197,26 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     fs::write(root.path().join("mock-app.pem"), PEM.as_bytes()).unwrap();
     let api = Server::new();
     let kind = match name {
-        "rejected_ask" | "question_403" => "question",
+        name if name.starts_with("question_")
+            || matches!(
+                name,
+                "rejected_ask" | "stale_ask" | "probe_ask" | "ask_state" | "status_ask"
+            ) =>
+        {
+            "question"
+        }
         "dropped_change" => "dropped",
         "lost_note" => "note",
         "filing_403" => "filing",
         _ => "summary",
     };
     let faults = Arc::new(Mutex::new(Faults {
-        reject: name != "question_403",
+        reject: !name.starts_with("question_4"),
         incident: name == "incident_no_loop",
         kind: kind.into(),
     }));
-    if name == "question_403" {
-        api.state.lock().unwrap().forbidden_question = true;
+    if let Some(status) = name.strip_prefix("question_4") {
+        api.state.lock().unwrap().question_status = Some(format!("4{status}").parse().unwrap());
     }
     if name == "dropped_change" {
         let mut c = steering::stopping_replacement(settings, root.path(), &api);
@@ -224,6 +243,17 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     if name != "dropped_change" {
         c.intake(labelled()).unwrap();
     }
+    let question_world = if kind == "question" {
+        for _ in 0..100 {
+            if c.world().unwrap().nodes[0].question.is_some() {
+                break;
+            }
+            assert!(c.drive_once().unwrap());
+        }
+        Some(c.world().unwrap())
+    } else {
+        None
+    };
     drain(&mut c);
     if kind == "filing" {
         api.state.lock().unwrap().forbidden_filing = true;
@@ -264,20 +294,81 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let incident_id = incident.id.clone();
     let detail = incident.value.to_string();
     assert!(detail.contains("Add a blue button"));
-    assert!(
-        detail.contains(if name == "question_403" || kind == "filing" {
-            "permission"
-        } else {
-            "message_rejected"
-        })
-    );
+    assert!(detail.contains(match name {
+        "question_401" | "question_403" | "filing_403" => "permission",
+        "question_404" | "question_410" => "not_found",
+        "question_422" => "invalid_request",
+        _ => "message_rejected",
+    }));
     if kind == "question" {
         let status =
             tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
         assert!(
             status.requests[0].waiting_on.contains("failed"),
-            "unposted question must wait on its failed post, not an unseen answer"
+            "unposted question must show its failed post, not an unseen answer"
         );
+    }
+    if name == "status_ask" {
+        let status =
+            tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
+        assert!(
+            status.requests[0].waiting_on.contains("never posted"),
+            "status must say that the open question was never posted"
+        );
+    }
+    if name == "ask_state" {
+        assert_eq!(
+            c.world().unwrap(),
+            *question_world.as_ref().unwrap(),
+            "a failed question post must leave the entire kernel world untouched"
+        );
+    }
+    if name == "question_dialogue" {
+        let mut comment = fixture(true)["comment"].clone();
+        comment["id"] = json!(90002);
+        comment["body"] = json!("Stop this request.");
+        c.observe(
+            "question-dialogue",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+        let classify = loop {
+            if let Some(effect) = c
+                .snapshot()
+                .unwrap()
+                .pending_effects
+                .into_iter()
+                .find(|e| e.payload["steering"]["Classify"].is_object())
+            {
+                break effect;
+            }
+            assert!(c.drive_once().unwrap());
+        };
+        let question =
+            &classify.payload["steering"]["Classify"]["inputs"]["state"]["open_question"];
+        assert_eq!(
+            question["kind"], "needs_splitting",
+            "failed posting must preserve the classifier's original question kind"
+        );
+        assert_eq!(question["answers"], json!(["change_request", "stop"]));
+        return;
+    }
+    if name == "stale_ask" {
+        c.observe(
+            "stop-before-clear",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 77,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+        drain(&mut c);
+        assert!(c.world().unwrap().nodes[0].question.is_none());
     }
     if name == "incident_no_loop" {
         assert_eq!(
@@ -311,9 +402,15 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     faults.lock().unwrap().reject = false;
     faults.lock().unwrap().incident = false;
     api.state.lock().unwrap().forbidden_question = false;
+    api.state.lock().unwrap().question_status = None;
     api.state.lock().unwrap().forbidden_filing = false;
+    let before_retry = c.world().unwrap();
     if point == "none" {
-        clear_incident(&mut c, &incident_id);
+        if name == "probe_ask" {
+            c.look_key(&failed.key).unwrap();
+        } else {
+            clear_incident(&mut c, &incident_id);
+        }
     }
     drop(c);
     if point != "none" {
@@ -343,7 +440,12 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
                 .arg(api.uri())
                 .arg(kind)
                 .arg(&incident_id)
+                .arg(&failed.key)
                 .env("TL3_NOTICE_CUT", point)
+                .env(
+                    "TL3_NOTICE_PROBE",
+                    if name == "probe_ask" { "1" } else { "0" },
+                )
                 .status()
                 .unwrap();
             if status.success() {
@@ -374,21 +476,71 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
             })
             .count()
     };
+    let expected_posts = usize::from(name != "stale_ask");
     assert_eq!(
         count(&api),
-        1,
-        "retry posts the original notice exactly once"
+        expected_posts,
+        "retry posts the original notice exactly once unless its question is stale"
+    );
+    assert_eq!(
+        c.world().unwrap(),
+        before_retry,
+        "clearing a notice incident must not advance the kernel"
+    );
+    if kind == "question" && name != "stale_ask" {
+        assert_eq!(
+            c.world().unwrap(),
+            question_world.unwrap(),
+            "failed posting and recovery must preserve the original question and kernel world"
+        );
+        let status =
+            tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
+        assert_eq!(status.requests[0].waiting_on, "Rob's answer");
+    }
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == incident_id && r.value["open"] == true),
+        "clearing must close the notice incident"
     );
     drop(c);
     let mut c = open(settings, root.path(), &api.uri(), faults);
     drain(&mut c);
     assert_eq!(
         count(&api),
-        1,
+        expected_posts,
         "restart must not duplicate a retried notice"
     );
     assert!(c.world().unwrap().consistent());
     if kind == "dropped" {
+        let delivery: Delivery = serde_json::from_value(failed.payload.clone()).unwrap();
+        let Some(tl3_controller::steering::Task::ReplacementDropped { text, .. }) =
+            delivery.steering
+        else {
+            panic!("dropped notice must retain Rob's change");
+        };
+        let state = api.state.lock().unwrap();
+        let body = state
+            .comments
+            .iter()
+            .find(|v| {
+                v["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&GitHub::marker(&failed.key))
+            })
+            .unwrap()["body"]
+            .as_str()
+            .unwrap();
+        for line in text.lines() {
+            assert!(
+                body.contains(&format!("    {line}")),
+                "retried dropped-change note must keep Rob's quote in its body: {body}"
+            );
+        }
+        assert!(body.contains("merged before") && body.contains("again"));
         assert!(
             !c.snapshot()
                 .unwrap()
@@ -439,7 +591,11 @@ pub(super) fn child(args: &[String]) {
         ..Faults::default()
     }));
     let mut c = open(&settings, root, &args[4], faults);
-    clear_incident(&mut c, &args[6]);
+    if env::var("TL3_NOTICE_PROBE").as_deref() == Ok("1") {
+        c.look_key(&args[7]).unwrap();
+    } else {
+        clear_incident(&mut c, &args[6]);
+    }
     for _ in 0..500 {
         let progressed = c
             .drive_once_with(|point, key| {
