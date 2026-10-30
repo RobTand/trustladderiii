@@ -216,6 +216,11 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--maker-trial") {
+        maker::trial(&database.create("maker_real_trial"), Path::new(&args[2]));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
         maker::run(&mut database);
         database.stop();

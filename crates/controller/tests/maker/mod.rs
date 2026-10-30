@@ -1,5 +1,10 @@
 use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
+mod real;
+
+pub(super) fn trial(settings: &tl3_config::Store, root: &Path) {
+    real::Flow::start(settings, root).write_trial(root);
+}
 
 fn git(root: &Path, args: &[&str]) -> String {
     let result = Command::new("git")
@@ -27,11 +32,11 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().into()
 }
 
-fn fixture(
+fn repository_fixture(
     settings: &tl3_config::Store,
     root: &Path,
     mode: &str,
-) -> (tl3_config::Config, PathBuf, String) {
+) -> (tl3_config::Config, PathBuf, PathBuf, String) {
     let mut config = super::config(settings, root, "normal");
     config.worktrees_root = root.join("worktrees");
     config.workers.command = vec![
@@ -44,7 +49,10 @@ fn fixture(
     ];
     let repository = root.join("repo");
     fs::create_dir(&repository).unwrap();
-    git(&repository, &["init", "--quiet", "--template="]);
+    git(
+        &repository,
+        &["init", "--quiet", "--template=", "-b", "main"],
+    );
     fs::write(
         repository.join("greeting.py"),
         "def greet(): return 'goodbye'\n",
@@ -56,12 +64,27 @@ fn fixture(
         "def test_hello():\n    from greeting import greet\n    assert greet() == 'hello'\n",
     )
     .unwrap();
+    fs::write(repository.join("pyproject.toml"), "[tool.tl3.harness]\ncommand = [\"python\", \"-m\", \"pytest\"]\ntest-files = [\"test_*.py\"]\n").unwrap();
     git(&repository, &["add", "."]);
     git(&repository, &["commit", "--quiet", "-m", "Base"]);
     let base = git(&repository, &["rev-parse", "HEAD"]);
     let worktree = config
         .worktrees_root
         .join("726f6274616e64/746c332d73616e64626f78/issue-42-node-0");
+    Store::open(settings).unwrap().put_worker_materials("0", &json!({"maker": {
+        "brief": "Return hello.", "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
+        "plan": {"files": ["not-authoritative.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]},
+        "attempt": 3, "round": 1
+    }})).unwrap();
+    (config, repository, worktree, base)
+}
+
+fn fixture(
+    settings: &tl3_config::Store,
+    root: &Path,
+    mode: &str,
+) -> (tl3_config::Config, PathBuf, String) {
+    let (config, repository, worktree, base) = repository_fixture(settings, root, mode);
     fs::create_dir_all(worktree.parent().unwrap()).unwrap();
     git(
         &repository,
@@ -74,11 +97,6 @@ fn fixture(
             worktree.to_str().unwrap(),
         ],
     );
-    Store::open(settings).unwrap().put_worker_materials("0", &json!({"maker": {
-        "brief": "Return hello.", "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
-        "plan": {"files": ["not-authoritative.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]},
-        "attempt": 3, "round": 1
-    }})).unwrap();
     (config, worktree, base)
 }
 
