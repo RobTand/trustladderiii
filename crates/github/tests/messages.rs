@@ -576,3 +576,15 @@ fn ampersands_without_real_entity_names_are_plain_prose() {
         assert!(check_prose(text, &Policy::default()).is_ok(), "{text}");
     }
 }
+
+underscore_mention!(unicode_fullwidth_mention, "ｏ@octocat", "@octocat");
+underscore_mention!(unicode_zero_width_mention, "a\u{200b}@octocat", "@octocat");
+gh_reference!(unicode_fullwidth_lowercase_gh, "ｏgh-5");
+gh_reference!(unicode_fullwidth_uppercase_gh, "ｏGH-5");
+gh_reference!(unicode_zero_width_lowercase_gh, "a\u{200b}gh-5");
+gh_reference!(unicode_zero_width_uppercase_gh, "a\u{200b}GH-5");
+
+gh_reference!(unicode_kelvin_lowercase_gh, "Kgh-5");
+gh_reference!(unicode_kelvin_uppercase_gh, "KGH-5");
+gh_reference!(unicode_long_s_lowercase_gh, "ſgh-5");
+gh_reference!(unicode_long_s_uppercase_gh, "ſGH-5");
