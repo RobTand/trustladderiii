@@ -28,6 +28,8 @@ fn model_bell(outage: bool) {
         let mut source = adapter.source();
         source.rebuild().unwrap();
         let path = root.path().to_owned();
+        // Registration may select the watcher before draining its notification.
+        waits::record(&path, "claimed");
         let d = delivery();
         let producer = crate::loom_tests::spawn(move || {
             let wait = tl3_store::ExternalWait {
@@ -48,7 +50,6 @@ fn model_bell(outage: bool) {
                 .unwrap();
         }
         assert_eq!(source.waits.len(), 1, "declared wait registration lost");
-        waits::record(&path, "claimed");
         assert_eq!(
             runtime
                 .block_on(source.poll(&sender, Duration::from_secs(1)))
