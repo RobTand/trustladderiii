@@ -1415,11 +1415,11 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
                 event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "ingest"
             })
     });
+    wait(&mut || store.worker_progress(Some("0")).unwrap().len() == 2);
     assert_eq!(
         store.worker_document("0", "briefs").unwrap().unwrap()["brief"],
         "Fix the greeting."
     );
-    wait(&mut || store.worker_progress(Some("0")).unwrap().len() == 2);
     // Webhooks remain live while audit waits. Redelivery must preserve one request and one ingest.
     assert_eq!(
         post(
