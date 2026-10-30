@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn stat_open_permission_error_is_not_absence() {
-        let denied = std::io::Error::from_raw_os_error(rustix::io::Errno::ACCES.raw_os_error());
+        let denied = std::io::Error::from_raw_os_error(rustix::io::Errno::ACCESS.raw_os_error());
         assert!(matches!(read_stat(Err(denied)), Err(Error::Io(error))
             if error.kind() == std::io::ErrorKind::PermissionDenied));
     }
