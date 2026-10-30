@@ -584,6 +584,8 @@ fn delivery(notice: Notice) -> Delivery {
         replanned: false,
         question: None,
         question_context: None,
+        checks: None,
+        job_generation: None,
         note: None,
     }
 }

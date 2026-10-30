@@ -20,6 +20,10 @@ pub struct Delivery {
     #[serde(default)]
     pub replanned: bool,
     #[serde(default)]
+    pub checks: Option<crate::adapters::prismabuild::CheckRun>,
+    #[serde(default)]
+    pub job_generation: Option<u64>,
+    #[serde(default)]
     pub question: Option<tl3_kernel::Question>,
     #[serde(default)]
     pub note: Option<String>,
@@ -54,6 +58,23 @@ pub enum Observation {
         node: NodeId,
         infra: bool,
         checks: Vec<crate::findings::CiFailure>,
+    },
+    CheckPlan {
+        node: NodeId,
+        sha: String,
+        run: crate::adapters::prismabuild::CheckRun,
+    },
+    Checks {
+        node: NodeId,
+        generation: u64,
+        action_key: String,
+        base_sha: String,
+        sha: String,
+        changed_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        failed_tests: Vec<crate::findings::FailedTest>,
+        report: bool,
+        pass: bool,
     },
     Plan {
         node: NodeId,

@@ -44,11 +44,11 @@
         "type": "object",
         "properties": {
           "kind": {"enum": ["failed_check", "review_finding"]},
-          "report": {"$ref": "#/$defs/text"},
+          "report": {"$ref": "#/$defs/text", "maxLength": 16000},
           "goal_ids": {"$ref": "#/$defs/strings"},
-          "failed_tests": {"type": "array", "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text"}}, "required": ["test", "message"], "additionalProperties": false}},
+          "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
           "outside_paths": {"$ref": "#/$defs/strings"},
-          "ci_checks": {"type": "array", "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text"}, "url": {"type": ["string", "null"]}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
+          "ci_checks": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text", "maxLength": 1000}, "url": {"type": ["string", "null"], "maxLength": 4096}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
         },
         "required": ["kind", "report", "goal_ids"], "additionalProperties": false
       }

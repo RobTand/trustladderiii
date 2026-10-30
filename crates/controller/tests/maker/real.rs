@@ -10,6 +10,7 @@ pub(super) struct Flow {
     remote: PathBuf,
     worktree: PathBuf,
     base: String,
+    _checks: adapters::prismabuild::RunningSource,
 }
 
 impl Flow {
@@ -46,7 +47,7 @@ impl Flow {
             &remote,
         )
         .unwrap();
-        let (mut registry, source) =
+        let (mut registry, source, checks_source) =
             registry(&config, &root.join("fakes"), &worktree, &base, false);
         registry.register(Upstream::Worktrees, real);
         let controller = Controller::open(
@@ -56,6 +57,7 @@ impl Flow {
         )
         .unwrap();
         let (sender, receiver) = mpsc::channel();
+        let checks = checks_source.spawn(sender.clone());
         thread::spawn(move || source.run(sender).unwrap());
         let mut flow = Self {
             controller,
@@ -65,6 +67,7 @@ impl Flow {
             remote,
             worktree,
             base,
+            _checks: checks,
         };
         flow.controller.intake(labelled()).unwrap();
         flow.until(|phase| phase == Phase::Checking);
@@ -94,7 +97,13 @@ impl Flow {
                 else {
                     panic!("worker observation required")
                 };
-                self.controller.observe(&key, observation).unwrap();
+                observe(
+                    &mut self.controller,
+                    &key,
+                    observation,
+                    &self.worktree,
+                    &self.base,
+                );
             }
         }
     }

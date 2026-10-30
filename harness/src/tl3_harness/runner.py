@@ -60,7 +60,8 @@ class Reporter:
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
             return report
         self.emit(event="phase", test=item.nodeid, when=report.when,
-                  outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing)
+                  outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
+                  message=str(report.longrepr)[:1000] if report.failed else "")
         return report
 
     def pytest_runtest_logreport(self, report):

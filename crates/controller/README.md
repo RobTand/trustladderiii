@@ -118,21 +118,24 @@ in the materials record; the flat ingest/audit format still works.
 The maker uses `worktrees_root/HEX_OWNER/HEX_REPO/issue-ISSUE-node-NODE`, matching
 #61's worktree adapter. Owner and repository are lowercase UTF-8 encoded as hex.
 It never uses an empty per-run directory as a checkout.
-Until #61 merges, the maker acceptance fixture creates that git worktree itself.
+The acceptance fixture uses the merged real worktrees adapter.
 Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
 advances attempts. Each attempt has a conversation outside the worktree under
 `workers.runs/sessions/NODE/plan-REPLANNED/attempt-N.json`. Round 1 resumes
 it. A fitting `needs_files` resumes at round 0 within the same attempt and plan.
 The resume decision checks the stored reply against the delivery attempt and
 re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
-A separate round checkpoint records the starting commit before the model runs.
+A checkpoint keyed by the operation generation records the starting commit for each
+Making visit, including rebase-needs-changes revisits in the same attempt and round.
 A retry counts commits since that checkpoint, including a commit left by a crash.
-Only clean completions save conversation history.
+Only clean, resumable completions save conversation history. Out-of-room runs
+preserve any previous conversation without saving the exhausted one.
 
 After durable work drains, the supervisor deletes a closed node's session
-directory only when no pending effect, retained watch or unretired worker can
+directory only when no inbox entry, pending effect, retained watch or unretired worker can
 reconcile that node. It queries only remaining session directories after retiring
-runs, without loading historical world rows.
+runs, without loading historical world rows. Deletion errors are logged and retained
+for a later pass; they do not fail the controller's idle drain.
 Open requests keep their sessions. The directory itself survives a crash as
 the cleanup queue, and the next drain repeats deletion. No clock triggers cleanup.
 Worker code commits a completed change and computes a conservative fit bound
@@ -143,7 +146,8 @@ Maker acceptance runs the actual Python entry point and maker graph with a
 scripted model, fake read-only Hindsight, and recorded self-check results.
 The combined acceptance also uses #61's real worktrees adapter for checkout,
 publication and cleanup. Focused worker cases keep their local Git fixtures.
-The PrismaBuild adapter stays fake until #62 merges.
+The checks use the merged real PrismaBuild adapter, its result source, and recorded
+PrismaBuild queue and ending records. No nested submission runs in acceptance.
 Scenarios cover success, failed checks through both rounds of all three attempts
 and one re-plan, an actual commit outside the footprint, requested files,
 context exhaustion, unmet goals, invalid output, recovery, and stop.
@@ -164,24 +168,26 @@ Production integration still requires:
    and deployment settings; it does not invent a brief or checks.
 2. Mergify #63, PR #69, must emit `Observation::CiFailed` with the failed check's
    name and link or summary. Its current bare fact is supported but lacks details.
-3. PrismaBuild #62, PR #67, must map its parsed harness report into `failed_tests`
-   and the finding report, and compare `changed_paths` with the footprint to fill
-   `outside_paths`. The current fake reports only verdict booleans; it cannot
-   supply missing test messages or offending paths.
-4. Replace the check fake with #62's real adapter and result source, PR #67.
-   The real worktrees integration and maker-to-harness trial are implemented.
-   `tests/maker/records` retains that trial's actual terminal record, CAS receipt
-   and result payload. Acceptance verifies the payload hash and compares its
-   code, tests and harness configuration with a new real maker change before
-   replaying the recorded check result. The trial runs the real harness against
-   the maker's actual base and head through PrismaBuild's managed container.
-   Both use a scripted model and fake read-only recall. The worker self-check
-   stays recorded; the outer trial checks the committed result independently.
+
+The merged PrismaBuild checks observation supplies changed paths and up to 20
+failing test IDs with messages capped at 1,000 characters each. The trusted
+harness retains pytest assertion messages; older reports without messages still
+parse and receive an explicit fallback. The controller records paths outside the
+node's footprint and failed tests in `maker_findings`. Missing goal materials
+retain unbound findings with an empty goal list and a log entry. Invalid goal IDs
+return an error. CI feedback keeps up to 20 checks, with 1,000-character summaries,
+4,096-character links and a 16,000-character finding report.
+
+`tests/maker/records` retains the actual maker-to-harness trial's terminal record,
+CAS receipt and payload. Acceptance verifies the hash and compares its code, tests
+and harness configuration with a new maker change. It then runs the real checks
+adapter against recorded queue evidence. The separate trial checks the committed
+result independently through PrismaBuild's managed container.
 
 Generate all-host verification with
 `python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
 the manifest with `pbcampaign.py --detach`. The three pinned actions run maker,
-worker, supervisor, GitHub ingress and worktrees scenarios.
+worker, supervisor, PrismaBuild adapter, GitHub ingress and worktrees scenarios.
 They also cover process exit during both opening and reading `/proc/<pid>/stat`.
 The open case extends main's ESRCH fix; permission errors still propagate.
 The daemon fixture makes and commits a real change through the shared ingress loop.
@@ -402,6 +408,138 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
+
+The real checks adapter lives in `adapters::prismabuild::Adapter`. Register it at
+`Upstream::PrismaBuild`. Its `source().spawn(sender)` starts the ingress thread;
+keep the returned handle alive. Its `join()` returns source errors or panics to
+the daemon supervisor, which must stop the ingress loop and exit on failure.
+The source sends existing `cli::Input` values.
+It also implements `ingress::Source`, so the shared ingress supervisor registers
+it with `sources.register(adapter.source())` and propagates its errors.
+The production registry remains with #20. The default simulation registry still
+uses the fake.
+
+Before `SubmitChecks`, a maker/worktree caller supplies
+`Observation::CheckPlan { node, sha, run: CheckRun { repository, base_sha, plan } }`.
+`sha` is the maker's exact head. Send this before the maker's completion. `repository` is an absolute local Git
+path. `base_sha` is the recorded full commit, not a moving branch. Each check
+names its kind and exact pytest node IDs. The controller persists this binding
+in `check_plans`, keyed by node and head. A late context for another head cannot
+replace it. This uses the existing world-row store. It hydrates the delivery
+with that context and the kernel's current head. An unbound plan stays unresolved
+with an adapter error. No store migration or kernel rule changes are needed.
+
+`Settings` names a private durable records directory, the trusted installed
+`tl3_harness` package directory, the Python command, pinned image, honest CPU and
+memory demand, progress allowance and result tool. Use a separate records
+directory for each controller store. The Postgres controller claim permits one
+adapter writer. The source writes durable `.done` completions after delivery. Retain them across restarts
+and upgrades. The records directory also fences older write epochs; reads of
+older jobs remain valid. Set `priority` to 0 for served work and -10 for agent
+validation. The result tool is `python3` with the published `pbwait.py` argument.
+The Python command must provide Python 3.14 on every eligible worker. For the
+current fleet, `uv run --python 3.14 --no-project python` does that.
+
+The PrismaBuild tool must be `pbrun` itself, or a wrapper that `exec`s it.
+The parent-death signal protects only the process the adapter execs. A wrapper
+that starts `pbrun` without `exec` leaves it as a grandchild that can survive a
+controller crash.
+
+The adapter clones committed Git objects into its own clean checkout at the
+exact head. Dirty maker files never enter it. A bundle retains both base and
+head. The bundle, trusted harness copy, check plan and entry point form a clean
+Git input that PB snapshots. Inputs remain unchanged while PB seals them.
+`--seal-only` publishes no work. The adapter fsyncs the effect-to-action binding
+before `--publish-sealed` can start work, then deletes the `.input` bundle.
+Startup removes every leftover `.input`, including failed staging without a
+binding. Reconciliation removes inputs for cancelled effects that never execute
+again. Only `execute` seals or publishes. With no `.job`, reconciliation returns
+`Absent`. With a saved seal and no queue row, the adapter consults the cleaned
+ending first. A readable ending supplies the result. A waiting ending permits
+`Absent`; tool errors stay unknown. The controller can then retry `execute` with the saved key after an input, look
+or restart. A Cancelling effect instead settles through `cancel_absent`.
+Withdrawal of an absent sealed action saves an empty completion and notifies
+the source to forget its watch. There is no PB terminal event for that key.
+Re-execution uses that saved CAS key,
+even after the source checkout disappears or PB publishes a new runtime.
+Existing queue records prevent another publication. Retries belong to the
+kernel, and every submitted action has max attempts 1.
+
+Queue and bell records decide when to read an ending. A queued or claimed job
+stays pending. The adapter uses `pbwait.py --endings --until cleaned --wait-s 0`
+to retrieve terminal evidence without waiting for execution. That observation
+allowance never ends a job. A withdrawal decision alone cannot confirm cleanup.
+Malformed queue records remain unknown. A digest mismatch, an unverified
+receipt or an oversized result log reports `report: false, pass: false` once
+and saves that completion. Result-tool spawn failures, unparseable output and
+log I/O errors stay pending. Bell news or a restart retries them. Bell transport
+backoff never retries a failed result tool.
+Successful actions require a CAS receipt. Failed actions use PB's verified
+immutable attempt logs and can have no success receipt.
+A valid ending whose verified log has no valid harness report reports
+`report: false`. Parsed reports bind the effect, base, head, check names, kinds,
+selectors and current `in-process` custody. Only typed fields enter parsing.
+
+The observation includes the action key, base, head and changed paths. The
+controller interns those paths in the repository namespace and compares their
+IDs with the node's footprint before handing `ChecksDone` to the kernel. Git's
+NUL-delimited `base...head` diff starts at the merge base and includes both
+names of a rename by disabling rename detection. Tests cover a divergent base,
+a rename, a deletion, spaces, newlines and a case-only rename.
+Evidence remains in the store event log and PB's verified result log.
+
+The `prismabuild` controller test executable uses recorded done, failed and
+withdrawn queue records from the client crate. Its tool fixture only writes
+private queue files. It covers pending work, missing and malformed reports,
+wrong heads, transport uncertainty, epoch fencing, withdrawal, SIGKILL followed
+by resubmission, source delivery and footprint failures through the real
+controller. Thread tests start the registered source, introduce new keys over
+the adapter channel, deliver bell events, restart after delivery, and check
+that idle sources make no bell requests or repeated ending reads. The channel
+holds at most 64 node IDs; lag rebuilds the active set from durable records. Finished
+jobs leave memory and get `.done` markers, which restarts skip. Withdrawal
+skips jobs with `.done` before parsing. A later `SubmitChecks` for the same node
+in a newer generation retires older `.job` and `.done` records only after
+the newer ending has been delivered. The kernel
+permits one in-flight effect per node, so the later submission proves the prior
+effect has settled and its watch no longer reconciles. Current jobs and other nodes remain intact. Superseded seals with no ending
+also retire, including never-published cancellations. Retirement fsyncs deletion of `.job` before deleting
+`.done`; startup removes orphan markers after an interrupted retirement.
+Records live under `<records>/<node id>/`, keyed by encoded effect key.
+Supersession and withdrawal list only that node's files.
+`action_key(&Delivery)` locates the binding directly. Startup moves flat bindings
+into node directories while preserving their completion markers.
+The last pair stays until that node delivers a newer ending. After the request
+closes and every effect and watch for that node has settled, ticket #13 teardown
+calls `prismabuild::Adapter::retire_node(node)`. The call is idempotent and removes
+the final records and source watches. Neither age nor a timer permits deletion.
+
+The source logs and skips bad `.job` records at startup or registration. A
+directory failure, failed `.done` write or closed ingress receiver reaches
+`RunningSource::join()` as an error. The source has
+no timed wake-up and never scans the directory during ordinary bell waits.
+It submits no fleet work from inside tests.
+
+Generate the adapter review campaign from a clean detached worktree with
+`python3 crates/controller/tools/prismabuild_review_manifest.py hosts > /tmp/tl3-pb-review.json`.
+Submit that file with the published `pbcampaign.py`. It runs controller, client and store
+process tests once on each fleet host. After those pass, generate and submit
+`prismabuild_review_manifest.py workspace` for the full verification script.
+
+The separate outer-session trial is reproducible from the repository root:
+
+```sh
+# Build this example through PrismaBuild first. Run its executable outside PB.
+/path/to/pb_trial submit /absolute/empty/trial-directory "$IMAGE"
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py \
+    --endings --until cleaned ACTION_KEY
+/path/to/pb_trial observe /absolute/empty/trial-directory "$IMAGE"
+```
+
+The trial submits a fixture demonstrating check through the real adapter. Its
+base fails and its exact head passes. The final command feeds the real ending
+through the ingress parser and prints the checks observation. It refuses to run
+inside an admitted action. Controller/store tests and this trial are separate.
 
 The systematic [crash simulation](../../docs/crash-simulation.md) uses real
 SIGKILL cuts inside transactions and around dispatch and reconciliation. Its

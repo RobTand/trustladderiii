@@ -82,7 +82,7 @@ def _starting_head(request, session):
     root = _git(request, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(root).resolve() != Path(request["worktree"]).resolve():
         raise ValueError("maker requires the worktree root")
-    checkpoint = session.with_suffix(f".round-{request['inputs']['round']}.head") if session else None
+    checkpoint = session.with_suffix(f".visit-{request['operation']['generation']}.head") if session else None
     if checkpoint and checkpoint.exists():
         return read_json(checkpoint.read_text())
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
@@ -197,8 +197,6 @@ def run(model, request, worktree, emit):
     finally:
         stream.close()
     if out_of_room:
-        if session:
-            _save(session, messages_to_dict(history))
         return {"kind": "out_of_room"}
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final maker reply")
@@ -226,7 +224,7 @@ def run(model, request, worktree, emit):
                 # Unknown, linked or unreadable contents cannot prove a fit.
                 size += inputs["fit_tokens"]
         reply["fits"] = size < inputs["fit_tokens"]
-    if session:
+    if session and reply["kind"] != "out_of_room":
         _save(session, messages_to_dict(history))
     return reply
 

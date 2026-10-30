@@ -151,54 +151,13 @@ impl Executor for Workers {
     }
 }
 
-struct Checks {
-    fake: adapters::prismabuild::Fake,
-    worktree: PathBuf,
-    base: String,
-    fail: bool,
-}
-impl Executor for Checks {
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        let mut result = self.fake.execute(delivery)?;
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::SubmitChecks,
-                ..
-            }
-        ) {
-            assert_eq!(
-                delivery.head_sha.as_deref(),
-                Some(git(&self.worktree, &["rev-parse", "HEAD"]).as_str())
-            );
-            let changed = git(&self.worktree, &["diff", "--name-only", &self.base, "HEAD"]);
-            let inside = changed
-                .lines()
-                .all(|path| delivery.paths.iter().any(|p| p == path));
-            result = Completion::confirmed(vec![Observation::Kernel(Event::Reply {
-                node: delivery.node(),
-                generation: delivery.generation,
-                reply: Reply::ChecksDone {
-                    report: true,
-                    pass: !self.fail,
-                    in_footprint: inside,
-                },
-            })]);
-        }
-        Ok(result)
-    }
-    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        self.fake.reconcile(delivery)
-    }
-}
-
 fn registry(
     config: &tl3_config::Config,
     root: &Path,
-    worktree: &Path,
-    base: &str,
+    _worktree: &Path,
+    _base: &str,
     fail: bool,
-) -> (Registry, WorkerOutputSource) {
+) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
     let mut registry = adapters::simulation(root).unwrap();
     let real = Supervisor::new(config, root).unwrap();
     let source = real.source();
@@ -209,16 +168,47 @@ fn registry(
             fake: adapters::workers::Fake::new(root),
         },
     );
-    registry.register(
-        Upstream::PrismaBuild,
-        Checks {
-            fake: adapters::prismabuild::Fake::new(root),
-            worktree: worktree.into(),
-            base: base.into(),
-            fail,
-        },
+    let (client, settings) = super::prismabuild_fixture::settings(
+        &root.join("checks"),
+        if fail { "check_fail" } else { "done" },
+        "http://127.0.0.1:9/",
     );
-    (registry, source)
+    let checks = adapters::prismabuild::Adapter::new(client, settings).unwrap();
+    let checks_source = checks.source();
+    registry.register(Upstream::PrismaBuild, checks);
+    (registry, source, checks_source)
+}
+
+fn observe(
+    controller: &mut Controller,
+    key: &str,
+    observation: Observation,
+    repository: &Path,
+    base: &str,
+) {
+    if let Observation::WorkerReply { node, reply, .. } = &observation
+        && let Some(sha) = reply.get("head").and_then(Value::as_str)
+    {
+        controller
+            .observe(
+                &format!("{key}:check-plan"),
+                Observation::CheckPlan {
+                    node: *node,
+                    sha: sha.into(),
+                    run: adapters::prismabuild::CheckRun {
+                        repository: repository.into(),
+                        base_sha: base.into(),
+                        plan: vec![adapters::prismabuild::Check {
+                            name: "hello".into(),
+                            kind: adapters::prismabuild::Kind::Demonstrating,
+                            tests: vec!["test_greeting.py::test_hello".into()],
+                        }],
+                    },
+                },
+            )
+            .unwrap();
+    }
+    controller.observe(key, observation).unwrap();
 }
 
 fn requests(config: &tl3_config::Config) -> Vec<Value> {
@@ -277,7 +267,7 @@ impl Executor for CiFailureOnce {
 fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let root = tempfile::tempdir().unwrap();
     let (config, worktree, base) = fixture(settings, root.path(), mode);
-    let (mut adapters, source) =
+    let (mut adapters, source, checks_source) =
         registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
     if mode.starts_with("ci-") {
         adapters.register(
@@ -296,6 +286,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     )
     .unwrap();
     let (tx, rx) = mpsc::channel();
+    let checks_running = checks_source.spawn(tx.clone());
     let mut source_thread = Some(thread::spawn(move || source.run(tx)));
     controller.intake(labelled()).unwrap();
     loop {
@@ -327,7 +318,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             let Input::Observation { key, observation } = input else {
                 panic!("worker observation required")
             };
-            controller.observe(&key, observation).unwrap();
+            observe(&mut controller, &key, observation, &worktree, &base);
         }
     }
     let world = controller.world().unwrap();
@@ -365,7 +356,8 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         });
         store.commit(&commit).unwrap();
         drop(controller);
-        let (registry, _) = registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+        let (registry, _, _) =
+            registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
         controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -374,10 +366,18 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         .unwrap();
         while controller.drive_once().unwrap() {}
         assert!(!leftover.exists());
-    } else {
+    } else if mode != "out-of-room" {
         assert!(
             config.workers.runs.join("sessions/0").exists(),
             "an open request retains its conversations"
+        );
+    } else {
+        assert!(
+            !config
+                .workers
+                .runs
+                .join("sessions/0/plan-0/attempt-1.json")
+                .exists()
         );
     }
     let runs = requests(&config);
@@ -402,6 +402,24 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     request["inputs"]["feedback"].as_array().unwrap().len(),
                     index
                 );
+            }
+            if index > 0 {
+                let finding = &request["inputs"]["feedback"][index - 1];
+                if mode == "outside" {
+                    assert_eq!(finding["outside_paths"], json!(["outside.py"]));
+                    assert!(finding["report"].as_str().unwrap().contains("outside.py"));
+                } else {
+                    assert_eq!(
+                        finding["failed_tests"][0]["test"],
+                        "test_greeting.py::test_hello"
+                    );
+                    assert!(
+                        finding["failed_tests"][0]["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("goodbye")
+                    );
+                }
             }
             println!(
                 "maker rung attempt {attempt}, round {}: {} effort {} budget {}",
@@ -506,6 +524,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     && i.value == git(&worktree, &["rev-parse", "HEAD"]))
         );
     }
+    drop(checks_running);
     drop(rx);
     drop(controller);
 }
@@ -524,6 +543,7 @@ fn process_contract(settings: &tl3_config::Store) {
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
+    assert!(!root_for(&config, &delivery.key).join("worktree").exists());
     assert!(
         matches!(completion.observations.as_slice(), [Observation::WorkerReply {role, reply, ..}] if role == "maker" && reply["kind"] == "done")
     );

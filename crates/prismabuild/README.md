@@ -127,3 +127,23 @@ OPENBLAS_NUM_THREADS=1
 
 Check `pbwait.py`, the terminal record, logs and CAS receipt before reporting
 success. CI runs on Mergify runners, outside PrismaBuild submission.
+
+The controller adapter adds `seal(&SubmitAction)`, `seal_at_priority` and
+`publish(&ActionKey)`. Sealing calls PB's `--seal-only` and publishes no runnable
+work. Persist its key durably before calling `publish`, which uses only
+`--publish-sealed KEY --detach`. This reuses the retained CAS request across a
+crash or runtime update. Publication validates that PB returned the requested
+key. Priority is publication policy, outside action identity; the controller
+uses -10 for its development trial. The ordinary `submit` interface is unchanged.
+
+Tool children set `PR_SET_PDEATHSIG=SIGKILL` before exec and check their parent
+PID afterward. The spawning thread must live until the tool finishes. Linux
+delivers the death signal when that thread exits, even if the process remains
+alive. The controller adapter spawns on its daemon owner thread through a
+current-thread runtime. This prevents a publisher from surviving controller
+SIGKILL and landing work after recovery has established absence.
+
+The submission tool must be `pbrun` itself, or a wrapper that `exec`s it.
+The parent-death signal protects only the process the adapter execs. A wrapper
+that starts `pbrun` without `exec` leaves it as a grandchild that can survive a
+controller crash.

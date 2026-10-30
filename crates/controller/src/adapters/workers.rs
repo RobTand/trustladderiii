@@ -170,20 +170,7 @@ impl Supervisor {
                 json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
             inputs["hindsight"] =
                 json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
-            let encoded = |name: &str| {
-                name.to_ascii_lowercase()
-                    .bytes()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            };
-            self.worktrees
-                .join(encoded(&delivery.repository.owner))
-                .join(encoded(&delivery.repository.name))
-                .join(format!(
-                    "issue-{}-node-{}",
-                    delivery.issue,
-                    delivery.node().0
-                ))
+            super::worktrees::checkout_path(&self.worktrees, delivery)
         } else {
             self.root(&delivery.key).join("worktree")
         };
@@ -264,23 +251,38 @@ impl Supervisor {
         let entries = match fs::read_dir(&sessions) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                eprintln!(
+                    "worker session retirement retained {}: {error}",
+                    sessions.display()
+                );
+                return Ok(());
+            }
         };
         for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let Some(node) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.parse::<u64>().ok())
-            else {
-                continue;
-            };
-            if store.can_retire_worker_session(&node.to_string())? {
-                fs::remove_dir_all(entry.path())?;
-                File::open(&sessions)?.sync_all()?;
+            let result = (|| -> Result<()> {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
+                    return Ok(());
+                }
+                let Some(node) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u64>().ok())
+                else {
+                    return Ok(());
+                };
+                if store.can_retire_worker_session(&node.to_string())? {
+                    fs::remove_dir_all(entry.path())?;
+                    File::open(&sessions)?.sync_all()?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                eprintln!(
+                    "worker session retirement retained an entry in {}: {error}",
+                    sessions.display()
+                );
             }
         }
         Ok(())
@@ -379,7 +381,10 @@ impl Executor for Supervisor {
             delivery.epoch,
             attempt_number,
         )?;
-        fs::create_dir_all(root.join("worktree"))?;
+        fs::create_dir_all(&root)?;
+        if role != "maker" {
+            fs::create_dir_all(root.join("worktree"))?;
+        }
         if matches!(role, "ingest" | "planner") {
             let materials = store
                 .worker_materials(&delivery.node().0.to_string())?

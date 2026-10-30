@@ -439,6 +439,8 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
+                delivery.checks =
+                    check_run(&snapshot, delivery.node(), delivery.head_sha.as_deref())?;
                 hook(Boundary::BeforeReconcile, &delivery.key);
                 let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                 hook(Boundary::AfterReconcile, &delivery.key);
@@ -680,6 +682,7 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let checks = check_run(snapshot, node, head_sha.as_deref())?;
             let question_context = if let Out::Notice {
                 notice: tl3_kernel::Notice::Ask { question },
                 ..
@@ -727,6 +730,8 @@ impl Controller {
                 attempt: n.attempt,
                 round: n.round,
                 replanned: n.replanned,
+                checks,
+                job_generation: n.job,
                 question: n.question,
                 note: None,
                 question_context,
@@ -800,9 +805,19 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let ci_checks = match &observation {
-            Observation::CiFailed { checks, .. } => checks.clone(),
+            Observation::CiFailed { checks, .. } => checks
+                .iter()
+                .take(20)
+                .map(|check| findings::CiFailure {
+                    name: findings::clipped(&check.name, 256),
+                    summary: findings::clipped(&check.summary, findings::MAX_MESSAGE_CHARS),
+                    url: check.url.as_ref().map(|url| findings::clipped(url, 4096)),
+                })
+                .collect(),
             _ => Vec::new(),
         };
+        let mut failed_tests = Vec::new();
+        let mut outside_paths = Vec::new();
         let event = match observation {
             Observation::GitHubComment {
                 repository,
@@ -843,6 +858,59 @@ impl Controller {
                 node,
                 fact: Fact::CiFailed { infra },
             },
+            Observation::CheckPlan { node, sha, run } => {
+                request(snapshot, node)?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
+            Observation::Checks {
+                node,
+                generation,
+                sha,
+                changed_paths,
+                failed_tests: tests,
+                report,
+                pass,
+                ..
+            } => {
+                let request = request(snapshot, node)?;
+                let repo = self
+                    .store
+                    .intern_repo(&request.repo.owner, &request.repo.name)?;
+                let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
+                let footprint: std::collections::BTreeSet<_> = world
+                    .files(n.footprint)
+                    .ok_or(Error::Invalid("unknown footprint"))?
+                    .collect();
+                let exact_head = n.head == Some(self.head(node, &sha)?);
+                let mut in_footprint = true;
+                for path in changed_paths {
+                    let id = self.store.intern_path(repo, &path)?;
+                    if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
+                        outside_paths.push(path);
+                        in_footprint = false;
+                    }
+                }
+                failed_tests = tests
+                    .into_iter()
+                    .take(findings::MAX_FAILED_TESTS)
+                    .map(|test| findings::FailedTest {
+                        test: findings::clipped(&test.test, 4096),
+                        message: findings::clipped(&test.message, findings::MAX_MESSAGE_CHARS),
+                    })
+                    .collect();
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::ChecksDone {
+                        report,
+                        pass: pass && exact_head,
+                        in_footprint,
+                    },
+                }
+            }
             Observation::WorkerReply {
                 node,
                 generation,
@@ -1075,11 +1143,8 @@ impl Controller {
                 let n = &world.nodes[node.0 as usize];
                 let report = match (n.phase, reply) {
                     (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
-                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck, match (pass, in_footprint) {
-                            (false, false) => "Tests failed and the change includes files outside the plan. The upstream supplied no test messages or changed paths.",
-                            (false, true) => "Tests failed. The upstream supplied no test names or failure messages.",
-                            _ => "The change includes files outside the plan. The upstream supplied no changed paths.",
-                        }.to_owned())),
+                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
+                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths))),
                     (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
                         findings::Kind::ReviewFinding,
                         "The independent reviewer requested changes. No detailed review report was supplied.".into(),
@@ -1111,34 +1176,51 @@ impl Controller {
             }
             _ => None,
         };
-        if let Some((node, kind, report)) = finding
-            && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
-        {
-            let inputs = materials.get("maker").unwrap_or(&materials);
-            if let Some(goals) = inputs["goals"].as_array() {
-                let mut findings = self
-                    .store
-                    .worker_document(&node.0.to_string(), "maker_findings")?
-                    .unwrap_or(json!([]));
-                let finding = findings::Finding {
-                    kind,
-                    report,
-                    goal_ids: goals
-                        .iter()
-                        .map(|goal| goal["id"].as_str().unwrap().to_owned())
-                        .collect(),
-                    failed_tests: Vec::new(),
-                    outside_paths: Vec::new(),
-                    ci_checks,
-                };
-                findings
-                    .as_array_mut()
-                    .ok_or(Error::Invalid("invalid maker findings"))?
-                    .push(serde_json::to_value(finding)?);
-                commit
-                    .rows
-                    .push(put("maker_findings", node.0.to_string(), findings));
-            }
+        if let Some((node, kind, report)) = finding {
+            let materials = self.store.worker_materials(&node.0.to_string())?;
+            let goals = materials
+                .as_ref()
+                .and_then(|materials| materials.get("maker").unwrap_or(materials).get("goals"));
+            let goal_ids = match goals {
+                Some(goals) => goals
+                    .as_array()
+                    .ok_or(Error::Invalid("maker goals must be an array"))?
+                    .iter()
+                    .map(|goal| {
+                        goal["id"]
+                            .as_str()
+                            .filter(|id| !id.trim().is_empty())
+                            .map(str::to_owned)
+                            .ok_or(Error::Invalid("maker goal needs a string id"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                None => {
+                    eprintln!(
+                        "maker finding for node {} has no goal materials; retaining unbound evidence",
+                        node.0
+                    );
+                    Vec::new()
+                }
+            };
+            let mut findings = self
+                .store
+                .worker_document(&node.0.to_string(), "maker_findings")?
+                .unwrap_or(json!([]));
+            let finding = findings::Finding {
+                kind,
+                report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
+                goal_ids,
+                failed_tests,
+                outside_paths,
+                ci_checks,
+            };
+            findings
+                .as_array_mut()
+                .ok_or(Error::Invalid("invalid maker findings"))?
+                .push(serde_json::to_value(finding)?);
+            commit
+                .rows
+                .push(put("maker_findings", node.0.to_string(), findings));
         }
         Ok(Some(event))
     }
@@ -1172,6 +1254,7 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
     delivery.epoch = effect.epoch.get();
+    delivery.checks = check_run(snapshot, delivery.node(), delivery.head_sha.as_deref())?;
     delivery.pull_request = snapshot
         .rows
         .iter()
@@ -1198,4 +1281,21 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn check_run(
+    snapshot: &Snapshot,
+    node: NodeId,
+    sha: Option<&str>,
+) -> Result<Option<adapters::prismabuild::CheckRun>> {
+    let Some(sha) = sha else {
+        return Ok(None);
+    };
+    snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
+        .map(|r| serde_json::from_value(r.value.clone()))
+        .transpose()
+        .map_err(Into::into)
 }

@@ -384,6 +384,8 @@ pub fn verify_contracts() {
             attempt: 1,
             round: 1,
             replanned: false,
+            checks: None,
+            job_generation: None,
             note: None,
             question: None,
             question_context: None,

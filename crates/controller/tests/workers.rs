@@ -1,6 +1,7 @@
 mod maker;
 #[path = "workers/planning.rs"]
 mod planning;
+mod prismabuild_fixture;
 #[path = "workers/retirement.rs"]
 mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
@@ -122,6 +123,8 @@ fn delivery() -> Delivery {
         round: 0,
         replanned: false,
         note: None,
+        checks: None,
+        job_generation: None,
         question: None,
         question_context: None,
     }
@@ -281,6 +284,12 @@ fn main() {
     println!("test retirement_states_keep_one_summary_until_closure ... ok");
     retirement_review::blocked_identities(&database.create("retirement_blocked"));
     println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+    for guard in ["inbox", "effect", "progress"] {
+        retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
+        println!("test session_retirement_{guard}_guard ... ok");
+    }
+    retirement_review::session_unlink_error(&database.create("session_unlink"));
+    println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
     retirement_review::transient_io(&database.create("source_emfile"));
     println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
     confirmed_absence(&database.create("workers_confirmed_absence"));

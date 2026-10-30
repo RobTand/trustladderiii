@@ -711,3 +711,62 @@ def test_actionable_check_feedback_matches_the_input_contract(maker_request):
         'ci_checks': [{'name': 'greeting', 'summary': 'Greeting assertion failed.', 'url': 'https://example.invalid/check/1'}],
     }]
     validate('maker-input', maker_request['inputs'])
+
+
+@pytest.mark.parametrize('moved_head', [False, True])
+@pytest.mark.parametrize('new_edits', [False, True])
+def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
+        maker_request, monkeypatch, tmp_path, moved_head, new_edits):
+    root = Path(maker_request['worktree'])
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    maker_request['inputs']['context_size'] = 150000
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(
+        responses=[AIMessage(**write_turn()), AIMessage(**turn(DONE))]))
+    runtime.run(maker_request, lambda event: None)
+    if moved_head:
+        # A rewritten upstream history need not retain the first visit's starting commit.
+        rebased = git(root, 'commit-tree', 'HEAD^{tree}', '-m', 'Rebased history')
+        git(root, 'reset', '--hard', rebased)
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['operation']['generation'] += 1
+    maker_request['resume_session'] = True
+    turns = [write_turn(content="def greet(): return 'hello again'\n")] if new_edits else []
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(
+        responses=[AIMessage(**message) for message in [*turns, turn(DONE)]]))
+    if new_edits:
+        events = []
+        runtime.run(maker_request, events.append)
+        assert events[-1]['reply']['kind'] == 'done'
+        assert git(root, 'rev-parse', 'HEAD^') == before
+    else:
+        with pytest.raises(ValueError, match='done requires code changes'):
+            runtime.run(maker_request, lambda event: None)
+        assert git(root, 'rev-parse', 'HEAD') == before
+
+
+@pytest.mark.parametrize('existing', [False, True])
+@pytest.mark.parametrize('usage_cutoff', [False, True])
+def test_out_of_room_never_saves_a_conversation(maker_request, monkeypatch, tmp_path, existing, usage_cutoff):
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    clean = b'[]'
+    if existing:
+        session.write_bytes(clean)
+    message = turn({'kind': 'out_of_room'}, input_tokens=900 if usage_cutoff else 100)
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**message)]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply']['kind'] == 'out_of_room'
+    assert session.read_bytes() == clean if existing else not session.exists()
+
+
+def test_ci_feedback_summary_has_a_character_cap(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'CI failed.', 'goal_ids': ['greeting'],
+        'ci_checks': [{'name': 'Rust', 'summary': 'x' * 1000, 'url': None}],
+    }]
+    validate('maker-input', maker_request['inputs'])
+    maker_request['inputs']['feedback'][0]['ci_checks'][0]['summary'] += 'x'
+    with pytest.raises(ValueError):
+        validate('maker-input', maker_request['inputs'])

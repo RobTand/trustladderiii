@@ -50,3 +50,41 @@ pub(crate) fn ci_report(checks: &[CiFailure]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+// Bound feedback persisted from external reports and sent back to the maker.
+pub const MAX_FAILED_TESTS: usize = 20;
+pub const MAX_MESSAGE_CHARS: usize = 1000;
+pub(crate) const MAX_REPORT_CHARS: usize = 16000;
+
+pub(crate) fn clipped(text: &str, cap: usize) -> String {
+    text.chars().take(cap).collect()
+}
+
+pub(crate) fn check_report(
+    pass: bool,
+    in_footprint: bool,
+    tests: &[FailedTest],
+    paths: &[String],
+) -> String {
+    let mut lines = vec![];
+    if !pass {
+        if tests.is_empty() {
+            lines.push("Checks failed. The upstream supplied no failing test details.".to_owned());
+        } else {
+            lines.extend(
+                tests
+                    .iter()
+                    .map(|test| format!("{}: {}", test.test, test.message)),
+            );
+        }
+    }
+    if !in_footprint {
+        lines.push(if paths.is_empty() {
+            "The change includes files outside the plan. The upstream supplied no changed paths."
+                .into()
+        } else {
+            format!("Files outside the plan: {}", paths.join(", "))
+        });
+    }
+    clipped(&lines.join("\n"), MAX_REPORT_CHARS)
+}

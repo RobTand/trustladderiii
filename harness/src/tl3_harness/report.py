@@ -8,7 +8,8 @@ class InvalidReport(ValueError):
 
 
 def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_code: int,
-          added_names: frozenset[tuple[str, str]] = frozenset()) -> dict[str, Outcome]:
+          added_names: frozenset[tuple[str, str]] = frozenset(), *,
+          messages: dict[str, str] | None = None) -> dict[str, Outcome]:
     if not records:
         return dict.fromkeys(tests, Outcome.NO_REPORT)
     if records[0] != {"event": "start", "schema": 1}:
@@ -19,6 +20,10 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
     selected = None
     collection_error = False
     for record in records[1:-1]:
+        message = record.get("message", "")
+        if not isinstance(message, str) or len(message) > 1000:
+            raise InvalidReport("invalid failure message")
+        record = {key: value for key, value in record.items() if key != "message"}
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
                 if (selected is not None or not all(isinstance(name, str) for name in names)
@@ -41,6 +46,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                         or when == "teardown" and previous not in (["setup"], ["setup", "call"])):
                     raise InvalidReport("test phases are out of order")
                 phases[test, when] = (outcome, assertion, tuple(name) if name else None)
+                if messages is not None and outcome == "failed" and message:
+                    messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
             case _:
                 raise InvalidReport("unknown report event")
     outcomes = {}
