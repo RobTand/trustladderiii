@@ -219,6 +219,7 @@ class DeployTests(unittest.TestCase):
 
     def test_check_reports_both_bad_credentials_as_missing(self):
         config, data = self.config()
+        deploy.write_file(deploy.paths(self.home)[0] / "deploy/managed-tunnel", b"managed\n")
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.write_file(destination, config.read_bytes())
         key = destination.parent / "secrets/model-key"
@@ -233,6 +234,32 @@ class DeployTests(unittest.TestCase):
             prefix = "OK" if content and mode == 0o600 else "MISSING"
             self.assertIn(f"{prefix} model credential\n", output.getvalue())
             self.assertIn(f"{prefix} Cloudflare token\n", output.getvalue())
+
+    def test_external_tunnel_needs_no_token_or_tl3_connector(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        deploy.write_file(destination.parent / "secrets/model-key", b"fixture")
+        deploy.write_file(destination.parent / "production-ready", b"")
+        calls = []
+
+        def command(argv, **kwargs):
+            calls.append(list(map(str, argv)))
+            return subprocess.CompletedProcess(argv, 0)
+
+        with patch.object(subprocess, "run", side_effect=command), \
+             patch.object(deploy.http.client, "HTTPConnection") as http, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            http.return_value.getresponse.return_value.status = 200
+            deploy.check(self.home)
+        self.assertNotIn("Cloudflare token", output.getvalue())
+        self.assertFalse(any("tl3-cloudflared" in call for call in calls))
+        self.assertIn("external webhook route", output.getvalue())
+
+    def test_controller_stops_its_whole_process_group_and_preserves_gate(self):
+        unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
+        self.assertIn("KillMode=control-group", unit)
+        self.assertIn("ConditionPathExists=%h/.config/tl3/production-ready", unit)
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:

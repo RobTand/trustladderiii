@@ -347,6 +347,9 @@ pub fn upstream(output: Output) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
+    pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
+        todo!("inspect registered implementations")
+    }
     pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) {
         for (upstream, adapter) in &mut self.0 {
             if let Err(error) = adapter.retire(store) {

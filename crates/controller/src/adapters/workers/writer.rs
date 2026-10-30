@@ -46,6 +46,18 @@ pub trait Writer {
     fn draft(&mut self, key: &str, input: &WriteRequest) -> Result<WriterReply>;
 }
 
+pub struct ProcessWriter;
+impl ProcessWriter {
+    pub fn new(_config: &tl3_config::Config, _root: &std::path::Path) -> Result<Self> {
+        todo!("configured writer")
+    }
+}
+impl Writer for ProcessWriter {
+    fn draft(&mut self, _key: &str, _input: &WriteRequest) -> Result<WriterReply> {
+        todo!("real writer process")
+    }
+}
+
 /// Fixed, deterministic simulation of the writer role. It executes no model.
 pub struct FakeWriter;
 impl Writer for FakeWriter {

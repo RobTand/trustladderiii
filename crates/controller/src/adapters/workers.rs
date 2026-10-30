@@ -8,6 +8,8 @@ mod process;
 pub(crate) mod protocol;
 pub(crate) mod review;
 mod source;
+#[cfg(test)]
+mod startup_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
@@ -27,6 +29,14 @@ use std::{
 };
 use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};
+
+pub(super) fn isolate_credentials(
+    _attempt: &Path,
+    _request: &mut Value,
+    _command: &mut Command,
+) -> Result<()> {
+    todo!("private worker credentials")
+}
 
 #[derive(Clone, Default)]
 pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeMap<String, i64>>>>);
