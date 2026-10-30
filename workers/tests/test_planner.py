@@ -131,7 +131,7 @@ def test_tokenizer_must_be_preloaded_without_network(tmp_path, planner_request, 
     (b"x" * (1_048_576 + 1), "declared file exceeds the 1048576-byte limit"),
     (b"hello\x00world", "declared file must be UTF-8 text without binary control bytes"),
     (b"\xff\xfe", "declared file must be UTF-8 text without binary control bytes"),
-])
+], ids=["oversized", "binary", "non_utf8"])
 def test_invalid_file_has_clear_error(tmp_path, planner_request, content, message):
     (tmp_path / "worktree/greeting.py").write_bytes(content)
     assert_rejected(run_reply(tmp_path, planner_request, LEAF), message=message)
