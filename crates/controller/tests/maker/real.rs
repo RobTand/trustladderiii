@@ -476,22 +476,38 @@ pub(super) fn review_feedback(settings: &tl3_config::Store) {
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[1]["inputs"]["round"], 1);
     let feedback = &runs[1]["inputs"]["feedback"];
-    let report = feedback[0]["report"].as_str().unwrap();
-    for text in [
-        "The greeting lacks context.",
-        "greeting.py returns only hello.",
-        "The report stream is overwritten.",
-        "The reporter replaces stdout.",
-        "Problem 0",
-        "Evidence 0",
+    let feedback = feedback.as_array().unwrap();
+    assert!(
+        feedback.len() >= 3,
+        "blocking findings must have individual feedback entries"
+    );
+    for (index, problem, evidence, goal_ids) in [
+        (
+            0,
+            "The greeting lacks context.",
+            "greeting.py returns only hello.",
+            json!(["greeting"]),
+        ),
+        (
+            1,
+            "The report stream is overwritten.",
+            "The reporter replaces stdout.",
+            json!([]),
+        ),
+        (2, "Problem 0", "Evidence 0", json!(["greeting"])),
     ] {
+        let report = feedback[index]["report"].as_str().unwrap();
         assert!(
-            report.contains(text),
-            "maker feedback missing {text}: {report}"
+            report.contains(problem) && report.contains(evidence),
+            "maker feedback missing {problem} or {evidence}: {report}"
         );
+        assert_eq!(feedback[index]["kind"], "review_finding");
+        assert_eq!(feedback[index]["goal_ids"], goal_ids);
     }
-    assert_eq!(feedback[0]["kind"], "review_finding");
-    assert_eq!(feedback[0]["goal_ids"], json!(["greeting"]));
+    let report: String = feedback
+        .iter()
+        .map(|finding| finding["report"].as_str().unwrap())
+        .collect();
     assert!(!report.contains("Optional style note"));
     assert!(!report.contains(&"é".repeat(1001)));
     assert!(!report.contains(&"界".repeat(1001)));
