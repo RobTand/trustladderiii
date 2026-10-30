@@ -583,6 +583,8 @@ fn delivery(notice: Notice) -> Delivery {
         round: 0,
         question: None,
         question_context: None,
+        checks: None,
+        job_generation: None,
         note: None,
     }
 }

@@ -371,7 +371,14 @@ fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
     body["check_run"] = api.state.lock().unwrap().queue_check();
     deliver(settings, &api, "check_run", &body);
     ingress::drain(&mut controller).unwrap();
-    controller.drive_once().unwrap();
+    let mut boundaries = Vec::new();
+    controller
+        .drive_once_with(|boundary, key| boundaries.push((boundary, key.to_owned())))
+        .unwrap();
+    assert_eq!(boundaries.len(), 2);
+    assert_eq!(boundaries[0].0, Boundary::BeforeReconcile);
+    assert_eq!(boundaries[1].0, Boundary::AfterReconcile);
+    assert_eq!(boundaries[0].1, boundaries[1].1);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     controller.drive_once().unwrap();
     assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
@@ -917,6 +924,8 @@ fn delivery() -> Delivery {
         question: None,
         note: None,
         question_context: None,
+        checks: None,
+        job_generation: None,
     }
 }
 fn label_removed_before_confirmation() {

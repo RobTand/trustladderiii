@@ -112,6 +112,8 @@ impl Fixture {
             paths: vec![],
             attempt: 1,
             round: 1,
+            checks: None,
+            job_generation: None,
             question: None,
             note: None,
             question_context: None,

@@ -347,9 +347,10 @@ impl Controller {
                         && matches!(effect.state, EffectState::Sent | EffectState::Uncertain)
                     {
                         // Queue facts can beat a lost enqueue response. Confirm that key first.
-                        if let Ok(Reconciliation::Found(completion)) =
-                            self.adapters.adapter(&delivery)?.reconcile(&delivery)
-                        {
+                        hook(Boundary::BeforeReconcile, &delivery.key);
+                        let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                        hook(Boundary::AfterReconcile, &delivery.key);
+                        if let Ok(Reconciliation::Found(completion)) = reconciled {
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -778,6 +779,7 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let checks = check_run(snapshot, node, head_sha.as_deref())?;
             let question_context = if let Out::Notice {
                 notice: tl3_kernel::Notice::Ask { question },
                 ..
@@ -824,6 +826,8 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                checks,
+                job_generation: n.job,
                 question: n.question,
                 note: None,
                 question_context,
@@ -1017,6 +1021,47 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::CheckPlan { node, sha, run } => {
+                request(snapshot, node)?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
+            Observation::Checks {
+                node,
+                generation,
+                sha,
+                changed_paths,
+                report,
+                pass,
+                ..
+            } => {
+                let request = request(snapshot, node)?;
+                let repo = self
+                    .store
+                    .intern_repo(&request.repo.owner, &request.repo.name)?;
+                let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
+                let footprint: std::collections::BTreeSet<_> = world
+                    .files(n.footprint)
+                    .ok_or(Error::Invalid("unknown footprint"))?
+                    .collect();
+                let exact_head = n.head == Some(self.head(node, &sha)?);
+                let mut in_footprint = true;
+                for path in changed_paths {
+                    let id = self.store.intern_path(repo, &path)?;
+                    in_footprint &= footprint.contains(&tl3_kernel::FileId(id.get() as u64));
+                }
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::ChecksDone {
+                        report,
+                        pass: pass && exact_head,
+                        in_footprint,
+                    },
+                }
+            }
             Observation::WorkerReply {
                 node,
                 generation,
@@ -1207,6 +1252,7 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
     delivery.epoch = effect.epoch.get();
+    delivery.checks = check_run(snapshot, delivery.node(), delivery.head_sha.as_deref())?;
     delivery.pull_request = snapshot
         .rows
         .iter()
@@ -1275,4 +1321,21 @@ fn record_progress(
     value["progress"] = json!(progress);
     commit.rows.push(put("watches", key.into(), value));
     Ok(true)
+}
+
+fn check_run(
+    snapshot: &Snapshot,
+    node: NodeId,
+    sha: Option<&str>,
+) -> Result<Option<adapters::prismabuild::CheckRun>> {
+    let Some(sha) = sha else {
+        return Ok(None);
+    };
+    snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
+        .map(|r| serde_json::from_value(r.value.clone()))
+        .transpose()
+        .map_err(Into::into)
 }

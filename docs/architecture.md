@@ -319,6 +319,94 @@ The synchronous GitHub adapter, Mergify adapter and ingress share a Tokio runtim
 with two worker threads. Cloned HTTP clients can share pooled connections, whose
 background tasks must keep running while another source reads them.
 
+The PrismaBuild checks adapter is available for mixed registries. A
+`CheckPlan` observation records the base commit, Git repository and named checks
+in a `check_plans` world row keyed by node and exact head. Maker/worktree integration supplies it before the
+maker's completion. `Delivery::checks` carries that context and `job_generation`
+identifies the job to withdraw after the node changes generation.
+
+The adapter freezes a clean head checkout, bundles both commits and snapshots
+that bundle with a trusted harness copy. It seals without publication, fsyncs
+the effect's action key in its private durable directory, deletes the sealed
+`.input` bundle, then publishes that exact CAS request. Startup removes all leftover inputs,
+including those without a `.job` after failed staging. Reconciliation also
+removes cancelled inputs when no further execution will occur. The records directory is scoped to
+one store and its single controller owner. A durable epoch fence rejects old writes. Results still
+reconcile by their original key and epoch. Existing PB records prevent repeated
+publication, including failed and withdrawn actions. PB owns stalls; the
+adapter sets a tests progress contract and max attempts 1, with no duration
+limit. Only `execute` seals or publishes. `reconcile` returns `Absent` without
+a `.job`, because no attempt can have been published without that binding.
+Before answering `Absent` for a saved seal with no `.done` and no queue row,
+the adapter consults the cleaned ending. A readable ending supplies the result,
+including a receipt-only cache hit. A waiting ending leaves authoritative absence.
+A tool error stays unknown. A later input, look or restart lets the controller retry `execute`, which publishes the
+same saved key idempotently. A Cancelling effect instead uses `cancel_absent`.
+Withdrawal of an absent sealed action saves an empty completion and notifies
+the source to forget its watch. There is no PB terminal event for that key.
+Reconciliation never publishes.
+
+PB tool children set `PR_SET_PDEATHSIG` to `SIGKILL` before exec, then check
+`getppid()` against the captured controller PID. If the parent already died,
+they exit before exec. This also works with deployment's `KillMode=process`.
+Linux ties the signal to the spawning thread. The adapter's current-thread
+Tokio runtime spawns on the controller owner thread, which lives until daemon
+exit. Do not move publication onto a temporary thread or `spawn_blocking`.
+After SIGKILL, publication either landed and has upstream evidence, or ended
+before publication and the controller can republish the same seal.
+
+`prismabuild::Source` runs on its own thread with a `Sender<Input>`. The adapter
+sends node IDs through a bounded 64-entry broadcast channel.
+The source rebuilds its active set once at startup, then blocks on that channel
+and PB's filtered bell together. An empty active set waits only for a key or
+shutdown. There is no periodic source wake-up or directory scan. Channel lag
+triggers a recovery scan. Bell resets rescan active keys; the client retains its
+capped transport backoff when the bell is unavailable.
+
+The source verifies cleaned endings and report-log digests before sending checks
+evidence. After delivery it fsyncs a `.done` marker containing the completion,
+then removes the job from memory. Restarts and recovery scans skip those records
+before parsing them. The channel and active set do not retain historical jobs.
+Records live under `<records>/<node id>/`, keyed by encoded effect key. Startup
+moves the prior flat bindings into these directories, preserving done markers.
+Normal supersession and withdrawal list only the affected node's files.
+A completed `.job` and `.done` pair remains for idempotence and recovery until
+a later `SubmitChecks` for that node in a newer generation delivers its ending. The kernel allows
+one in-flight effect per node. That later submission proves the old effect is
+settled and its watch cannot reconcile again. Superseded records then retire,
+including cancelled seals that never published or delivered an ending. Current
+jobs and other nodes remain. Retirement deletes and
+fsyncs `.job` first, then `.done`, so a crash cannot expose a delivered job
+without its marker. Startup removes orphan markers from interrupted retirement.
+Withdrawal skips `.done` jobs before parsing. Teardown #13 calls
+`Adapter::retire_node(node)` after the request has closed and no effect or watch
+for that node can reconcile again. This idempotent call removes the node's final
+records and staging files and notifies the source to forget the node. A shared
+mutex covers source delivery and marker fsync against retirement. A source
+result already in flight discards a binding removed by teardown. Retirement
+does not read other nodes' records.
+
+Invalid evidence, such as a digest mismatch, unverified receipt or oversized
+log, produces one `report: false, pass: false` observation and a durable marker.
+A failed result-tool spawn, unparseable tool output or log I/O error stays
+pending until bell news or restart. Bell transport backoff does not retry it.
+A waiting cleanup stays active until another bell event. Queue read errors stay
+unknown and are reconsidered on later hints, resets or restart. Bad `.job`
+records are logged and skipped during rebuild or registration. Directory
+failures, failed marker writes and a closed ingress receiver stop the source.
+`RunningSource::join()` returns the error or a panic to the daemon supervisor,
+which must stop the loop so systemd can restart it.
+
+Delivery uses a stable `pb:<action key>` inbox key. A crash between sending and
+the marker fsync can redeliver that key. If the controller crashes before it
+persists a delivered input, its watch can recover the saved completion from the
+marker. Sources never touch the controller. The source implements `ingress::Source` for
+the shared daemon loop. Register it with `sources.register(adapter.source())`.
+The shared ingress supervisor propagates its errors. The controller translates the
+changed-file evidence from `git diff base...head --name-only -z --no-renames`
+through repository-scoped path interning and supplies
+`in_footprint` to the kernel. No kernel transition or store schema changed.
+
 ## Real worktree records
 
 `adapters::worktrees::Real` serves configured repositories beneath
