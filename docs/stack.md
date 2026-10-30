@@ -15,7 +15,7 @@ Rob and I settled this on 2026-10-29. The state machine's reasoning is in `docs/
 
 | Layer | Choice | Why |
 |---|---|---|
-| Kernel | Rust, with its laws proven by Kani | Decided 2026-10-29 after the kernel trial, now in `crates/kernel`. The kernel is the state machine, a pure function `step(world, event) -> (world, effects)`, specified in `docs/state-table.md`. Ordinary builds have no standard library, so core logic cannot slip into I/O code. |
+| Kernel | Rust, with its laws proven by Kani | Decided 2026-10-29 after a kernel trial. The kernel, in `crates/kernel`, is the state machine, a pure function `step(world, event) -> (world, effects)`, specified in `docs/state-table.md`. Ordinary builds have no standard library, so core logic cannot slip into I/O code. |
 | Controller | A Rust process under a systemd user unit that feeds events to the kernel, keeps the event log in Postgres and carries out effects | Decided 2026-10-29. With the state machine in the kernel, the per-item LangGraph graph is gone. LangGraph stays inside the agent workers. |
 | Agent nodes | LangChain Deep Agents, one Python 3.14 worker per agent run | TL3 controls every system prompt. A harness profile drops optional middleware, turns off the default general-purpose sub-agent and overrides tool descriptions. A crashed agent cannot take the controller down. |
 | Models | LangChain chat models that call CLIProxyAPI | One endpoint spreads requests over several subscriptions. The maker's ladder uses the default model for attempts 1 and 2, with attempt 2 at maximum effort and budget, and the strongest model from a different family for attempt 3. Reviewers default to a different family from the maker. Config names the models from what CLIProxyAPI serves (Q22). |

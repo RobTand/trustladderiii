@@ -22,11 +22,25 @@ impl Rng {
     }
 }
 
-fn footprint(w: &mut World, bits: u64) -> Footprint {
-    w.intern_footprint((0..4).filter(|i| bits & (1 << i) != 0).map(FileId))
+/// File ids for footprints, one pool per seed. Ids below 64 make inline sets
+/// and larger ids interned ones, so the walks lock and extend both kinds,
+/// mixed, and across the 63/64 boundary.
+const POOLS: [[u64; 4]; 4] = [
+    [0, 1, 2, 3],
+    [62, 63, 64, 65],
+    [0, 63, 1 << 40, u64::MAX],
+    [64, 66, 1 << 40, u64::MAX],
+];
+
+fn footprint(w: &mut World, pool: &[u64; 4], bits: u64) -> Footprint {
+    w.intern_footprint(
+        (0..4)
+            .filter(|i| bits & (1 << i) != 0)
+            .map(|i| FileId(pool[i])),
+    )
 }
 
-fn random_event(w: &mut World, rng: &mut Rng) -> Event {
+fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
     if w.nodes.is_empty() || (w.nodes.len() < 4 && rng.below(40) == 0) {
         return Event::NewRequest {
             repo: RepoId(rng.below(3)),
@@ -70,14 +84,14 @@ fn random_event(w: &mut World, rng: &mut Rng) -> Event {
                 2 => Reply::AuditAgrees,
                 3 => Reply::AuditDisagrees,
                 4 => Reply::PlanLeaf {
-                    footprint: footprint(w, rng.below(16)),
+                    footprint: footprint(w, pool, rng.below(16)),
                     fits: rng.below(5) != 0,
                 },
                 5 => Reply::PlanSplit,
                 6 => Reply::PlanCantMeet,
                 7 => Reply::MakerDone { head },
                 8 => Reply::MakerNeedsFiles {
-                    files: footprint(w, rng.below(16)),
+                    files: footprint(w, pool, rng.below(16)),
                     fits: rng.below(2) == 0,
                 },
                 9 => Reply::MakerCantMeet,
@@ -172,13 +186,14 @@ fn random_walks_keep_every_rule() {
     let mut passes_by_size = [0u32; 5];
     for seed in 1..=400u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let pool = &POOLS[seed as usize % POOLS.len()];
         let gates = [1 + rng.below(2) as u8, 1 + rng.below(2) as u8, 1];
         let mut w = World::new(&gates, 1 + rng.below(2) as u8);
         for _ in 0..500 {
             let event = if rng.below(4) == 0 {
                 w.witness().unwrap_or(Event::NewRequest { repo: RepoId(0) })
             } else {
-                random_event(&mut w, &mut rng)
+                random_event(&mut w, pool, &mut rng)
             };
             let witnessed = w.witness() == Some(event);
             let before = w.measure();
@@ -218,6 +233,18 @@ fn random_walks_keep_every_rule() {
                 "seed {seed}: invalid world after {event:?}\nfrom {w:#?}\nto {next:#?}"
             );
             assert!(next.is_settled(), "seed {seed}: unsettled after {event:?}");
+            // The lock rule again, with plain sets instead of the kernel's set code.
+            for (a, x) in next.nodes.iter().enumerate() {
+                for y in &next.nodes[..a] {
+                    if x.holds && y.holds && x.repo == y.repo {
+                        let held: BTreeSet<FileId> = next.files(y.footprint).unwrap().collect();
+                        assert!(
+                            next.files(x.footprint).unwrap().all(|f| !held.contains(&f)),
+                            "seed {seed}: two holders share a file after {event:?}"
+                        );
+                    }
+                }
+            }
             if witnessed {
                 assert!(
                     next.measure() < before,
@@ -262,9 +289,10 @@ fn random_walks_keep_every_rule() {
 fn the_witness_always_finishes_the_work() {
     for seed in 1..=200u64 {
         let mut rng = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
+        let pool = &POOLS[seed as usize % POOLS.len()];
         let mut w = World::new(&[1, 2], 2);
         for _ in 0..rng.below(300) {
-            let e = random_event(&mut w, &mut rng);
+            let e = random_event(&mut w, pool, &mut rng);
             w = step(w, e).0;
         }
         for _ in 0..2_000 {

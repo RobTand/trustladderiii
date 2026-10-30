@@ -24,10 +24,11 @@ fn mapped() -> BTreeSet<&'static str> {
         .collect()
 }
 
-/// Names of the per-variant and per-phase proofs in proofs.rs.
+/// Names of the per-variant and per-phase proofs in proofs.rs. Only calls
+/// that start a line count, so a commented-out proof is missing, not proven.
 fn proven() -> BTreeSet<&'static str> {
     PROOFS
-        .split("proof!(")
+        .split("\nproof!(")
         .skip(1)
         .filter_map(|call| call.split(',').next())
         .map(str::trim)
