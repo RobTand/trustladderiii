@@ -697,7 +697,7 @@ fn tool_errors_wait_for_news() {
         let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
         let program = root.path().join("result-python");
         if spawn_failure {
-            settings.result_tool.program = program.clone().into();
+            settings.result_tool.program = program.clone();
         } else {
             fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
         }
