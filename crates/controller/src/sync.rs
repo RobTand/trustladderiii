@@ -1,7 +1,17 @@
 #[cfg(loom)]
 pub(crate) use loom::sync::{Arc, Mutex};
 #[cfg(loom)]
-pub(crate) use loom::thread;
+pub(crate) mod thread {
+    pub(crate) use loom::thread::yield_now;
+    pub(crate) fn spawn<T: Send + 'static>(
+        f: impl FnOnce() -> T + Send + 'static,
+    ) -> loom::thread::JoinHandle<T> {
+        loom::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+    }
+}
 #[cfg(not(loom))]
 pub(crate) use std::{
     sync::{Arc, Mutex, mpsc},
