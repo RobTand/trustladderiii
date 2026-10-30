@@ -10,6 +10,6 @@ if [[ "$operations_first" != "$operations_second" ]]; then
   printf 'Operations issue identity changed on rerun\n' >&2
   exit 1
 fi
-python3 "$deployment_dir/deploy.py" install "$@" --refresh-config
+python3 "$deployment_dir/deploy.py" install "$@"
 python3 "$deployment_dir/deploy.py" start
 python3 "$deployment_dir/verify-live.py"

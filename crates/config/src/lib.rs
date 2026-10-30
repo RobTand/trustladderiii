@@ -224,6 +224,8 @@ pub struct Models {
     pub reviewer: Vec<Model>,
     pub rebaser: Vec<Model>,
     pub comment_classifier: Vec<Model>,
+    #[serde(default)]
+    pub writer: Vec<Model>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -318,6 +320,9 @@ impl Config {
                 config.models.maker[0].clone(),
                 config.models.maker[2].clone(),
             ];
+        }
+        if config.models.writer.is_empty() {
+            config.models.writer = config.models.ingest.clone();
         }
         config.validate()?;
         Ok(config)
@@ -472,6 +477,7 @@ impl Config {
             ("reviewer", &self.models.reviewer),
             ("rebaser", &self.models.rebaser),
             ("comment_classifier", &self.models.comment_classifier),
+            ("writer", &self.models.writer),
         ] {
             if ladder.is_empty() {
                 return Err(invalid(

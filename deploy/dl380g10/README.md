@@ -20,7 +20,7 @@ directory and the installed harness's immutable image ID:
 python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE
 ~/.local/share/tl3/bin/tl3-deploy app-check ~/.config/tl3/tl3.toml
 ~/.local/share/tl3/bin/tl3-deploy operations ~/.config/tl3/tl3.toml
-python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE --refresh-config
+python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE
 python3 deploy/dl380g10/deploy.py start
 ```
 
@@ -35,19 +35,55 @@ installation, searches all issue pages including closed issues, and matches the
 exact title `TL3 operations` and marker `<!-- tl3:operations:v1 -->`.
 It journals a pending creation before POST and records the returned number
 durably. Reruns read that issue directly, so a stale list cannot create another.
-An uncertain creation stays pending until discovery finds its marker.
+A rejected POST with a 4xx response clears `creation_pending`. Fix permissions
+or the request and rerun `operations`. Transport errors, invalid successful
+responses and 5xx responses keep the pending marker because creation is uncertain.
+Rerun discovery first. If the marker remains pending, check GitHub's issue record
+including closed issues and confirm that no creation occurred before removing
+`creation_pending` from the nonsecret `app-state.json`. Preserve a private backup
+first, then rerun. Never clear it based only on elapsed time.
 If duplicate App-authored copies exist, it keeps the oldest and closes the others
 with a duplicate marker. Copies by another author stop automatic reconciliation.
 The nonsecret `app-state.json` records the installation and issue numbers for
 config generation. The operations repo is
 not added to the served repositories. Pinning is an optional UI step for Rob.
 
-The installer preserves an existing config unless `--refresh-config` is passed.
-Before refreshing a tuned config, preserve its nonsecret settings.
-Supply `--primary OPENAI_MODEL --alternate ANTHROPIC_MODEL` to replace the
-example's model aliases. Confirm the names, effort values, and maximum output
-budgets against CLIProxyAPI before enabling workers. Defaults remain explicit
-placeholders until that check is possible with Rob's model credential.
+The installer merges missing deployment fields into an existing config. It keeps
+operator model names, efforts, budgets, the harness image, and all existing
+values. Every rewrite first saves `tl3.toml.TIMESTAMP.bak` at mode 0600. A rerun
+with no missing fields leaves the config untouched.
+
+`models.toml` in this directory holds the Q22 model choices as data. New installs
+use it. To apply those defaults deliberately to an existing deployment, run
+`python3 deploy/dl380g10/deploy.py model-defaults` through PrismaBuild. This
+explicit command replaces role ladders, preserves the endpoint and key path,
+and saves a 0600 backup. Normal preparation never resets tuned ladders.
+The deployed `~/.config/tl3/tl3.toml` remains the operator's runtime config.
+
+The maker ladder uses GPT-6.1 Sol twice, then Claude Fable 5.1. Attempt 2 uses
+`max` effort and 128,000 output tokens. GPT makers get Claude Opus 5.5 review;
+Claude makers get GPT-6.1 Sol review. The planner and rebaser use GPT-6.1 Sol.
+Ingest, audit, comment classification and writer use Claude Sonnet 5.5.
+The writer field is optional for older configs and defaults to ingest. #20 must
+wire it into production registration, along with the other role settings.
+
+Provider limits checked on 2026-10-30:
+
+- [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol):
+  1,050,000 context tokens and 128,000 maximum output tokens.
+- [Claude models](https://platform.claude.com/docs/en/models/overview):
+  Fable 5.1, Opus 5.5 and Sonnet 5.5 each have 1M context and 128K maximum output.
+- [GPT effort](https://developers.openai.com/api/docs/guides/latest-model):
+  GPT-6.1 Sol supports `max`.
+
+All configured budgets also fit TL3's 150,000-token context setting. The proxy's
+catalog lists IDs without limits, so these limits come from provider docs.
+Run the explicit proxy smoke from the session, as Rob authorized for this task:
+`python3 deploy/dl380g10/smoke-models.py ~/.config/tl3/tl3.toml`.
+It loads the key in-process and prints only model IDs, HTTP status and token
+counts. It sends one 16-token Chat Completions request per distinct configured
+model, using attempt 2's effort for GPT-6.1 Sol. It never prints response bodies
+or credentials. TL3 code tests still run only through PrismaBuild.
 The published PrismaBuild client runs `python3 .../tools/pbrun.py` directly.
 The config points to that published tools directory.
 
@@ -88,7 +124,7 @@ paths. No secret bytes enter a config, command argument, or environment variable
 Rob's steps:
 
 1. In Cloudflare, create a tunnel and a public hostname routing to `http://127.0.0.1:8081`.
-2. Give the tunnel token and CLIProxyAPI key through the coordinator's secret prompts.
+2. Give the tunnel token through the coordinator's secret prompt. The model key is installed.
 3. After production startup is available, have the coordinator run the command below with the chosen hostname.
 4. In [the App settings](https://github.com/settings/apps/tl3-robtand), check the webhook URL and enable **Active**.
 5. Optionally pin the **TL3 operations** issue from its menu.
@@ -113,7 +149,7 @@ controller unit passes `--workers`, and its config supplies loopback webhook
 ingress. It never enables simulation against the deployment database.
 The unit has a `~/.config/tl3/production-ready` gate. After #20 supplies and
 verifies real startup, install that release, validate with `Config::load`,
-and create the marker before starting `tl3d`. The daemon and loopback webhook
+narrow worker credentials to `model-key` only, and create the marker before starting `tl3d`. The daemon and loopback webhook
 check remain missing until then. Do not create the marker to bypass this blocker.
 
 `KillMode=process` keeps durable worker supervisors alive during controller
@@ -139,3 +175,5 @@ is missing. It reads no secret values. `tl3 status` and the store read their
 own Postgres credential in-process. No raw logs, config dumps, or HTTP bodies
 are printed. After production setup, restart each service and rerun the check
 through PrismaBuild to finish #19's acceptance criteria.
+
+Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status address stays stable.

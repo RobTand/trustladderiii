@@ -17,6 +17,9 @@ required = {
     "OK operations issue configured",
     "OK sandbox installation configured",
     "OK harness image configured",
+    "OK Config::load including secret metadata",
+    "OK model names configured",
+    "OK model credential",
 }
 
 

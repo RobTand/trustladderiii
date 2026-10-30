@@ -28,6 +28,18 @@ fn run() -> Result<()> {
             tl3_config::Config::load(path)?;
             println!("config: Config::load passed");
         }
+        "check" => {
+            let home = std::env::var_os("HOME").ok_or("HOME is required")?;
+            let home = Path::new(&home);
+            if Path::new(path) != home.join(".config/tl3/tl3.toml") {
+                return Err("check requires the installed ~/.config/tl3/tl3.toml".into());
+            }
+            let status = std::process::Command::new("python3")
+                .arg(home.join(".local/share/tl3/deploy/deploy.py"))
+                .arg("check")
+                .status()?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
         "database" => database(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
             let config = tl3_config::Config::load_status(path)?;
@@ -83,6 +95,17 @@ struct Api {
     root: String,
 }
 
+#[derive(Debug)]
+struct HttpFailure(u16);
+
+impl std::fmt::Display for HttpFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GitHub HTTP {}", self.0)
+    }
+}
+
+impl std::error::Error for HttpFailure {}
+
 impl Api {
     async fn request(
         &self,
@@ -107,7 +130,7 @@ impl Api {
             .await
             .map_err(|_| "GitHub transport failed; reconcile before retrying")?;
         if !response.status().is_success() {
-            return Err(format!("GitHub HTTP {}", response.status().as_u16()).into());
+            return Err(HttpFailure(response.status().as_u16()).into());
         }
         response
             .json()
@@ -344,9 +367,20 @@ async fn operations(
             state,
             json!({"installation_id": installation, "creation_pending": true}),
         )?;
-        api.request(Method::POST, "repos/RobTand/trustladderiii/issues", token,
+        let creation = api.request(Method::POST, "repos/RobTand/trustladderiii/issues", token,
             Some(json!({"title": TITLE, "body": format!("{MARKER}\n\nTL3 posts incidents here. Questions about a request stay on that request's issue.")})))
-            .await?["number"].as_u64().ok_or("missing new issue number")?
+            .await;
+        if let Err(error) = &creation {
+            if error
+                .downcast_ref::<HttpFailure>()
+                .is_some_and(|error| (400..500).contains(&error.0))
+            {
+                save_state(state, json!({"installation_id": installation}))?;
+            }
+        }
+        creation?["number"]
+            .as_u64()
+            .ok_or("missing new issue number")?
     };
     if found.len() > 1
         && found
@@ -445,6 +479,48 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn rejected_creation_can_retry_after_permissions_are_fixed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        let rejected = Mock::given(method("POST"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(403))
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+        let api = Api {
+            http: Client::new(),
+            root: format!("{}/", server.uri()),
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let state = scratch.path().join("state.json");
+        assert!(
+            operations(&api, "fixture", "tl3-robtand", 1, &state)
+                .await
+                .is_err()
+        );
+        let saved: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_ne!(saved["creation_pending"], true);
+        drop(rejected);
+        Mock::given(method("POST"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(issue(81)))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(
+            operations(&api, "fixture", "tl3-robtand", 1, &state)
+                .await
+                .unwrap(),
+            81
+        );
     }
 
     #[tokio::test]

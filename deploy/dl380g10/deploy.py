@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Install and inspect TL3 on dl380g10 without printing credentials."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import http.client
 import io
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import socket
@@ -47,6 +49,8 @@ def private_file(path):
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
         raise RuntimeError("credential must be a regular owner-only file with mode 0600")
+    if info.st_size == 0:
+        raise RuntimeError("credential must not be empty")
 
 
 def sync_directory(path):
@@ -161,6 +165,10 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         raise RuntimeError("status must use the LAN interface address and a fixed port")
     root, config, _ = paths(home)
     text = (SOURCE / "crates/config/example.toml").read_text()
+    start = text.index('# Names below are deployment placeholders')
+    end = text.index('\n[prismabuild]', start)
+    models = (HERE / "models.toml").read_text().removeprefix('[models]\n')
+    text = text[:start] + models + text[end:]
     replacements = {
         '"/srv/tl3/worktrees"': json.dumps(str(root / "worktrees")),
         'host = "127.0.0.1"': "host = " + json.dumps(str(root / "postgres/socket")),
@@ -177,11 +185,9 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     if image:
         replacements['sha256:' + '0' * 64] = image
     if primary:
-        replacements['default-model'] = primary
-        replacements['family = "default"'] = 'family = "openai"'
+        replacements['gpt-6.1-sol'] = primary
     if alternate:
-        replacements['alternate-model'] = alternate
-        replacements['family = "alternate"'] = 'family = "anthropic"'
+        replacements['claude-fable-5-1'] = alternate
     for old, new in replacements.items():
         text = text.replace(old, new)
     text = text.replace('[github]\n', '[github]\nwebhook_listen = "127.0.0.1:8081"\n')
@@ -189,6 +195,77 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         text += f'\n[operations]\nowner = "RobTand"\nrepo = "trustladderiii"\nissue = {issue}\n'
     tomllib.loads(text)
     return text
+
+
+def add_fields(text, table, fields):
+    """Insert missing fields without reserializing operator settings or comments."""
+    header = re.search(r"(?m)^" + re.escape(table) + r"\s*(?:#.*)?$", text)
+    additions = "".join(f"{key} = {value}\n" for key, value in fields.items())
+    if header:
+        return text[:header.end()] + "\n" + additions + text[header.end():]
+    return text + "\n" + table + "\n" + additions
+
+
+def configure(home, listen, state, image=None, primary=None, alternate=None):
+    _, config, _ = paths(home)
+    destination = config / "tl3.toml"
+    defaults = render_config(home, listen, state.get("installation_id", 1),
+                             state.get("operations_issue"), image, primary, alternate)
+    if not destination.exists():
+        write_file(destination, defaults.encode())
+        return
+    original = destination.read_text()
+    data = tomllib.loads(original)
+    text = original
+    # Deployment migrations fill missing fields. Existing values always win.
+    for table, fields in (
+        ("github", {"webhook_listen": "127.0.0.1:8081"}),
+        ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
+        ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
+    ):
+        missing = {key: toml_value(value) for key, value in fields.items()
+                   if key not in data.get(table, {})}
+        if missing:
+            text = add_fields(text, f"[{table}]", missing)
+    if "installation_id" not in data["github"]["repos"][0]:
+        text = add_fields(text, "[[github.repos]]", {"installation_id": state.get("installation_id", 1)})
+    if "operations_issue" in state:
+        operations = {"owner": "RobTand", "repo": "trustladderiii", "issue": state["operations_issue"]}
+        missing = {key: toml_value(value) for key, value in operations.items()
+                   if key not in data.get("operations", {})}
+        if missing:
+            text = add_fields(text, "[operations]", missing)
+    tomllib.loads(text)
+    save_config(destination, original, text)
+
+
+def save_config(destination, original, text):
+    if text != original:
+        backup = destination.with_name("tl3.toml." + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + ".bak")
+        write_file(backup, original.encode())
+        write_file(destination, text.encode())
+        print(f"Config: updated; 0600 backup {backup.name}")
+
+
+def model_defaults(home):
+    """Explicit operator command; ordinary installation never replaces ladders."""
+    destination = paths(home)[1] / "tl3.toml"
+    original = destination.read_text()
+    data = tomllib.loads(original)["models"]
+    defaults = tomllib.loads((HERE / "models.toml").read_text())["models"]
+    data.update(defaults)
+    section = "[models]\n" + "".join(f"{key} = {toml_value(value)}\n" for key, value in data.items())
+    text = re.sub(r"(?ms)^\[models\].*?(?=^\[|\Z)", lambda _: section + "\n", original)
+    tomllib.loads(text)
+    save_config(destination, original, text)
+
+
+def toml_value(value):
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{key} = {toml_value(item)}" for key, item in value.items()) + " }"
+    if isinstance(value, list):
+        return "[" + ", ".join(map(toml_value, value)) + "]"
+    return json.dumps(value)
 
 
 def run(command, **kwargs):
@@ -224,9 +301,7 @@ def install(args):
     state_path = root / "app-state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     destination = config / "tl3.toml"
-    if not destination.exists() or args.refresh_config:
-        write_file(destination, render_config(home, args.status_listen, state.get("installation_id", 1),
-                   state.get("operations_issue"), args.image, args.primary, args.alternate).encode())
+    configure(home, args.status_listen, state, args.image, args.primary, args.alternate)
     run([root / "bin/tl3-deploy", "parse", destination])
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
@@ -306,30 +381,38 @@ def check(home):
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
     for label, path in (("model credential", config / "secrets/model-key"),
-                        ("Cloudflare token", config / "secrets/cloudflared-token"),
-                        ("production startup marker after #20", config / "production-ready")):
-        print(f"{'OK' if path.exists() else 'MISSING'} {label}")
-        missing += not path.exists()
+                        ("Cloudflare token", config / "secrets/cloudflared-token")):
+        try:
+            private_file(path)
+            ok = True
+        except (OSError, RuntimeError):
+            ok = False
+        print(f"{'OK' if ok else 'MISSING'} {label}")
+        missing += not ok
+    ready = (config / "production-ready").exists()
+    print(f"{'OK' if ready else 'MISSING'} production startup marker after #20")
+    missing += not ready
     print(f"Deployment check: {missing} missing checks")
     return 1 if missing else 0
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service"])
+    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults"])
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/debug")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
     parser.add_argument("--image")
     parser.add_argument("--primary")
     parser.add_argument("--alternate")
-    parser.add_argument("--refresh-config", action="store_true")
     parser.add_argument("--service", choices=["database", "status", "controller"])
     args = parser.parse_args()
     if args.command == "check":
         return check(args.home)
     if args.command == "service":
         service(args.home, args.service)
+    elif args.command == "model-defaults":
+        model_defaults(args.home)
     elif args.command == "install":
         install(args)
     else:

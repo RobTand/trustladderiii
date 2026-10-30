@@ -126,9 +126,87 @@ class DeployTests(unittest.TestCase):
         controller = (units / "tl3d.service").read_text()
         self.assertIn("KillMode=process", controller)
         self.assertIn("Requires=tl3-postgres.service", controller)
+        self.assertIn("After=tl3-postgres.service", controller.splitlines())
+        self.assertIn(f"ConditionPathExists={self.home}/.config/tl3/production-ready", controller.splitlines())
         self.assertIn("LoadCredential=model-key:", controller)
         cloudflared = (units / "tl3-cloudflared.service").read_text()
         self.assertIn("--token-file %d/token", cloudflared)
+
+    def test_private_credentials_require_nonempty_owner_only_regular_files(self):
+        credential = self.home / "credential"
+        with self.assertRaises(OSError):
+            deploy.private_file(credential)
+        deploy.write_file(credential, b"")
+        with self.assertRaises(RuntimeError):
+            deploy.private_file(credential)
+        deploy.write_file(credential, b"fixture")
+        deploy.private_file(credential)
+        credential.chmod(0o644)
+        with self.assertRaises(RuntimeError):
+            deploy.private_file(credential)
+        credential.chmod(0o600)
+        link = self.home / "link"
+        link.symlink_to(credential)
+        with self.assertRaises(RuntimeError):
+            deploy.private_file(link)
+        with self.assertRaises(RuntimeError):
+            deploy.private_file(self.home)
+
+    def test_config_migration_preserves_operator_settings_and_backs_up_once(self):
+        config, _ = self.config()
+        original = config.read_text().replace('installation_id = 987\n', '')
+        original = original[:original.index('\n[operations]')]
+        original = original.replace('budget_tokens = 128000', 'budget_tokens = 120000')
+        original = original.replace('effort = "max"', 'effort = "xhigh"')
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, original.encode())
+        deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123},
+                         "sha256:" + "b" * 64, "replacement", "replacement")
+        actual = tomllib.loads(destination.read_text())
+        before = tomllib.loads(original)
+        self.assertEqual(actual["models"], before["models"])
+        self.assertEqual(actual["prismabuild"], before["prismabuild"])
+        self.assertEqual(actual["github"]["repos"][0]["installation_id"], 987)
+        self.assertEqual(actual["operations"]["issue"], 123)
+        backups = list(destination.parent.glob("tl3.toml.*.bak"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), original)
+        self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
+        info = destination.stat()
+        deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 999, "operations_issue": 999})
+        self.assertEqual(destination.stat().st_mtime_ns, info.st_mtime_ns)
+        self.assertEqual(list(destination.parent.glob("tl3.toml.*.bak")), backups)
+
+    def test_model_defaults_are_explicit_and_preserve_endpoint_and_key_path(self):
+        config, data = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        deploy.model_defaults(self.home)
+        actual = tomllib.loads(destination.read_text())["models"]
+        self.assertEqual(actual["base_url"], data["models"]["base_url"])
+        self.assertEqual(actual["key_file"], data["models"]["key_file"])
+        defaults = tomllib.loads((deploy.HERE / "models.toml").read_text())["models"]
+        for role, ladder in defaults.items():
+            self.assertEqual(actual[role], ladder)
+        self.assertEqual(actual["maker"][1]["effort"], "max")
+        self.assertEqual(actual["maker"][1]["budget_tokens"], 128000)
+
+    def test_check_reports_both_bad_credentials_as_missing(self):
+        config, data = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        key = destination.parent / "secrets/model-key"
+        token = destination.parent / "secrets/cloudflared-token"
+        for content, mode in ((b"", 0o600), (b"fixture", 0o644), (b"fixture", 0o600)):
+            for path in (key, token):
+                deploy.write_file(path, content, mode)
+            with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                 patch.object(deploy.http.client, "HTTPConnection"), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                deploy.check(self.home)
+            prefix = "OK" if content and mode == 0o600 else "MISSING"
+            self.assertIn(f"{prefix} model credential\n", output.getvalue())
+            self.assertIn(f"{prefix} Cloudflare token\n", output.getvalue())
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
