@@ -190,6 +190,7 @@ case remains in the controller suite and runs in every placement too.
 Ticket #71's focused final campaign comes from
 `python3 crates/controller/tools/loom_manifest.py`. Its three pinned actions run
 the bounded models and all twenty crash save points on `dl380g10`, `sparky`, and
-`sparklina`. The portable action runs `crates/controller/tools/verify.sh`.
-The workspace script also runs the bounded loom suite. Each action reserves two
+`sparklina`. The dl380g10 action also repeats both bell models 50 times at bound two.
+A portable action runs `crates/controller/tools/verify.sh`, and another checks
+all 13 ordering mutants. The workspace script also runs the bounded loom suite. Each action reserves two
 CPUs and 6 GiB, bounds build and native threads, and preserves PB affinity.
