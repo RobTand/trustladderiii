@@ -85,7 +85,6 @@ fn require_consistent(w: &World) {
         Ok(()) => {}
         Err(Broken::Config) => panic!("broken: config"),
         Err(Broken::Agenda) => panic!("broken: agenda"),
-        Err(Broken::Head) => panic!("broken: head"),
         Err(Broken::Effect) => panic!("broken: effect"),
         Err(Broken::Holds) => panic!("broken: holds"),
         Err(Broken::Run) => panic!("broken: run"),

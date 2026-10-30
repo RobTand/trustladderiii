@@ -1,8 +1,38 @@
-# Slice-one kernel spike
+# TL3 kernel
 
-This spike builds TL3's slice-one kernel in Rust from `docs/state-table.md` version 4. It answers one question before anyone builds the controller: can the state table's rules be proven as written, at the stated bounds, in reasonable time?
+`tl3-kernel` implements slice one of [the state table](../../docs/state-table.md), version 5.
+It is an edition-2024 Rust crate in the root Cargo workspace, with `no_std` plus `alloc` in ordinary builds.
+It does no I/O. The controller commits its decisions and carries out its outputs.
 
-Version 5 of the state table adds one thing to slice one's kernel that the spike doesn't do: a note to Rob when a leaf is re-planned (Q8).
+## Controller API
+
+- `World::new(&[slots_per_repo], pool_capacity)` creates an empty world.
+- `step(world, event) -> (World, Vec<Out>)` applies one event and takes every enabled internal transition.
+- `Event` carries new requests, operation replies, effect acknowledgements, facts and commands.
+- `Out::Effect` names the node, sequence, effect kind and exact head where needed. `Out::Notice` asks for a message.
+- `World::check`, `consistent` and `valid` check the invariant. `World::witness` and `measure` support progress checks.
+
+`HeadId`, `FileId`, `RepoId` and `NodeId` wrap `u64`. The controller interns external commit hashes, paths and repository names.
+Keep those mappings stable across restarts. File IDs are scoped to a repo. Head ID zero is valid.
+`RepoId` indexes `World::gates`, and `NodeId` indexes `World::nodes`.
+Requests append nodes, so those indices stay stable. Keep closed nodes in the snapshot.
+Unknown node and repo IDs are ignored without truncation to the machine's index width.
+
+`Node::approved` is one `Option<HeadId>`, the exact head that passed checks and review.
+A later approval replaces it. A merge naming any other head raises the unapproved-merge incident and note.
+
+`Footprint::new(files)` sorts and deduplicates controller-interned `FileId`s.
+`files()` returns the sorted slice. Plans carry a footprint, and `MakerNeedsFiles` carries the additional files.
+The kernel unions extensions and derives file locks from the footprints of slot holders.
+There is no file-count ceiling.
+
+Footprints own sorted `Vec<FileId>` sets. `Node`, `Reply` and `Event` implement `Clone` instead of `Copy`.
+This avoids an interned-set table and a second identity for every footprint. Transitions borrow nodes where possible.
+The fixed `Outbox` remains in place. Proofs bound the set lengths and IDs with assumptions, and the PR records their measured memory.
+
+`Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
+It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
+The message adapter supplies the plain-language text.
 
 ## What is here
 
@@ -13,7 +43,7 @@ Version 5 of the state table adds one thing to slice one's kernel that the spike
   - `proof_of_event` and `proofs_of_phase`, the proof map.
 - `src/proofs.rs` holds the Kani proofs.
 - `tests/` holds scripted scenarios, seeded random walks and the proof-map check.
-- `run.py` runs one PrismaBuild action: `run.py tests`, `run.py prove NAME...`, or `run.py prove` for all.
+- `run.py` runs a build and tests, runs named Kani proofs, or prints a PrismaBuild campaign manifest.
 
 ## How the proofs work
 
@@ -62,19 +92,19 @@ These are simplifications against the state table, all deliberate:
 - Notices are outbox entries no node waits on. They cover questions to Rob, notes, issue summaries and filing a replacement request.
 - Looks run in the controller. What they find arrives as replies, acknowledgements and facts.
 - After a permanent effect failure, carrying on restarts the phase's effects from the top. Every effect converges or is deduplicated, so this ends where retrying only the failed effect would.
-- Heads are abstract ids below 8, and footprints are bitmasks.
-- Events name requests by index.
+- Production IDs are 64-bit newtypes. Proof assumptions bound heads below 8 and each repo to four file IDs.
+- Events name requests by stable `NodeId` indices.
 
-## What the spike found
+## Findings from the spike
 
 - **Proving a whole step at once is too big for Kani.** Every harness that did so hit PrismaBuild's one-hour limit, even for the simplest event. Proving one transition at a time takes about 2 to 12 minutes per proof and at most 25 GB.
 - **Kani found states the first invariants allowed but the kernel never reaches.** Examples include a closing request still holding an open PR, a merge recorded outside a merged outcome, and a question carrying a continuation the kernel never gives it. Each became a fact in `check`. The tests check every intermediate state of 200,000 random steps, and none of the counterexamples was a reachable kernel bug.
 - **The cover checks caught a harness bug.** One harness had two cover statements and reached only one of them.
 - **A growable list on the heap is expensive for Kani.** Every merge proof needed more than 48 GB, even split by phase. Two bisects on the fleet found that the merge itself and the full invariant fit in 5 GB, and that the cost came from reading the merge's outputs back from their `Vec`. The likely cause is that a merge adds notices after a branch, so the `Vec`'s length is unknown at each push and CBMC also explores growing it. With the fixed-size outbox, the merge proofs need 5.2 GB.
 
-## Results
+## Historical spike results
 
-All 81 proofs verify on commit `7a9af9b`, with every cover check satisfied, and the tests pass: the 11 scenarios, the random walks and the proof-map check. The run took 285 CPU-minutes across dl380g10, sparky and sparklina, and 16 minutes from the first start to the last finish.
+All 81 proofs verified on commit `7a9af9b`, with every cover check satisfied, and the tests pass: the 11 scenarios, the random walks and the proof-map check. The run took 285 CPU-minutes across dl380g10, sparky and sparklina, and 16 minutes from the first start to the last finish.
 
 | Proofs | Count | Peak memory | Minutes each, median and max |
 |---|---|---|---|
@@ -88,22 +118,34 @@ Earlier runs:
 - The first full run verified 54 of 69 smaller proofs. 13 ran out of memory, 1 found an invariant gap and 1 was the cover-check harness bug.
 - The merge proofs then kept running out of memory, at 24 GB and at 48 GB, until the outbox.
 
-## How to run it
+## Run development verification
+
+Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
+Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
+
+From the repo root, generate and submit all 81 proofs and the tests:
 
 ```bash
-cd spikes/slice-one-kernel
-ENV="--env PATH=/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin --env RUSTUP_HOME=/home/rob/.rustup \
-  --env CARGO_HOME=/home/rob/.cargo --env KANI_HOME=/home/rob/.kani"
-# The tests, on any fleet box.
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py --cwd . --anywhere --cpus 2 --demand mem_gb=8 \
-  --priority -10 --timeout-s 1800 $ENV -- /home/rob/venvs/pb-cpu/bin/python run.py tests
-# One proof. A campaign submits one row per proof.
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py --cwd . --anywhere --cpus 1 --demand mem_gb=10 \
-  --priority -10 --timeout-s 3600 $ENV -- /home/rob/venvs/pb-cpu/bin/python run.py prove apply_conflict
+python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-kernel-campaign.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 ```
 
-Rust 1.99.1 and Kani 0.68.0 are installed at the same paths on dl380g10, sparky and sparklina, so `--anywhere` is accurate.
+The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
+It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
+Most proofs reserve 10 GiB, `progress_from_*` reserves 20 GiB, and `progress_from_queued` and `apply_new_request` reserve 32 GiB.
+These are the spike's starting budgets. Compare each ending's cgroup memory peak against them when the representation changes.
+Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
 
-- **Memory.** Most proofs fit in 10 GB. Give the `progress_from_*` proofs 20 GB, and `progress_from_queued` and `apply_new_request` 32 GB.
-- **Submit from a clean worktree.** PrismaBuild snapshots the whole checkout for every row and refuses a row whose files change mid-snapshot. Submitting from `git worktree add --detach <dir> <commit>` also ties every result to one commit.
-- **Seeing why a proof failed.** `KANI_OUTPUT=regular` shows CBMC's progress. A proof killed for running out of memory then shows how far it got.
+To generate a smaller campaign, name `tests` or the proof harnesses:
+
+```bash
+python3 crates/kernel/run.py manifest tests apply_conflict > /tmp/tl3-kernel-campaign.json
+```
+
+Inside an admitted action, `run.py tests` builds the workspace in ordinary `no_std` mode and runs the scenarios, random walks and proof-map check.
+`run.py prove NAME...` runs the named harnesses. Omitting the names runs every proof sequentially, so use the campaign for a full fleet run.
+The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUTPUT=regular` shows CBMC's detailed progress.
+
+A submission is not a pass. Check the terminal exit code, actual logs and verified CAS receipt before reporting a result.
+CI runs separately on Mergify's fleet runners. It does not submit to PrismaBuild.

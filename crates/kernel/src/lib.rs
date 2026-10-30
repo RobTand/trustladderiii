@@ -1178,7 +1178,6 @@ impl World {
 pub enum Broken {
     Config,
     Agenda,
-    Head,
     Effect,
     Holds,
     Run,
@@ -1481,7 +1480,7 @@ fn accepts(n: &Node, reply: &Reply) -> bool {
 }
 
 fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
-    let n = w.nodes[i].clone();
+    let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
@@ -1498,7 +1497,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    if !accepts(&n, &reply) {
+    if !accepts(n, &reply) {
         run_failed(w, i, out);
         return;
     }
@@ -2062,7 +2061,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
 
 /// One internal transition for node `i`, if the facts allow one.
 fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
-    let n = w.nodes[i].clone();
+    let n = &w.nodes[i];
     if n.phase.is_closed() {
         return false;
     }
