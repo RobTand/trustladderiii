@@ -635,25 +635,53 @@ impl GitHub {
             }
             let mut heads: BTreeSet<_> = repo.tracked_heads.iter().cloned().collect();
             heads.extend(pull_requests.iter().map(|pull| pull.head.sha.clone()));
-            // This endpoint has no since filter or documented chronological ordering.
-            let events: Vec<Value> = self
-                .list(format!("{path}/issues/events"), vec![], None)
-                .await?;
-            for event in events {
-                if matches!(
-                    event.get("event").and_then(Value::as_str),
-                    Some("labeled" | "unlabeled")
-                ) {
-                    let number = event
-                        .get("issue")
-                        .and_then(|issue| issue.get("number"))
-                        .and_then(Value::as_u64)
-                        .ok_or(Error::Response)?;
-                    let event: LabelChange =
-                        serde_json::from_value(event).map_err(|_| Error::Response)?;
-                    if event.created_at >= since {
-                        labels.push((number, event));
+            // GitHub documents no ordering here. Stop early only while ids strictly descend.
+            let mut descending = true;
+            let mut previous_id = None;
+            for page in 1.. {
+                let events: Vec<Value> = self
+                    .request(
+                        Method::GET,
+                        format!("{path}/issues/events"),
+                        vec![
+                            ("per_page".into(), "100".into()),
+                            ("page".into(), page.to_string()),
+                        ],
+                        None,
+                    )
+                    .await?;
+                let short_page = events.len() < 100;
+                let mut all_older = true;
+                for event in events {
+                    let id = event.get("id").and_then(Value::as_u64);
+                    descending &= id.is_some()
+                        && previous_id
+                            .zip(id)
+                            .is_none_or(|(previous, id)| previous > id);
+                    previous_id = id;
+                    all_older &= event
+                        .get("created_at")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.parse::<DateTime<Utc>>().ok())
+                        .is_some_and(|created_at| created_at < since);
+                    if matches!(
+                        event.get("event").and_then(Value::as_str),
+                        Some("labeled" | "unlabeled")
+                    ) {
+                        let number = event
+                            .get("issue")
+                            .and_then(|issue| issue.get("number"))
+                            .and_then(Value::as_u64)
+                            .ok_or(Error::Response)?;
+                        let event: LabelChange =
+                            serde_json::from_value(event).map_err(|_| Error::Response)?;
+                        if event.created_at >= since {
+                            labels.push((number, event));
+                        }
                     }
+                }
+                if short_page || (descending && all_older) {
+                    break;
                 }
             }
             let mut check_runs = Vec::new();

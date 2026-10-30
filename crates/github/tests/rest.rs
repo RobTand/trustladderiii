@@ -919,6 +919,82 @@ async fn catch_up_stops_pr_pages_at_the_cursor_and_reads_repository_label_events
 }
 
 #[tokio::test]
+async fn catch_up_stops_after_a_full_old_event_page_when_ids_descend() {
+    assert_event_pages(None, false).await;
+}
+
+#[tokio::test]
+async fn catch_up_reads_every_event_page_after_ids_stop_descending() {
+    for disorder in [
+        (0, 1, Some(401)),
+        (1, 0, Some(301)),
+        (1, 50, Some(500)),
+        (0, 1, None),
+    ] {
+        assert_event_pages(Some(disorder), true).await;
+    }
+}
+
+async fn assert_event_pages(disorder: Option<(usize, usize, Option<u64>)>, read_third: bool) {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    let since = "2026-10-29T00:00:00Z".parse().unwrap();
+    for endpoint in ["issues", "issues/comments", "pulls"] {
+        get(
+            &server,
+            &format!("/repos/owner/sandbox/{endpoint}"),
+            json!([]),
+        )
+        .await;
+    }
+    let mut pages: Vec<Vec<Value>> = ["2026-10-29T00:00:00Z", "2026-10-28T23:59:59Z"]
+        .into_iter()
+        .enumerate()
+        .map(|(page, timestamp)| {
+            (0..100)
+                .map(|row| json!({"id":400 - page * 100 - row, "event":"closed", "created_at":timestamp}))
+                .collect()
+        })
+        .collect();
+    pages[0][0] = json!({"id":400,"event":"labeled","actor":{"id":42,"login":"owner"},
+        "label":{"name":"tl3"},"created_at":"2026-10-29T00:00:00Z","issue":{"number":12}});
+    if let Some((page, row, id)) = disorder {
+        pages[page][row]["id"] = json!(id);
+    }
+    pages.push(vec![
+        json!({"id":200,"event":"labeled","actor":{"id":42,"login":"owner"},
+        "label":{"name":"tl3"},"created_at":"2026-10-29T00:00:00Z","issue":{"number":13}}),
+    ]);
+    for (page, events) in pages.into_iter().enumerate() {
+        let mock = Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/issues/events"))
+            .and(query_param("per_page", "100"))
+            .and(query_param("page", (page + 1).to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(events));
+        let mock = if page < 2 || read_third {
+            mock.expect(1)
+        } else {
+            mock.expect(0)
+        };
+        mock.mount(&server).await;
+    }
+    let result = github
+        .catch_up(
+            &[ServedRepo {
+                full_name: "owner/sandbox".into(),
+                tracked_heads: vec![],
+            }],
+            since,
+        )
+        .await
+        .unwrap();
+    let labels = &result.repositories[0].labels;
+    let numbers: Vec<_> = labels.iter().map(|(number, _)| *number).collect();
+    assert_eq!(numbers, if read_third { vec![12, 13] } else { vec![12] });
+    assert!(labels.iter().all(|(_, event)| event.actor.id == 42));
+}
+
+#[tokio::test]
 async fn unfinished_check_requests_omit_the_conclusion_field() {
     for (status, status_text) in [
         (CheckStatus::Queued, "queued"),

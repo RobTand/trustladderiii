@@ -102,8 +102,11 @@ cursor, repository comments, label changes with their original actors, and PRs
 updated since the cursor. PR listing sorts by update time, newest first, and stops at
 the first row older than the cursor, independently of issue timestamps. Label recovery
 uses the repository-wide `/issues/events` endpoint, which includes issue numbers,
-labels, actors and timestamps. It reads all event pages because GitHub documents no
-`since` filter or chronological ordering for that endpoint. It rereads
+labels, actors and timestamps. The endpoint has no `since` filter or documented
+chronological ordering. The pass stops after a full page of events older than the
+cursor only while all event ids seen so far strictly descend, including across
+page boundaries. An equal, increasing or missing id disables early stopping for
+the rest of the pass. It rereads
 checks on every supplied `tracked_heads` entry and every changed PR head, since a
 check can finish without updating an issue.
 
@@ -124,15 +127,27 @@ two-sentence obstacle, two or three actions with outcomes, a recommendation inde
 and reason, and answer instructions. The original title comes from the issue,
 not from the message-writing agent.
 
-The checker scans only TL3-written fields for the vocabulary leaf, lineage, replan
-and measure, including inflections and re-plan. It also checks code identifiers,
-hashes, issue ids, file paths and recognizable logs. Plain English such as yes/no,
-and/or and 24/7 passes, as do product names such as GitHub, PostgreSQL and YouTube.
+The checker scans only TL3-written fields. It rejects exactly these vocabulary
+forms as whole words, ignoring case: leaf, lineage, lineages, replan, replans,
+replanned, replanning, re-plan, re-plans, re-planned, re-planning, measure, measures.
+It allows leaves, measured and measuring.
+It also checks code identifiers, hashes, issue ids, file paths and recognizable
+logs. A hex id has at least seven hex characters, at least one digit and at least
+one letter a-f. Plain numbers and words such as defaced pass.
+Plain English such as yes/no, and/or and 24/7 passes, as do product names such as
+GitHub, PostgreSQL, YouTube, Node.js and Next.js.
 Matching normalizes Unicode and strips invisible formatting characters. `Policy::internal_terms` adds actual
 internal names and ids known to the controller. It must include identifiers that
 have no recognizable code shape, including internal CamelCase names.
-Paths need a root, explicit relative prefix, directory structure, known source
-directory or file extension. A slash alone does not establish a path.
+The controller supplies `Policy::known_paths`, a set of repo-relative files and
+directories from both the served repo and TL3's own repo. A token is a path when
+it equals a known entry, starts with `/`, `~/`, `./` or `../` followed by at least
+one path segment, or contains a slash and its last segment ends with a dot and
+one to five lowercase letters or digits. Surrounding prose punctuation is ignored.
+There are no other path rules. Unknown names such as deploy/github-app and
+workers/src pass until the controller includes them in the set. Dates such as
+10/30/2026 and phrases such as pass/fail/skip, Mon/Tue/Wed, TCP/IP/UDP and approx./
+pass too.
 Required fields are checked for nonempty text.
 The checker cannot prove that prose is true, that an outcome follows from an option,
 or that advice is sensible. Those remain the writer's and reviewer's responsibility.

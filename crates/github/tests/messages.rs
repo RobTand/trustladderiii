@@ -99,28 +99,34 @@ fn checks_every_required_part() {
 fn blocks_vocabulary_inflections_case_and_hidden_unicode() {
     for term in [
         "leaf",
-        "leaves",
         "lineage",
         "replan",
+        "replans",
+        "replanned",
+        "replanning",
         "re-plan",
+        "re-planned",
+        "re-planning",
+        "measure",
         "measures",
         "lineages",
         "re-plans",
-        "measurement",
         "ＬＥＡＦ",
         "lea\u{200b}f",
     ] {
-        rejects(
-            |d| d.obstacle = format!("The {term} needs attention."),
-            Violation::InternalVocabulary,
-        );
+        for form in [term.to_string(), term.to_uppercase()] {
+            rejects(
+                |d| d.obstacle = format!("The {form} needs attention."),
+                Violation::InternalVocabulary,
+            );
+        }
     }
 }
 
 #[test]
 fn blocks_ids_names_paths_and_logs_in_every_section() {
     for term in [
-        "deadbeef",
+        "deadb33f",
         "b5862850-8ed7-47f7-8fdf-887a96ba872c",
         "id: 12",
         "request_id",
@@ -135,8 +141,6 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
     for path in [
         "/home/rob/work",
         "src/main.rs",
-        "README.md",
-        "C:\\work\\file.txt",
         "../private",
         "~/work",
         "/tmp/output",
@@ -162,7 +166,8 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         check(
             &d,
             &Policy {
-                internal_terms: vec!["Copper Finch".into()]
+                internal_terms: vec!["Copper Finch".into()],
+                ..Policy::default()
             }
         )
         .unwrap_err()
@@ -218,6 +223,7 @@ fn quotes_robs_title_verbatim_without_scanning_it() {
         d.request_quote = title.into();
         let policy = Policy {
             internal_terms: vec!["RepoSlot".into()],
+            ..Policy::default()
         };
         let checked = check(&d, &policy).unwrap();
         assert!(
@@ -265,11 +271,120 @@ fn actual_internal_names_are_supplied_by_policy() {
             check(
                 &d,
                 &Policy {
-                    internal_terms: vec![name.into()]
+                    internal_terms: vec![name.into()],
+                    ..Policy::default()
                 }
             )
             .unwrap_err()
             .contains(&Violation::InternalNameOrId)
         );
     }
+}
+
+#[test]
+fn hex_ids_need_at_least_seven_characters_a_digit_and_a_letter() {
+    for id in [
+        "abc1234",
+        "23b00f2ca28caec396e5553a9cd98911632d8b8e",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ] {
+        for form in [id.to_string(), id.to_uppercase()] {
+            rejects(
+                |d| d.options[0].outcome = format!("Use {form}."),
+                Violation::InternalNameOrId,
+            );
+        }
+    }
+    for text in [
+        "defaced", "10000000", "2026", "accede", "deadbeef", "abc123", "abc1234g",
+    ] {
+        let mut d = draft();
+        d.options[0].outcome = format!("Use {text}.");
+        assert!(check(&d, &Policy::default()).is_ok(), "{text}");
+    }
+}
+
+#[test]
+fn common_inflections_and_words_containing_vocabulary_pass() {
+    for word in [
+        "leaves",
+        "measured",
+        "measuring",
+        "measurement",
+        "measurements",
+        "leaflet",
+        "lineageology",
+        "replanner",
+        "re planned",
+    ] {
+        for form in [word.to_string(), word.to_uppercase()] {
+            let mut d = draft();
+            d.options[0].outcome = form;
+            assert!(check(&d, &Policy::default()).is_ok(), "{word}");
+        }
+    }
+}
+
+#[test]
+fn paths_are_known_names_explicit_paths_or_slash_paths_with_extensions() {
+    let known = ["deploy/github-app", "workers/src", "README.md", "workers"];
+    let policy = Policy {
+        known_paths: known.into_iter().map(String::from).collect(),
+        ..Policy::default()
+    };
+    for path in known.into_iter().chain([
+        "/etc/hosts",
+        "~/.config/tl3/github-app.json",
+        "src/main.rs",
+        "./work",
+        "../work",
+        "assets/image.avif",
+        "data/file.a1",
+        "data/file.12345",
+    ]) {
+        for text in [
+            path.to_string(),
+            format!("Use ({path})."),
+            format!("Use `{path}`, please."),
+        ] {
+            let mut d = draft();
+            d.options[0].outcome = text.clone();
+            assert!(
+                check(&d, &policy)
+                    .unwrap_err()
+                    .contains(&Violation::FilePath),
+                "{text}"
+            );
+        }
+    }
+    for text in [
+        "10/30/2026",
+        "pass/fail/skip",
+        "Mon/Tue/Wed",
+        "TCP/IP/UDP",
+        "Node.js",
+        "Next.js",
+        "approx./",
+        "yes/no",
+        "and/or",
+        "24/7",
+        "README.md",
+        "deploy/github-app",
+        "workers/src",
+        "src/work",
+        "a/b/c",
+        "data/file.RS",
+        "data/file.abcdef",
+        "~/",
+        "./",
+        "../",
+        "C:\\work\\file.txt",
+    ] {
+        let mut d = draft();
+        d.options[0].outcome = format!("Use {text}.");
+        assert!(check(&d, &Policy::default()).is_ok(), "{text}");
+    }
+    let mut d = draft();
+    d.options[0].outcome = "Use other/workers/src or workers/src-extra.".into();
+    assert!(check(&d, &policy).is_ok());
 }

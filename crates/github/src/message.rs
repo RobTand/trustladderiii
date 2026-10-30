@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::sync::LazyLock;
+use std::{collections::BTreeSet, sync::LazyLock};
 use unicode_normalization::UnicodeNormalization;
 
 #[derive(Clone, Debug)]
@@ -24,6 +24,8 @@ pub struct Draft {
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
     pub internal_terms: Vec<String>,
+    /// Repo-relative files and directories in the served repo and TL3's repo.
+    pub known_paths: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,20 +56,13 @@ impl CheckedMessage {
 }
 
 static VOCABULARY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:lea(?:f|ves)|lineages?|re[ -]?plans?|measur(?:e|es|ement|ements|ing))\b")
-        .unwrap()
+    Regex::new(r"(?i)\b(?:leaf|lineages?|re-?plan(?:s|ned|ning)?|measures?)\b").unwrap()
 });
+static HEX_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b[0-9a-f]{7,}\b").unwrap());
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
     // CamelCase alone also describes product names. Actual internal names belong in Policy.
     Regex::new(
-        r"(?x)(?:(?i:\b[0-9a-f]{7,40}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\#[0-9]+|<!--)",
-    )
-    .unwrap()
-});
-static PATH: LazyLock<Regex> = LazyLock::new(|| {
-    // A single slash also occurs in English. Require a root, directory structure or extension.
-    Regex::new(
-        r#"(?ix)(?: (?:^|[\s"'`(])[/\\][\w.-]+ | \b[a-z]:\\ | ~/ | \.\.?[/\\] | \b(?:src|crates|tests|docs|bin|lib)/[\w.-]+ | \b[\w.-]+(?:[/\\][\w.-]+){2,} | \b[\w.-]+\.(?:rs|py|ts|tsx|js|json|toml|yaml|yml|md|log|txt|sql|sh)\b )"#,
+        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\#[0-9]+|<!--)",
     )
     .unwrap()
 });
@@ -152,6 +147,10 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         errors.push(Violation::InternalVocabulary);
     }
     if IDENTIFIER.is_match(&normalized)
+        || HEX_ID.find_iter(&normalized).any(|token| {
+            let bytes = token.as_str().as_bytes();
+            bytes.iter().any(u8::is_ascii_digit) && bytes.iter().any(u8::is_ascii_alphabetic)
+        })
         || policy
             .internal_terms
             .iter()
@@ -164,7 +163,15 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     {
         errors.push(Violation::InternalNameOrId);
     }
-    if PATH.is_match(&normalized) {
+    if normalized.split_whitespace().any(|token| {
+        let punctuation = [
+            '"', '\'', '`', '(', ')', '[', ']', '{', '}', ',', ';', ':', '!', '?',
+        ];
+        let token = token
+            .trim_start_matches(punctuation)
+            .trim_end_matches(|c| c == '.' || punctuation.contains(&c));
+        is_path(token, &policy.known_paths)
+    }) {
         errors.push(Violation::FilePath);
     }
     if LOG.is_match(&normalized) {
@@ -175,6 +182,27 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     } else {
         Err(errors)
     }
+}
+
+fn is_path(token: &str, known_paths: &BTreeSet<String>) -> bool {
+    if known_paths.contains(token) {
+        return true;
+    }
+    if ["/", "~/", "./", "../"].iter().any(|prefix| {
+        token
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.split('/').any(|segment| !segment.is_empty()))
+    }) {
+        return true;
+    }
+    token.rsplit_once('/').is_some_and(|(_, last)| {
+        last.rsplit_once('.').is_some_and(|(_, extension)| {
+            (1..=5).contains(&extension.len())
+                && extension
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+    })
 }
 
 fn normalize(text: &str) -> String {
