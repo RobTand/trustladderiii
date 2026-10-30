@@ -1479,23 +1479,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
-    let credentials = root.path().join("app.json");
-    let model_key = root.path().join("model-key");
-    fs::write(
-        &credentials,
-        serde_json::to_vec(&json!({
-            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(&model_key, "fixture-only").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    for path in [&credentials, &model_key] {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let marker = root.path().join("entered");
-    let runs = root.path().join("runs");
+    let (config_path, marker, runs) = worker_daemon_config(settings, root.path(), "audit-blocked");
     let worktrees = root.path().join("worktrees");
     let checkout = worktrees
         .join(hex::encode("owner"))
@@ -1527,53 +1511,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
-    git(&["init", "--quiet", "--template="]);
-    fs::write(
-        checkout.join("greeting.py"),
-        "def greet(): return 'goodbye'\n",
-    )
-    .unwrap();
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "Base"]);
     let base = git(&["rev-parse", "HEAD"]);
-    let config = include_str!("../../config/example.toml")
-        .replace("port = 5432", &format!("port = {}", settings.port))
-        .replace(
-            "database = \"tl3\"",
-            &format!("database = {:?}", settings.database),
-        )
-        .replace("user = \"tl3\"", "user = \"postgres\"")
-        .replace(
-            "connect_timeout_secs = 10",
-            &format!(
-                "password_file = {:?}\nconnect_timeout_secs = 10",
-                settings.password_file.as_ref().unwrap()
-            ),
-        )
-        .replace(
-            "/home/rob/.config/tl3/github-app.json",
-            credentials.to_str().unwrap(),
-        )
-        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
-        .replace("owner = \"RobTand\"", "owner = \"owner\"")
-        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
-        .replace("installation_id = 1", "installation_id = 3")
-        .replace("id = 24923402", "id = 42")
-        .replace(
-            "/srv/tl3/workers/.venv/bin/python",
-            package.join(".venv/bin/python").to_str().unwrap(),
-        )
-        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
-        .replace("/srv/tl3/worktrees", worktrees.to_str().unwrap())
-        .replace(
-            "command = [\"-m\", \"tl3_workers\", \"run\"]",
-            &format!(
-                "command = [{:?}, \"audit-blocked\", {marker:?}]",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
-            ),
-        );
-    let config_path = root.path().join("config.toml");
-    fs::write(&config_path, config).unwrap();
     let mut store = Store::open(settings).unwrap();
     let inputs = json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
