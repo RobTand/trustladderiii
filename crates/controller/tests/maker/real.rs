@@ -20,17 +20,6 @@ impl Flow {
 
     fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str, hold_queue: bool) -> Self {
         let (config, source, worktree, base) = repository_fixture(settings, root, mode);
-        if mode == "review-feedback" {
-            let mut store = Store::open(settings).unwrap();
-            let mut commit =
-                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
-            commit.rows.push(tl3_store::RowChange::Put {
-                table: "goals".into(),
-                id: "0".into(),
-                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
-            });
-            store.commit(&commit).unwrap();
-        }
         let remote = root.join("remote.git");
         let repository = root.join("served.git");
         git(
@@ -73,6 +62,17 @@ impl Flow {
             Bootstrap::from_config(&config).unwrap(),
         )
         .unwrap();
+        if mode == "review-feedback" {
+            let mut store = Store::open(settings).unwrap();
+            let mut commit =
+                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+            commit.rows.push(tl3_store::RowChange::Put {
+                table: "goals".into(),
+                id: "0".into(),
+                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
+            });
+            store.commit(&commit).unwrap();
+        }
         let (sender, receiver) = mpsc::channel();
         let checks = checks_source.spawn(sender.clone());
         thread::spawn(move || source.run(sender).unwrap());
