@@ -1,6 +1,8 @@
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
+#[path = "workers/retirement.rs"]
+mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use serde_json::{Value, json};
@@ -24,7 +26,7 @@ use tl3_controller::{
     executor::{Delivery, Executor, Observation, Reconciliation},
 };
 use tl3_kernel::{EffectKind, Event, NodeId, Phase, Reply, Role};
-use tl3_store::Store;
+use tl3_store::{Commit, EffectState, EffectTransition, NewEffect, RowChange, Store};
 
 fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -166,6 +168,11 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--source-io-child") {
+        let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        retirement_review::io_child(&settings, Path::new(&args[3]));
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--source-child") {
         let settings: tl3_config::Store =
             serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
@@ -214,6 +221,17 @@ fn main() {
             }
         }
     }
+    if args.get(1).is_some_and(|s| s == "--retire-child") {
+        let settings: tl3_config::Store =
+            serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        let root = Path::new(&args[3]);
+        let config = config(&settings, root, "normal");
+        Supervisor::new(&config, &root.join("fakes"))
+            .unwrap()
+            .retire(&mut Store::open(&settings).unwrap())
+            .unwrap();
+        return;
+    }
     prepare_workers();
     let mut database = Database::start();
     simulation(&database.create("workers_sim"));
@@ -245,6 +263,20 @@ fn main() {
     println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
     event_source(&database.create("workers_events"));
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
+    bounded_startup(&database.create("workers_bounded"));
+    println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
+    retirement(&database.create("workers_retirement"));
+    println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    retirement_review::summaries_and_states(&database.create("retirement_summaries"));
+    println!("test retirement_states_keep_one_summary_until_closure ... ok");
+    retirement_review::blocked_identities(&database.create("retirement_blocked"));
+    println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+    retirement_review::transient_io(&database.create("source_emfile"));
+    println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
+    confirmed_absence(&database.create("workers_confirmed_absence"));
+    println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
+    overflow(&database.create("workers_overflow"));
+    println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
     for mode in [
         "normal",
         "plan-split",
@@ -258,7 +290,7 @@ fn main() {
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
     database.stop();
-    println!("22 required worker supervisor and planning scenarios passed; no skips");
+    println!("All required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -338,13 +370,7 @@ fn simulation(settings: &tl3_config::Store) {
         ["- Return hello."]
     );
     let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 3);
-    assert!(
-        progress
-            .iter()
-            .all(|p| p.last_progress_ms.is_some_and(|ms| ms >= p.started_ms)
-                && p.unit == "model_turn")
-    );
+    assert!(progress.is_empty(), "finished progress is retired");
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut replay = supervisor.source();
     let (tx, _rx) = mpsc::channel();
@@ -360,12 +386,8 @@ fn simulation(settings: &tl3_config::Store) {
             .iter()
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
-    for entry in fs::read_dir(&config.workers.runs).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            assert_eq!(attempts(&path), 1);
-        }
-    }
+    assert_recorded_runs(root.path(), 3);
+    assert_retired(&config, &mut store);
 }
 fn attempts(root: &Path) -> usize {
     fs::read_dir(root)
@@ -448,36 +470,19 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     } else {
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Ingesting);
     }
+    let watched = store_worker_run(settings);
+    let attempt = root_for(&config, &watched.key).join("attempt-00000000");
+    let identity: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    assert_eq!(identity["pid"].to_string(), worker_pid);
     fs::write(root.path().join("entered.release"), "go").unwrap();
     let mut store = Store::open(settings).unwrap();
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    let records: Vec<_> = fs::read_dir(&config.workers.runs)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.is_dir())
-        .collect();
-    assert_eq!(records.len(), 3, "ingest, audit and planner");
-    assert!(records.iter().all(|p| attempts(p) == 1));
-    let ingest = records
-        .iter()
-        .find(|p| {
-            let record: Value =
-                serde_json::from_slice(&fs::read(p.join("delivery.json")).unwrap()).unwrap();
-            record["output"]["Effect"]["kind"]["StartRun"]
-                == if mode == "plan-blocked" {
-                    "Plan"
-                } else {
-                    "Ingest"
-                }
-        })
-        .unwrap();
-    let identity: Value =
-        serde_json::from_slice(&fs::read(ingest.join("attempt-00000000/process.json")).unwrap())
-            .unwrap();
-    assert_eq!(identity["pid"].to_string(), worker_pid);
+    assert_recorded_runs(root.path(), 3);
+    assert_retired(&config, &mut store);
     assert!(store.worker_document("0", "briefs").unwrap().is_some());
 }
 
@@ -577,10 +582,9 @@ fn early_and_objections(database: &mut Database) {
                 store.worker_document("0", "audits").unwrap().unwrap()["objections"][0],
                 "Preserve punctuation."
             );
-            let requests: Vec<_> = fs::read_dir(&config.workers.runs)
-                .unwrap()
-                .map(|e| e.unwrap().path().join("attempt-00000000/request.json"))
-                .map(|p| serde_json::from_slice::<Value>(&fs::read(p).unwrap()).unwrap())
+            let requests: Vec<_> = recorded_runs(root.path())
+                .into_iter()
+                .map(|r| r["request"].clone())
                 .collect();
             assert!(
                 requests
@@ -621,17 +625,8 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    let runs: Vec<_> = fs::read_dir(&config.workers.runs)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.is_dir())
-        .collect();
-    assert_eq!(
-        runs.len(),
-        4,
-        "one failed ingest, its kernel-directed retry, audit and planner"
-    );
-    assert!(runs.iter().all(|p| attempts(p) == 1));
+    assert_recorded_runs(root.path(), 4);
+    assert_retired(&config, &mut store);
 }
 
 fn late_launcher(settings: &tl3_config::Store) {
@@ -847,6 +842,10 @@ fn fake_stop(settings: &tl3_config::Store) {
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
     fs::write(history.join("delivery.json"), "invalid history").unwrap();
+    assert!(
+        Supervisor::new(&config, &fakes).is_ok(),
+        "startup must skip invalid history"
+    );
     run.key = "effect:0:2".into();
     run.output = Out::Effect {
         node: NodeId(0),
@@ -900,6 +899,7 @@ fn partial_crash(settings: &tl3_config::Store) {
     materials(&mut store);
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let run = delivery();
+    watch_run(&mut store, &run);
     supervisor.execute(&run).unwrap();
     wait(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
@@ -912,6 +912,22 @@ fn partial_crash(settings: &tl3_config::Store) {
     assert_eq!(
         store.worker_progress(None).unwrap()[0].output_offset,
         complete as i64
+    );
+    let progress = store.worker_progress(None).unwrap();
+    assert!(
+        progress[0]
+            .last_progress_ms
+            .is_some_and(|ms| ms >= progress[0].started_ms)
+    );
+    assert_eq!(progress[0].unit, "model_turn");
+    let mut replay = Supervisor::new(&config, &root.path().join("fakes"))
+        .unwrap()
+        .source();
+    replay.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        store.worker_progress(None).unwrap(),
+        progress,
+        "restart replay cannot refresh progress time"
     );
     assert!(rx.try_recv().is_err());
     kill_record(&attempt.join("process.json"));
@@ -934,4 +950,512 @@ fn partial_crash(settings: &tl3_config::Store) {
             ..
         }
     ));
+}
+
+fn recorded_runs(root: &Path) -> Vec<Value> {
+    fs::read_to_string(root.join("entered.requests"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+fn assert_recorded_runs(root: &Path, count: usize) {
+    let records = recorded_runs(root);
+    assert_eq!(records.len(), count);
+    let keys: std::collections::BTreeSet<_> = records
+        .iter()
+        .map(|r| r["request"]["worktree"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys.len(), count, "each key launched exactly one worker");
+}
+
+fn assert_retired(config: &tl3_config::Config, store: &mut Store) {
+    assert!(store.worker_progress(None).unwrap().is_empty());
+    assert!(store.worker_watches().unwrap().is_empty());
+    assert_eq!(
+        fs::read_dir(&config.workers.runs).unwrap().count(),
+        1,
+        "only the notification inbox remains"
+    );
+    assert_eq!(
+        fs::read_dir(config.workers.runs.join(".ready"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+fn store_worker_run(settings: &tl3_config::Store) -> Delivery {
+    serde_json::from_value(
+        Store::open(settings).unwrap().worker_watches().unwrap()[0]
+            .1
+            .clone(),
+    )
+    .unwrap()
+}
+
+fn save(
+    store: &mut Store,
+    rows: Vec<RowChange>,
+    transitions: Vec<EffectTransition>,
+    effects: Vec<NewEffect>,
+) {
+    let snapshot = store.load().unwrap();
+    let mut commit = Commit::new(
+        format!("fixture:{}", snapshot.revision.get()),
+        json!({"fixture": snapshot.revision.get()}),
+        &snapshot,
+    );
+    commit.rows = rows;
+    commit.transitions = transitions;
+    commit.effects = effects;
+    store.commit(&commit).unwrap();
+}
+
+fn watch_run(store: &mut Store, run: &Delivery) {
+    save(
+        store,
+        vec![RowChange::Put {
+            table: "watches".into(),
+            id: run.key.clone(),
+            value: json!(run),
+        }],
+        vec![],
+        vec![NewEffect {
+            key: run.key.clone(),
+            kind: "Workers".into(),
+            payload: json!(run),
+        }],
+    );
+}
+
+fn unwatch(store: &mut Store, run: &Delivery) {
+    save(
+        store,
+        vec![RowChange::Delete {
+            table: "watches".into(),
+            id: run.key.clone(),
+        }],
+        vec![],
+        vec![],
+    );
+}
+
+fn bounded_startup(settings: &tl3_config::Store) {
+    use rustix::fs::inotify;
+    use std::mem::MaybeUninit;
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let run = delivery();
+    watch_run(&mut store, &run);
+    let mut original = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    original.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let observer = inotify::init(inotify::CreateFlags::NONBLOCK).unwrap();
+    for n in 0..128 {
+        let history = config.workers.runs.join(format!("history-{n}"));
+        let attempt = history.join("attempt-00000000");
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(history.join("delivery.json"), "invalid historical delivery").unwrap();
+        fs::write(
+            attempt.join("claim.json"),
+            json!({"pid": 1, "start": 1, "boot": "old", "machine": "another-machine"}).to_string(),
+        )
+        .unwrap();
+        fs::write(attempt.join("exit.json"), "{\"code\":0}").unwrap();
+        fs::write(attempt.join("stdout.jsonl"), "invalid historical output").unwrap();
+        for path in [&history, &attempt] {
+            inotify::add_watch(
+                &observer,
+                path,
+                inotify::WatchFlags::OPEN | inotify::WatchFlags::ACCESS,
+            )
+            .unwrap();
+        }
+    }
+    let mut finished = run.clone();
+    finished.key = "effect:finished:1".into();
+    watch_run(&mut store, &finished);
+    save(
+        &mut store,
+        vec![RowChange::Delete {
+            table: "watches".into(),
+            id: finished.key.clone(),
+        }],
+        vec![
+            EffectTransition {
+                key: finished.key.clone(),
+                from: EffectState::Intended,
+                to: EffectState::Sent,
+            },
+            EffectTransition {
+                key: finished.key.clone(),
+                from: EffectState::Sent,
+                to: EffectState::Confirmed,
+            },
+        ],
+        vec![],
+    );
+    let finished_root = root_for(&config, &finished.key);
+    fs::create_dir(&finished_root).unwrap();
+    fs::write(finished_root.join("delivery.json"), "bad finished record").unwrap();
+    let finished_ready = config.workers.runs.join(".ready").join(format!(
+        ".ready-{}",
+        finished_root.file_name().unwrap().to_string_lossy()
+    ));
+    fs::write(&finished_ready, json!(finished).to_string()).unwrap();
+    inotify::add_watch(
+        &observer,
+        &finished_root,
+        inotify::WatchFlags::OPEN | inotify::WatchFlags::ACCESS,
+    )
+    .unwrap();
+    let mut bad = run.clone();
+    bad.key = "effect:bad:1".into();
+    watch_run(&mut store, &bad);
+    let bad_attempt = root_for(&config, &bad.key).join("attempt-00000000");
+    fs::create_dir_all(&bad_attempt).unwrap();
+    fs::write(bad_attempt.join("claim.json"), "broken active record").unwrap();
+    let mut foreign = run.clone();
+    foreign.key = "effect:foreign:1".into();
+    watch_run(&mut store, &foreign);
+    let foreign_attempt = root_for(&config, &foreign.key).join("attempt-00000000");
+    fs::create_dir_all(&foreign_attempt).unwrap();
+    fs::write(
+        foreign_attempt.join("claim.json"),
+        json!({"pid": 1, "start": 1, "boot": "old", "machine": "another-machine"}).to_string(),
+    )
+    .unwrap();
+    let name = root_for(&config, &run.key).file_name().unwrap().to_owned();
+    let legacy = config
+        .workers
+        .runs
+        .join(format!(".ready-{}", name.to_string_lossy()));
+    fs::write(&legacy, "stale legacy notification").unwrap();
+    let corrupt_ready = config.workers.runs.join(".ready/.ready-deadbeef");
+    fs::write(&corrupt_ready, "broken notification").unwrap();
+    let mut restarted = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut source = restarted.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        source.active_runs(),
+        1,
+        "bad and foreign records are skipped independently"
+    );
+    assert!(!legacy.exists());
+    assert!(!corrupt_ready.exists());
+    assert!(!finished_ready.exists());
+    assert!(rx.try_recv().is_err());
+    let mut buffer = [MaybeUninit::uninit(); 1024];
+    let mut reader = inotify::Reader::new(&observer, &mut buffer);
+    assert!(
+        matches!(reader.next(), Err(rustix::io::Errno::AGAIN)),
+        "startup must not open any history directory or file"
+    );
+    let mut stop = run.clone();
+    stop.key = "stop:0".into();
+    stop.output = Out::Effect {
+        node: NodeId(0),
+        seq: 2,
+        kind: EffectKind::StopRun,
+        head: None,
+    };
+    restarted.execute(&stop).unwrap();
+    assert!(
+        matches!(
+            original.reconcile(&run).unwrap(),
+            Reconciliation::Absent | Reconciliation::Found(_)
+        ),
+        "restarted ActiveRuns must find and stop the live worker"
+    );
+}
+
+fn retirement(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let run = delivery();
+    watch_run(&mut store, &run);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(source.active_runs(), 1);
+    let run_root = root_for(&config, &run.key);
+    unwatch(&mut store, &run);
+    supervisor.retire(&mut store).unwrap();
+    assert!(
+        run_root.exists(),
+        "pending effects retain their evidence without a watch"
+    );
+    save(
+        &mut store,
+        vec![RowChange::Put {
+            table: "watches".into(),
+            id: run.key.clone(),
+            value: json!(run),
+        }],
+        vec![
+            EffectTransition {
+                key: run.key.clone(),
+                from: EffectState::Intended,
+                to: EffectState::Sent,
+            },
+            EffectTransition {
+                key: run.key.clone(),
+                from: EffectState::Sent,
+                to: EffectState::Confirmed,
+            },
+        ],
+        vec![],
+    );
+    supervisor.retire(&mut store).unwrap();
+    assert!(
+        run_root.exists(),
+        "a confirmed effect remains reconcilable while watched"
+    );
+    assert_eq!(store.worker_progress(None).unwrap().len(), 1);
+    unwatch(&mut store, &run);
+    // Hold only the final DB deletion. The child can remove files but cannot forget its cleanup row.
+    let mut connection = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    let mut transaction = connection.transaction().unwrap();
+    transaction
+        .query_one(
+            "SELECT run_key FROM tl3_worker_progress WHERE run_key = $1 FOR UPDATE",
+            &[&run.key],
+        )
+        .unwrap();
+    let settings_path = root.path().join("settings.json");
+    fs::write(&settings_path, serde_json::to_vec(&json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})).unwrap()).unwrap();
+    let mut child = Command::new(env::current_exe().unwrap())
+        .arg("--retire-child")
+        .arg(&settings_path)
+        .arg(root.path())
+        .spawn()
+        .unwrap();
+    wait(|| !run_root.exists());
+    let mut backend = None;
+    wait(|| {
+        transaction
+            .simple_query("SELECT pg_stat_clear_snapshot()")
+            .unwrap();
+        backend = transaction.query_opt("SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'DELETE FROM tl3_worker_progress%'", &[]).unwrap().map(|row| row.get::<_, i32>(0));
+        backend.is_some()
+    });
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "cleanup is blocked at the final row deletion"
+    );
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
+    // Client death does not cancel an executing SQL statement. End that session too.
+    let backend = backend.unwrap();
+    transaction
+        .query(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = $1",
+            &[&backend],
+        )
+        .unwrap();
+    wait(|| {
+        transaction
+            .simple_query("SELECT pg_stat_clear_snapshot()")
+            .unwrap();
+        !transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1)",
+                &[&backend],
+            )
+            .unwrap()
+            .get::<_, bool>(0)
+    });
+    transaction.rollback().unwrap();
+    assert_eq!(
+        store.worker_progress(None).unwrap().len(),
+        1,
+        "SIGKILL retains the durable cleanup queue"
+    );
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        source.active_runs(),
+        0,
+        "retirement drops source watches even when files disappear before refresh"
+    );
+    assert!(rx.try_recv().is_err());
+    let mut restarted = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    restarted.retire(&mut store).unwrap();
+    restarted.retire(&mut store).unwrap();
+    assert_retired(&config, &mut store);
+
+    // A source can attach before an attempt exists, with no pidfd to wake it.
+    fs::create_dir_all(&run_root).unwrap();
+    store.claim_worker(&run.key, "0", 0, 0).unwrap();
+    save(
+        &mut store,
+        vec![RowChange::Put {
+            table: "watches".into(),
+            id: run.key.clone(),
+            value: json!(run),
+        }],
+        vec![],
+        vec![],
+    );
+    let mut unclaimed_source = restarted.source();
+    unclaimed_source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(unclaimed_source.active_runs(), 1);
+    unwatch(&mut store, &run);
+    restarted.retire(&mut store).unwrap();
+    unclaimed_source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        unclaimed_source.active_runs(),
+        0,
+        "directory removal wakes a source without process identities"
+    );
+    assert!(rx.try_recv().is_err());
+    assert_retired(&config, &mut store);
+}
+
+fn kill_record_and_wait(path: &Path) {
+    use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+    let record: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let fd = pidfd_open(
+        Pid::from_raw(record["pid"].as_i64().unwrap().try_into().unwrap()).unwrap(),
+        PidfdFlags::empty(),
+    )
+    .unwrap();
+    pidfd_send_signal(&fd, Signal::KILL).unwrap();
+    let mut descriptors = [rustix::event::PollFd::new(
+        &fd,
+        rustix::event::PollFlags::IN,
+    )];
+    loop {
+        match rustix::event::poll(&mut descriptors, None) {
+            Ok(_) => break,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => panic!("pidfd wait failed: {error}"),
+        }
+    }
+}
+
+fn confirmed_absence(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let (registry, mut source) =
+        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let run = store_worker_run(settings);
+    assert_eq!(
+        store.effect(&run.key).unwrap().unwrap().state,
+        EffectState::Confirmed
+    );
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    kill_record_and_wait(&attempt.join("claim.json"));
+    kill_record_and_wait(&attempt.join("process.json"));
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    assert!(!attempt.join("exit.json").exists());
+    assert!(
+        rx.try_recv().is_err(),
+        "source emits nothing for confirmed absence"
+    );
+    while controller.drive_once().unwrap() {}
+    let replacement = store_worker_run(settings);
+    assert_ne!(
+        replacement.key, run.key,
+        "the kernel retries under a new effect key"
+    );
+    let failures = |store: &mut Store| {
+        store
+            .events_after(tl3_store::Revision::ZERO, 1000)
+            .unwrap()
+            .iter()
+            .filter(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "RunFailed")
+            .count()
+    };
+    assert_eq!(failures(&mut store), 1);
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].phase.is_closed()
+    });
+    assert_eq!(
+        failures(&mut store),
+        1,
+        "later looks cannot charge the missing run again"
+    );
+    assert_recorded_runs(root.path(), 4);
+    assert_retired(&config, &mut store);
+}
+
+fn overflow(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut run = delivery();
+    supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    let limit: usize = fs::read_to_string("/proc/sys/fs/inotify/max_queued_events")
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let noise = root_for(&config, &run.key).join("attempt-00000000/noise");
+    for _ in 0..=limit {
+        fs::write(&noise, "noise").unwrap();
+    }
+    run.key = "effect:0:2".into();
+    supervisor.execute(&run).unwrap();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        source.recovered_overflows(),
+        1,
+        "the kernel queue really overflowed"
+    );
+    assert_eq!(
+        source.active_runs(),
+        2,
+        "overflow rescan discovers a dropped ready event"
+    );
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    assert_eq!(
+        rx.try_iter().count(),
+        2,
+        "ingress survives the overflow and emits each reply once"
+    );
 }

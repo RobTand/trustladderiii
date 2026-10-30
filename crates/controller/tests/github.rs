@@ -1414,7 +1414,14 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
                 event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "ingest"
             })
     });
-    wait(&mut || store.worker_progress(Some("0")).unwrap().len() == 2);
+    wait(&mut || {
+        store.worker_document("0", "briefs").unwrap().is_some()
+            && store
+                .worker_watches()
+                .unwrap()
+                .iter()
+                .any(|(_, delivery)| delivery["output"]["Effect"]["kind"]["StartRun"] == "Audit")
+    });
     assert_eq!(
         store.worker_document("0", "briefs").unwrap().unwrap()["brief"],
         "Fix the greeting."
@@ -1450,9 +1457,23 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         store.worker_document("0", "audits").unwrap().unwrap()["verdict"],
         "agree"
     );
-    let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 3);
-    assert!(progress.iter().all(|p| p.last_progress_ms.is_some()));
+    assert_eq!(
+        store.worker_document("0", "plans").unwrap().unwrap()["kind"],
+        "leaf"
+    );
+    let replies: Vec<_> = store
+        .events_after(tl3_store::Revision::ZERO, 1000)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.payload.get("WorkerReply").is_some())
+        .collect();
+    for role in ["ingest", "audit", "planner"] {
+        assert!(
+            replies
+                .iter()
+                .any(|event| event.payload["WorkerReply"]["role"] == role)
+        );
+    }
     let snapshot = store.load().unwrap();
     assert_eq!(
         snapshot
@@ -1472,7 +1493,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             .any(|comment| comment["body"].as_str().unwrap().contains("Return hello."))
     );
     // Malformed durable worker notification fails the actual source while webhooks and stdin live.
-    fs::write(runs.join(".ready-dead"), "{").unwrap();
+    fs::write(runs.join(".ready/.ready-dead"), "{").unwrap();
     let mut ending = None;
     wait(&mut || {
         ending = daemon.0.try_wait().unwrap();

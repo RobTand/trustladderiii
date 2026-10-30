@@ -525,6 +525,7 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        self.adapters.retire(&mut self.store)?;
         Ok(progressed)
     }
 

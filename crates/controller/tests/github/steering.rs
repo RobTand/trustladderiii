@@ -107,6 +107,16 @@ impl Daemon {
             })
         });
     }
+    fn requests(&self) -> Vec<Value> {
+        fs::read_to_string(self.marker.with_extension("requests"))
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let record: Value = serde_json::from_str(line).unwrap();
+                record["request"].clone()
+            })
+            .collect()
+    }
     fn input(&mut self, key: &str, event: Event) {
         let input = Input::Observation {
             key: key.into(),
@@ -154,6 +164,7 @@ impl Daemon {
         self.wait(|s| {
             let snapshot = s.store.load().unwrap();
             snapshot.pending_effects.is_empty()
+                && s.store.worker_progress(None).unwrap().is_empty()
                 && !snapshot.rows.iter().any(|r| {
                     matches!(
                         r.table.as_str(),
@@ -168,20 +179,12 @@ impl Drop for Daemon {
         let _ = self.child.kill();
         let _ = self.child.wait();
         // A controller crash leaves supervisors alive by design. End this fixture's runs.
-        if let Ok(entries) = fs::read_dir(&self.runs) {
-            for entry in entries.flatten().filter(|e| e.path().is_dir()) {
-                if let Ok(bytes) = fs::read(entry.path().join("delivery.json")) {
-                    let delivery: Delivery = serde_json::from_slice(&bytes).unwrap();
-                    let config_path = self.root.path().join("config.toml");
-                    let config = tl3_config::Config::load(config_path).unwrap();
-                    let supervisor = adapters::workers::Supervisor::new(
-                        &config,
-                        &self.root.path().join("fakes"),
-                    )
-                    .unwrap();
-                    supervisor.stop_run(&delivery.key, delivery.epoch).unwrap();
-                }
-            }
+        let config = tl3_config::Config::load(self.root.path().join("config.toml")).unwrap();
+        let supervisor =
+            adapters::workers::Supervisor::new(&config, &self.root.path().join("fakes")).unwrap();
+        let epoch = self.store.load().unwrap().epoch.get();
+        for progress in self.store.worker_progress(None).unwrap() {
+            supervisor.stop_run(&progress.key, epoch).unwrap();
         }
     }
 }
@@ -255,11 +258,9 @@ pub(super) fn commands(settings: &tl3_config::Store) {
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Stopped"}));
     d.settled();
     let classifies = d
-        .store
-        .worker_progress(None)
-        .unwrap()
-        .into_iter()
-        .filter(|p| p.key.starts_with("classify:"))
+        .requests()
+        .iter()
+        .filter(|r| r["role"] == "classifier")
         .count();
     assert_eq!(
         classifies, 5,
@@ -286,11 +287,7 @@ pub(super) fn commands(settings: &tl3_config::Store) {
             .iter()
             .any(|r| r.table == "comment_questions")
     );
-    let requests = fs::read_dir(&d.runs)
-        .unwrap()
-        .filter_map(|e| fs::read(e.unwrap().path().join("attempt-00000000/request.json")).ok())
-        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap())
-        .collect::<Vec<_>>();
+    let requests = d.requests();
     assert!(requests.iter().any(|r| {
         r["role"] == "classifier"
             && r["inputs"]["comment"]["body"] == "Please stop"
@@ -298,6 +295,8 @@ pub(super) fn commands(settings: &tl3_config::Store) {
                 .as_str()
                 .is_some_and(|id| id.ends_with("/10004"))
     }));
+    assert_eq!(fs::read_dir(&d.runs).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(d.runs.join(".ready")).unwrap().count(), 0);
     println!("test steering_commands_remark_authorization_and_dedup ... ok");
 }
 
@@ -379,12 +378,7 @@ pub(super) fn replacement(settings: &tl3_config::Store) {
             == 2
     });
     d.wait(|s| !s.store.worker_progress(Some("1")).unwrap().is_empty());
-    let requests = fs::read_dir(&d.runs)
-        .unwrap()
-        .map(|e| e.unwrap().path().join("attempt-00000000/request.json"))
-        .filter_map(|p| fs::read(p).ok())
-        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap())
-        .collect::<Vec<_>>();
+    let requests = d.requests();
     assert!(requests.iter().any(|r| {
         r["role"] == "ingest"
             && r["inputs"]["issue"]["number"] == 1000
@@ -492,10 +486,6 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     d.send(15001, "Answer the old question");
     d.wait(|s| s.marker.with_extension("classifying").exists());
     d.restart();
-    fs::write(d.marker.with_extension("answer"), "go").unwrap();
-    d.classified(15001);
-    d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
-    d.settled();
     let jobs: Vec<_> = d
         .store
         .worker_progress(None)
@@ -504,8 +494,17 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
         .filter(|p| p.key.starts_with("classify:"))
         .collect();
     assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].attempt, 0);
+    fs::write(d.marker.with_extension("answer"), "go").unwrap();
+    d.classified(15001);
+    d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
+    d.settled();
     assert_eq!(
-        jobs[0].attempt, 0,
+        d.requests()
+            .iter()
+            .filter(|r| r["role"] == "classifier")
+            .count(),
+        1,
         "recovery reattaches the existing classifier"
     );
     println!("test steering_named_answer_applies_after_controller_recovery ... ok");

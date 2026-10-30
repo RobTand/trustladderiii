@@ -32,6 +32,8 @@ def no_network(*args, **kwargs):
 
 
 def create_model(request):
+    with marker.with_suffix(".requests").open("a") as output:
+        output.write(json.dumps({"pid": os.getpid(), "request": request}) + "\n")
     if mode != "plan-blocked" or request["role"] == "planner":
         publish_marker(marker, str(os.getpid()))
     if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):

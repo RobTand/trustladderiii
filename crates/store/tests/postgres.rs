@@ -511,7 +511,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4]
+        [1, 2, 3, 4, 5]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -813,7 +813,9 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             &[&expected, &future],
         )
         .unwrap();
-    client.batch_execute("DROP TABLE tl3_world").unwrap();
+    client
+        .batch_execute("DROP TABLE tl3_world CASCADE")
+        .unwrap();
     assert_eq!(
         Reader::open(settings).err().unwrap().to_string(),
         "database not initialized"
