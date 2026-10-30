@@ -1,0 +1,34 @@
+{
+  "number": 2425,
+  "state": "open",
+  "merged_at": null,
+  "head": {
+    "ref": "prismabuild-2190-pri868",
+    "sha": "b25d71303944c15d8997e8467314e33147279623",
+    "repo": {
+      "id": 1353085101,
+      "name": "prismabuild",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "22e9d75298608078c91d331a646f6446352577f6",
+    "repo": {
+      "id": 1353085101,
+      "name": "prismabuild",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "updated_at": "2026-10-28T19:18:47Z",
+  "user": {
+    "id": 24923402,
+    "login": "RobTand"
+  }
+}
