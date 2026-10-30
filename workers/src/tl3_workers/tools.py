@@ -10,6 +10,8 @@ import stat
 
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
+from tl3_workers.pb_tests import make_test_tool
+
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
 WRITE_TOOLS = frozenset({"write", "edit"})
@@ -262,8 +264,9 @@ class Worktree:
         return f"Replaced {count} occurrence(s)."
 
 
-# Ticket #33 adds one factory here. Never expose execute or a local shell.
+# Never expose execute or a local shell.
 TOOL_FACTORIES = {
+    "run_tests": make_test_tool,
     "list": lambda worktree: worktree.list_files,
     "read": lambda worktree: worktree.read,
     "glob": lambda worktree: worktree.glob,
