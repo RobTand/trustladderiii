@@ -21,13 +21,19 @@ brief = {"kind": "brief", "brief": "Fix the greeting.", "goals": [
     {"description": "Return hello.", "verification": "test"}], "memory_ids": [], "files": ["greeting.py"]}
 
 
+def publish_marker(path, text):
+    pending = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    pending.write_text(text)
+    pending.replace(path)
+
+
 def no_network(*args, **kwargs):
     raise AssertionError("network forbidden in supervisor fixtures")
 
 
 def create_model(request):
     if mode != "plan-blocked" or request["role"] == "planner":
-        marker.write_text(str(os.getpid()))
+        publish_marker(marker, str(os.getpid()))
     if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
@@ -38,7 +44,7 @@ def create_model(request):
         if reply.get("question_id") == "current":
             reply["question_id"] = request["inputs"]["state"]["open_question"]["id"]
         if body == "Answer the old question":
-            marker.with_suffix(".classifying").write_text("ready")
+            publish_marker(marker.with_suffix(".classifying"), "ready")
             while not marker.with_suffix(".answer").exists():
                 time.sleep(0.01)
         return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
@@ -96,7 +102,7 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
         print("not json", flush=True)
     elif mode != "missing":
         print(json.dumps({"event": "reply", "role": "audit" if mode == "wrong-role" else request["role"], "reply": reply}), flush=True)
-    marker.write_text(str(__import__("os").getpid()))
+    publish_marker(marker, str(os.getpid()))
     if mode in {"reply-before-exit", "partial-crash"}:
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
