@@ -46,7 +46,7 @@ pub fn serve(config: &tl3_config::Config) -> Result<()> {
     for stream in listener.incoming() {
         let stream = stream?;
         if open
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                 (count < MAX_CONNECTIONS).then_some(count + 1)
             })
             .is_err()
