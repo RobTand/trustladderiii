@@ -707,6 +707,7 @@ fn delivery(notice: Notice) -> Delivery {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         question: None,
         question_context: None,
         steering: None,
@@ -1478,11 +1479,112 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
-    let (config_path, marker, runs) = worker_daemon_config(settings, root.path(), "audit-blocked");
+    let credentials = root.path().join("app.json");
+    let model_key = root.path().join("model-key");
+    fs::write(
+        &credentials,
+        serde_json::to_vec(&json!({
+            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(&model_key, "fixture-only").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&credentials, &model_key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let marker = root.path().join("entered");
+    let runs = root.path().join("runs");
+    let worktrees = root.path().join("worktrees");
+    let checkout = worktrees
+        .join(hex::encode("owner"))
+        .join(hex::encode("sandbox"))
+        .join("issue-12-node-0");
+    fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--quiet", "--template="]);
+    fs::write(
+        checkout.join("greeting.py"),
+        "def greet(): return 'goodbye'\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "Base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    let config = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace(
+            "connect_timeout_secs = 10",
+            &format!(
+                "password_file = {:?}\nconnect_timeout_secs = 10",
+                settings.password_file.as_ref().unwrap()
+            ),
+        )
+        .replace(
+            "/home/rob/.config/tl3/github-app.json",
+            credentials.to_str().unwrap(),
+        )
+        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        .replace("owner = \"RobTand\"", "owner = \"owner\"")
+        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
+        .replace("installation_id = 1", "installation_id = 3")
+        .replace("id = 24923402", "id = 42")
+        .replace(
+            "/srv/tl3/workers/.venv/bin/python",
+            package.join(".venv/bin/python").to_str().unwrap(),
+        )
+        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace("/srv/tl3/worktrees", worktrees.to_str().unwrap())
+        .replace(
+            "command = [\"-m\", \"tl3_workers\", \"run\"]",
+            &format!(
+                "command = [{:?}, \"audit-blocked\", {marker:?}]",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+            ),
+        );
+    let config_path = root.path().join("config.toml");
+    fs::write(&config_path, config).unwrap();
     let mut store = Store::open(settings).unwrap();
-    store.put_worker_materials("0", &json!({
+    let inputs = json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
         "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]}
+    });
+    store.put_worker_materials("0", &json!({
+        "ingest": inputs, "audit": inputs, "repo": inputs["repo"],
+        "maker": {
+            "brief": "Return hello.", "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
+            "plan": {"files": ["greeting.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["tests/test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]}
+        }
     })).unwrap();
     struct Daemon(std::process::Child);
     impl Drop for Daemon {
@@ -1599,13 +1701,18 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         .into_iter()
         .filter(|event| event.payload.get("WorkerReply").is_some())
         .collect();
-    for role in ["ingest", "audit", "planner"] {
+    for role in ["ingest", "audit", "planner", "maker"] {
         assert!(
             replies
                 .iter()
                 .any(|event| event.payload["WorkerReply"]["role"] == role)
         );
     }
+    assert_ne!(git(&["rev-parse", "HEAD"]), base);
+    assert_eq!(
+        fs::read_to_string(checkout.join("greeting.py")).unwrap(),
+        "def greet(): return 'hello'\n"
+    );
     let snapshot = store.load().unwrap();
     assert_eq!(
         snapshot
@@ -1743,6 +1850,43 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     }
 }
 
+fn steering_maker_worktree(root: &Path) {
+    let checkout = root.join("worktrees/6f776e6572/73616e64626f78/issue-12-node-0");
+    fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet", "--template="]);
+    fs::write(
+        checkout.join("greeting.py"),
+        "def greet(): return 'goodbye'\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "Base"]);
+}
+
 fn worker_daemon_config(
     settings: &tl3_config::Store,
     root: &Path,
@@ -1752,6 +1896,7 @@ fn worker_daemon_config(
         .join("../../workers")
         .canonicalize()
         .unwrap();
+    steering_maker_worktree(root);
     let credentials = root.join("app.json");
     let model_key = root.join("model-key");
     fs::write(
@@ -1797,6 +1942,10 @@ fn worker_daemon_config(
             package.join(".venv/bin/python").to_str().unwrap(),
         )
         .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace(
+            "/srv/tl3/worktrees",
+            root.join("worktrees").to_str().unwrap(),
+        )
         .replace(
             "command = [\"-m\", \"tl3_workers\", \"run\"]",
             &format!(

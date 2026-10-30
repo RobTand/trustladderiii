@@ -23,7 +23,8 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
 use tl3_kernel::{Command as Control, EffectKind, Event, NodeId, Phase};
-use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
+use tl3_prismabuild::PrismaBuild;
+mod prismabuild_fixture;
 
 fn git(root: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -108,6 +109,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         paths: vec!["value.py".into()],
         attempt: 1,
         round: 0,
+        replanned: false,
         note: None,
         steering: None,
         request_text: None,
@@ -133,48 +135,9 @@ fn fixture_with_bell(root: &Path, mode: &str, bell_url: &str) -> Adapter {
     Adapter::new(client, settings).unwrap()
 }
 fn fixture_settings(root: &Path, mode: &str, bell_url: &str) -> (PrismaBuild, Settings) {
-    let queue = root.join("queue");
-    fs::create_dir_all(&queue).unwrap();
-    for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
-        fs::create_dir_all(queue.join(state)).unwrap();
-    }
-    fs::write(queue.join("mode"), mode).unwrap();
-    let tool = Tool {
-        program: "python3".into(),
-        args: vec![
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/pb.py")
-                .into(),
-            queue.clone().into(),
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../prismabuild/tests/fixtures/queue")
-                .into(),
-        ],
-    };
-    let client = PrismaBuild::new(Options {
-        queue_root: queue,
-        tool: tool.clone(),
-        bell_url: bell_url.into(),
-    })
-    .unwrap();
-    (
-        client,
-        Settings {
-            records: root.join("records"),
-            harness: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/src/tl3_harness"),
-            python: vec!["python3.14".into()],
-            image: format!("sha256:{}", "a".repeat(64)),
-            demand: Demand {
-                cpus: 1.try_into().unwrap(),
-                mem_gb: 2,
-                gpu: false,
-            },
-            quiet: Duration::from_secs(120),
-            priority: -10,
-            result_tool: tool,
-        },
-    )
+    prismabuild_fixture::settings(root, mode, bell_url)
 }
+
 fn observed(completion: Completion) -> (bool, bool, Vec<String>) {
     assert_eq!(completion.observations.len(), 1);
     match completion.observations.into_iter().next().unwrap() {
@@ -219,6 +182,44 @@ fn recorded_endings() {
         );
     }
 }
+fn bounded_failure_details() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.checks.as_mut().unwrap().plan[0].tests = (0..25)
+        .map(|i| format!("test_value.py::test_{i}"))
+        .collect();
+    let mut adapter = fixture(root.path(), "check_fail");
+    fs::write(root.path().join("queue/failure_message"), "é".repeat(2000)).unwrap();
+    adapter.execute(&delivery).unwrap();
+    let result = completion(&mut adapter, &delivery);
+    match &result.observations[0] {
+        Observation::Checks {
+            failed_tests,
+            report,
+            pass,
+            ..
+        } => {
+            assert!(*report && !*pass);
+            assert_eq!(failed_tests.len(), 20);
+            assert_eq!(failed_tests[0].test, "test_value.py::test_0");
+            assert!(
+                failed_tests
+                    .iter()
+                    .all(|test| test.message == "é".repeat(1000))
+            );
+        }
+        _ => panic!("check observation required"),
+    }
+    let mut legacy = serde_json::to_value(&result.observations[0]).unwrap();
+    legacy["Checks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("failed_tests");
+    assert!(
+        matches!(serde_json::from_value::<Observation>(legacy).unwrap(), Observation::Checks { failed_tests, .. } if failed_tests.is_empty())
+    );
+}
+
 fn pending_and_withdrawal() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1451,6 +1452,22 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         .collect();
     assert!(paths.contains("value.py"));
     assert_eq!(paths.contains("outside.py"), outside);
+    if outside {
+        let findings = tl3_store::Store::open(settings)
+            .unwrap()
+            .worker_document("0", "maker_findings")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            findings[0]["outside_paths"],
+            serde_json::json!(["outside.py"])
+        );
+        assert_eq!(
+            findings[0]["goal_ids"],
+            serde_json::json!([]),
+            "missing maker goals must retain unbound evidence"
+        );
+    }
     drop(running);
 }
 fn main() {
@@ -1487,6 +1504,7 @@ fn main() {
         ),
         ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
         ("recorded_endings", recorded_endings as fn()),
+        ("bounded_failure_details", bounded_failure_details),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
         ("SIGKILL_reuses_seal", crash_reuses_seal),
@@ -1543,7 +1561,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("25 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("26 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

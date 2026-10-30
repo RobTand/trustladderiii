@@ -503,7 +503,14 @@ impl Store {
     ) -> Result<Option<serde_json::Value>> {
         if !matches!(
             document,
-            "briefs" | "goals" | "audits" | "plans" | "findings"
+            "briefs"
+                | "goals"
+                | "audits"
+                | "maker_replies"
+                | "maker_findings"
+                | "maker_session"
+                | "plans"
+                | "findings"
         ) {
             return Err(Error::Invalid("unknown worker document"));
         }
@@ -561,6 +568,18 @@ impl Store {
     pub fn worker_watches(&mut self) -> Result<Vec<(String, serde_json::Value)>> {
         Ok(self.client.query("SELECT w.row_id, w.value FROM tl3_world w JOIN tl3_effects e ON e.effect_key = w.row_id WHERE w.table_name = 'watches' AND e.kind = 'Workers'", &[])?
             .into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
+    /// Remaining session directories are the cleanup queue, including after a crash.
+    pub fn can_retire_worker_session(&mut self, node: &str) -> Result<bool> {
+        Ok(self.client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'nodes' AND row_id = $1 AND value->'phase' ? 'Closed')
+             AND NOT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'inbox')
+             AND NOT EXISTS (SELECT 1 FROM tl3_worker_progress WHERE node_id = $1)
+             AND NOT EXISTS (SELECT 1 FROM tl3_effects WHERE state NOT IN ('Confirmed', 'Failed', 'Cancelled') AND COALESCE(payload #>> '{output,Effect,node}', payload #>> '{output,Notice,node}') = $1)
+             AND NOT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'watches' AND COALESCE(value #>> '{output,Effect,node}', value #>> '{output,Notice,node}') = $1)",
+            &[&node],
+        )?.get(0))
     }
 
     /// A stale notification cannot revive a terminal, unwatched delivery.

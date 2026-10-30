@@ -134,6 +134,7 @@ fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     assert_eq!(config.github.rob.login, "RobTand");
     assert_eq!(config.github.repos[0].name, "tl3-sandbox");
     assert_eq!(config.hindsight.endpoint.as_str(), "http://127.0.0.1:8890/");
+    assert_eq!(config.hindsight.bank, "tl3");
     for (maker, expected) in
         config
             .models
@@ -192,6 +193,18 @@ fn reviewer_ladder_must_cover_every_maker_family() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn planner_ladder_has_a_next_model_for_a_rerun() {
+    let document: Value = EXAMPLE.parse().unwrap();
+    let mut planner = document["models"]["planner"].clone();
+    planner.as_array_mut().unwrap().truncate(1);
+    let error = Config::parse(&changed(&["models", "planner"], planner))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("models.planner"), "{error}");
+    assert!(error.contains("next model"), "{error}");
 }
 
 #[test]

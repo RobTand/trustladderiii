@@ -7,6 +7,7 @@ import subprocess
 from threading import Barrier, Event
 
 import httpx
+from jsonschema import ValidationError
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
@@ -116,7 +117,7 @@ def maker_request(tmp_path):
 
 
 def test_maker_declares_only_file_and_pb_tools():
-    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests"}
+    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "recall"}
 
 
 @pytest.mark.parametrize("reply", [
@@ -222,8 +223,8 @@ def test_done_with_an_unmet_goal_is_rejected_before_commit(tmp_path, maker_reque
     reply = {"kind": "done", "self_check": [DONE["self_check"][0],
              {"goal_id": "interface", "status": "not_met", "why": "Signature check is still failing."}]}
     result = start_worker(tmp_path, maker_request, [write_turn(), turn(reply)])
-    assert result.exit_code == 1
-    assert all(event["event"] != "reply" for event in result.events)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"]["kind"] == "cant_meet"
     assert git(root, "rev-parse", "HEAD") == before
     assert git(root, "diff", "--cached", "--name-only") == ""
     assert (root / "greeting.py").read_text() == "def greet(): return 'hello'\n"
@@ -615,3 +616,231 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
         {"event": "reply", "role": "maker", "reply": response},
     ]
     assert not (Path(maker_request["worktree"]) / "forbidden").exists()
+
+
+@pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
+def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, fit_tokens, linked, expected):
+    maker_request['inputs']['fit_tokens'] = fit_tokens
+    root = Path(maker_request['worktree'])
+    if linked:
+        (root / 'helper.py').symlink_to(root / 'greeting.py')
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['fits'] is expected
+
+
+def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
+    maker_request['inputs']['fit_tokens'] = 100000
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}], 'fits': True})])
+    assert result.exit_code == 1
+    assert all(event['event'] != 'reply' for event in result.events)
+
+
+def test_missing_fix_session_fails_without_starting_fresh(tmp_path, maker_request):
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['session_file'] = str(tmp_path / 'missing-session.json')
+    maker_request['resume_session'] = True
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 1
+    assert all(event['event'] != 'reply' for event in result.events)
+    assert git(root, 'rev-parse', 'HEAD') == before
+
+
+def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, monkeypatch, tmp_path):
+    root = Path(maker_request['worktree'])
+    base = git(root, 'rev-parse', 'HEAD')
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    model = ToolModel(responses=[AIMessage(**write_turn()), AIMessage(**turn(DONE))])
+    monkeypatch.setattr(runtime, 'create_model', lambda request: model)
+    commit = maker._commit
+
+    def crash_after_commit(*args):
+        commit(*args)
+        raise RuntimeError('crash after commit, before successful exit')
+
+    monkeypatch.setattr(maker, '_commit', crash_after_commit)
+    with pytest.raises(RuntimeError, match='crash after commit'):
+        runtime.run(maker_request, lambda event: None)
+    head = git(root, 'rev-parse', 'HEAD')
+    assert head != base
+    assert not session.exists(), 'a raised run must not save its history'
+    monkeypatch.setattr(maker, '_commit', commit)
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**turn(DONE))]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply'] == {**DONE, 'head': head}
+    assert git(root, 'rev-parse', 'HEAD^') == base
+    assert git(root, 'rev-parse', 'HEAD') == head
+    assert session.exists()
+
+
+@pytest.mark.parametrize('failure', ['schema', 'stream'])
+def test_failed_run_preserves_the_last_clean_session(maker_request, monkeypatch, tmp_path, failure):
+    maker_request['inputs']['context_size'] = 150000
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    reply = {'kind': 'cant_meet', 'report': 'Need another approach.'}
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**turn(reply))]))
+    runtime.run(maker_request, lambda event: None)
+    clean = session.read_bytes()
+    maker_request['resume_session'] = True
+    if failure == 'schema':
+        monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(content='invalid json')]))
+    else:
+        class BrokenAgent:
+            def stream(self, *args, **kwargs):
+                yield {'model': {'messages': [AIMessage(content='partial history')]}}
+                raise ValueError('stream failed')
+        monkeypatch.setattr(runtime, 'build_agent', lambda *args, **kwargs: BrokenAgent())
+    with pytest.raises(ValueError):
+        runtime.run(maker_request, lambda event: None)
+    assert session.read_bytes() == clean
+    assert not session.with_suffix('.tmp').exists()
+
+
+def test_actionable_check_feedback_matches_the_input_contract(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'The greeting assertion failed and secret.py is outside the plan.',
+        'goal_ids': ['greeting'],
+        'failed_tests': [{'test': 'test_greeting.py::test_hello', 'message': "assert 'goodbye' == 'hello'"}],
+        'outside_paths': ['secret.py'],
+        'ci_checks': [{'name': 'greeting', 'summary': 'Greeting assertion failed.', 'url': 'https://example.invalid/check/1'}],
+    }]
+    validate('maker-input', maker_request['inputs'])
+
+
+@pytest.mark.parametrize('moved_head', [False, True])
+@pytest.mark.parametrize('new_edits', [False, True])
+def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
+        maker_request, monkeypatch, tmp_path, moved_head, new_edits):
+    root = Path(maker_request['worktree'])
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    maker_request['inputs']['context_size'] = 150000
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(
+        responses=[AIMessage(**write_turn()), AIMessage(**turn(DONE))]))
+    runtime.run(maker_request, lambda event: None)
+    if moved_head:
+        # A rewritten upstream history need not retain the first visit's starting commit.
+        rebased = git(root, 'commit-tree', 'HEAD^{tree}', '-m', 'Rebased history')
+        git(root, 'reset', '--hard', rebased)
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['last_accepted_generation'] = maker_request['operation']['generation']
+    maker_request['operation']['generation'] += 1
+    maker_request['resume_session'] = True
+    turns = [write_turn(content="def greet(): return 'hello again'\n")] if new_edits else []
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(
+        responses=[AIMessage(**message) for message in [*turns, turn(DONE)]]))
+    if new_edits:
+        events = []
+        runtime.run(maker_request, events.append)
+        assert events[-1]['reply']['kind'] == 'done'
+        assert git(root, 'rev-parse', 'HEAD^') == before
+    else:
+        with pytest.raises(ValueError, match='done requires code changes'):
+            runtime.run(maker_request, lambda event: None)
+        assert git(root, 'rev-parse', 'HEAD') == before
+    checkpoint = Path(maker_request['session_file']).with_suffix('.head')
+    assert json.loads(checkpoint.read_text()) == {
+        'generation': maker_request['operation']['generation'], 'head': before,
+    }
+    assert list(tmp_path.glob('*.head')) == [checkpoint], 'visits replace one bounded checkpoint'
+
+
+@pytest.mark.parametrize('existing', [False, True])
+@pytest.mark.parametrize('usage_cutoff', [False, True])
+def test_out_of_room_never_saves_a_conversation(maker_request, monkeypatch, tmp_path, existing, usage_cutoff):
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    clean = b'[]'
+    if existing:
+        session.write_bytes(clean)
+    message = turn({'kind': 'out_of_room'}, input_tokens=900 if usage_cutoff else 100)
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**message)]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply']['kind'] == 'out_of_room'
+    assert session.read_bytes() == clean if existing else not session.exists()
+
+
+def test_ci_feedback_summary_has_a_character_cap(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'CI failed.', 'goal_ids': ['greeting'],
+        'ci_checks': [{'name': 'Rust', 'summary': 'x' * 1000, 'url': None}],
+    }]
+    validate('maker-input', maker_request['inputs'])
+    maker_request['inputs']['feedback'][0]['ci_checks'][0]['summary'] += 'x'
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
+
+
+@pytest.mark.parametrize('failure', ['killed', 'session-save'])
+@pytest.mark.parametrize('failures', [1, 2])
+@pytest.mark.parametrize('fix_round', [False, True])
+def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, monkeypatch, failure, failures, fix_round):
+    root = Path(maker_request['worktree'])
+    base = git(root, 'rev-parse', 'HEAD')
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    maker_request['inputs']['context_size'] = 150000
+    launcher = worker_process.LAUNCH
+    if fix_round:
+        accepted = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+        assert accepted.exit_code == 0, accepted.stderr
+        maker_request['last_accepted_generation'] = maker_request['operation']['generation']
+        maker_request['operation']['generation'] += 1
+        maker_request['inputs']['round'] = 1
+        maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Repair the greeting.', 'goal_ids': ['greeting']}]
+        maker_request['resume_session'] = True
+    visit_base = git(root, 'rev-parse', 'HEAD')
+    visit_generation = maker_request['operation']['generation']
+    injection = """
+from tl3_workers.roles import maker
+commit = maker._commit
+save = maker._save
+def crash_commit(*args):
+    commit(*args)
+    import os, signal
+    os.kill(os.getpid(), signal.SIGKILL)
+def fail_save(path, value):
+    if path.suffix == '.json':
+        raise OSError('injected session save failure')
+    save(path, value)
+"""
+    injection += ("maker._commit = crash_commit\n" if failure == 'killed'
+                  else "maker._save = fail_save\n")
+    monkeypatch.setattr(worker_process, 'LAUNCH', launcher.replace('def no_network', injection + '\ndef no_network'))
+    for index in range(failures):
+        turns = [write_turn(content="def greet(): return 'hello fixed'\n")] if index == 0 else []
+        failed = start_worker(tmp_path, maker_request, [*turns, turn(DONE)])
+        assert failed.exit_code == (-9 if failure == 'killed' else 1), failed.stderr
+        assert all(event['event'] != 'reply' for event in failed.events)
+        head = git(root, 'rev-parse', 'HEAD')
+        assert head != visit_base
+        assert git(root, 'rev-list', '--count', f'{visit_base}..HEAD') == '1'
+        maker_request['operation']['generation'] += 1
+    monkeypatch.setattr(worker_process, 'LAUNCH', launcher)
+    recovered = start_worker(tmp_path, maker_request, [turn(DONE)])
+    assert recovered.exit_code == 0, recovered.stderr
+    assert recovered.events[-1]['reply'] == {**DONE, 'head': head}
+    assert git(root, 'rev-list', '--count', f'{base}..HEAD') == str(2 if fix_round else 1)
+    assert git(root, 'rev-parse', 'HEAD') == head
+    checkpoint = Path(maker_request['session_file']).with_suffix('.head')
+    assert json.loads(checkpoint.read_text()) == {'generation': visit_generation, 'head': visit_base}
+
+
+@pytest.mark.parametrize('paths', [['outside.py'] * 101, ['é' * 4097]])
+def test_outside_path_feedback_schema_is_bounded(maker_request, paths):
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'Files outside the footprint.',
+        'goal_ids': ['greeting'], 'outside_paths': paths,
+    }]
+    # Use distinct paths so duplicate rejection cannot substitute for the item cap.
+    if len(paths) > 1:
+        maker_request['inputs']['feedback'][0]['outside_paths'] = [f'outside-{i}.py' for i in range(101)]
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])

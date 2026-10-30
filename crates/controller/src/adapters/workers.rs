@@ -85,6 +85,9 @@ pub struct Supervisor {
     store: tl3_config::Store,
     fake_root: PathBuf,
     active: ActiveRuns,
+    worktrees: PathBuf,
+    tests: tl3_config::PrismaBuild,
+    hindsight: tl3_config::Hindsight,
 }
 
 impl Supervisor {
@@ -114,6 +117,9 @@ impl Supervisor {
             limits: config.limits.clone(),
             store: config.store.clone(),
             fake_root: fake_root.to_owned(),
+            worktrees: config.worktrees_root.clone(),
+            tests: config.prismabuild.clone(),
+            hindsight: config.hindsight.clone(),
         })
     }
 
@@ -146,12 +152,51 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let mut inputs =
+        let materials =
             if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
                 inputs.clone()
             } else {
                 self.materials(delivery, store, snapshot)?
             };
+        let mut inputs = materials.get(role).unwrap_or(&materials).clone();
+        if matches!(role, "ingest" | "audit")
+            && let Some(issue) = materials.get("issue")
+        {
+            inputs["issue"] = issue.clone();
+        }
+        let worktree = if role == "maker" {
+            if !inputs.is_object() || !inputs["plan"].is_object() {
+                return Err(Error::Invalid("maker materials need a plan object"));
+            }
+            if let Some(findings) = store.worker_document(&node, "maker_findings")? {
+                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
+                feedback
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid maker feedback"))?
+                    .extend(
+                        findings
+                            .as_array()
+                            .ok_or(Error::Invalid("invalid maker findings"))?
+                            .iter()
+                            .cloned(),
+                    );
+                if !feedback.as_array().unwrap().is_empty() {
+                    inputs["feedback"] = feedback;
+                }
+            }
+            inputs["attempt"] = json!(delivery.attempt);
+            inputs["round"] = json!(delivery.round);
+            inputs["plan"]["files"] = json!(delivery.paths);
+            inputs["context_size"] = json!(self.limits.context_tokens);
+            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
+            inputs["tests"] =
+                json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
+            inputs["hindsight"] =
+                json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
+            super::worktrees::checkout_path(&self.worktrees, delivery)
+        } else {
+            self.root(&delivery.key).join("worktree")
+        };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "planner" {
@@ -179,22 +224,46 @@ impl Supervisor {
             inputs["forecast"] = forecast;
         }
         protocol::validate_inputs(role, &inputs)?;
-        let ladder = if role == "classifier" {
-            &self.models.comment_classifier
-        } else if role == "ingest" {
-            &self.models.ingest
-        } else if role == "audit" {
-            &self.models.audit
-        } else {
-            &self.models.planner
+        let ladder: &[tl3_config::Model] = match role {
+            "classifier" => &self.models.comment_classifier,
+            "ingest" => &self.models.ingest,
+            "audit" => &self.models.audit,
+            "maker" => &self.models.maker,
+            "planner" => &self.models.planner,
+            _ => return Err(Error::Invalid("unsupported worker role")),
         };
         let model = &ladder[rung.min(ladder.len() - 1)];
-        Ok(json!({
+        let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
-            "inputs": inputs, "worktree": self.root(&delivery.key).join("worktree"),
-        }))
+            "inputs": inputs, "worktree": worktree,
+        });
+        if role == "maker" {
+            request["session_file"] = json!(
+                self.settings
+                    .runs
+                    .join("sessions")
+                    .join(&node)
+                    .join(format!("plan-{}", u8::from(delivery.replanned)))
+                    .join(format!("attempt-{}.json", delivery.attempt))
+            );
+            let session = store
+                .worker_document(&node, "maker_session")?
+                .filter(|session| {
+                    session["attempt"] == delivery.attempt
+                        && session["replanned"] == delivery.replanned
+                });
+            if let Some(session) = &session {
+                let generation = session["generation"]
+                    .as_u64()
+                    .ok_or(Error::Invalid("maker session has no accepted generation"))?;
+                request["last_accepted_generation"] = json!(generation);
+            }
+            let needs_files = session.is_some_and(|session| session["needs_files"] == true);
+            request["resume_session"] = json!(delivery.round == 1 || needs_files);
+        }
+        Ok(request)
     }
 
     fn materials(
@@ -238,6 +307,48 @@ impl Supervisor {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
         stop_attempt(&self.root(key))?;
+        Ok(())
+    }
+
+    fn retire_sessions(&self, store: &mut Store) -> Result<()> {
+        let sessions = self.settings.runs.join("sessions");
+        let entries = match fs::read_dir(&sessions) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                eprintln!(
+                    "worker session retirement retained {}: {error}",
+                    sessions.display()
+                );
+                return Ok(());
+            }
+        };
+        for entry in entries {
+            let result = (|| -> Result<()> {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
+                    return Ok(());
+                }
+                let Some(node) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u64>().ok())
+                else {
+                    return Ok(());
+                };
+                if store.can_retire_worker_session(&node.to_string())? {
+                    fs::remove_dir_all(entry.path())?;
+                    File::open(&sessions)?.sync_all()?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                eprintln!(
+                    "worker session retirement retained an entry in {}: {error}",
+                    sessions.display()
+                );
+            }
+        }
         Ok(())
     }
 
@@ -349,8 +460,11 @@ impl Supervisor {
             delivery.epoch,
             attempt_number,
         )?;
-        fs::create_dir_all(root.join("worktree"))?;
-        if role != "audit" && role != "classifier" {
+        fs::create_dir_all(&root)?;
+        if role != "maker" {
+            fs::create_dir_all(root.join("worktree"))?;
+        }
+        if matches!(role, "ingest" | "planner") {
             let materials = self.materials(delivery, &mut store, &snapshot)?;
             materialize(&root.join("worktree"), &materials["repo"])?;
         }
@@ -480,7 +594,7 @@ impl Executor for Supervisor {
                 eprintln!("worker retirement retained {key}: {error}");
             }
         }
-        Ok(())
+        self.retire_sessions(store)
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {

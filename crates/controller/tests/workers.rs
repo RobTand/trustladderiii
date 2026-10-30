@@ -1,6 +1,8 @@
+mod maker;
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
+mod prismabuild_fixture;
 #[path = "workers/retirement.rs"]
 mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
@@ -122,6 +124,7 @@ fn delivery() -> Delivery {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         note: None,
         checks: None,
         job_generation: None,
@@ -171,8 +174,74 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
     )
 }
 
+fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    if wrapped {
+        let inputs = store.worker_materials("0").unwrap().unwrap();
+        store
+            .put_worker_materials(
+                "0",
+                &json!({"ingest": inputs, "audit": inputs, "repo": inputs["repo"]}),
+            )
+            .unwrap();
+    }
+    let mut commit = Commit::new("linked-materials", json!({}), &store.load().unwrap());
+    commit.rows.push(RowChange::Put {
+        table: "request_links".into(),
+        id: "1".into(),
+        value: json!({"original": 0, "issue": {
+            "number": 1000, "title": "Correct the greeting", "body": "Repair the delivered result.",
+            "state": "open", "updated_at": "2026-10-30T00:00:00Z", "pull_request": null
+        }}),
+    });
+    store.commit(&commit).unwrap();
+    let mut delivery = delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(1),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    delivery.issue = 1000;
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["inputs"]["issue"]["number"], 1000,
+        "linked issues must replace the selected role's original issue"
+    );
+    assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
+    assert_eq!(
+        request["inputs"]["issue"]["body"],
+        "Repair the delivered result."
+    );
+    assert_eq!(
+        request["inputs"]["repo"]["file_list"],
+        json!(["greeting.py"])
+    );
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--maker-rebase") {
+        prepare_workers();
+        let mut database = Database::start();
+        for new_edits in [false, true] {
+            maker::rebase_trial(
+                &database.create(&format!("maker_rebase_{new_edits}")),
+                new_edits,
+            );
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--source-io-child") {
         let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
         retirement_review::io_child(&settings, Path::new(&args[3]));
@@ -207,7 +276,7 @@ fn main() {
         let mode = args.get(4).map(String::as_str).unwrap_or("blocked");
         let config = config(&settings, root, mode);
         let (registry, mut source) =
-            adapters::simulation_with_workers(&root.join("fakes"), &config).unwrap();
+            worker_simulation(&root.join("fakes"), &config, mode != "plan-blocked").unwrap();
         let mut controller = Controller::open(
             Store::open(&settings).unwrap(),
             registry,
@@ -250,6 +319,55 @@ fn main() {
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     external_wait_survives_restart(&database.create("workers_external_wait"));
     println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+
+    if args.get(1).is_some_and(|s| s == "--linked-materials") {
+        for wrapped in [false, true] {
+            linked_materials(
+                &database.create(&format!("linked_materials_{wrapped}")),
+                wrapped,
+            );
+        }
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-failure") {
+        maker::scenario(
+            &database.create("maker_failure"),
+            &args[2],
+            args.get(3).is_some_and(|arg| arg == "--checks-fail"),
+        );
+        println!("test maker_failure_{} ... ok", args[2]);
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-legacy") {
+        maker::legacy_session(&database.create("maker_legacy_session"));
+        println!("test maker_legacy_session_fails_closed ... ok");
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-trial") {
+        maker::trial(&database.create("maker_real_trial"), Path::new(&args[2]));
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-bounds") {
+        maker::bounds_trial(&database.create("maker_outside_bounds"));
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-only") {
+        maker::run(&mut database);
+        database.stop();
+        return;
+    }
+    for wrapped in [false, true] {
+        linked_materials(
+            &database.create(&format!("linked_materials_{wrapped}")),
+            wrapped,
+        );
+        println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
+    }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
     killed_worker(&database.create("workers_kill"));
@@ -287,6 +405,12 @@ fn main() {
     println!("test retirement_states_keep_one_summary_until_closure ... ok");
     retirement_review::blocked_identities(&database.create("retirement_blocked"));
     println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+    for guard in ["inbox", "effect", "progress"] {
+        retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
+        println!("test session_retirement_{guard}_guard ... ok");
+    }
+    retirement_review::session_unlink_error(&database.create("session_unlink"));
+    println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
     retirement_review::transient_io(&database.create("source_emfile"));
     println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
     confirmed_absence(&database.create("workers_confirmed_absence"));
@@ -305,8 +429,88 @@ fn main() {
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
+    maker::run(&mut database);
     database.stop();
-    println!("All required worker supervisor and planning scenarios passed; no skips");
+    println!("All required worker supervisor, planning and maker scenarios passed; no skips");
+}
+
+// These scenarios isolate ingest/audit. Maker acceptance below uses the real
+// supervisor with its own git fixture and model, rather than these role fakes.
+fn ingest_audit_simulation(
+    root: &Path,
+    config: &tl3_config::Config,
+) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
+    worker_simulation(root, config, true)
+}
+
+fn worker_simulation(
+    root: &Path,
+    config: &tl3_config::Config,
+    fake_planning: bool,
+) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
+    struct IngestAudit(Supervisor, adapters::workers::Fake, bool);
+    impl Executor for IngestAudit {
+        fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
+            self.0.retire(store)
+        }
+        fn execute(
+            &mut self,
+            delivery: &Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            if matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            ) || (self.2
+                && matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::StartRun(Role::Plan),
+                        ..
+                    }
+                ))
+            {
+                self.1.execute(delivery)
+            } else {
+                self.0.execute(delivery)
+            }
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            if matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            ) || (self.2
+                && matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::StartRun(Role::Plan),
+                        ..
+                    }
+                ))
+            {
+                self.1.reconcile(delivery)
+            } else {
+                self.0.reconcile(delivery)
+            }
+        }
+    }
+    let mut registry = adapters::simulation(root).unwrap();
+    let supervisor = Supervisor::new(config, root).unwrap();
+    let source = supervisor.source();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        IngestAudit(
+            supervisor,
+            adapters::workers::Fake::new(root),
+            fake_planning,
+        ),
+    );
+    Ok((registry, source))
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -324,7 +528,7 @@ fn simulation(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -402,7 +606,7 @@ fn simulation(settings: &tl3_config::Store) {
             .iter()
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
-    assert_recorded_runs(root.path(), 3);
+    assert_recorded_runs(root.path(), 2);
     assert_retired(&config, &mut store);
 }
 fn attempts(root: &Path) -> usize {
@@ -470,7 +674,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        worker_simulation(&root.path().join("fakes"), &config, mode != "plan-blocked").unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -497,7 +701,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    assert_recorded_runs(root.path(), 3);
+    assert_recorded_runs(root.path(), if mode == "plan-blocked" { 3 } else { 2 });
     assert_retired(&config, &mut store);
     assert!(store.worker_document("0", "briefs").unwrap().is_some());
 }
@@ -574,7 +778,7 @@ fn early_and_objections(database: &mut Database) {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
         let (registry, mut source) =
-            adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+            ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
         let mut controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -618,7 +822,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -641,7 +845,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    assert_recorded_runs(root.path(), 4);
+    assert_recorded_runs(root.path(), 3);
     assert_retired(&config, &mut store);
 }
 
@@ -857,9 +1061,10 @@ fn fake_stop(settings: &tl3_config::Store) {
     run.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
-        kind: EffectKind::StartRun(Role::Make),
+        kind: EffectKind::StartRun(Role::Review),
         head: None,
     };
+    run.head_sha = Some("a".repeat(40));
     supervisor.execute(&run).unwrap();
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
@@ -1579,7 +1784,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -1633,7 +1838,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
         1,
         "later looks cannot charge the missing run again"
     );
-    assert_recorded_runs(root.path(), 4);
+    assert_recorded_runs(root.path(), 3);
     assert_retired(&config, &mut store);
 }
 

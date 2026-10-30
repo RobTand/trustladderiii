@@ -334,11 +334,10 @@ also describes file paths as absolute. TL3 instead supplies its own tools and
 keeps the required built-in `read_file` excluded over an empty `StateBackend`.
 The built-in `glob` and `grep` are absent; those names refer only to TL3 tools.
 
-No role can declare shell, network, delete, or delegation tools. The model
-transport still connects to the configured proxy. Ticket #33 can extend the
-`TOOL_FACTORIES` table with one PrismaBuild test tool entry, without changing
-`build_tools` or file confinement.
-It must submit admitted work rather than expose `execute` or a local shell.
+No role can declare shell, general network, delete, or delegation tools. The model
+transport still connects to the configured proxy. The `TOOL_FACTORIES` table
+supplies PrismaBuild tests and read-only Hindsight recall without changing
+`build_tools` or file confinement. Tests submit admitted work through PrismaBuild.
 
 Maker commits in worker code with hooks disabled and no inherited Git overrides
 or user or system Git configuration. An agent-written `.gitattributes` can name
@@ -396,3 +395,9 @@ with a quota record and exit 0 instead of a failed run:
 The controller waits for that reset and the supervisor starts another attempt
 under the same operation key and generation. A 429 without a valid future reset
 still fails. The protocol includes no exception text or response body.
+
+Maker recall uses `[hindsight].endpoint` and `[hindsight].bank` from controller
+config. The model supplies only a query. One 30-second deadline covers connection,
+headers and the entire response. Recall accepts at most 64 KiB of decoded response
+bytes, then returns at most 20 memories, 4,096 characters per memory, and
+15,000 JSON bytes across the returned memories.

@@ -2,6 +2,7 @@ use super::{Job, checks::Kind};
 use crate::{
     Error, Result,
     executor::{Completion, Observation},
+    findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -72,6 +73,8 @@ struct TestResult {
     #[serde(rename = "pre_existing")]
     _pre_existing: bool,
     passed: bool,
+    #[serde(default)]
+    message: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -120,23 +123,24 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     if withdrawal {
         return Ok(Some(Completion::confirmed(vec![])));
     }
-    let (report, pass) = match evidence(ending, job) {
+    let (report, pass, failed_tests) = match evidence(ending, job) {
         Ok(verdict) => verdict,
         Err(error @ Error::Io(_)) => return Err(error),
         Err(error) => {
             eprintln!("PrismaBuild result {}: {error}", job.action);
-            (false, false)
+            (false, false, Vec::new())
         }
     };
-    Ok(Some(completion(job, report, pass)?))
+    Ok(Some(completion(job, report, pass, failed_tests)?))
 }
 
-fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool)> {
+fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool, Vec<FailedTest>)> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
         && ending.exit_code == Some(0);
     let mut report = false;
     let mut pass = false;
+    let mut failed_tests = Vec::new();
     if let Some(evidence) = ending.result {
         if !evidence.verified
             || (successful
@@ -162,6 +166,22 @@ fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool)> {
             return Err(Error::Invalid("PrismaBuild result log changed"));
         }
         if let Some(parsed) = parse(&raw, job) {
+            failed_tests = parsed
+                .results
+                .iter()
+                .flat_map(|result| &result.tests)
+                .filter(|test| !test.passed)
+                .take(MAX_FAILED_TESTS)
+                .map(|test| FailedTest {
+                    test: clipped(&test.test, 4096),
+                    message: if test.message.trim().is_empty() {
+                        "The harness rejected this named test; no failure message was supplied."
+                            .into()
+                    } else {
+                        clipped(&test.message, MAX_MESSAGE_CHARS)
+                    },
+                })
+                .collect();
             report = parsed
                 .results
                 .iter()
@@ -179,10 +199,15 @@ fn evidence(ending: Ending, job: &Job) -> Result<(bool, bool)> {
             "successful PrismaBuild ending has no verified result",
         ));
     }
-    Ok((report, pass))
+    Ok((report, pass, failed_tests))
 }
 
-fn completion(job: &Job, report: bool, pass: bool) -> Result<Completion> {
+fn completion(
+    job: &Job,
+    report: bool,
+    pass: bool,
+    failed_tests: Vec<FailedTest>,
+) -> Result<Completion> {
     Ok(Completion::confirmed(vec![Observation::Checks {
         node: job.delivery.node(),
         generation: job.delivery.generation,
@@ -194,6 +219,7 @@ fn completion(job: &Job, report: bool, pass: bool) -> Result<Completion> {
             .clone()
             .ok_or(Error::Invalid("missing check head"))?,
         changed_paths: job.changed_paths.clone(),
+        failed_tests,
         report,
         pass,
     }]))

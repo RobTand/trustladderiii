@@ -78,6 +78,7 @@ fn fixture(root: &Path) -> Delivery {
         paths: vec!["value.py".into()],
         attempt: 1,
         round: 0,
+        replanned: false,
         note: None,
         steering: None,
         request_text: None,

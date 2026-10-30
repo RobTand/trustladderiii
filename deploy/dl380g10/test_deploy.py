@@ -184,6 +184,25 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(destination.stat().st_mtime_ns, info.st_mtime_ns)
         self.assertEqual(list(destination.parent.glob("tl3.toml.*.bak")), backups)
 
+    def test_configure_says_which_flags_an_existing_config_ignores(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123},
+                             "sha256:" + "b" * 64, "replacement")
+        self.assertIn("--image", output.getvalue())
+        self.assertIn("--primary", output.getvalue())
+        self.assertNotIn("--alternate", output.getvalue())
+        self.assertEqual(destination.read_bytes(), config.read_bytes())
+
+    def test_configure_explains_a_config_without_github_repos(self):
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, b"[store]\nhost = \"x\"\n")
+        with self.assertRaisesRegex(SystemExit, r"\[\[github\.repos\]\]"):
+            deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987})
+
     def test_model_defaults_are_explicit_and_preserve_endpoint_and_key_path(self):
         config, data = self.config()
         destination = self.home / ".config/tl3/tl3.toml"

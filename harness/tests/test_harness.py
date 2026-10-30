@@ -206,3 +206,30 @@ def test_symlink_export_is_rejected(tmp_path):
     git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "link")
     with pytest.raises(ValueError, match="regular files"):
         export(repo, "HEAD", tmp_path / "export")
+
+
+def test_failure_message_survives_real_pytest_and_judging(trees):
+    _, head, _ = trees
+    test = 'tests/test_product.py::test_regression_breaks'
+    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps([test]), str(head)],
+                           capture_output=True)
+    records = [decode(line) for line in child.stdout.splitlines()]
+    messages = {}
+    outcomes = parse(records, (test,), set(), child.returncode, messages=messages)
+    assert outcomes[test] == Outcome.ASSERTION
+    assert 'assert' in messages[test]
+    result = judge(Check('regression', Kind.REGRESSION, (test,)),
+                   {test: Outcome.PASSED}, outcomes, messages=messages)
+    assert result.tests[0].message == messages[test]
+    assert len(result.tests[0].message) <= 1000
+
+
+def test_failure_messages_are_bounded_without_changing_verdicts():
+    test = 'test.py::test_x'
+    result = judge(Check('bounded', Kind.REGRESSION, (test,)),
+                   {test: Outcome.PASSED}, {test: Outcome.ASSERTION}, messages={test: 'é' * 2000})
+    assert result.verdict == Verdict.FAIL
+    assert result.tests[0].message == 'é' * 1000
+    legacy = judge(Check('legacy', Kind.REGRESSION, (test,)),
+                   {test: Outcome.PASSED}, {test: Outcome.ASSERTION})
+    assert 'head assertion' in legacy.tests[0].message
