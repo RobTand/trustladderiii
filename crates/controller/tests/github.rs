@@ -1426,9 +1426,11 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     });
     wait(&mut || {
         store.worker_document("0", "briefs").unwrap().is_some()
-            && store.worker_watches().unwrap().iter().any(|(_, delivery)| {
-                delivery["output"]["Effect"]["kind"]["StartRun"] == "Audit"
-            })
+            && store
+                .worker_watches()
+                .unwrap()
+                .iter()
+                .any(|(_, delivery)| delivery["output"]["Effect"]["kind"]["StartRun"] == "Audit")
     });
     assert_eq!(
         store.worker_document("0", "briefs").unwrap().unwrap()["brief"],
@@ -1465,11 +1467,22 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         store.worker_document("0", "audits").unwrap().unwrap()["verdict"],
         "agree"
     );
-    assert_eq!(store.worker_document("0", "plans").unwrap().unwrap()["kind"], "leaf");
-    let replies: Vec<_> = store.events_after(tl3_store::Revision::ZERO, 1000).unwrap()
-        .into_iter().filter(|event| event.payload.get("WorkerReply").is_some()).collect();
+    assert_eq!(
+        store.worker_document("0", "plans").unwrap().unwrap()["kind"],
+        "leaf"
+    );
+    let replies: Vec<_> = store
+        .events_after(tl3_store::Revision::ZERO, 1000)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.payload.get("WorkerReply").is_some())
+        .collect();
     for role in ["ingest", "audit", "planner"] {
-        assert!(replies.iter().any(|event| event.payload["WorkerReply"]["role"] == role));
+        assert!(
+            replies
+                .iter()
+                .any(|event| event.payload["WorkerReply"]["role"] == role)
+        );
     }
     let snapshot = store.load().unwrap();
     assert_eq!(

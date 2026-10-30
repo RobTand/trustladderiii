@@ -63,6 +63,13 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         return;
     }
     let plan = plan.unwrap();
+    let mut reader = tl3_store::Reader::open(settings).unwrap();
+    let status = tl3_controller::status::load(&mut reader).unwrap();
+    assert_eq!(
+        status.requests[0].details.last_progress.is_some(),
+        !n.phase.is_closed(),
+        "progress survives retirement while waiting for Rob, and is removed on closure"
+    );
     if mode == "normal" {
         assert!(n.phase.is_closed());
         assert_eq!(requests.len(), 1);

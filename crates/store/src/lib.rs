@@ -457,7 +457,13 @@ impl Store {
 
     /// A stale notification cannot revive a terminal, unwatched delivery.
     pub fn worker_reconcilable(&mut self, key: &str) -> Result<bool> {
-        Ok(self.client.query_one("SELECT NOT EXISTS (SELECT 1 FROM tl3_retired_workers WHERE effect_key = $1)", &[&key])?.get(0))
+        Ok(self
+            .client
+            .query_one(
+                "SELECT NOT EXISTS (SELECT 1 FROM tl3_retired_workers WHERE effect_key = $1)",
+                &[&key],
+            )?
+            .get(0))
     }
 
     /// Terminal effects cannot be dispatched again. Watches retain their evidence.
@@ -468,7 +474,10 @@ impl Store {
 
     /// Retain evidence whose process identity cannot safely be stopped. Log once at the caller.
     pub fn block_worker_retirement(&mut self, key: &str) -> Result<()> {
-        self.client.execute("UPDATE tl3_worker_progress SET retirement_blocked = true WHERE run_key = $1", &[&key])?;
+        self.client.execute(
+            "UPDATE tl3_worker_progress SET retirement_blocked = true WHERE run_key = $1",
+            &[&key],
+        )?;
         Ok(())
     }
 

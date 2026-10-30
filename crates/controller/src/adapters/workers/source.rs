@@ -224,7 +224,9 @@ impl WorkerOutputSource {
                 Ok(keep) => keep,
                 Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => false,
                 Err(error @ Error::Json(_))
-                | Err(error @ Error::Invalid("worker record belongs to another machine")) if startup => {
+                | Err(error @ Error::Invalid("worker record belongs to another machine"))
+                    if startup =>
+                {
                     eprintln!("worker source skipped {}: {error}", root.display());
                     false
                 }
@@ -285,7 +287,9 @@ impl WorkerOutputSource {
                     eprintln!("worker source skipped notification {name}: {error}");
                     remove_ready(&self.root.join(".ready").join(name.as_ref()))?;
                 }
-                result => { result?; }
+                result => {
+                    result?;
+                }
             }
         }
         Ok(())

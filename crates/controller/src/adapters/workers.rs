@@ -327,7 +327,10 @@ impl Executor for Supervisor {
     fn retire(&mut self, store: &mut Store) -> Result<()> {
         for key in store.retired_workers()? {
             if let Err(error) = self.retire_run(&key, store) {
-                if matches!(error, Error::Json(_) | Error::Invalid("worker record belongs to another machine")) {
+                if matches!(
+                    error,
+                    Error::Json(_) | Error::Invalid("worker record belongs to another machine")
+                ) {
                     store.block_worker_retirement(&key)?;
                     self.active.remove_key(&key);
                 }

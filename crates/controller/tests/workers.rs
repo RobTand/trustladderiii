@@ -1,7 +1,7 @@
-#[path = "workers/retirement.rs"]
-mod retirement_review;
 #[path = "workers/planning.rs"]
 mod planning;
+#[path = "workers/retirement.rs"]
+mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use serde_json::{Value, json};
@@ -288,7 +288,7 @@ fn main() {
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
     database.stop();
-    println!("26 required worker supervisor and planning scenarios passed; no skips");
+    println!("All required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -1436,7 +1436,11 @@ fn overflow(settings: &tl3_config::Store) {
     run.key = "effect:0:2".into();
     supervisor.execute(&run).unwrap();
     source.poll_once(&mut store, &tx).unwrap();
-    assert_eq!(source.recovered_overflows(), 1, "the kernel queue really overflowed");
+    assert_eq!(
+        source.recovered_overflows(),
+        1,
+        "the kernel queue really overflowed"
+    );
     assert_eq!(
         source.active_runs(),
         2,
