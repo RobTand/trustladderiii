@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/audit-reply.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "const": "agree"
+        },
+        "objections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "verdict",
+        "objections"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "const": "disagree"
+        },
+        "objections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "verdict",
+        "objections"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

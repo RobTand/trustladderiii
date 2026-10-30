@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/audit-input.json",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "$ref": "ingest-input.json#/$defs/issue"
+    },
+    "repo": {
+      "$ref": "ingest-input.json#/$defs/repo"
+    },
+    "memories": {
+      "$ref": "ingest-input.json#/$defs/memories"
+    },
+    "ingest": {
+      "$ref": "ingest-reply.json"
+    }
+  },
+  "required": [
+    "issue",
+    "repo",
+    "ingest"
+  ],
+  "additionalProperties": false
+}
