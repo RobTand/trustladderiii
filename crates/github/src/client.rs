@@ -620,6 +620,15 @@ impl GitHub {
         }
     }
 
+    pub async fn issue_events(&self, repo: &str, number: u64) -> Result<Vec<IssueActivity>, Error> {
+        self.list(
+            format!("{}/issues/{number}/events", repo_path(repo)?),
+            vec![],
+            None,
+        )
+        .await
+    }
+
     pub async fn catch_up(
         &self,
         served: &[ServedRepo],
@@ -705,7 +714,9 @@ impl GitHub {
                         .and_then(|value| value.parse::<DateTime<Utc>>().ok())
                         .is_some_and(|created_at| created_at < since);
                     if event.get("event").and_then(Value::as_str) == Some("closed") {
-                        let number = event["issue"]["number"].as_u64().ok_or(Error::Response)?;
+                        let Some(number) = event["issue"]["number"].as_u64() else {
+                            continue;
+                        };
                         let activity: PullClosed =
                             serde_json::from_value(event.clone()).map_err(|_| Error::Response)?;
                         if activity.created_at >= since {
@@ -721,6 +732,9 @@ impl GitHub {
                             .and_then(|issue| issue.get("number"))
                             .and_then(Value::as_u64)
                             .ok_or(Error::Response)?;
+                        if event["actor"].is_null() {
+                            continue;
+                        }
                         let event: LabelChange =
                             serde_json::from_value(event).map_err(|_| Error::Response)?;
                         if event.created_at >= since {

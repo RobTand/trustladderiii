@@ -61,6 +61,10 @@ pub enum Event {
         context: Context,
         check_run: CheckRun,
     },
+    CheckRunUpdated {
+        context: Context,
+        check_run: CheckRun,
+    },
     CheckSuiteCompleted {
         context: Context,
         check_suite: CheckSuite,
@@ -157,7 +161,11 @@ pub fn verify_and_parse(
         ("issues", "labeled")
             | ("issue_comment", "created")
             | ("pull_request" | "merge_group", _)
-            | ("check_run" | "check_suite", "completed")
+            | (
+                "check_run",
+                "created" | "in_progress" | "rerequested" | "completed"
+            )
+            | ("check_suite", "completed")
     );
     if !relevant {
         return Ok(Delivery {
@@ -233,8 +241,8 @@ pub fn verify_and_parse(
             context,
             pull_request: field(&value, "pull_request")?,
             label: field(&value, "label")?,
-        actor: Actor,
-    },
+            actor: field(&value, "sender")?,
+        },
         ("pull_request", _) => Event::PullRequestUpdated {
             context,
             action: action.into(),
@@ -247,6 +255,10 @@ pub fn verify_and_parse(
             merge_group: field(&value, "merge_group")?,
         },
         ("check_run", "completed") => Event::CheckRunCompleted {
+            context,
+            check_run: field(&value, "check_run")?,
+        },
+        ("check_run", _) => Event::CheckRunUpdated {
             context,
             check_run: field(&value, "check_run")?,
         },

@@ -89,7 +89,9 @@ fn recorded_payloads_parse_into_the_expected_variants() {
             Event::MergeGroup { merge_group, .. } => {
                 assert_eq!(merge_group.head_sha, "batch-head");
                 8
-            Event::PullRequestUpdated { .. } => panic!("unexpected variant"),
+            }
+            Event::PullRequestUpdated { .. } | Event::CheckRunUpdated { .. } => {
+                panic!("unexpected variant")
             }
             Event::IssueLabeled {
                 actor,

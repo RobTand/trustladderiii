@@ -729,6 +729,42 @@ impl Controller {
                 });
             }
         }
+        let closed: BTreeSet<_> = world
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| matches!(node.phase, tl3_kernel::Phase::Closed(_)))
+            .map(|(index, _)| NodeId(index as u64))
+            .collect();
+        let closed_fact = |value: &Value| -> Result<bool> {
+            let fact: adapters::mergify::QueueFact = serde_json::from_value(value.clone())?;
+            Ok(fact
+                .node(snapshot)?
+                .is_some_and(|node| closed.contains(&node)))
+        };
+        let mut rows = Vec::new();
+        for row in std::mem::take(&mut commit.rows) {
+            if let RowChange::Put { table, value, .. } = &row
+                && table == "queue_facts"
+                && closed_fact(value)?
+            {
+                continue;
+            }
+            rows.push(row);
+        }
+        commit.rows = rows;
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            if closed_fact(&row.value)? {
+                commit.rows.push(RowChange::Delete {
+                    table: "queue_facts".into(),
+                    id: row.id.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -753,6 +789,13 @@ impl Controller {
                     return Ok(None);
                 };
                 use adapters::mergify::Evidence;
+                let current = &world.nodes[node.0 as usize];
+                if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && (!matches!(fact.evidence, Evidence::Merged { .. })
+                        || current.merged.is_some())
+                {
+                    return Ok(None);
+                }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =
                     &fact.evidence

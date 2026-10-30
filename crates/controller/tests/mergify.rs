@@ -77,6 +77,8 @@ struct State {
     fail_post: bool,
     events: Vec<Value>,
     merge_checks: Value,
+    deletes: usize,
+    remove_after_post: bool,
 }
 impl State {
     fn new() -> Self {
@@ -95,8 +97,9 @@ impl State {
             lag: false,
             fail_post: false,
             events: vec![],
-            merge_checks: json!([{ "id": 900, "name": "CI", "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
-                "status": "completed", "conclusion": "success", "app": {"id": 2, "slug": "ci"} }]),
+            merge_checks: json!([]),
+            deletes: 0,
+            remove_after_post: false,
         }
     }
     fn checks(&self) -> Value {
@@ -140,11 +143,23 @@ impl Respond for Api {
             ("POST", "/repos/owner/sandbox/issues/100/labels") => {
                 assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap(), json!({"labels":["tl3-queue"]}));
                 state.posts += 1;
+                let changed = !state.label;
                 state.label = true;
-                if !state.lag { state.checks = fixture("running", "checks"); }
+                if changed && !state.lag { state.checks = fixture("running", "checks"); }
+                if state.remove_after_post {
+                    state.label = false;
+                    state.events.push(json!({"id":600,"event":"unlabeled","actor":{"id":42,"login":"rob"},
+                        "label":{"name":"tl3-queue"},"created_at":"2026-10-30T02:00:00Z","issue":{"number":100}}));
+                }
                 if state.fail_post { return ResponseTemplate::new(503); }
                 ResponseTemplate::new(200).set_body_json(json!([{"name":"tl3-queue"}]))
             }
+            ("DELETE", "/repos/owner/sandbox/issues/100/labels/tl3-queue") => {
+                state.deletes += 1;
+                state.label = false;
+                ResponseTemplate::new(200).set_body_json(json!([]))
+            }
+            ("GET", "/repos/owner/sandbox/issues/100/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/pulls") => ResponseTemplate::new(200).set_body_json(json!([state.pull])),
             ("GET", "/repos/owner/sandbox/issues/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues" | "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200).set_body_json(json!([])),
@@ -203,6 +218,7 @@ fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bo
     registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     controller
         .intake(LabelledIssue {
             delivery: "label-1".into(),
@@ -210,6 +226,7 @@ fn queued(settings: &tl3_config::Store, api: &Server, root: &Path, confirmed: bo
             repo: "sandbox".into(),
             installation: 3,
             number: 12,
+            title: "change".into(),
             actor: 42,
             label: "tl3".into(),
         })
@@ -256,13 +273,13 @@ fn post(address: SocketAddr, id: &str, event: &str, body: &Value) -> u16 {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    write!(stream, "POST /webhooks/github HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {event}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len()).unwrap();
+    write!(stream, "POST /github/events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\nX-GitHub-Event: {event}\r\nX-GitHub-Delivery: {id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n", body.len()).unwrap();
     stream.write_all(&body).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
-fn deliver(settings: &tl3_config::Store, api: &Server, event: &str, body: &Value) {
+fn deliver(settings: &tl3_config::Store, _api: &Server, event: &str, body: &Value) {
     let source = Webhooks::bind(
         "127.0.0.1:0".parse().unwrap(),
         Store::open(settings).unwrap(),
@@ -270,8 +287,7 @@ fn deliver(settings: &tl3_config::Store, api: &Server, event: &str, body: &Value
         b"test-secret".to_vec(),
         None,
     )
-    .unwrap()
-    .with_mergify(Translator::new(api.clients()).unwrap());
+    .unwrap();
     let address = source.address();
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
@@ -290,7 +306,7 @@ fn pull_event(api: &Server, action: &str) -> Value {
     body
 }
 fn catch_up(settings: &tl3_config::Store, api: &Server, controller: &mut Controller) {
-    let source = CatchUp::new(api.clients()).unwrap().with_mergify().unwrap();
+    let source = CatchUp::new(api.clients()).unwrap();
     for _ in 0..2 {
         let inputs = source
             .pass(&mut Store::open(settings).unwrap(), &bootstrap())
@@ -342,7 +358,7 @@ fn watched_merge(settings: &tl3_config::Store) {
     );
     deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
     drain(&mut controller);
-    assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert!(queue_facts(&mut controller).is_empty());
     assert_kernel_facts(settings, 1);
 }
 fn merged(
@@ -356,8 +372,22 @@ fn merged(
     let mut controller = queued(settings, &api, root.path(), true);
     api.state.lock().unwrap().merged(unapproved);
     if !checks_passed {
-        api.state.lock().unwrap().merge_checks = json!([]);
+        api.state.lock().unwrap().checks = fixture("waiting", "checks");
     }
+    // Merge-method merge creates a new commit with no completed push CI.
+    assert!(
+        api.state
+            .lock()
+            .unwrap()
+            .merge_checks
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    api.state.lock().unwrap().events.push(
+        json!({"id":501,"event":"closed","actor":{"id":42,"login":"rob"},
+        "created_at":"2026-10-30T02:00:00Z","issue":{"number":100}}),
+    );
     if !webhook_first {
         catch_up(settings, &api, &mut controller);
     }
@@ -368,16 +398,28 @@ fn merged(
         controller.world().unwrap().nodes[0].phase,
         Phase::Closed(Outcome::Merged)
     );
-    let facts = queue_facts(&mut controller);
+    assert!(queue_facts(&mut controller).is_empty());
+    let facts: Vec<_> = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 2000)
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| {
+            event.receipt.result["kernel_event"]["Fact"]["fact"]
+                .get("PrMerged")
+                .cloned()
+        })
+        .collect();
     assert_eq!(facts.len(), 1);
-    assert_eq!(
-        facts[0]["evidence"]["Merged"]["checks_passed"],
-        checks_passed
-    );
+    assert_eq!(facts[0]["checks_passed"], checks_passed);
     if unapproved {
-        assert_eq!(
-            facts[0]["evidence"]["Merged"]["head"],
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .interned
+                .iter()
+                .any(|entry| entry.value == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
     }
     if unapproved || !checks_passed {
@@ -407,8 +449,10 @@ fn merged(
     );
     let mut restarted =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    restarted.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     catch_up(settings, &api, &mut restarted);
-    assert_eq!(queue_facts(&mut restarted).len(), 1);
+    assert!(queue_facts(&mut restarted).is_empty());
+    assert_kernel_facts(settings, 1);
 }
 fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     let api = Server::new();
@@ -435,8 +479,6 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     }
     // Catch-up and the enqueue watch see the same upstream check before either is consumed.
     let inputs = CatchUp::new(api.clients())
-        .unwrap()
-        .with_mergify()
         .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
@@ -468,7 +510,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
             state.checks = fixture("waiting", "checks");
             state.events.push(
                 json!({"id":500,"event":"unlabeled", "actor":body["sender"], "label":body["label"],
-                "created_at":body["pull_request"]["updated_at"],"issue":{"number":100}}),
+                "created_at":"2026-10-30T02:00:00Z","issue":{"number":100}}),
             );
         }
         "closed" => {
@@ -478,7 +520,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
             state
                 .events
                 .push(json!({"id":501,"event":"closed","actor":body["sender"],
-                "created_at":body["pull_request"]["updated_at"],"issue":{"number":100}}));
+                "created_at":"2026-10-30T02:00:00Z","issue":{"number":100}}));
         }
         "synchronize" => {
             body["before"] = body["pull_request"]["head"]["sha"].clone();
@@ -491,8 +533,6 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
     deliver(settings, &api, "pull_request", &body);
     let inputs = CatchUp::new(api.clients())
         .unwrap()
-        .with_mergify()
-        .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
     for input in inputs {
@@ -504,6 +544,31 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
     assert_kernel_facts(settings, 1);
     if action == "unlabeled" {
         assert!(controller.world().unwrap().nodes[0].paused);
+        controller
+            .observe(
+                "resume",
+                tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                    node: NodeId(0),
+                    command: tl3_kernel::Command::Resume,
+                }),
+            )
+            .unwrap();
+        drain(&mut controller);
+        assert!(!controller.world().unwrap().nodes[0].paused);
+        let inputs = Translator::new(api.clients())
+            .unwrap()
+            .webhook(
+                &parsed("pull_request", body),
+                &controller.snapshot().unwrap(),
+                &bootstrap().repos,
+            )
+            .unwrap();
+        for input in inputs {
+            ingress::apply(&mut controller, input).unwrap();
+        }
+        drain(&mut controller);
+        assert!(!controller.world().unwrap().nodes[0].paused);
+        assert_kernel_facts(settings, 1);
     }
 }
 fn ignored_events(settings: &tl3_config::Store) {
@@ -521,9 +586,30 @@ fn ignored_events(settings: &tl3_config::Store) {
         let event = parsed("pull_request", body);
         assert!(
             translator
-                .webhook(&event, &controller.snapshot().unwrap(), &bootstrap())
+                .webhook(&event, &controller.snapshot().unwrap(), &bootstrap().repos)
                 .unwrap()
                 .is_empty()
+        );
+    }
+    for (branch, author) in [
+        ("mergify/merge-queue/main/pr-100", "human"),
+        ("feature", "mergify[bot]"),
+    ] {
+        let mut body = pull_event(&api, "synchronize");
+        body["pull_request"]["head"]["ref"] = json!(branch);
+        body["pull_request"]["user"]["login"] = json!(author);
+        body["before"] = json!("old");
+        body["after"] = body["pull_request"]["head"]["sha"].clone();
+        assert_eq!(
+            translator
+                .webhook(
+                    &parsed("pull_request", body),
+                    &controller.snapshot().unwrap(),
+                    &bootstrap().repos
+                )
+                .unwrap()
+                .len(),
+            1
         );
     }
     api.state.lock().unwrap().checks = fixture("failed", "checks");
@@ -536,7 +622,7 @@ fn ignored_events(settings: &tl3_config::Store) {
             .webhook(
                 &parsed("check_suite", body.clone()),
                 &controller.snapshot().unwrap(),
-                &bootstrap()
+                &bootstrap().repos
             )
             .unwrap()
             .is_empty()
@@ -548,7 +634,7 @@ fn ignored_events(settings: &tl3_config::Store) {
             .webhook(
                 &parsed("check_suite", body.clone()),
                 &controller.snapshot().unwrap(),
-                &bootstrap()
+                &bootstrap().repos
             )
             .unwrap()
             .is_empty()
@@ -560,7 +646,7 @@ fn ignored_events(settings: &tl3_config::Store) {
             .webhook(
                 &parsed("check_suite", body),
                 &controller.snapshot().unwrap(),
-                &bootstrap()
+                &bootstrap().repos
             )
             .unwrap()
             .is_empty()
@@ -568,13 +654,13 @@ fn ignored_events(settings: &tl3_config::Store) {
     api.state.lock().unwrap().checks = fixture("running", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("checks_requested");
-    body["merge_group"] = json!({"head_sha":"draft-head","head_ref":"gh-readonly-queue/main/pr-100","base_ref":"refs/heads/main"});
+    body["merge_group"] = json!({"head_sha":"draft-head","head_ref":"gh-readonly-queue/main/pr-100","base_ref":"refs/heads/main","base_sha":"base"});
     assert!(
         translator
             .webhook(
                 &parsed("merge_group", body),
                 &controller.snapshot().unwrap(),
-                &bootstrap()
+                &bootstrap().repos
             )
             .unwrap()
             .is_empty()
@@ -627,6 +713,85 @@ fn delivery() -> Delivery {
         question: None,
     }
 }
+fn label_removed_before_confirmation() {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.lag = true;
+        state.remove_after_post = true;
+    }
+    let delivery = delivery();
+    let mut adapter = api.adapter(root.path(), 1);
+    let completion = adapter.execute(&delivery).unwrap();
+    assert_eq!(completion.ack, Ack::Confirmed);
+    assert!(
+        matches!(&completion.observations[0], tl3_controller::executor::Observation::Queue(fact)
+        if matches!(fact.evidence, adapters::mergify::Evidence::DequeuedByPerson { event: 600 }))
+    );
+    assert!(root.path().read_dir().unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "applied")
+    }));
+    drop(adapter);
+    let mut adapter = api.adapter(root.path(), 1);
+    assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert!(!api.state.lock().unwrap().label);
+}
+
+fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
+    let api = Server::new();
+    api.state.lock().unwrap().lag = true;
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), false);
+    api.state.lock().unwrap().checks = fixture("running", "checks");
+    let mut body = webhook_fixture();
+    body["action"] = json!("in_progress");
+    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    body["check_run"]["status"] = json!("in_progress");
+    body["check_run"]["conclusion"] = Value::Null;
+    api.state.lock().unwrap().checks[0]["status"] = json!("in_progress");
+    api.state.lock().unwrap().checks[0]["conclusion"] = Value::Null;
+    deliver(settings, &api, "check_run", &body);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert_kernel_facts(settings, 0);
+}
+
+fn outside_merge_checks(settings: &tl3_config::Store, passed: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.merged(false);
+        state.checks = fixture("waiting", "checks");
+        let sha = state.pull["merge_commit_sha"].clone();
+        state.merge_checks = json!([
+            {"id":900,"name":"CI","head_sha":sha,"status":"completed","conclusion":if passed { "success" } else { "failure" }},
+            {"id":901,"name":"optional","head_sha":sha,"status":"completed","conclusion":"skipped"},
+            {"id":902,"name":"lint","head_sha":sha,"status":"completed","conclusion":"neutral"}
+        ]);
+    }
+    deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
+    drain(&mut controller);
+    let events = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 2000)
+        .unwrap();
+    let merges: Vec<_> = events
+        .iter()
+        .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].get("PrMerged"))
+        .collect();
+    assert_eq!(merges.len(), 1);
+    assert_eq!(merges[0]["checks_passed"], passed);
+}
+
 fn executor_recovery() {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -671,14 +836,9 @@ fn executor_recovery() {
     api.state.lock().unwrap().checks = fixture("failed", "checks");
     api.state.lock().unwrap().label = true;
     let posts = api.state.lock().unwrap().posts;
-    api.state.lock().unwrap().lag = true;
-    assert!(adapter.execute(&delivery).is_err());
-    assert!(matches!(
-        adapter.reconcile(&delivery).unwrap(),
-        Reconciliation::Pending
-    ));
-    api.state.lock().unwrap().checks = fixture("running", "checks");
+    api.state.lock().unwrap().lag = false;
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
+    assert_eq!(api.state.lock().unwrap().deletes, 1);
     assert_eq!(
         api.state.lock().unwrap().posts,
         posts + 1,
@@ -709,8 +869,12 @@ fn executor_recovery() {
 }
 fn main() {
     executor_recovery();
+    label_removed_before_confirmation();
     println!("test executor_recovery ... ok");
     let mut database = support::Database::start();
+    in_progress_confirms_enqueue(&database.create("progress"));
+    outside_merge_checks(&database.create("outside_pass"), true);
+    outside_merge_checks(&database.create("outside_fail"), false);
     merged(&database.create("merged_webhook"), false, true, true);
     merged(&database.create("merged_catchup"), false, false, true);
     merged(&database.create("unapproved"), true, true, true);

@@ -344,6 +344,7 @@ impl CatchUp {
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;
+        let world: tl3_kernel::World = crate::snapshot::decode(&snapshot)?;
         let mut deliveries = Vec::new();
         let mut notifications = Vec::new();
         let mut cursor = None;
@@ -362,7 +363,14 @@ impl CatchUp {
                         .ok()
                         .map(|request| (r.id.clone(), request))
                 })
-                .filter(|(_, request)| request.repo == *repo)
+                .filter(|(id, request)| {
+                    request.repo == *repo
+                        && id
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| world.nodes.get(index))
+                            .is_some_and(|node| !matches!(node.phase, tl3_kernel::Phase::Closed(_)))
+                })
                 .map(|(id, _)| id)
                 .collect();
             let tracked_heads = snapshot

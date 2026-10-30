@@ -207,26 +207,44 @@ uncertain. Mergify must report queue membership or the attempt's terminal result
 The kernel has no dequeue effect, so this adapter adds none. GitHub PR effects
 remain on the fake until ticket #13.
 
-Enable queue facts on the existing ingress source with
-`CatchUp::new(clients)?.with_mergify()?`. `Webhooks` uses that translator when it
-has catch-up configured. A receiver without catch-up can use
-`with_mergify(mergify::Translator::new(clients)?)`. Both sources resolve tracked
-PRs, ignore Mergify draft PRs, and read authoritative queue state through the
-client. The receiver commits the resulting inputs before returning 202. Read
-failures return 503 so GitHub can retry. Merge-group notifications request a
-read. Their lifecycle does not prove that an original PR merged.
+Register queue translation on the controller before draining ingress:
 
-The controller stores each consumed queue fact's identity with its kernel step
-in `queue_facts` JSON rows. Webhook delivery IDs, catch-up and enqueue watches
-share those identities. This uses the existing store schema. A merge always
-reports the PR's actual head. Its `checks_passed` value requires successful
-checks on the merge commit. Missing evidence reports false.
+```rust,ignore
+controller.register_github_translator("mergify", mergify::Translator::new(clients)?);
+```
 
-Submit `bash crates/controller/tools/verify-mergify.sh` through PrismaBuild once
-with each of `--tag dl380g10`, `--tag sparky` and `--tag sparklina`. The integration
-scenarios use the real HTTP receiver, a local REST server and embedded Postgres.
+The hook translates persisted webhook and catch-up deliveries on the controller
+thread. The receiver stores verified events before returning 202. Queue reads
+never run while acknowledging a webhook. A failed translator keeps its cursor
+for replay. GitHub does not automatically redeliver failed webhooks.
+Merge-group notifications request authoritative reads of open nodes.
+
+Queue retries persist intent, remove a remaining queue label, then add it again.
+A successful label write also persists an applied marker. A later person removal
+confirms the attempted enqueue and reports dequeue evidence instead of restoring
+the label. In-progress queue checks can confirm an enqueue.
+
+The controller commits each queue fact's identity with its kernel step in
+`queue_facts`. Person actions use GitHub issue-event IDs in both delivery paths.
+These rows are pruned when a node closes. Catch-up and merge-group reads exclude
+closed nodes. Merges report the PR's actual head. A successful Mergify check
+reporting "Merged via merge queue" proves queue CI passed before the merge.
+Outside merges use checks on the actual merge commit. Completed `neutral` and
+`skipped` checks pass. Missing or failing evidence reports false.
+
+Create a clean detached worktree at the final commit, then submit its host checks:
+
+```bash
+python3 crates/controller/tools/mergify_review_manifest.py > /tmp/tl3-mergify-review.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-mergify-review.json
+```
+
+The manifest runs controller, GitHub and Mergify tests on `dl380g10`, `sparky` and
+`sparklina`. Then submit `bash crates/controller/tools/verify.sh` once with
+`--anywhere`. The scenarios use local HTTP servers and embedded Postgres.
 See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
-inputs.
+inputs. Real queue payload confirmation remains the sandbox trial on #17.
+
 For PR #64's receiver and status review evidence, create a clean detached worktree
 at the final commit. From that worktree, submit the three host checks:
 

@@ -202,7 +202,8 @@ pub struct ServedRepo {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PullClosed {
-    pub actor: Actor,
+    pub id: u64,
+    pub actor: Option<Actor>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -217,4 +218,13 @@ pub struct MergeGroup {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckPullRequest {
     pub number: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IssueActivity {
+    pub id: u64,
+    pub event: String,
+    pub actor: Option<Actor>,
+    pub created_at: DateTime<Utc>,
+    pub label: Option<Label>,
 }

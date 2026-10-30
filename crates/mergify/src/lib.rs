@@ -128,6 +128,12 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
 }
 
 fn check_state(check: &CheckRun) -> QueueState {
+    if matches!(
+        check.conclusion.as_deref(),
+        Some("timed_out" | "startup_failure")
+    ) {
+        return QueueState::FailedCi;
+    }
     let Some(output) = &check.output else {
         return QueueState::Unknown;
     };
@@ -225,4 +231,13 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
                     .dequeue_reason
                     .is_some_and(|reason| reason.code == "CHECKS_TIMEOUT")
         })
+}
+
+/// The selected check belongs to Mergify on the original PR head.
+pub fn merged_via_queue(observation: &Observation) -> bool {
+    observation.check.as_ref().is_some_and(|check| {
+        check.status == "completed"
+            && check.conclusion.as_deref() == Some("success")
+            && check_state(check) == QueueState::Merged
+    })
 }

@@ -40,8 +40,11 @@ impl Executor for Fake {
     }
 }
 
-use crate::{Bootstrap, Error, Repository, cli::Input};
-use chrono::{DateTime, Utc};
+use crate::{
+    Error, Repository,
+    cli::Input,
+    ingress::{GitHubDelivery, GitHubTranslator},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tl3_github::{Actor, CheckRun, GitHub, RepoChanges, webhook::Event};
@@ -72,10 +75,10 @@ pub enum Evidence {
         head: String,
     },
     DequeuedByPerson {
-        at: DateTime<Utc>,
+        event: u64,
     },
     ClosedByPerson {
-        at: DateTime<Utc>,
+        event: u64,
     },
     PushByOther {
         head: String,
@@ -110,8 +113,8 @@ impl QueueFact {
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed { check, .. } => format!("ci:{check}"),
             Evidence::Conflict { check, .. } => format!("conflict:{check}"),
-            Evidence::DequeuedByPerson { at } => format!("dequeued:{at}"),
-            Evidence::ClosedByPerson { at } => format!("closed:{at}"),
+            Evidence::DequeuedByPerson { event } => format!("dequeued:{event}"),
+            Evidence::ClosedByPerson { event } => format!("closed:{event}"),
             Evidence::PushByOther { head } => format!("push:{head}"),
         };
         format!(
@@ -133,6 +136,7 @@ impl QueueFact {
 #[derive(Serialize, Deserialize)]
 struct Attempt {
     before: Option<CheckRun>,
+    last_event: u64,
 }
 
 pub struct Adapter {
@@ -189,7 +193,7 @@ impl Adapter {
         }
     }
     fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
-        let (state, observations) = self.read(delivery)?;
+        let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
         let baseline = self.baseline(delivery)?;
@@ -199,7 +203,32 @@ impl Adapter {
             state.state,
             QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
         );
+        let mut person_removed = false;
+        if let Some(attempt) = &baseline {
+            let github = &self.clients[&delivery.repository.installation];
+            let events = self.runtime.block_on(
+                github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
+            )?;
+            let person_observations: Vec<_> = person_facts(
+                &delivery.repository,
+                enqueue(delivery)?.0,
+                &events,
+                state.pull_request.merged_at.is_some(),
+            )
+            .into_iter()
+            .filter(|fact| match fact.evidence {
+                Evidence::DequeuedByPerson { event } | Evidence::ClosedByPerson { event } => {
+                    event > attempt.last_event
+                }
+                _ => false,
+            })
+            .map(Observation::Queue)
+            .collect();
+            person_removed = !person_observations.is_empty();
+            observations.extend(person_observations);
+        }
         if previously_confirmed
+            || person_removed
             || state.state == QueueState::Merged
             || (current_head
                 && (active
@@ -220,6 +249,13 @@ impl Adapter {
             return Ok(Reconciliation::Absent);
         }
         if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
+            Ok(Reconciliation::Pending)
+        } else if self
+            .records
+            .path(&delivery.key)
+            .with_extension("applied")
+            .exists()
+        {
             Ok(Reconciliation::Pending)
         } else {
             Ok(Reconciliation::Absent)
@@ -248,6 +284,18 @@ impl Executor for Adapter {
                 &self.records.path(&delivery.key).with_extension("intent"),
                 &serde_json::to_vec(&Attempt {
                     before: state.check.clone(),
+                    last_event: self
+                        .runtime
+                        .block_on(
+                            self.clients[&delivery.repository.installation].issue_events(
+                                &full_name(&delivery.repository),
+                                enqueue(delivery)?.0,
+                            ),
+                        )?
+                        .iter()
+                        .map(|event| event.id)
+                        .max()
+                        .unwrap_or(0),
                 })?,
             )?;
         }
@@ -262,9 +310,20 @@ impl Executor for Adapter {
             )
         {
             self.fence(delivery)?;
+            let mergify = Mergify::new(github);
+            if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
+                self.runtime
+                    .block_on(mergify.dequeue(&repo, number))
+                    .map_err(adapter_error)?;
+                self.fence(delivery)?;
+            }
             self.runtime
-                .block_on(Mergify::new(github).queue(&repo, number, head))
+                .block_on(mergify.queue(&repo, number, head))
                 .map_err(adapter_error)?;
+            self.records.write(
+                &self.records.path(&delivery.key).with_extension("applied"),
+                b"true",
+            )?;
         }
         match self.completion(delivery)? {
             Reconciliation::Found(completion) => {
@@ -334,15 +393,13 @@ async fn queue_facts(
     }
     let evidence = match state.state {
         QueueState::Merged => {
-            // Approval covers the original head. CI must cover the actual merge commit.
-            let checks = match &pull.merge_commit_sha {
-                Some(sha) => github.check_runs(&full_name(repo), sha).await?,
-                None => vec![],
+            let checks_passed = if tl3_mergify::merged_via_queue(state) {
+                true
+            } else if let Some(sha) = &pull.merge_commit_sha {
+                checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
+            } else {
+                false
             };
-            let checks_passed = pull
-                .merge_commit_sha
-                .as_ref()
-                .is_some_and(|sha| checks_passed(&checks, sha));
             Some(Evidence::Merged {
                 head: pull.head.sha.clone(),
                 checks_passed,
@@ -379,7 +436,11 @@ fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
     }
     !latest.is_empty()
         && latest.values().all(|check| {
-            check.status == "completed" && check.conclusion.as_deref() == Some("success")
+            check.status == "completed"
+                && matches!(
+                    check.conclusion.as_deref(),
+                    Some("success" | "skipped" | "neutral")
+                )
         })
 }
 
@@ -401,7 +462,11 @@ fn tracked(snapshot: &Snapshot, repo: &Repository) -> Result<Vec<Tracked>> {
                 .parse()
                 .map_err(|_| Error::Invalid("invalid PR node"))?,
         );
-        if crate::request(snapshot, node)?.repo != *repo {
+        if matches!(
+            world.nodes[node.0 as usize].phase,
+            tl3_kernel::Phase::Closed(_)
+        ) || crate::request(snapshot, node)?.repo != *repo
+        {
             continue;
         }
         let Some(head) = world.nodes[node.0 as usize].head else {
@@ -447,7 +512,7 @@ impl Translator {
         &self,
         event: &Event,
         snapshot: &Snapshot,
-        bootstrap: &Bootstrap,
+        repos: &[Repository],
     ) -> Result<Vec<Input>> {
         let context = match event {
             Event::PullRequestMerged { context, .. }
@@ -455,11 +520,12 @@ impl Translator {
             | Event::PullRequestSynchronized { context, .. }
             | Event::PullRequestUnlabeled { context, .. }
             | Event::CheckRunCompleted { context, .. }
+            | Event::CheckRunUpdated { context, .. }
             | Event::CheckSuiteCompleted { context, .. }
             | Event::MergeGroup { context, .. } => context,
             _ => return Ok(vec![]),
         };
-        let Some(repo) = bootstrap.repos.iter().find(|repo| {
+        let Some(repo) = repos.iter().find(|repo| {
             repo.installation == context.installation_id
                 && repo
                     .owner
@@ -476,16 +542,12 @@ impl Translator {
         let mut facts = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
-                if tracked
+                if let Some(item) = tracked
                     .iter()
-                    .any(|item| item.number == pull_request.number)
+                    .find(|item| item.number == pull_request.number)
                     && !is_merge_queue_pr(pull_request)
                 {
-                    let state = tl3_mergify::observe(pull_request.clone(), &[], "");
-                    facts.extend(
-                        self.runtime
-                            .block_on(queue_facts(github, repo, &state, ""))?,
-                    );
+                    facts.extend(self.look(github, repo, item)?);
                 }
             }
             Event::PullRequestClosed {
@@ -511,17 +573,17 @@ impl Translator {
                     return Ok(vec![]);
                 }
                 let evidence = match event {
-                    Event::PullRequestClosed { .. } if person(actor) => {
-                        Some(Evidence::ClosedByPerson {
-                            at: pull_request.updated_at,
-                        })
-                    }
-                    Event::PullRequestUnlabeled { label, .. }
-                        if label.name == QUEUE_LABEL && person(actor) =>
-                    {
-                        Some(Evidence::DequeuedByPerson {
-                            at: pull_request.updated_at,
-                        })
+                    Event::PullRequestClosed { .. } | Event::PullRequestUnlabeled { .. } => {
+                        let events = self
+                            .runtime
+                            .block_on(github.issue_events(&full_name(repo), pull_request.number))?;
+                        facts.extend(person_facts(
+                            repo,
+                            pull_request.number,
+                            &events,
+                            pull_request.merged_at.is_some(),
+                        ));
+                        None
                     }
                     Event::PullRequestSynchronized { after, .. }
                         if actor.login != format!("{}[bot]", github.app_slug())
@@ -539,7 +601,8 @@ impl Translator {
                     evidence,
                 }));
             }
-            Event::CheckRunCompleted { check_run, .. } => {
+            Event::CheckRunCompleted { check_run, .. }
+            | Event::CheckRunUpdated { check_run, .. } => {
                 for item in tracked.iter().filter(|item| {
                     item.head == check_run.head_sha
                         && (check_run.pull_requests.is_empty()
@@ -563,10 +626,7 @@ impl Translator {
                     facts.extend(self.look(github, repo, item)?);
                 }
             }
-            Event::MergeGroup { merge_group, .. } => {
-                if merge_group.head_ref.starts_with("mergify/merge-queue/") {
-                    return Ok(vec![]);
-                }
+            Event::MergeGroup { .. } => {
                 for item in &tracked {
                     facts.extend(self.look(github, repo, item)?);
                 }
@@ -621,20 +681,19 @@ impl Translator {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
-                        evidence: Evidence::DequeuedByPerson {
-                            at: event.created_at,
-                        },
+                        evidence: Evidence::DequeuedByPerson { event: event.id },
                     });
                 }
             }
             for (number, event) in &changes.closed {
-                if *number == item.number && person(&event.actor) {
+                if *number == item.number
+                    && pull.merged_at.is_none()
+                    && event.actor.as_ref().is_some_and(person)
+                {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
-                        evidence: Evidence::ClosedByPerson {
-                            at: event.created_at,
-                        },
+                        evidence: Evidence::ClosedByPerson { event: event.id },
                     });
                 }
             }
@@ -644,4 +703,57 @@ impl Translator {
 }
 fn person(actor: &Actor) -> bool {
     !actor.login.ends_with("[bot]")
+}
+
+fn person_facts(
+    repo: &Repository,
+    number: u64,
+    events: &[tl3_github::IssueActivity],
+    merged: bool,
+) -> Vec<QueueFact> {
+    events
+        .iter()
+        .filter(|event| event.actor.as_ref().is_some_and(person))
+        .filter_map(|event| {
+            let evidence = match event.event.as_str() {
+                "unlabeled"
+                    if event
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.name == QUEUE_LABEL) =>
+                {
+                    Evidence::DequeuedByPerson { event: event.id }
+                }
+                "closed" if !merged => Evidence::ClosedByPerson { event: event.id },
+                _ => return None,
+            };
+            Some(QueueFact {
+                repository: repo.clone(),
+                number,
+                evidence,
+            })
+        })
+        .collect()
+}
+
+impl GitHubTranslator for Translator {
+    fn translate(&mut self, delivery: &GitHubDelivery, snapshot: &Snapshot) -> Result<Vec<Input>> {
+        let repos = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "repos")
+            .map(|row| serde_json::from_value(row.value.clone()))
+            .collect::<std::result::Result<Vec<Repository>, _>>()?;
+        match delivery {
+            GitHubDelivery::Webhook(delivery) => match &delivery.event {
+                Some(event) => self.webhook(event, snapshot, &repos),
+                None => Ok(vec![]),
+            },
+            GitHubDelivery::CatchUp {
+                repository,
+                changes,
+            } if repos.contains(repository) => self.catch_up(repository, changes, snapshot),
+            _ => Ok(vec![]),
+        }
+    }
 }

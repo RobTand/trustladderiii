@@ -590,7 +590,10 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     .await;
     get(&server,"/repos/owner/sandbox/issues/events",json!([
         {"id":1,"event":"labeled","actor":{"id":42,"login":"owner"},"label":{"name":"tl3"},"created_at":"2026-10-30T01:00:00Z","issue":{"number":12}},
-        {"id":2,"event":"closed","created_at":"2026-10-30T01:00:00Z","actor":{"id":42,"login":"owner"},"issue":{"number":13}}
+        {"id":2,"event":"closed","created_at":"2026-10-30T01:00:00Z","actor":{"id":42,"login":"owner"},"issue":{"number":13}},
+        {"id":3,"event":"closed","created_at":"2026-10-30T01:00:00Z","actor":null,"issue":{"number":14}},
+        {"id":4,"event":"closed","created_at":"2026-10-30T01:00:00Z","actor":null},
+        {"id":5,"event":"unlabeled","created_at":"2026-10-30T01:00:00Z","actor":null,"label":{"name":"tl3"},"issue":{"number":14}}
     ])).await;
     get(
         &server,
@@ -618,8 +621,10 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     assert!(changes.next_cursor > since);
     let changes = &changes.repositories[0];
     assert_eq!(changes.labels[0].1.actor.id, 42);
+    assert_eq!(changes.closed.len(), 2);
+    assert_eq!(changes.closed[1].1.actor, None);
     assert_eq!(changes.closed[0].0, 13);
-    assert_eq!(changes.closed[0].1.actor.id, 42);
+    assert_eq!(changes.closed[0].1.actor.as_ref().unwrap().id, 42);
     assert_eq!(changes.comments.len(), 1);
     assert_eq!(changes.pull_requests[0].number, 13);
     assert_eq!(changes.check_runs[0].id, 22);
