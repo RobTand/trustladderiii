@@ -9,6 +9,7 @@ use tl3_github::message::{Policy, check_prose};
 
 fn policy() -> Policy {
     Policy {
+        own_repository: Some("RobTand/tl3-sandbox".into()),
         own_issue: Some(12),
         own_pull_request: Some(34),
         ..Policy::default()
@@ -153,7 +154,13 @@ fn code_blocks_are_allowed_but_surrounding_prose_is_checked() {
         "Example:\n\n~~~~\n@octocat @org/team owner/repo#56 #56\n~~~~\n",
         "> Example:\n>\n> ```\n> @octocat #56\n> ```\n",
     ] {
-        assert!(check_prose(text, &policy()).is_ok(), "{text}");
+        let errors = check_prose(text, &policy()).err().unwrap_or_default();
+        assert!(
+            errors
+                .iter()
+                .all(|error| *error == tl3_github::message::Violation::Log),
+            "{text}: {errors:?}"
+        );
         for token in ["@octocat", "owner/repo#56", "#56"] {
             assert!(
                 check_prose(&format!("{text}\nOutside {token}"), &policy()).is_err(),
@@ -300,3 +307,46 @@ fn checker_feedback_reaches_real_writer_protocol_and_fake_model() {
         assert!(!draft.contains('@') && !draft.contains('#'));
     }
 }
+
+macro_rules! entity_feedback {
+    ($name:ident, $entity:expr) => {
+        #[test]
+        fn $name() {
+            for kind in [
+                MessageKind::Question,
+                MessageKind::Clarification,
+                MessageKind::Note,
+                MessageKind::Summary,
+            ] {
+                let mut writer = writer($entity, true);
+                let result = checked_draft(&mut writer, "entity", input(kind), &policy()).unwrap();
+                assert_eq!(writer.calls.len(), 2, "{kind:?}: {}", $entity);
+                assert!(
+                    writer.calls[1]
+                        .violations
+                        .iter()
+                        .any(|problem| problem.contains($entity)
+                            && problem.contains("write the character itself, not an HTML entity")),
+                    "{:?}",
+                    writer.calls[1].violations
+                );
+                assert!(!result.contains($entity));
+            }
+        }
+    };
+}
+entity_feedback!(hex_entity_gets_entity_feedback, "&#x40;octocat");
+entity_feedback!(named_mention_entity_gets_entity_feedback, "&commat;octocat");
+entity_feedback!(named_number_entity_gets_entity_feedback, "&num;1");
+entity_feedback!(decimal_entity_gets_entity_feedback, "&#64;octocat");
+entity_feedback!(ordinary_entity_gets_entity_feedback, "&amp;");
+
+rejection!(rejects_gh_references_in_every_message_kind, "GH-1");
+rejection!(
+    rejects_issue_urls_in_every_message_kind,
+    "https://github.com/octocat/hello-world/issues/5"
+);
+rejection!(
+    rejects_pull_urls_in_every_message_kind,
+    "https://github.com/octocat/hello-world/pull/5"
+);

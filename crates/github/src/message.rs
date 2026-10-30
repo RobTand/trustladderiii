@@ -27,6 +27,7 @@ pub struct Draft {
 pub struct Policy {
     /// Only these request-local issue and PR references may appear in prose.
     pub own_issue: Option<u64>,
+    pub own_repository: Option<String>,
     pub own_pull_request: Option<u64>,
     pub internal_terms: Vec<String>,
     /// Repo-relative files and directories from the request delivery.

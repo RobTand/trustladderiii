@@ -154,7 +154,7 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         );
     }
     for log in [
-        "```text\nTraceback\n```",
+        "```text\nraw\n```",
         "Traceback",
         "thread panicked",
         "stderr",
@@ -431,4 +431,74 @@ fn references_follow_the_rendered_question_markdown() {
             .expect_err("the rendered colon before the outcome prevents an indented code block")
             .contains(&Violation::Mention("@octocat".into()))
     );
+}
+
+#[test]
+fn table_cells_do_not_hide_references_after_a_pipe_in_backticks() {
+    let text = "| Example | Detail |\n| --- | --- |\n| `left|#1` | ready |";
+    assert!(
+        check_prose(text, &Policy::default())
+            .expect_err("GitHub splits the cell at the unescaped pipe")
+            .contains(&Violation::ForeignReference("#1".into()))
+    );
+}
+
+#[test]
+fn github_reference_urls_allow_only_the_requests_repository_and_numbers() {
+    let policy = Policy {
+        own_repository: Some("RobTand/tl3-sandbox".into()),
+        own_issue: Some(12),
+        own_pull_request: Some(34),
+        ..Policy::default()
+    };
+    for reference in [
+        "GH-1",
+        "https://github.com/octocat/hello-world/issues/5",
+        "https://github.com/octocat/hello-world/pull/5",
+        "https://github.com/other/tl3-sandbox/issues/12",
+        "https://github.com/RobTand/other/issues/12",
+        "https://github.com/RobTand/tl3-sandbox/pull/56",
+    ] {
+        for text in [
+            reference.to_owned(),
+            format!("<{reference}>"),
+            format!("[details]({reference})"),
+        ] {
+            assert!(
+                check_prose(&text, &policy)
+                    .expect_err(&text)
+                    .contains(&Violation::ForeignReference(reference.into())),
+                "{text}"
+            );
+        }
+    }
+    for reference in [
+        "GH-12",
+        "GH-34",
+        "https://github.com/RobTand/tl3-sandbox/issues/12",
+        "https://github.com/RobTand/tl3-sandbox/pull/34",
+        "https://github.com/robtand/TL3-SANDBOX/issues/12#issuecomment-42",
+    ] {
+        for text in [
+            reference.to_owned(),
+            format!("<{reference}>"),
+            format!("[details]({reference})"),
+        ] {
+            assert!(check_prose(&text, &policy).is_ok(), "{text}");
+        }
+    }
+    assert!(check_prose("item #1 of the list", &policy).is_err());
+    assert!(check_prose("item #12 of the list", &policy).is_ok());
+}
+
+#[test]
+fn entity_and_url_references_inside_code_are_inert() {
+    let tokens = "&#x40;octocat &commat;octocat &num;1 &#64;octocat GH-1 https://github.com/octocat/hello-world/issues/5";
+    for text in [
+        format!("`{tokens}`"),
+        format!("    {tokens}"),
+        format!("~~~\n{tokens}\n~~~"),
+    ] {
+        assert!(check_prose(&text, &Policy::default()).is_ok(), "{text}");
+    }
 }
