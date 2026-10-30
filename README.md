@@ -6,7 +6,7 @@ Created in [T3 Code](https://t3.codes).
 
 ## Queue a pull request
 
-Wait for the `Rust` and `Python` checks to pass and get the required review.
+Wait for the required `Rust` and `Python` checks to pass.
 Then use Mergify's `queue` command in a PR comment or its queue control in GitHub.
 For the comment command, type an at-sign, `mergifyio`, a space, and `queue`.
 Nothing queues automatically. Use the corresponding `dequeue` command to withdraw it.
@@ -24,14 +24,16 @@ every PR and push to `main`. It needs only read access to repository contents.
 Branch protection should require the GitHub Actions checks `Rust` and `Python`.
 The coordinator applies branch protection after review.
 
-- `Rust` discovers the root `Cargo.toml` and every manifest under `crates/`.
+- `Rust` discovers every tracked `Cargo.toml` outside `spikes/` and `fixtures/`.
   Cargo metadata groups members by workspace, so each workspace runs once.
   It runs rustfmt, Clippy with warnings denied, and unit and integration tests
   for all targets. Commit the lockfile for each standalone crate or workspace.
   Adding the root workspace requires no workflow edit.
 - `Python` lints every tracked Python file outside `spikes/` and `fixtures/`
   with Ruff's syntax and Pyflakes rules. It discovers every `pyproject.toml`
-  with a `[project]` table, installs each project with uv, and runs pytest in it.
+  outside `spikes/` and `fixtures/`, requires a `[project]` table, installs each
+  project with uv, and runs pytest in it. Each file belongs to its nearest
+  ancestor project, so parent pytest runs exclude nested projects.
   It uses `uv.lock` when present, default dependency groups, and the `test` extra
   when declared. Other directories containing `test_*.py` run through unittest.
   `tools/board.py` gets the same lint check as the packages.

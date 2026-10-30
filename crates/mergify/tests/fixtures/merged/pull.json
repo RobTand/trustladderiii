@@ -1,0 +1,34 @@
+{
+  "number": 2408,
+  "state": "closed",
+  "merged_at": "2026-10-27T23:46:47Z",
+  "head": {
+    "ref": "prismabuild-2407-ci-routing",
+    "sha": "f3422fa5133d0e4a001a0a5b894314b568c94917",
+    "repo": {
+      "id": 1353085101,
+      "name": "prismabuild",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "08a7b62187a6e321e74468f5cce4d1fe8575eaf2",
+    "repo": {
+      "id": 1353085101,
+      "name": "prismabuild",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "updated_at": "2026-10-27T23:46:52Z",
+  "user": {
+    "id": 24923402,
+    "login": "RobTand"
+  }
+}

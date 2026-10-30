@@ -1,0 +1,34 @@
+{
+  "number": 62987,
+  "state": "open",
+  "merged_at": null,
+  "head": {
+    "ref": "sales-order-overdelivery-and-return",
+    "sha": "4a57d273120a83951bcf0a2bc4174878fb3b97ce",
+    "repo": {
+      "id": 1148594064,
+      "name": "erpnext",
+      "owner": {
+        "id": 140623894,
+        "login": "Shllokkk"
+      }
+    }
+  },
+  "base": {
+    "ref": "develop",
+    "sha": "2f8c531c4162a0ed47efc8317597152c8487658d",
+    "repo": {
+      "id": 1864233,
+      "name": "erpnext",
+      "owner": {
+        "id": 836974,
+        "login": "frappe"
+      }
+    }
+  },
+  "updated_at": "2026-10-29T20:44:01Z",
+  "user": {
+    "id": 140623894,
+    "login": "Shllokkk"
+  }
+}

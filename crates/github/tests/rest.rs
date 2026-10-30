@@ -1035,3 +1035,31 @@ async fn unfinished_check_requests_omit_the_conclusion_field() {
         assert!(check.app.is_none());
     }
 }
+
+#[tokio::test]
+async fn label_operations_keep_names_in_one_url_segment() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/repos/owner/sandbox/issues/13/labels"))
+        .and(body_json(json!({"labels": ["queue/ready"]})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"name": "queue/ready"}])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/repos/owner/sandbox/issues/13/labels/queue%2Fready"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let labels = github
+        .add_label("owner/sandbox", 13, "queue/ready")
+        .await
+        .unwrap();
+    assert_eq!(labels[0].name, "queue/ready");
+    github
+        .remove_label("owner/sandbox", 13, "queue/ready")
+        .await
+        .unwrap();
+}
