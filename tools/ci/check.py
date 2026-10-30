@@ -27,14 +27,13 @@ def tracked_files():
 
 def active(path):
     # Spikes and deliberately broken fixtures aren't production projects.
-    return path.parts[0] != "spikes" and "fixtures" not in path.parts
+    return not {"spikes", "fixtures"}.intersection(path.parts)
 
 
 def rust_manifests(files):
     return sorted(
         path for path in files
-        if path == Path("Cargo.toml")
-        or (path.parts[0] == "crates" and path.name == "Cargo.toml" and active(path))
+        if path.name == "Cargo.toml" and active(path)
     )
 
 
@@ -61,8 +60,9 @@ def python_projects(files):
     for manifest in files:
         if manifest.name == "pyproject.toml" and active(manifest):
             config = tomllib.loads((ROOT / manifest).read_text())
-            if "project" in config:
-                projects[manifest.parent] = config
+            if "project" not in config:
+                raise RuntimeError(f"{manifest}: missing [project] table")
+            projects[manifest.parent] = config
     return projects
 
 
@@ -75,10 +75,10 @@ def standalone_test_dirs(files, projects):
 
 
 def python(files):
+    projects = python_projects(files)
     sources = sorted(path for path in files if path.suffix == ".py" and active(path))
     run("uv", "tool", "run", "--from", "ruff==0.14.14", "ruff", "check",
         "--isolated", "--select", "E9,F", *sources)
-    projects = python_projects(files)
     for directory, config in sorted(projects.items()):
         command = ["uv", "run", "--project", ".", "--python", sys.executable]
         if (ROOT / directory / "uv.lock").exists():
@@ -86,6 +86,12 @@ def python(files):
         if "test" in config["project"].get("optional-dependencies", {}):
             command.extend(["--extra", "test"])
         command.extend(["--with", "pytest==9.0.2", "python", "-m", "pytest"])
+        # Nested projects own their files and run with their own dependencies.
+        command.extend(
+            f"--ignore={nested.relative_to(directory)}"
+            for nested in sorted(projects)
+            if nested != directory and nested.is_relative_to(directory)
+        )
         # Run in the package so pytest reads its own configuration and imports.
         run(*command, cwd=ROOT / directory)
     for directory in standalone_test_dirs(files, projects):
