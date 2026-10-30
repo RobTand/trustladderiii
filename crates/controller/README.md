@@ -310,11 +310,6 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
-`adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
-processes and returns a `WorkerOutputSource`. Making and review remain on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
-before dispatch. Audit reads the stored ingest reply. An ingest revision reads
-the audit's objections. Missing materials block dispatch.
-
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
 ingest, audit, planning and maker, with the remaining roles and upstreams simulated. Add
