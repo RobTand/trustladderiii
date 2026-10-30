@@ -22,7 +22,6 @@ use std::{
     path::PathBuf,
     sync::mpsc::Sender,
 };
-use tl3_kernel::{EffectKind, Out};
 use tl3_store::Store;
 
 struct Run {
@@ -396,13 +395,8 @@ pub(super) fn parse_reply(
     if !bytes.ends_with(b"\n") {
         return Err(Error::Invalid("incomplete worker output"));
     }
-    let role = match delivery.output {
-        Out::Effect {
-            kind: EffectKind::StartRun(role),
-            ..
-        } => protocol::role(role).ok_or(Error::Invalid("unsupported worker role"))?,
-        _ => return Err(Error::Invalid("worker output without start")),
-    };
+    let role = protocol::delivery_role(delivery)
+        .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
         let value: Value = super::json::parse(line)?;
@@ -418,9 +412,19 @@ pub(super) fn parse_reply(
         {
             return Err(Error::Invalid("invalid worker event"));
         }
-        protocol::map_reply(role, &value["reply"])?;
-        protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
+        if delivery.is_classifier() {
+            protocol::validate_classification(inputs, &value["reply"])?;
+        } else {
+            protocol::map_reply(role, &value["reply"])?;
+            protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
+        }
         reply = Some(value["reply"].clone());
+    }
+    if delivery.is_classifier() {
+        return Ok(Observation::Classified {
+            key: delivery.key.clone(),
+            reply: Some(reply.ok_or(Error::Invalid("worker reply is missing"))?),
+        });
     }
     Ok(Observation::WorkerReply {
         node: delivery.node(),

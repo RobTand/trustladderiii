@@ -11,7 +11,7 @@ def check_reply(inputs, reply):
         question = state.get("open_question")
         if question is None or reply["question_id"] != question["id"]:
             raise ValueError("reply answers a question that is not open")
-        if reply["answer"] not in question["answers"]:
+        if reply["answer"] != "unclear" and reply["answer"] not in question["answers"]:
             raise ValueError("reply selects an answer the question does not offer")
         # JSON Schema treats 1.0 as an integer; credit arithmetic requires an int.
         if reply["answer"] == "add_credit" and type(reply["amount"]) is not int:

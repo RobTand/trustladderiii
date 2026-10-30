@@ -3,7 +3,7 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/writer-input.json",
   "type": "object",
   "properties": {
-    "kind": {"enum": ["question", "note", "summary"]},
+    "kind": {"enum": ["question", "note", "summary", "clarification"]},
     "facts": {"type": "object"},
     "violations": {
       "type": "array",
@@ -65,6 +65,37 @@
             }
           },
           "required": ["issue_title", "request", "outcome", "unmet_goals"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "clarification"
+        },
+        "facts": {
+          "type": "object",
+          "properties": {
+            "issue_title": {
+              "$ref": "writer-reply.json#/$defs/text"
+            },
+            "request": {
+              "$ref": "writer-reply.json#/$defs/text"
+            },
+            "question": {
+              "$ref": "writer-reply.json#/$defs/text"
+            },
+            "comment_excerpt": {
+              "$ref": "writer-reply.json#/$defs/text"
+            }
+          },
+          "required": [
+            "issue_title",
+            "request",
+            "question",
+            "comment_excerpt"
+          ],
           "additionalProperties": false
         }
       }
