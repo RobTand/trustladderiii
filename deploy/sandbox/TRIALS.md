@@ -1,5 +1,59 @@
 # Sandbox gate trials, 2026-10-30
 
+## Phase B queue trials
+
+Sandbox PR #29 merged as `1179d3fccfdc9fccc9b08efd11615f373ae3d5fc`.
+The live settings checker passes with `merge_bot_account: RobTand` and
+`branch_protection_injection_mode: none`. The trials used a clean detached
+worktree of `t17-sandbox-merge-account` at `8bf5e74229edecf105e1a4a529e0f42183b6b706`.
+Every agent trial command and verifier ran through PrismaBuild. Sandbox CI
+ran directly on its fleet runners.
+
+The App created both Git trees, commits, branches and PRs. Each PR changed only
+one `trials/` text file. No gate file changed.
+
+- **Success:** [sandbox #30](https://github.com/RobTand/tl3-sandbox/pull/30)
+  entered the queue automatically after exact-head App approval and the
+  `tl3-queue` label. Mergify tested separate draft
+  [#32](https://github.com/RobTand/tl3-sandbox/pull/32), then merged #30 at
+  `668fd489e9798d64fb1c0a96295d2fd5c9ef6205`. GitHub records merger `RobTand`.
+  Mergify records `Merged via merge queue` and identifies draft #32 as passed.
+  The original head stayed `1ee8d4c881c7350e9c75551bd03ea9dcd5d6bab1`.
+- **Draft CI:** `Sandbox tests`, job `124326120949`, succeeded on
+  `tl3-sandbox-dl380g10-slot-1-1793396093-18022`. Its labels were `self-hosted`,
+  `linux`, `x64`, and `tl3-sandbox-fleet`. Original CI also succeeded on a sandbox
+  fleet runner. TL3 never approved the draft.
+- **Refusal:** [sandbox #31](https://github.com/RobTand/tl3-sandbox/pull/31)
+  had green CI and the queue label, with no App approval. Mergify check
+  `124324781836` reported `Waiting for queue conditions to match`. The label
+  and base matched; App approval was the only unmet queue-rule condition.
+  Its recorded payload says `waiting`, with null `queued_at` and
+  `speculative_check_pr`. There was no Mergify queue comment or draft.
+  The App removed the label, closed the PR and deleted its branch.
+
+Recordings are under [`evidence/queue-trials/`](evidence/queue-trials/).
+The standard recorder retains its existing field allowlist. Supplementary REST
+selections retain only changed-file metadata, merger identity, workflow/run/job
+identity, runner labels/name and completion timestamps. No headers or
+credentials are evidence. `refusal/condition-report.json` preserves the complete
+queue condition output and its decoded Mergify state.
+
+The positive production-adapter replay expects `checks_passed: true` from #30's
+recorded pull, head checks and merge checks. The separate bootstrap replay still
+expects `false`. The host results and every trial action, exit code, log hash and
+verified CAS receipt/payload hash are in `evidence/queue-trials/prismabuild.json`.
+The supplementary jobs recorder failed once because shell quoting removed a
+JSON key's quotes. The corrected recorder passed; both actions remain recorded.
+This was a recording error, not a sandbox CI failure.
+
+This phase covers the requested success and refusal trials. The separate
+main-advancement trial remains unrun, so #114 remains **Part of #17**. The App's
+delivery history still contains only the old ping with HTTP 502. Actual
+in-progress check-run and merged closed webhook deliveries remain unobserved;
+REST snapshots do not replace them. The twelve seed issues were preserved.
+
+## Earlier sandbox trials
+
 The approved copy now includes sandbox PR #23, merged by the coordinator as
 `f9a76b6a9fc62518540d80cd989ad3d0bd35591e` after Rob's approval. The live
 GET-only settings checker passes at this follow-up. The no-approval merge trial
