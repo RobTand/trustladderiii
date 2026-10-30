@@ -686,10 +686,13 @@ impl Executor for Workers {
         self.fake.reconcile(delivery)
     }
 }
-fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool) {
+fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool, recover: bool) {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), outside);
     let adapter = fixture(root.path(), "pending");
+    if recover {
+        fs::write(root.path().join("queue/fail_publish"), "once").unwrap();
+    }
     let source = adapter.source();
     let fakes = root.path().join("fakes");
     let mut registry = adapters::simulation(&fakes).unwrap();
@@ -812,7 +815,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool)
                 sha: "a".repeat(40),
                 run: CheckRun {
                     repository: root.path().join("absent-old-checkout"),
-                    ..delivery.checks.unwrap()
+                    ..delivery.checks.clone().unwrap()
                 },
             },
         )
@@ -822,10 +825,60 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool)
             break;
         }
     }
+    if recover {
+        assert!(!root.path().join("queue/publications").exists());
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .pending_effects
+                .iter()
+                .any(|e| {
+                    e.kind == "PrismaBuild" && e.state == tl3_store::EffectState::Uncertain
+                })
+        );
+        fs::remove_file(root.path().join("queue/fail_publish")).unwrap();
+        controller.retry_held_effects();
+        controller
+            .observe(
+                "recovered-tool",
+                Observation::CheckPlan {
+                    node: NodeId(0),
+                    sha: delivery.head_sha.clone().unwrap(),
+                    run: delivery.checks.clone().unwrap(),
+                },
+            )
+            .unwrap();
+        for _ in 0..100 {
+            if !controller.drive_once().unwrap() {
+                break;
+            }
+        }
+        assert!(
+            root.path().join("queue/publications").exists(),
+            "the controller must publish the saved seal after PrismaBuild recovers"
+        );
+        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains("--seal-only"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.contains("--publish-sealed"))
+                .count(),
+            2
+        );
+    }
     let key = fs::read_to_string(root.path().join("queue/publications"))
         .unwrap()
         .trim()
         .to_owned();
+    assert_eq!(key.lines().count(), 1, "publish exactly one action");
     finish(root.path(), &key, "done");
     let (sender, receiver) = mpsc::channel();
     let running = source.spawn(sender);
@@ -890,12 +943,14 @@ fn main() {
         println!("test {name} ... ok");
     }
     let mut database = support::Database::start();
-    through_controller(&database.create("pb_pass"), false, false);
+    through_controller(&database.create("pb_pass"), false, false, false);
     println!("test recorded_records_reach_kernel ... ok");
-    through_controller(&database.create("pb_footprint"), true, false);
+    through_controller(&database.create("pb_footprint"), true, false, false);
     println!("test outside_footprint_fails_round ... ok");
-    through_controller(&database.create("pb_cancel"), false, true);
+    through_controller(&database.create("pb_cancel"), false, true, false);
     println!("test cancelling_unbound_checks_starts_no_work ... ok");
+    through_controller(&database.create("pb_recover"), false, false, true);
+    println!("test controller_recovers_failed_publication ... ok");
     database.stop();
     println!("11 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }

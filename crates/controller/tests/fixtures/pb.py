@@ -68,6 +68,8 @@ if "--seal-only" in args:
     print(json.dumps({"schema": "prismabuild.sealed.v1", "action_key": key, "transport": "pool"}))
 elif "--publish-sealed" in args or "--finish" in args:
     key = args[1]
+    if "--publish-sealed" in args and (root / "fail_publish").exists():
+        raise SystemExit(1)
     request = json.loads((root / f"{key}.request").read_text())
     if not any((root / state / f"{key}.json").exists() for state in ("ready", "done", "failed", "withdrawn")):
         with (root / "publications").open("a") as stream:
