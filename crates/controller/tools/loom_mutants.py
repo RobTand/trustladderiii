@@ -19,8 +19,8 @@ MUTANTS = {
     ),
     "ingress": (
         "crates/controller/src/ingress.rs",
-        "            apply(controller, input)?;",
-        "            let _ = input;",
+        "            drain(controller)?;\n            apply(controller, input)?;\n            controller.look_due()?;",
+        "            drain(controller)?;\n            let _ = input;\n            controller.look_due()?;",
         "loom_sources_", "deadlock",
     ),
     "gap": (
