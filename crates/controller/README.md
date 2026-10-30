@@ -922,6 +922,13 @@ Hindsight then owns extraction and its operation retries. This handoff uses
 Hindsight's operation contract; it does not wait for extraction on the request
 thread.
 
+Authenticated servers use optional `[hindsight].api_key_file`. It contains the
+raw API key in an owner-only file. Only the background sender validates and
+reads that file, then puts the key in a Bearer authorization header. A missing,
+insecure or unreadable file leaves the outbox pending. It does not block daemon
+startup or request progress. The path and key are never passed to workers or
+included in the retained item. Status readers do not need the file.
+
 Records have `repo:`, `request:` and `role:` tags. The controller selects summary
 fields, omits infrastructure and repository file contents, removes credential
 fields, and redacts bearer tokens, common provider keys, private keys,

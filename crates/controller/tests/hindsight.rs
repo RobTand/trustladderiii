@@ -87,6 +87,7 @@ impl Fixture {
         tl3_config::Hindsight {
             endpoint: self.server.uri().parse().unwrap(),
             bank: "tl3".into(),
+            api_key_file: None,
         }
     }
     fn attempt(&self, role: &str, input: Value, reply: Value) -> std::path::PathBuf {
@@ -293,6 +294,11 @@ fn authenticated_retain_loads_a_runtime_key_without_recording_it() {
     let f = Fixture::new();
     let key = f.scratch.path().join("fixture-hindsight-key");
     fs::write(&key, "fixture-hindsight-authentication\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let text = include_str!("../../config/example.toml")
         .replace(
             "[hindsight]",

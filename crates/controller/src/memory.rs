@@ -230,8 +230,14 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
 /// Hindsight owns the durable async operation after acknowledgement. Retrying
 /// after any ambiguous response reuses its UUID and cannot enqueue new work.
 pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> {
+    let mut pending = store.pending_memories(0)?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let key = settings.retain_key()?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| Error::Adapter(Box::new(e)))?;
@@ -244,16 +250,16 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
     let mut count = 0;
     let mut failure = None;
     loop {
-        let pending = store.pending_memories(after)?;
-        if pending.is_empty() {
-            break;
-        }
         for (sequence, id, item) in pending {
             after = sequence;
             let result: Result<()> = crate::executor::runtime()?.block_on(async {
-                let response = client
+                let mut request = client
                     .post(url.clone())
-                    .json(&json!({"async": true, "operation_id": id, "items": [item]}))
+                    .json(&json!({"async": true, "operation_id": id, "items": [item]}));
+                if let Some(key) = &key {
+                    request = request.bearer_auth(key);
+                }
+                let response = request
                     .send()
                     .await
                     .map_err(|e| Error::Adapter(Box::new(e)))?;
@@ -283,6 +289,10 @@ pub fn flush(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usiz
                     failure = Some(error);
                 }
             }
+        }
+        pending = store.pending_memories(after)?;
+        if pending.is_empty() {
+            break;
         }
     }
     match failure {
