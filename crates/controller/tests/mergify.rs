@@ -79,6 +79,7 @@ struct State {
     merge_checks: Value,
     deletes: usize,
     remove_after_post: bool,
+    pull_reads: usize,
 }
 impl State {
     fn new() -> Self {
@@ -100,6 +101,7 @@ impl State {
             merge_checks: json!([]),
             deletes: 0,
             remove_after_post: false,
+            pull_reads: 0,
         }
     }
     fn checks(&self) -> Value {
@@ -135,7 +137,10 @@ impl Respond for Api {
             return ResponseTemplate::new(503);
         }
         match (method, path) {
-            ("GET", "/repos/owner/sandbox/pulls/100") => ResponseTemplate::new(200).set_body_json(state.pull.clone()),
+            ("GET", "/repos/owner/sandbox/pulls/100") => {
+                state.pull_reads += 1;
+                ResponseTemplate::new(200).set_body_json(state.pull.clone())
+            },
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
                 "number":100, "title":"change", "state":state.pull["state"], "updated_at":state.pull["updated_at"],
                 "labels": if state.label {json!([{"name":"tl3-queue"}])} else {json!([])},
@@ -359,6 +364,25 @@ fn watched_merge(settings: &tl3_config::Store) {
     deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
     drain(&mut controller);
     assert!(queue_facts(&mut controller).is_empty());
+    let reads = api.state.lock().unwrap().pull_reads;
+    catch_up(settings, &api, &mut controller);
+    let mut body = webhook_fixture();
+    body["action"] = json!("checks_requested");
+    body["merge_group"] = json!({"head_sha":"batch","head_ref":"gh-readonly-queue/main/pr-100","base_ref":"main","base_sha":"base"});
+    let inputs = Translator::new(api.clients())
+        .unwrap()
+        .webhook(
+            &parsed("merge_group", body),
+            &controller.snapshot().unwrap(),
+            &bootstrap().repos,
+        )
+        .unwrap();
+    assert!(inputs.is_empty());
+    assert_eq!(
+        api.state.lock().unwrap().pull_reads,
+        reads,
+        "closed nodes leave the watched set"
+    );
     assert_kernel_facts(settings, 1);
 }
 fn merged(
@@ -549,6 +573,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
                 "resume",
                 tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
                     node: NodeId(0),
+                    id: 1,
                     command: tl3_kernel::Command::Resume,
                 }),
             )
@@ -743,6 +768,36 @@ fn label_removed_before_confirmation() {
     assert!(!api.state.lock().unwrap().label);
 }
 
+fn applied_marker_waits_for_person_evidence() {
+    let api = Server::new();
+    api.state.lock().unwrap().lag = true;
+    let root = tempfile::tempdir().unwrap();
+    let delivery = delivery();
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(adapter.execute(&delivery).is_err());
+    api.state.lock().unwrap().label = false;
+    drop(adapter);
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Pending
+    ));
+    assert!(adapter.execute(&delivery).is_err());
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    api.state.lock().unwrap().events.push(
+        json!({"id":601,"event":"unlabeled","actor":{"id":42,"login":"rob"},
+        "label":{"name":"tl3-queue"},"created_at":"2026-10-30T02:00:00Z"}),
+    );
+    let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else {
+        panic!("person removal must confirm");
+    };
+    assert!(
+        matches!(&completion.observations[0], tl3_controller::executor::Observation::Queue(fact)
+        if matches!(fact.evidence, adapters::mergify::Evidence::DequeuedByPerson { event: 601 }))
+    );
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+}
+
 fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
     let api = Server::new();
     api.state.lock().unwrap().lag = true;
@@ -870,6 +925,7 @@ fn executor_recovery() {
 fn main() {
     executor_recovery();
     label_removed_before_confirmation();
+    applied_marker_waits_for_person_evidence();
     println!("test executor_recovery ... ok");
     let mut database = support::Database::start();
     in_progress_confirms_enqueue(&database.create("progress"));
@@ -893,5 +949,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("14 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("19 Mergify scenarios passed; no skips; no live upstream calls");
 }

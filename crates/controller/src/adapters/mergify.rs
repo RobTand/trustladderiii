@@ -248,13 +248,12 @@ impl Adapter {
         if baseline.is_none() {
             return Ok(Reconciliation::Absent);
         }
-        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
-            Ok(Reconciliation::Pending)
-        } else if self
-            .records
-            .path(&delivery.key)
-            .with_extension("applied")
-            .exists()
+        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+            || self
+                .records
+                .path(&delivery.key)
+                .with_extension("applied")
+                .exists()
         {
             Ok(Reconciliation::Pending)
         } else {

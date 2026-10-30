@@ -454,3 +454,16 @@ fn future_encoding_and_unrecorded_titles_stay_unknown() {
         );
     }
 }
+
+#[test]
+fn a_timed_out_queue_check_is_an_infrastructure_failure_without_a_known_title() {
+    let (pr, mut checks) = recorded("running");
+    checks[0].status = "completed".into();
+    checks[0].conclusion = Some("timed_out".into());
+    checks[0].output = None;
+    let state = observe(pr.clone(), &checks, &pr.head.sha);
+    assert_eq!(state.state, QueueState::FailedCi);
+    assert!(tl3_mergify::ci_is_infrastructure(
+        state.check.as_ref().unwrap()
+    ));
+}
