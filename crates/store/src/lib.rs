@@ -86,6 +86,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (2, include_str!("../migrations/0002_world_arrival.sql")),
     (3, include_str!("../migrations/0003_workers.sql")),
     (4, include_str!("../migrations/0004_ingress.sql")),
+    (5, include_str!("../migrations/0005_worker_retirement.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -353,12 +354,18 @@ impl Store {
                 RowChange::Put { table, id, value } => {
                     tx.execute("INSERT INTO tl3_world (table_name, row_id, value, version) VALUES ($1, $2, $3, $4) ON CONFLICT (table_name, row_id) DO UPDATE SET value = EXCLUDED.value, version = EXCLUDED.version",
                         &[table, id, value, &revision.get()])?;
+                    if table == "nodes" && value["phase"].get("Closed").is_some() {
+                        tx.execute("DELETE FROM tl3_worker_summary WHERE node_id = $1", &[id])?;
+                    }
                 }
                 RowChange::Delete { table, id } => {
                     tx.execute(
                         "DELETE FROM tl3_world WHERE table_name = $1 AND row_id = $2",
                         &[table, id],
                     )?;
+                    if table == "nodes" {
+                        tx.execute("DELETE FROM tl3_worker_summary WHERE node_id = $1", &[id])?;
+                    }
                 }
             }
         }
@@ -530,6 +537,55 @@ impl Store {
         Ok(self.client.query("SELECT run_key, node_id, epoch, attempt, output_offset, unit, started_ms, last_progress_ms FROM tl3_worker_progress WHERE ($1::text IS NULL OR node_id = $1) ORDER BY started_ms DESC, run_key", &[&node])?.into_iter().map(|r| WorkerProgress {
             key: r.get(0), node: r.get(1), epoch: r.get(2), attempt: r.get(3), output_offset: r.get(4), unit: r.get(5), started_ms: r.get(6), last_progress_ms: r.get(7),
         }).collect())
+    }
+
+    /// Only watched worker deliveries, without loading historical world rows.
+    pub fn worker_watches(&mut self) -> Result<Vec<(String, serde_json::Value)>> {
+        Ok(self.client.query("SELECT w.row_id, w.value FROM tl3_world w JOIN tl3_effects e ON e.effect_key = w.row_id WHERE w.table_name = 'watches' AND e.kind = 'Workers'", &[])?
+            .into_iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
+
+    /// A stale notification cannot revive a terminal, unwatched delivery.
+    pub fn worker_reconcilable(&mut self, key: &str) -> Result<bool> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT NOT EXISTS (SELECT 1 FROM tl3_retired_workers WHERE effect_key = $1)",
+                &[&key],
+            )?
+            .get(0))
+    }
+
+    /// Terminal effects cannot be dispatched again. Watches retain their evidence.
+    pub fn retired_workers(&mut self) -> Result<Vec<String>> {
+        Ok(self.client.query("SELECT p.run_key FROM tl3_worker_progress p JOIN tl3_retired_workers e ON e.effect_key = p.run_key WHERE NOT p.retirement_blocked", &[])?
+            .into_iter().map(|row| row.get(0)).collect())
+    }
+
+    /// Retain evidence whose process identity cannot safely be stopped. Log once at the caller.
+    pub fn block_worker_retirement(&mut self, key: &str) -> Result<()> {
+        self.client.execute(
+            "UPDATE tl3_worker_progress SET retirement_blocked = true WHERE run_key = $1",
+            &[&key],
+        )?;
+        Ok(())
+    }
+
+    /// Call only after durable removal of the run directory.
+    /// Fold progress into one summary for an open node in the same transaction.
+    pub fn forget_worker(&mut self, key: &str) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        // Serialize with world commits so closure cannot race summary insertion.
+        tx.query_one("SELECT revision FROM tl3_meta FOR UPDATE", &[])?;
+        if let Some(row) = tx.query_opt("DELETE FROM tl3_worker_progress p USING tl3_retired_workers e WHERE p.run_key = $1 AND e.effect_key = p.run_key RETURNING p.node_id, p.unit, p.last_progress_ms", &[&key])? {
+            let node: String = row.get(0);
+            let unit: String = row.get(1);
+            if let Some(time) = row.get::<_, Option<i64>>(2) {
+                tx.execute("INSERT INTO tl3_worker_summary (node_id, unit, last_progress_ms) SELECT $1, $2, $3 WHERE EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'nodes' AND row_id = $1 AND NOT (value->'phase' ? 'Closed')) ON CONFLICT (node_id) DO UPDATE SET unit = EXCLUDED.unit, last_progress_ms = EXCLUDED.last_progress_ms WHERE tl3_worker_summary.last_progress_ms < EXCLUDED.last_progress_ms", &[&node, &unit, &time])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {
