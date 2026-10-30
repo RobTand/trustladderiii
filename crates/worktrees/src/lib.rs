@@ -132,6 +132,17 @@ impl InstallationToken {
 pub struct Remote(OsString);
 
 impl Remote {
+    fn credentials<'a>(
+        &self,
+        token: Option<&'a InstallationToken>,
+    ) -> Option<&'a InstallationToken> {
+        if self.0.to_string_lossy().starts_with("https://github.com/") {
+            token
+        } else {
+            None
+        }
+    }
+
     pub fn https(value: &str) -> Result<Self, Error> {
         let url = Url::parse(value).map_err(|_| Error::Remote)?;
         if url.scheme() != "https"
@@ -148,7 +159,12 @@ impl Remote {
 
     pub fn local(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = fs::canonicalize(path).map_err(|_| Error::Remote)?;
-        Ok(Self(path.into_os_string()))
+        Ok(Self(
+            Url::from_file_path(path)
+                .map_err(|_| Error::Remote)?
+                .as_str()
+                .into(),
+        ))
     }
 }
 
@@ -208,7 +224,7 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<CommitId, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.push_locked(name, remote, token)
@@ -219,7 +235,7 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
         expected: &CommitId,
     ) -> Result<CommitId, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
@@ -230,7 +246,7 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Option<CommitId>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.remote_head_locked(name, remote, token)
@@ -240,7 +256,7 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.delete_remote_branch_locked(name, remote, token)
@@ -252,7 +268,168 @@ impl Worktrees {
         path: impl AsRef<Path>,
     ) -> Result<RebaseResult, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.rebase_onto_main_locked(name, path)
+        self.rebase_onto_locked(name, path, &self.resolve("refs/heads/main")?)
+    }
+
+    /// Creates both refs at the operation's durably recorded base.
+    pub fn create_branch_at(&self, name: &BranchName, base: &CommitId) -> Result<Branch, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        if self.resolve_optional(&name.reference())?.is_none()
+            && self.resolve_optional(&name.base_ref())?.is_none()
+        {
+            self.update_refs(&format!(
+                "create {} {}\ncreate {} {}\n",
+                name.reference(),
+                base.as_str(),
+                name.base_ref(),
+                base.as_str()
+            ))?;
+        }
+        self.create_branch_locked(name)
+    }
+
+    pub fn recover_rebase(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_repository(path)?;
+        let marker = self.rebase_marker(path)?;
+        if marker.exists() {
+            self.restore_rebase_checkout(path, name, &marker)?;
+        }
+        self.verify_checkout(path, name)?;
+        self.require_clean(path)
+    }
+
+    /// Deletes only the head recorded by the teardown effect, never a newer push.
+    pub fn delete_remote_branch_at(
+        &self,
+        name: &BranchName,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+        expected: &CommitId,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let token = remote.credentials(token);
+        if self.remote_head_locked(name, remote, token)?.is_none() {
+            return Ok(());
+        }
+        let reference = name.reference();
+        let lease = format!("--force-with-lease={reference}:{}", expected.as_str());
+        self.network(
+            "delete recorded remote branch",
+            [
+                OsStr::new("push"),
+                OsStr::new("--porcelain"),
+                OsStr::new(&lease),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!(":{reference}")),
+            ],
+            token,
+        )?;
+        Ok(())
+    }
+
+    pub fn common_directory(&self) -> &Path {
+        &self.common
+    }
+
+    pub fn branch_state(&self, name: &BranchName) -> Result<Option<(CommitId, CommitId)>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        match (
+            self.resolve_optional(&name.reference())?,
+            self.resolve_optional(&name.base_ref())?,
+        ) {
+            (Some(head), Some(base)) => Ok(Some((head, base))),
+            (None, None) => Ok(None),
+            _ => Err(Error::Recovery),
+        }
+    }
+
+    pub fn checkout_exists(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        self.verify_checkout(path, name)?;
+        Ok(true)
+    }
+
+    /// Fetches only main, with the same credential and transport policy as pushes.
+    pub fn fetch_main(
+        &self,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+    ) -> Result<CommitId, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let output = self.network(
+            "fetch main",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new("refs/heads/main"),
+            ],
+            remote.credentials(token),
+        )?;
+        drop(output);
+        let main = self.resolve("FETCH_HEAD")?;
+        self.update_refs(&format!("update refs/heads/main {}\n", main.as_str()))?;
+        Ok(main)
+    }
+
+    /// Uses the effect's immutable head and the last head this controller published.
+    pub fn publish(
+        &self,
+        name: &BranchName,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+        head: &CommitId,
+        expected: Option<&CommitId>,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let token = remote.credentials(token);
+        let actual = self.remote_head_locked(name, remote, token)?;
+        if actual.as_ref() == Some(head) {
+            return Ok(());
+        }
+        if actual.as_ref() != expected {
+            return Err(Error::Git {
+                operation: "remote branch changed",
+                code: None,
+            });
+        }
+        let reference = name.reference();
+        let lease = format!(
+            "--force-with-lease={reference}:{}",
+            expected.map_or("", CommitId::as_str)
+        );
+        self.network(
+            "publish head",
+            [
+                OsStr::new("push"),
+                OsStr::new("--porcelain"),
+                OsStr::new(&lease),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!("{}:{reference}", head.as_str())),
+            ],
+            token,
+        )?;
+        Ok(())
+    }
+
+    pub fn rebase_onto(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+    ) -> Result<RebaseResult, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.rebase_onto_locked(name, path, target)
     }
 
     pub fn changed_files(&self, base: &CommitId, head: &CommitId) -> Result<Vec<PathBuf>, Error> {
@@ -523,8 +700,9 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<CommitId, Error> {
+        let token = remote.credentials(token);
         leaf(name)?;
         let head = self.head_locked(name)?;
         let reference = name.reference();
@@ -564,9 +742,10 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
         expected: &CommitId,
     ) -> Result<CommitId, Error> {
+        let token = remote.credentials(token);
         leaf(name)?;
         let head = self.head_locked(name)?;
         if self.remote_head_locked(name, remote, token)?.as_ref() == Some(&head) {
@@ -593,8 +772,9 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Option<CommitId>, Error> {
+        let token = remote.credentials(token);
         let output = self.network(
             "read remote branch",
             [
@@ -621,8 +801,9 @@ impl Worktrees {
         &self,
         name: &BranchName,
         remote: &Remote,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<(), Error> {
+        let token = remote.credentials(token);
         leaf(name)?;
         if let Some(head) = self.remote_head_locked(name, remote, token)? {
             let reference = name.reference();
@@ -643,10 +824,11 @@ impl Worktrees {
         Ok(())
     }
 
-    fn rebase_onto_main_locked(
+    fn rebase_onto_locked(
         &self,
         name: &BranchName,
         path: impl AsRef<Path>,
+        target: &CommitId,
     ) -> Result<RebaseResult, Error> {
         leaf(name)?;
         let path = fs::canonicalize(path).map_err(|_| Error::Io)?;
@@ -680,7 +862,7 @@ impl Worktrees {
         self.require_clean(&path)?;
         let old_head = self.head_locked(name)?;
         let old_base = self.create_branch_locked(name)?.base;
-        let main = self.resolve("refs/heads/main")?;
+        let main = target.clone();
         let mut temporary = tempfile::NamedTempFile::new_in(marker.parent().ok_or(Error::Io)?)
             .map_err(|_| Error::Io)?;
         temporary
@@ -950,16 +1132,13 @@ impl Worktrees {
         &self,
         operation: &'static str,
         args: I,
-        token: &InstallationToken,
+        token: Option<&InstallationToken>,
     ) -> Result<Output, Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        success(
-            operation,
-            self.execute(&self.repo, args, Some(token), None)?,
-        )
+        success(operation, self.execute(&self.repo, args, token, None)?)
     }
 
     fn execute<I, S>(
@@ -991,6 +1170,16 @@ impl Worktrees {
                 "-c",
                 "core.hooksPath=/dev/null",
                 "-c",
+                "credential.helper=",
+                "-c",
+                "http.followRedirects=false",
+                "-c",
+                "protocol.allow=never",
+                "-c",
+                "protocol.https.allow=always",
+                "-c",
+                "protocol.file.allow=always",
+                "-c",
                 "core.fsmonitor=false",
                 "-c",
                 "commit.gpgsign=false",
@@ -1020,7 +1209,7 @@ impl Worktrees {
             for (index, (key, value)) in [
                 ("credential.helper", ""),
                 ("http.extraHeader", ""),
-                ("http.extraHeader", header.as_str()),
+                ("http.https://github.com/.extraHeader", header.as_str()),
                 ("http.followRedirects", "false"),
                 ("protocol.allow", "never"),
                 ("protocol.https.allow", "always"),

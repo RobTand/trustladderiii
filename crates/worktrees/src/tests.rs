@@ -364,21 +364,28 @@ fn push_and_remote_deletion_converge_after_the_write_already_happened() {
     write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
     let head = f.manager.head(&f.name).unwrap();
     for _ in 0..2 {
-        assert_eq!(f.manager.push(&f.name, &f.remote, &f.token).unwrap(), head);
         assert_eq!(
-            f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
+            f.manager.push(&f.name, &f.remote, Some(&f.token)).unwrap(),
+            head
+        );
+        assert_eq!(
+            f.manager
+                .remote_head(&f.name, &f.remote, Some(&f.token))
+                .unwrap(),
             Some(head.clone())
         );
     }
     write_commit(&f.worktree, "next.txt", "next\n", "next work");
-    let next = f.manager.push(&f.name, &f.remote, &f.token).unwrap();
+    let next = f.manager.push(&f.name, &f.remote, Some(&f.token)).unwrap();
     assert_ne!(head, next);
     for _ in 0..2 {
         f.manager
-            .delete_remote_branch(&f.name, &f.remote, &f.token)
+            .delete_remote_branch(&f.name, &f.remote, Some(&f.token))
             .unwrap();
         assert_eq!(
-            f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
+            f.manager
+                .remote_head(&f.name, &f.remote, Some(&f.token))
+                .unwrap(),
             None
         );
     }
@@ -389,7 +396,7 @@ fn clean_rebase_and_leased_push_are_repeatable() {
     let f = Fixture::new();
     f.checkout();
     write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-    let old = f.manager.push(&f.name, &f.remote, &f.token).unwrap();
+    let old = f.manager.push(&f.name, &f.remote, Some(&f.token)).unwrap();
     write_commit(&f.repo, "main.txt", "main\n", "main work");
     let result = f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap();
     let RebaseResult::Clean { base, head } = result else {
@@ -406,7 +413,7 @@ fn clean_rebase_and_leased_push_are_repeatable() {
     for _ in 0..2 {
         assert_eq!(
             f.manager
-                .push_rebased(&f.name, &f.remote, &f.token, &old)
+                .push_rebased(&f.name, &f.remote, Some(&f.token), &old)
                 .unwrap(),
             head
         );
@@ -502,7 +509,7 @@ fn changed_files_include_both_rename_paths_deletions_and_unusual_names() {
 fn a_remote_push_by_somebody_else_is_preserved() {
     let f = Fixture::new();
     let branch = f.checkout();
-    f.manager.push(&f.name, &f.remote, &f.token).unwrap();
+    f.manager.push(&f.name, &f.remote, Some(&f.token)).unwrap();
     write_commit(&f.repo, "main.txt", "someone else\n", "other work");
     let other = f.manager.resolve("refs/heads/main").unwrap();
     git(
@@ -514,14 +521,16 @@ fn a_remote_push_by_somebody_else_is_preserved() {
         ],
     );
     write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
-    assert!(f.manager.push(&f.name, &f.remote, &f.token).is_err());
+    assert!(f.manager.push(&f.name, &f.remote, Some(&f.token)).is_err());
     assert!(
         f.manager
-            .push_rebased(&f.name, &f.remote, &f.token, &branch.base)
+            .push_rebased(&f.name, &f.remote, Some(&f.token), &branch.base)
             .is_err()
     );
     assert_eq!(
-        f.manager.remote_head(&f.name, &f.remote, &f.token).unwrap(),
+        f.manager
+            .remote_head(&f.name, &f.remote, Some(&f.token))
+            .unwrap(),
         Some(other)
     );
 }
@@ -539,7 +548,10 @@ fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-    let error = f.manager.push(&f.name, &f.remote, &f.token).unwrap_err();
+    let error = f
+        .manager
+        .push(&f.name, &f.remote, Some(&f.token))
+        .unwrap_err();
     assert_no_secret(
         format!("{error:?} {error}").as_bytes(),
         &STANDARD.encode(format!("x-access-token:{TOKEN}")),
@@ -606,7 +618,8 @@ fn invalid_inputs_are_rejected_without_echoing_credentials() {
         Err(Error::MainBranch)
     ));
     assert!(matches!(
-        f.manager.delete_remote_branch(&main, &f.remote, &f.token),
+        f.manager
+            .delete_remote_branch(&main, &f.remote, Some(&f.token)),
         Err(Error::MainBranch)
     ));
 }
