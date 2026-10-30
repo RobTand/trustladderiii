@@ -23,7 +23,7 @@ def no_network(*args, **kwargs):
 
 def create_model(request):
     marker.write_text(str(__import__("os").getpid()))
-    if mode == "blocked":
+    if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}

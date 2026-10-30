@@ -182,7 +182,7 @@ fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &m
 
 fn simulation(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "normal");
+    let config = config(settings, root.path(), "audit-blocked");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
@@ -194,6 +194,41 @@ fn simulation(settings: &tl3_config::Store) {
     )
     .unwrap();
     controller.intake(labelled()).unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].phase == Phase::Auditing
+    });
+    // Pause lets the in-flight audit finish and exposes Unplanned before admission.
+    controller
+        .observe(
+            "fixture-pause",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Pause,
+            }),
+        )
+        .unwrap();
+    drive(&mut controller, &mut source, &mut store);
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].phase == Phase::Unplanned
+    });
+    assert_eq!(
+        adapters::delivered_notes(&root.path().join("fakes")).unwrap(),
+        ["- Return hello."]
+    );
+    controller
+        .observe(
+            "fixture-resume",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 2,
+                command: tl3_kernel::Command::Resume,
+            }),
+        )
+        .unwrap();
     wait(|| {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
