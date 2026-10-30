@@ -34,17 +34,20 @@ def create_model(request):
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 
-if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed"}:
+if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash"}:
     request = json.load(sys.stdin)
     reply = brief if mode != "bad-schema" else {"kind": "brief", "brief": "Missing goals"}
     if mode == "duplicate-key":
         print('{"event":"reply","role":"ingest","reply":{"kind":"brief","brief":"x","brief":"y","goals":[{"description":"x","verification":"test"}],"memory_ids":[]}}', flush=True)
+    elif mode in {"partial", "partial-crash"}:
+        print(json.dumps({"event": "progress", "unit": "model_turn"}), flush=True)
+        print('{"event":"reply","role":"ingest","reply":', end="", flush=True)
     elif mode == "malformed":
         print("not json", flush=True)
     elif mode != "missing":
         print(json.dumps({"event": "reply", "role": "audit" if mode == "wrong-role" else request["role"], "reply": reply}), flush=True)
     marker.write_text(str(__import__("os").getpid()))
-    if mode == "reply-before-exit":
+    if mode in {"reply-before-exit", "partial-crash"}:
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
     if mode == "duplicate":

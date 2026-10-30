@@ -30,6 +30,9 @@ pub(super) fn write(path: &Path, value: &impl Serialize) -> Result<()> {
 /// A link publishes a complete claim or cancellation in one atomic operation.
 /// A late launcher cannot cross a cancellation, even after a controller crash.
 pub(super) fn cancel(path: &Path) -> Result<()> {
+    if path.try_exists()? {
+        return Ok(());
+    }
     let temporary = temporary(path);
     write(&temporary, &json!({"cancelled": true}))?;
     match fs::hard_link(&temporary, path) {

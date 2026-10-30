@@ -157,6 +157,11 @@ impl Supervisor {
         for key in self.active.keys(&delivery.node().0.to_string()) {
             self.stop_run(&key, delivery.epoch)?;
         }
+        self.active
+            .0
+            .lock()
+            .unwrap()
+            .remove(&delivery.node().0.to_string());
         Ok(())
     }
 }
@@ -182,7 +187,10 @@ impl Executor for Supervisor {
             return Fake::new(&self.fake_root).execute(delivery);
         };
         match inspect(&self.root(&delivery.key), delivery)? {
-            Reconciliation::Found(completion) => return Ok(completion),
+            Reconciliation::Found(completion) => {
+                self.active.remove(delivery);
+                return Ok(completion);
+            }
             Reconciliation::Pending => {
                 self.active.add(delivery);
                 return Ok(Completion::confirmed(vec![]));
@@ -237,7 +245,13 @@ impl Executor for Supervisor {
             Out::Effect {
                 kind: EffectKind::StartRun(role),
                 ..
-            } if protocol::role(role).is_some() => inspect(&self.root(&delivery.key), delivery),
+            } if protocol::role(role).is_some() => {
+                let result = inspect(&self.root(&delivery.key), delivery)?;
+                if !matches!(result, Reconciliation::Pending) {
+                    self.active.remove(delivery);
+                }
+                Ok(result)
+            }
             Out::Effect {
                 kind: EffectKind::StopRun,
                 ..

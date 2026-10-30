@@ -3,6 +3,7 @@ mod support;
 use serde_json::{Value, json};
 use std::{
     env, fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
@@ -147,6 +148,28 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--source-child") {
+        let settings: tl3_config::Store =
+            serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        let root = Path::new(&args[3]);
+        let config = config(&settings, root, "normal");
+        let supervisor = Supervisor::new(&config, &root.join("fakes")).unwrap();
+        let mut source = supervisor.source();
+        let (tx, rx) = mpsc::channel();
+        source
+            .poll_once(&mut Store::open(&settings).unwrap(), &tx)
+            .unwrap();
+        fs::write(root.join("source-ready"), "ready").unwrap();
+        thread::spawn(move || {
+            for input in rx {
+                if let Input::Observation { key, observation } = input {
+                    println!("{}", json!({"key": key, "observation": observation}));
+                }
+            }
+        });
+        source.run(tx).unwrap();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--controller-child") {
         let config_text = fs::read_to_string(&args[2]).unwrap();
         let settings: tl3_config::Store = serde_json::from_str(&config_text).unwrap();
@@ -184,8 +207,20 @@ fn main() {
     println!("test reply_requires_exit_zero_and_stop_waits_for_death ... ok");
     early_and_objections(&mut database);
     println!("test early_end_and_audit_disagreement_mapping ... ok");
+    never_started(&database.create("workers_unclaimed"));
+    println!("test unclaimed_crash_window_emits_no_failure_and_retries_same_key ... ok");
+    partial_crash(&database.create("workers_partial_crash"));
+    println!("test partial_last_line_at_sigkill_keeps_only_complete_progress ... ok");
+    killed_reply(&database.create("workers_reply_kill"));
+    println!("test sigkill_after_valid_reply_is_a_failed_exit ... ok");
+    killed_supervisor(&database.create("workers_supervisor_kill"));
+    println!("test supervisor_death_keeps_live_worker_and_discards_unrecorded_exit ... ok");
+    fake_stop(&database.create("workers_fake_stop"));
+    println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
+    event_source(&database.create("workers_events"));
+    println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
     database.stop();
-    println!("8 required worker supervisor scenarios passed; no skips");
+    println!("14 required worker supervisor scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -405,6 +440,7 @@ fn invalid_replies(settings: &tl3_config::Store) {
         "duplicate-key",
         "wrong-role",
         "malformed",
+        "partial",
     ] {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
@@ -579,4 +615,254 @@ fn late_launcher(settings: &tl3_config::Store) {
     supervisor.execute(&delivery).unwrap();
     assert!(!failed(&terminal(&mut supervisor, &delivery)));
     assert_eq!(attempts(&root_for(&config, &delivery.key)), 2);
+}
+
+fn never_started(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    let run_root = root_for(&config, &run.key);
+    let attempt = run_root.join("attempt-00000000");
+    fs::create_dir_all(&attempt).unwrap();
+    fs::write(
+        run_root.join("delivery.json"),
+        serde_json::to_vec(&run).unwrap(),
+    )
+    .unwrap();
+    // Controller died between create_dir(attempt) and the launcher's claim.
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert!(matches!(
+        supervisor.reconcile(&run).unwrap(),
+        Reconciliation::Absent
+    ));
+    source.poll_once(&mut store, &tx).unwrap();
+    assert!(
+        rx.try_recv().is_err(),
+        "never-started attempts must not charge a failure"
+    );
+    assert_eq!(source.active_runs(), 0);
+    supervisor.execute(&run).unwrap();
+    supervisor.execute(&run).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &run)));
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        Input::Observation {
+            observation: Observation::WorkerReply { .. },
+            ..
+        }
+    ));
+    assert!(rx.try_recv().is_err());
+    assert_eq!(attempts(&run_root), 2);
+    fs::write(
+        run_root.join("attempt-00000001/stdout.jsonl"),
+        "broken history",
+    )
+    .unwrap();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        source.active_runs(),
+        0,
+        "finished history must remain retired"
+    );
+    assert!(rx.try_recv().is_err());
+}
+
+fn kill_record(path: &Path) {
+    let record: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &record["pid"].to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+fn killed_reply(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "reply-before-exit");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let row = &store.worker_progress(None).unwrap()[0];
+    assert!(row.started_ms > 0);
+    assert_eq!(row.last_progress_ms, None);
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let output: Value =
+        serde_json::from_slice(&fs::read(attempt.join("stdout.jsonl")).unwrap()).unwrap();
+    assert_eq!(output["event"], "reply");
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert!(
+        rx.try_recv().is_err(),
+        "a reply alone cannot complete a run"
+    );
+    kill_record(&attempt.join("process.json"));
+    assert!(failed(&terminal(&mut supervisor, &run)));
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        Input::Observation {
+            observation: Observation::Kernel(Event::Reply {
+                reply: Reply::RunFailed,
+                ..
+            }),
+            ..
+        }
+    ));
+}
+
+fn killed_supervisor(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "reply-before-exit");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    kill_record(&attempt.join("claim.json"));
+    // A dead supervisor does not make its still-live worker absent.
+    assert!(matches!(
+        supervisor.reconcile(&run).unwrap(),
+        Reconciliation::Pending
+    ));
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert!(rx.try_recv().is_err());
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+    wait(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
+    assert!(!attempt.join("exit.json").exists());
+    source.poll_once(&mut store, &tx).unwrap();
+    assert!(
+        rx.try_recv().is_err(),
+        "discard a valid reply without a recorded exit"
+    );
+    supervisor.execute(&run).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &run)));
+    assert_eq!(attempts(&root_for(&config, &run.key)), 2);
+}
+
+fn fake_stop(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let fakes = root.path().join("fakes");
+    let mut supervisor = Supervisor::new(&config, &fakes).unwrap();
+    let mut run = delivery();
+    run.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Plan),
+        head: None,
+    };
+    supervisor.execute(&run).unwrap();
+    // An unrelated historical record cannot be read by stop_node.
+    let history = config.workers.runs.join("old-history");
+    fs::create_dir(&history).unwrap();
+    fs::write(history.join("delivery.json"), "invalid history").unwrap();
+    run.key = "effect:0:2".into();
+    run.output = Out::Effect {
+        node: NodeId(0),
+        seq: 2,
+        kind: EffectKind::StopRun,
+        head: None,
+    };
+    supervisor.execute(&run).unwrap();
+    assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
+    assert!(matches!(
+        supervisor.reconcile(&run).unwrap(),
+        Reconciliation::Found(_)
+    ));
+}
+
+fn event_source(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let settings_path = root.path().join("settings.json");
+    fs::write(&settings_path, serde_json::to_vec(&json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs})).unwrap()).unwrap();
+    materials(&mut Store::open(settings).unwrap());
+    let mut child = Command::new(env::current_exe().unwrap())
+        .arg("--source-child")
+        .arg(&settings_path)
+        .arg(root.path())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait(|| root.path().join("source-ready").exists());
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).unwrap();
+        tx.send(line).unwrap();
+    });
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery()).unwrap();
+    let line = rx.recv_timeout(Duration::from_secs(90));
+    child.kill().unwrap();
+    child.wait().unwrap();
+    reader.join().unwrap();
+    let event: Value = serde_json::from_str(&line.unwrap()).unwrap();
+    assert_eq!(event["observation"]["WorkerReply"]["role"], "ingest");
+}
+
+fn partial_crash(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "partial-crash");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let bytes = fs::read(attempt.join("stdout.jsonl")).unwrap();
+    assert!(!bytes.ends_with(b"\n"));
+    let complete = bytes.iter().position(|b| *b == b'\n').unwrap() + 1;
+    let mut source = supervisor.source();
+    let (tx, rx) = mpsc::channel();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(
+        store.worker_progress(None).unwrap()[0].output_offset,
+        complete as i64
+    );
+    assert!(rx.try_recv().is_err());
+    kill_record(&attempt.join("process.json"));
+    assert!(failed(&terminal(&mut supervisor, &run)));
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        source.active_runs() == 0
+    });
+    assert_eq!(
+        store.worker_progress(None).unwrap()[0].output_offset,
+        complete as i64
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        Input::Observation {
+            observation: Observation::Kernel(Event::Reply {
+                reply: Reply::RunFailed,
+                ..
+            }),
+            ..
+        }
+    ));
 }

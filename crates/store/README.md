@@ -137,16 +137,25 @@ It then reuses the killed event key successfully.
 
 ## Worker data
 
-Migration 2 adds supplied worker materials and a liveness side table.
+Migration 3 adds supplied worker materials and a liveness side table.
 `put_worker_materials` supplies the original issue and repository text for a
 request node. `worker_materials` reads it without taking controller ownership.
 
-`record_worker_progress` accepts a run key, node, epoch, attempt, byte offset and
-progress unit. Only a newer attempt or output offset updates the database time.
-Replaying stdout leaves the last progress time unchanged. Old epochs cannot
-update the table. `worker_progress(None)` reads all runs, newest first.
-`worker_progress(Some(node))` filters by request node. No row exists before the
-first progress event. These writes never change the kernel world revision.
+`claim_worker` records the attempt start before launching it. Repeating the same
+claim preserves its time. A later attempt resets progress. `record_worker_progress`
+accepts a run key, attempt, complete output byte offset and progress unit.
+Only a newer offset updates progress time. Replaying stdout leaves it unchanged.
+Old epochs cannot update the table. These writes never change the kernel revision.
+
+`tl3_worker_progress` has one row per `run_key`, with `node_id`, `epoch`, `attempt`,
+`output_offset`, `unit`, `started_ms` and nullable `last_progress_ms`. Times are
+Unix milliseconds observed by Postgres. Before progress, the offset is zero,
+the unit is empty and `last_progress_ms` is NULL. Ticket #15 uses `started_ms`
+when a run never reports progress. Ticket #18's status hook receives a Postgres
+`Transaction` and queries this table directly within its read-only transaction.
+The `(node_id, last_progress_ms DESC)` index supports per-node reads.
+`worker_progress(None)` reads all runs by start time, newest first.
+`worker_progress(Some(node))` filters by request node.
 
 The controller stores accepted ingest replies, goals and audits as world rows
 in the same transaction as their kernel event. `worker_document(node, name)`

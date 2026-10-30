@@ -62,6 +62,10 @@ impl WorkerOutputSource {
         }
     }
 
+    pub fn active_runs(&self) -> usize {
+        self.runs.len()
+    }
+
     fn watch(&self, path: &std::path::Path) -> Result<i32> {
         io(inotify::add_watch(
             self.inotify.as_ref().unwrap(),
@@ -187,7 +191,7 @@ impl WorkerOutputSource {
             }
         }
         for (wd, flags, name) in events {
-            if flags.contains(inotify::ReadFlags::Q_OVERFLOW) {
+            if flags.contains(inotify::ReadFlags::QUEUE_OVERFLOW) {
                 return Err(Error::Invalid(
                     "worker inotify queue overflow; restart source to rebuild active runs",
                 ));
@@ -252,6 +256,11 @@ impl WorkerOutputSource {
                 self.watches.insert(wd, run.root.clone());
                 run.watches.push(wd);
             }
+        }
+        if let Some((_, attempt)) = &run.attempt
+            && read(&attempt.join("claim.json"))?.is_some_and(|c| c["cancelled"] == true)
+        {
+            return Ok(false);
         }
         let (Some(delivery), Some((number, attempt))) = (&run.delivery, &run.attempt) else {
             return Ok(true);
