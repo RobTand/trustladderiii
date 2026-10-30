@@ -18,7 +18,7 @@ fn main() {
         return;
     }
     let mut database = Database::start();
-    for (name, test) in [
+    let cases = [
         (
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
@@ -33,7 +33,8 @@ fn main() {
         ("read_only_reader", read_only_reader),
         ("reader_schema_versions", reader_schema_versions),
         ("arrival_within_transaction", arrival_within_transaction),
-    ] {
+    ];
+    for (name, test) in &cases {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
@@ -46,7 +47,11 @@ fn main() {
     assert_eq!(Reader::open(&settings).unwrap().load().unwrap(), before);
     println!("test reader_restart ... ok");
     database.stop();
-    println!("12 Postgres integration scenarios passed; no skips");
+    // reader_restart runs outside the list because it restarts Postgres.
+    println!(
+        "{} Postgres integration scenarios passed; no skips",
+        cases.len() + 1
+    );
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
