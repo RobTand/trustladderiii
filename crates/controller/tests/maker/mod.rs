@@ -791,7 +791,12 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&delivery).unwrap();
-    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    assert!(
+        !failed(&terminal(&mut supervisor, &delivery)),
+        "{}",
+        fs::read_to_string(root_for(&config, &delivery.key).join("attempt-00000000/stderr.log"))
+            .unwrap_or_default()
+    );
     let accepted_head = git(&worktree, &["rev-parse", "HEAD"]);
     let mut store = Store::open(settings).unwrap();
     let mut commit =

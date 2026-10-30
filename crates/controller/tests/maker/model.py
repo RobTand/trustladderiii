@@ -107,7 +107,12 @@ def run_with_mismatch(request, emit):
             event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
             marker.touch()
         emit(event)
-    return run_worker(request, emit_reply)
+    try:
+        return run_worker(request, emit_reply)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 with patch.object(runtime, 'create_model', create_model), \
