@@ -1,5 +1,6 @@
 """Runner command boundaries. Execute through PrismaBuild."""
 
+import configparser
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,7 @@ class RunnerTests(unittest.TestCase):
                     "PATH": f"{self.bin}:{os.environ['PATH']}",
                     "CALLS": str(self.calls), "CI_RUNNER_IMAGE": IMAGE}
         self.env.pop("CI_RUNNER_CPUSET", None)
-        for tool in ("gh", "podman", "systemctl", "uname", "id"):
+        for tool in ("gh", "podman", "systemctl", "systemd-notify", "uname", "id"):
             path = self.bin / tool
             path.write_text("#!/usr/bin/env python3\n" + '''import json, os, sys
 from pathlib import Path
@@ -67,6 +68,36 @@ elif name == "id": print("1000")
             self.assertIn(option, container)
         self.assertFalse(any(c.startswith(("--volume", "--mount", "--env")) for c in container))
         self.assertNotIn(JIT, " ".join(container))
+
+    def test_slot_units_keep_restarting_with_backoff(self):
+        for profile, prefix in (("tl3", "tl3-ci-runner"),
+                                ("sandbox", "tl3-ci-runner-sandbox")):
+            with self.subTest(profile=profile):
+                result = self.run_script("install.sh", "0", profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                unit = configparser.ConfigParser(interpolation=None)
+                unit.read(self.home / f".config/systemd/user/{prefix}@.service")
+                self.assertEqual(unit["Unit"].get("StartLimitIntervalSec"), "0",
+                                 "successful job exits must never exhaust the start burst")
+                self.assertGreater(int(unit["Service"]["RestartSteps"]), 0)
+                self.assertEqual(unit["Service"]["RestartMaxDelaySec"], "5min")
+                self.assertEqual(unit["Service"]["NotifyAccess"], "all")
+
+    def test_listener_receives_jit_in_environment(self):
+        listener = self.bin / "listener"
+        listener.write_text("#!/usr/bin/env python3\n" +
+                            "import json, os, sys\n" +
+                            "print(json.dumps([sys.argv[1:], " +
+                            "os.environ.get('ACTIONS_RUNNER_INPUT_JITCONFIG')]))\n")
+        listener.chmod(0o700)
+        entrypoint = self.home / "entrypoint.sh"
+        entrypoint.write_text((ROOT / "runner-entrypoint.sh").read_text().replace(
+            "/home/runner/bin/Runner.Listener", str(listener)))
+        result = subprocess.run(["bash", str(entrypoint)], env=self.env,
+                                input=f"{JIT}\n", text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [["run"], JIT],
+                         "the shared listener must receive JIT input through its environment")
 
     def test_default_slot_keeps_tl3_routing(self):
         self.assert_slot("tl3-ci-runner", "trustladderiii", "tl3-fleet", "tl3-ci-runner")
