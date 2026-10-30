@@ -227,17 +227,25 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
 }
 
 static MENTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^a-zA-Z0-9_])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)").unwrap()
+    Regex::new(
+        r"(?:^|[^a-zA-Z0-9])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)",
+    )
+    .unwrap()
 });
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#|\bGH-)(?P<number>[0-9]+)").unwrap()
+    Regex::new(r"(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#(?P<number>[0-9]+)").unwrap()
+});
+
+static GH_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[^a-z0-9])(?P<reference>gh\\?-(?P<number>\d+))").unwrap()
 });
 
 static REFERENCE_URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:https?://)?github\.com/(?P<repo>[a-z0-9_.-]+/[a-z0-9_.-]+)/(?:issues|pull)/(?P<number>[0-9]+)\b").unwrap()
 });
-static HTML_ENTITY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);").unwrap());
+static HTML_ENTITY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[a-zA-Z][a-zA-Z0-9]*;)").unwrap()
+});
 
 /// Mask code using GFM ranges so tables, nested blocks and multi-backtick spans
 /// have the same meaning to this rule as they do to the Markdown renderer.
@@ -264,27 +272,41 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     // Complete UTF-8 ranges were replaced with ASCII spaces.
     let prose = normalize(&String::from_utf8(prose).unwrap());
     let mut errors = Vec::new();
-    for entity in HTML_ENTITY.find_iter(&prose) {
-        let violation = Violation::HtmlEntity(entity.as_str().to_owned());
+    // Entity syntax has its own feedback; its numeric payload is not an issue reference.
+    let prose = HTML_ENTITY.replace_all(&prose, |capture: &regex::Captures<'_>| {
+        let entity = &capture[0];
+        // Use the Markdown parser's entity names so ordinary ampersands remain prose.
+        if !entity.starts_with("&#")
+            && !Parser::new(entity)
+                .any(|event| matches!(event, Event::Text(decoded) if decoded.as_ref() != entity))
+        {
+            return entity.to_owned();
+        }
+        let violation = Violation::HtmlEntity(entity.to_owned());
         if !errors.contains(&violation) {
             errors.push(violation);
         }
-    }
-    // Entity syntax has its own feedback; its numeric payload is not an issue reference.
-    let prose = HTML_ENTITY.replace_all(&prose, " ");
+        " ".to_owned()
+    });
     for capture in MENTION.captures_iter(&prose) {
         let violation = Violation::Mention(capture["mention"].to_owned());
         if !errors.contains(&violation) {
             errors.push(violation);
         }
     }
-    for capture in REFERENCE.captures_iter(&prose) {
+    for capture in REFERENCE
+        .captures_iter(&prose)
+        .chain(GH_REFERENCE.captures_iter(&prose))
+    {
         let number = capture["number"].parse::<u64>().ok();
         if capture.name("repo").is_some()
             || number.is_none()
             || ![policy.own_issue, policy.own_pull_request].contains(&number)
         {
-            let violation = Violation::ForeignReference(capture[0].to_owned());
+            let token = capture
+                .name("reference")
+                .map_or(&capture[0], |m| m.as_str());
+            let violation = Violation::ForeignReference(token.to_owned());
             if !errors.contains(&violation) {
                 errors.push(violation);
             }
