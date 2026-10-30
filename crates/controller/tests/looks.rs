@@ -1327,6 +1327,10 @@ fn r3(settings: &tl3_config::Store, case: &str) {
         let running = source.spawn(tx);
         bell.request().reply(0, serde_json::json!([]));
         let mut waiting = bell.request();
+        assert!(
+            waiting.line.contains(&waits::key()),
+            "declared action joins the awaited set"
+        );
         // Startup captures the cursor, then rereads outstanding waits once.
         for input in rx.try_iter() {
             tl3_controller::ingress::apply(&mut c, input).unwrap();

@@ -1,9 +1,14 @@
 """Print ticket 15's PrismaBuild verification campaign from a clean commit."""
+import argparse
 import json
 from pathlib import Path
 import subprocess
 
-root = Path(__file__).resolve().parents[3]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--checkout", type=Path, default=Path(__file__).resolve().parents[3])
+parser.add_argument("--red", action="store_true", help="run the focused review regressions on dl380g10")
+args = parser.parse_args()
+root = args.checkout.resolve()
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
     raise SystemExit("Commit changes before submitting.")
 if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=root,
@@ -33,4 +38,10 @@ rows.extend({
     "priority": -10, "timeout_s": 3600, "env": env,
     "argv": ["/home/rob/.local/bin/uv", "run", "--locked", "--project", "workers", "--python", "3.14+gil", "python", "-m", "pytest", "workers/tests"],
 } for host in ["dl380g10", "sparky", "sparklina"])
+if args.red:
+    rows = [{
+        "cwd": str(root), "tags": ["dl380g10"], "cpus": 2, "demand": {"mem_gb": 6},
+        "priority": -10, "timeout_s": 3600, "env": env,
+        "argv": ["bash", "-c", "cargo test -p tl3-controller --locked --test looks -- --r3; a=$?; cargo test -p tl3-controller --locked --test workers -- --r3; b=$?; cargo test -p tl3-controller --locked --test prismabuild -- --r3; c=$?; cargo test -p tl3-store --locked --test postgres -- --r3; d=$?; exit $((a|b|c|d))"],
+    }]
 print(json.dumps(rows, indent=2))

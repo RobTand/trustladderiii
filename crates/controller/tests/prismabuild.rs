@@ -6,15 +6,10 @@ mod support;
 use std::{
     collections::BTreeSet,
     fs,
-    io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
+    io::{BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -1532,7 +1527,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("22 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("23 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -1555,7 +1550,15 @@ fn declared_wait_uses_bell() {
         "the declared key is in the bell's awaited set"
     );
     while receiver.try_recv().is_ok() {}
-    finish(root.path(), key.as_str(), "done");
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        serde_json::json!({
+            "schema":"prismaquant.prismabuild.pool_outcome.v1", "action_key":key,
+            "published_unix":100, "status":"executed", "detail":{"returncode":0}
+        })
+        .to_string(),
+    )
+    .unwrap();
     waiting.reply(1, serde_json::json!([{"seq":1, "dir":"done", "key":key}]));
     assert!(
         receiver.recv_timeout(Duration::from_secs(10)).is_ok(),

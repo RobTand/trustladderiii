@@ -506,7 +506,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn declared_wait_protocol_is_strict_and_owner_independent() {
+    fn declared_wait_protocol_accepts_only_readable_owners() {
         let event = serde_json::json!({"event":"progress", "unit":"external_wait",
             "wait":{"upstream":"prismabuild", "key":"a".repeat(64)}});
         assert!(progress(&event));
