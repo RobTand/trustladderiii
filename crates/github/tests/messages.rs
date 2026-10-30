@@ -185,3 +185,27 @@ fn three_options_and_punctuation_are_allowed() {
     d.obstacle = "The artwork needs permission. You can grant it or choose another image.".into();
     assert!(check(&d, &Policy::default()).is_ok());
 }
+
+#[test]
+fn invisible_characters_cannot_fill_required_sections() {
+    rejects(
+        |d| d.obstacle = "\u{200b} \u{2060}".into(),
+        Violation::MissingObstacle,
+    );
+    rejects(
+        |d| d.options[0].action = "\u{200b}".into(),
+        Violation::MissingOptionAction(0),
+    );
+    rejects(
+        |d| d.options[0].outcome = "\u{200b}".into(),
+        Violation::MissingOptionOutcome(0),
+    );
+    rejects(
+        |d| d.recommendation_reason = "\u{200b}".into(),
+        Violation::MissingRecommendationReason,
+    );
+    rejects(
+        |d| d.how_to_answer = "\u{200b}".into(),
+        Violation::MissingAnswerInstructions,
+    );
+}

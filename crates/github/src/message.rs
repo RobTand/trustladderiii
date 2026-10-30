@@ -77,16 +77,16 @@ static LOG: LazyLock<Regex> = LazyLock::new(|| {
 /// A deterministic format/content check. It cannot judge whether prose is true.
 pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Violation>> {
     let mut errors = Vec::new();
-    if draft.issue_title.trim().is_empty() || draft.request_quote.trim().is_empty() {
+    if is_blank(&draft.issue_title) || is_blank(&draft.request_quote) {
         errors.push(Violation::MissingRequest);
     } else if draft.request_quote != draft.issue_title {
         errors.push(Violation::RequestDoesNotQuoteTitle);
     }
-    if draft.obstacle.trim().is_empty() {
+    if is_blank(&draft.obstacle) {
         errors.push(Violation::MissingObstacle);
     }
-    let sentences = draft
-        .obstacle
+    let obstacle = normalize(&draft.obstacle);
+    let sentences = obstacle
         .split_terminator(['.', '!', '?'])
         .filter(|s| !s.trim().is_empty())
         .count();
@@ -97,10 +97,10 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         errors.push(Violation::OptionCount);
     }
     for (i, option) in draft.options.iter().enumerate() {
-        if option.action.trim().is_empty() {
+        if is_blank(&option.action) {
             errors.push(Violation::MissingOptionAction(i));
         }
-        if option.outcome.trim().is_empty() {
+        if is_blank(&option.outcome) {
             errors.push(Violation::MissingOptionOutcome(i));
         }
     }
@@ -110,10 +110,10 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     {
         errors.push(Violation::MissingRecommendation);
     }
-    if draft.recommendation_reason.trim().is_empty() {
+    if is_blank(&draft.recommendation_reason) {
         errors.push(Violation::MissingRecommendationReason);
     }
-    if draft.how_to_answer.trim().is_empty() {
+    if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
     let mut rendered = format!(
@@ -136,7 +136,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         ));
     }
     rendered.push_str(&format!("\n{}", draft.how_to_answer));
-    let normalized: String = rendered.nfkc().filter(|c| !matches!(*c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')).collect();
+    let normalized = normalize(&rendered);
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }
@@ -164,4 +164,19 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     } else {
         Err(errors)
     }
+}
+
+fn normalize(text: &str) -> String {
+    text.nfkc()
+        .filter(|c| {
+            !matches!(*c,
+                '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' |
+                '\u{2060}'..='\u{206f}' | '\u{feff}'
+            )
+        })
+        .collect()
+}
+
+fn is_blank(text: &str) -> bool {
+    normalize(text).trim().is_empty()
 }
