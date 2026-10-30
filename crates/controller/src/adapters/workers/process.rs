@@ -90,19 +90,6 @@ fn stat_matches(stat: std::io::Result<String>, start: u64) -> Result<bool> {
     Ok(actual_start == start && !matches!(fields.first(), Some(&"Z" | &"X")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::stat_matches;
-
-    #[test]
-    fn exited_process_during_stat_read_is_not_alive() {
-        for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
-            assert!(!stat_matches(Err(std::io::Error::from(error)), 0).unwrap());
-        }
-        assert!(stat_matches(Err(std::io::ErrorKind::PermissionDenied.into()), 0).is_err());
-    }
-}
-
 pub(super) fn alive(path: &Path) -> Result<bool> {
     match read(path)? {
         Some(value) if value["cancelled"] == true => Ok(false),
@@ -163,4 +150,17 @@ fn temporary(path: &Path) -> PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stat_matches;
+
+    #[test]
+    fn exited_process_during_stat_read_is_not_alive() {
+        for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
+            assert!(!stat_matches(Err(std::io::Error::from(error)), 0).unwrap());
+        }
+        assert!(stat_matches(Err(std::io::ErrorKind::PermissionDenied.into()), 0).is_err());
+    }
 }
