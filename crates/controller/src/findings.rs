@@ -58,6 +58,7 @@ pub(crate) fn ci_report(checks: &[CiFailure]) -> String {
 
 // Bound feedback persisted from external reports and sent back to the maker.
 pub const MAX_FAILED_TESTS: usize = 20;
+pub(crate) const MAX_REVIEW_FINDINGS: usize = 20;
 pub(crate) const MAX_OUTSIDE_PATHS: usize = 100;
 pub(crate) const MAX_PATH_CHARS: usize = 4096;
 pub const MAX_MESSAGE_CHARS: usize = 1000;

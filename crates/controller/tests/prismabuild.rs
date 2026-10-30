@@ -199,11 +199,19 @@ fn bounded_failure_details() {
     match &result.observations[0] {
         Observation::Checks {
             failed_tests,
+            results,
             report,
             pass,
             ..
         } => {
             assert!(*report && !*pass);
+            assert!(
+                results
+                    .iter()
+                    .flat_map(|result| result["tests"].as_array().unwrap())
+                    .all(|test| test["message"] == "é".repeat(1000)),
+                "reviewer check messages must be clipped"
+            );
             assert_eq!(failed_tests.len(), 20);
             assert_eq!(failed_tests[0].test, "test_value.py::test_0");
             assert!(

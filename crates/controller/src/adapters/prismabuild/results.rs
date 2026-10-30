@@ -170,7 +170,14 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
         {
             return Err(Error::Invalid("PrismaBuild result log changed"));
         }
-        if let Some(parsed) = parse(&raw, job) {
+        if let Some(mut parsed) = parse(&raw, job) {
+            for test in parsed
+                .results
+                .iter_mut()
+                .flat_map(|result| &mut result.tests)
+            {
+                test.message = clipped(&test.message, MAX_MESSAGE_CHARS);
+            }
             failed_tests = parsed
                 .results
                 .iter()

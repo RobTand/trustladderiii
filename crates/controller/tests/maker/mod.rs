@@ -2,6 +2,10 @@ use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
 mod real;
 
+pub(super) fn review_trial(settings: &tl3_config::Store) {
+    real::review_feedback(settings);
+}
+
 pub(super) fn rebase_trial(settings: &tl3_config::Store, new_edits: bool) {
     real::rebase_revisit(settings, new_edits);
 }
@@ -195,7 +199,7 @@ fn registry(
                 .workers
                 .command
                 .get(1)
-                .is_some_and(|mode| mode == "review-fix"),
+                .is_some_and(|mode| mode == "review-fix" || mode == "review-feedback"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(
@@ -852,6 +856,8 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 pub(super) fn run(database: &mut Database) {
     real::reproducing_fix(&database.create("maker_reproducing_fix"));
     println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
+    real::review_feedback(&database.create("maker_review_feedback"));
+    println!("test reviewer_blockers_reach_real_maker ... ok");
     legacy_session(&database.create("maker_legacy_session"));
     println!("test maker_legacy_session_fails_closed ... ok");
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));

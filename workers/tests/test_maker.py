@@ -899,3 +899,12 @@ def test_failed_checks_do_not_require_new_tests(maker_request):
         'kind': 'failed_check', 'report': 'CI test failed.', 'goal_ids': ['greeting'],
     }])
     maker._check_reply(inputs, DONE)
+
+
+def test_standing_rule_feedback_needs_no_goal_citation(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'review_finding', 'report': 'Protect the test report stream.', 'goal_ids': [],
+    }]
+    validate('maker-input', maker_request['inputs'])
+    maker._check_inputs(maker_request['inputs'])

@@ -37,7 +37,21 @@ def create_model(request):
                          {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Empty names fail.', 'evidence': 'greet has no empty-name coverage.'},
                          {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Explain the greeting.', 'evidence': 'The documentation omits the greeting.'},
                      ], 'findings': []})
-        return Model(responses=[AIMessage(content=json.dumps(reply))])
+        if mode != 'review-feedback':
+            return Model(responses=[AIMessage(content=json.dumps(reply))])
+        blockers = [
+            {'citation': {'kind': 'goal', 'id': 'greeting'},
+             'problem': 'The greeting lacks context.', 'evidence': 'greeting.py returns only hello.'},
+            {'citation': {'kind': 'standing_rule', 'id': 'test-report-integrity'},
+             'problem': 'The report stream is overwritten.', 'evidence': 'The reporter replaces stdout.'},
+        ]
+        blockers.extend({'citation': {'kind': 'goal', 'id': 'greeting'},
+                         'problem': f'Problem {i} ' + 'é' * 2000,
+                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(30))
+        return Model(responses=[AIMessage(content=json.dumps({
+            'verdict': 'changes', 'blocking_findings': blockers,
+            'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],
+        }))])
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
@@ -87,6 +101,9 @@ def create_model(request):
             {'finding_id': findings[1]['id'], 'reason': 'This is a documentation correction.'},
         ]
         reproducing_turns = [call('write', {'path': 'test_greeting.py', 'content': "def test_hello():\n    from greeting import greet\n    assert greet() == 'hello'\ndef test_empty():\n    from greeting import greet\n    assert greet() == 'hello'\n"})]
+    if mode == 'review-feedback' and inputs['round'] == 1:
+        reply['reproductions'] = [{'finding_id': f['id'], 'reason': 'This is a report integrity correction.'}
+                                  for f in inputs['feedback'] if f.get('reviewed_sha') == inputs.get('reviewed_sha')]
     if mode == 'unmet':
         reply['self_check'][0] = {'goal_id': inputs['goals'][0]['id'], 'status': 'not_met', 'why': 'The interface is unresolved.'}
     return Model(responses=[
@@ -126,6 +143,12 @@ def run_with_mismatch(request, emit):
             # Corrupt a schema-valid reply after the real worker has committed.
             event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
             marker.touch()
+        if mode == 'self-check-mismatch' and event['event'] == 'reply':
+            marker = Path(request['session_file']).parent / 'mismatch-injected'
+            if not marker.exists():
+                # Corrupt a schema-valid reply after the real worker has committed.
+                event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
+                marker.touch()
         emit(event)
     return run_worker(request, emit_reply)
 
