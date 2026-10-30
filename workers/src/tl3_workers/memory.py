@@ -92,7 +92,7 @@ class Summary:
                 activity["tests"].append(bounded({
                     "selectors": args.get("tests"), "status": result.get("status", "tool_error" if error else "unknown"),
                     "action_key": result.get("action_key"), "totals": result.get("totals"),
-                    "tests": [{"name": item.get("name"), "outcome": item.get("outcome")}
+                    "tests": [{"test": item.get("test"), "outcome": item.get("outcome")}
                               for item in result.get("tests", [])[:16]],
                 }))
             self.save()

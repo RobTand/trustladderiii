@@ -53,7 +53,7 @@ fn sensitive_key(key: &str) -> bool {
 fn safe_text(text: &str) -> String {
     static SECRET: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-        r"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY|(?:sk-|ghp_|gho_|github_pat_)[a-zA-Z0-9_-]+|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.|https?://[^/\s:@]+:[^/\s@]+@|(?:api[_-]?key|password|passwd|secret|token|authorization|cookie)\s*[=:]\s*\S+)"
+        r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY|(?:sk-|ghp_|gho_|github_pat_)[a-zA-Z0-9_-]+|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.|https?://[^/\s:@]+:[^/\s@]+@|(?:api[_-]?key|password|passwd|secret|token|authorization|cookie)["']?\s*[=:]\s*\S+)"#
     ).expect("memory secret pattern")
     });
     if SECRET.is_match(text) {
