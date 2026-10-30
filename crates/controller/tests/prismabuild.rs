@@ -1507,6 +1507,7 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
             rob: 1,
             slots: 1,
             pool: 1,
+            operations: None,
         },
     )
     .unwrap();
