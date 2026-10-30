@@ -1,6 +1,5 @@
 use crate::{ActionKey, Error, PrismaBuild};
 use serde::Deserialize;
-use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Component, Path, PathBuf},
@@ -32,7 +31,63 @@ pub struct ActionRecord {
     pub published_unix: f64,
     pub attempts: Vec<Attempt>,
     pub lease: Option<Lease>,
-    pub detail: Value,
+    pub returncode: Option<i32>,
+    pub termination_reason: Option<String>,
+    pub stderr_tail: String,
+    pub progress_observation: Option<ProgressObservation>,
+}
+
+/// Maximum retained stderr suffix, in UTF-8 bytes.
+pub const MAX_STDERR_TAIL_BYTES: usize = 8192;
+
+/// Only the progress counters and timestamps used by controller looks are retained.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct ProgressObservation {
+    pub sampled_unix: Option<f64>,
+    pub accepted_count: Option<u64>,
+    pub rejected_count: Option<u64>,
+    pub last_rejection: Option<String>,
+    pub last_accepted: Option<AcceptedProgress>,
+    pub quiet_s: Option<f64>,
+    pub grace_s: Option<f64>,
+    pub phase: Option<String>,
+    pub phases_entered: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct AcceptedProgress {
+    pub phase: String,
+    pub units_completed: f64,
+    pub reported_unix: f64,
+    pub unit: Option<String>,
+}
+
+/// Results are independent: one unreadable key does not hide other observations.
+pub type Observations = BTreeMap<ActionKey, Result<Option<ActionRecord>, Error>>;
+
+#[derive(Default, Deserialize)]
+struct Detail {
+    returncode: Option<i32>,
+    action_returncode: Option<i32>,
+    termination_reason: Option<String>,
+    #[serde(default, rename = "stderr", deserialize_with = "stderr_tail")]
+    stderr_tail: String,
+    progress_observation: Option<ProgressObservation>,
+}
+
+impl Detail {
+    fn returncode(&self) -> Option<i32> {
+        self.action_returncode.or(self.returncode)
+    }
+}
+
+fn stderr_tail<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let text = Option::<String>::deserialize(deserializer)?.unwrap_or_default();
+    let mut start = text.len().saturating_sub(MAX_STDERR_TAIL_BYTES);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    Ok(text[start..].to_owned())
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -40,7 +95,7 @@ pub struct Lease {
     pub heartbeat_unix: f64,
     pub owner: String,
     pub host: String,
-    pub progress_observation: Option<Value>,
+    pub progress_observation: Option<ProgressObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,7 +103,10 @@ pub struct Attempt {
     pub number: u32,
     pub status: String,
     pub disposition: String,
-    pub detail: Value,
+    pub returncode: Option<i32>,
+    pub termination_reason: Option<String>,
+    pub stderr_tail: String,
+    pub progress_observation: Option<ProgressObservation>,
 }
 
 impl Attempt {
@@ -62,17 +120,24 @@ fn lease_lost(status: &str) -> bool {
 }
 
 #[derive(Deserialize)]
+struct LeaseWire {
+    schema: String,
+    action_key: ActionKey,
+    #[serde(flatten)]
+    lease: Lease,
+}
+
+#[derive(Deserialize)]
 struct Record {
     schema: String,
     action_key: ActionKey,
     published_unix: f64,
     status: Option<String>,
     #[serde(default)]
-    detail: Value,
+    detail: Detail,
     #[serde(default)]
     attempt_history: Vec<Link>,
-    #[serde(default)]
-    attempt_history_before_withdrawal: Vec<Link>,
+    withdrawn_attempt: Option<Box<Record>>,
 }
 
 #[derive(Deserialize)]
@@ -89,7 +154,7 @@ struct AttemptWire {
     attempt: u32,
     status: String,
     disposition: String,
-    detail: Value,
+    detail: Detail,
 }
 
 fn invalid(path: &Path, reason: impl Into<String>) -> Error {
@@ -157,15 +222,7 @@ impl PrismaBuild {
             return Ok(None);
         };
         let status = record.status.as_deref();
-        let returncode = match record.detail.get("returncode") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(
-                value
-                    .as_i64()
-                    .and_then(|n| i32::try_from(n).ok())
-                    .ok_or_else(|| invalid(&path, "invalid returncode"))?,
-            ),
-        };
+        let returncode = record.detail.returncode();
         let state = match STATES[rank] {
             "ready" => ActionState::Queued,
             "claimed" => ActionState::Claimed,
@@ -187,7 +244,20 @@ impl PrismaBuild {
         let mut attempts = Vec::new();
         let mut previous = 0;
         let history = if state == ActionState::Withdrawn {
-            record.attempt_history_before_withdrawal
+            if let Some(withdrawn) = record.withdrawn_attempt {
+                if withdrawn.action_key != record.action_key
+                    || withdrawn.published_unix != record.published_unix
+                    || withdrawn.schema != ITEM_SCHEMA
+                {
+                    return Err(invalid(
+                        &path,
+                        "withdrawn attempt identity or schema mismatch",
+                    ));
+                }
+                withdrawn.attempt_history
+            } else {
+                record.attempt_history
+            }
         } else {
             record.attempt_history
         };
@@ -224,23 +294,24 @@ impl PrismaBuild {
                 number: attempt.attempt,
                 status: attempt.status,
                 disposition: attempt.disposition,
-                detail: attempt.detail,
+                returncode: attempt.detail.returncode(),
+                termination_reason: attempt.detail.termination_reason,
+                stderr_tail: attempt.detail.stderr_tail,
+                progress_observation: attempt.detail.progress_observation,
             });
         }
         let lease = if state == ActionState::Claimed {
             let lease_path = root.join("claimed").join(format!("{key}.lease"));
-            let raw: Option<Value> = document(&lease_path).await?;
+            let raw: Option<LeaseWire> = document(&lease_path).await?;
             match raw {
                 None => None,
                 Some(value) => {
-                    if value.get("action_key").and_then(Value::as_str) != Some(key.as_str())
-                        || value.get("schema").and_then(Value::as_str)
-                            != Some("prismaquant.prismabuild.pool_lease.v1")
+                    if value.action_key != *key
+                        || value.schema != "prismaquant.prismabuild.pool_lease.v1"
                     {
                         return Err(invalid(&lease_path, "lease identity or schema mismatch"));
                     }
-                    let lease: Lease = serde_json::from_value(value)
-                        .map_err(|e| invalid(&lease_path, e.to_string()))?;
+                    let lease = value.lease;
                     if !lease.heartbeat_unix.is_finite() || lease.heartbeat_unix < 0.0 {
                         return Err(invalid(&lease_path, "invalid heartbeat"));
                     }
@@ -256,18 +327,18 @@ impl PrismaBuild {
             published_unix: record.published_unix,
             attempts,
             lease,
-            detail: record.detail,
+            returncode,
+            termination_reason: record.detail.termination_reason,
+            stderr_tail: record.detail.stderr_tail,
+            progress_observation: record.detail.progress_observation,
         }))
     }
 
-    pub async fn reconcile(
-        &self,
-        awaited: &BTreeSet<ActionKey>,
-    ) -> Result<BTreeMap<ActionKey, Option<ActionRecord>>, Error> {
+    pub async fn reconcile(&self, awaited: &BTreeSet<ActionKey>) -> Observations {
         let mut records = BTreeMap::new();
         for key in awaited {
-            records.insert(key.clone(), self.read(key).await?);
+            records.insert(key.clone(), self.read(key).await);
         }
-        Ok(records)
+        records
     }
 }

@@ -1,9 +1,6 @@
-use crate::{ActionKey, ActionRecord, Error, PrismaBuild};
+use crate::{ActionKey, Error, Observations, PrismaBuild};
 use serde::Deserialize;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Duration,
-};
+use std::{collections::BTreeSet, time::Duration};
 
 #[derive(Clone, Debug, Deserialize)]
 struct Cursor {
@@ -43,8 +40,8 @@ struct Hint {
 
 #[derive(Debug)]
 pub struct Changes {
-    /// Current observations for every awaited key, including keys with no record.
-    pub records: BTreeMap<ActionKey, Option<ActionRecord>>,
+    /// Per-key observations for hinted keys, or every awaited key on reset.
+    pub records: Observations,
     pub reset: bool,
     pub bell_available: bool,
 }
@@ -54,6 +51,7 @@ pub struct Watcher {
     cursor: Option<Cursor>,
     retry: Duration,
     last_reply: Option<tokio::time::Instant>,
+    awaited: BTreeSet<ActionKey>,
 }
 
 impl PrismaBuild {
@@ -63,12 +61,13 @@ impl PrismaBuild {
             cursor: None,
             retry: Duration::from_millis(250),
             last_reply: None,
+            awaited: BTreeSet::new(),
         }
     }
 }
 
 impl Watcher {
-    async fn request(&self, wait: Duration) -> Result<Reply, Error> {
+    async fn request(&self, awaited: &BTreeSet<ActionKey>, wait: Duration) -> Result<Reply, Error> {
         let mut url = self
             .client
             .bell_url
@@ -87,8 +86,14 @@ impl Watcher {
                     "dirs",
                     "ready,claimed,done,failed,withdrawn,attempts,publication-endings",
                 )
-                // No key filter avoids PB's 128-key filter limit. Records stay authoritative.
-                .append_pair("keys", "")
+                .append_pair(
+                    "keys",
+                    &awaited
+                        .iter()
+                        .map(ActionKey::as_str)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
                 .append_pair("timeout", &server_wait.to_string());
         }
         let timeout = if self.cursor.is_some() {
@@ -157,7 +162,7 @@ impl Watcher {
         Ok(reply)
     }
 
-    /// Capture the cursor before reads, then reread every key after each bell reply.
+    /// Capture the cursor before reads, then reread hinted keys after each bell reply.
     /// On transport failure, reread with capped backoff. Silence never declares loss.
     pub async fn next(
         &mut self,
@@ -174,12 +179,28 @@ impl Watcher {
                 tokio::time::sleep(delay).await;
             }
         }
+        if self.awaited != *awaited || awaited.is_empty() {
+            self.cursor = None;
+            self.awaited = awaited.clone();
+        }
         let started = tokio::time::Instant::now();
-        let reply = self.request(patience).await;
+        let reply = self.request(awaited, patience).await;
         let initial = self.cursor.is_none();
         let available = reply.is_ok();
         let reset = initial || reply.as_ref().is_ok_and(|r| r.reset) || !available;
-        let records = self.client.reconcile(awaited).await?;
+        let hinted = reply
+            .as_ref()
+            .ok()
+            .and_then(|r| r.events.as_ref())
+            .into_iter()
+            .flatten()
+            .map(|hint| hint.key.clone())
+            .filter(|key| awaited.contains(key))
+            .collect();
+        let records = self
+            .client
+            .reconcile(if reset { awaited } else { &hinted })
+            .await;
         self.cursor = reply.ok().map(|r| r.cursor);
         self.retry = if started.elapsed() < Duration::from_millis(250) {
             (self.retry * 2).min(Duration::from_secs(5))

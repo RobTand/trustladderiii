@@ -27,7 +27,7 @@ impl Tool {
 #[derive(Clone, Debug)]
 pub struct Demand {
     pub cpus: NonZeroU32,
-    pub mem_gb: f64,
+    pub mem_gb: u32,
     pub gpu: bool,
 }
 
@@ -115,8 +115,7 @@ impl SubmitAction {
             });
         if !self.checkout.is_absolute()
             || self.command.first().is_none_or(|c| c.is_empty())
-            || !self.demand.mem_gb.is_finite()
-            || self.demand.mem_gb <= 0.0
+            || self.demand.mem_gb == 0
             || image.is_none_or(|hash| !digest(hash))
             || self.progress.is_empty()
         {
@@ -137,11 +136,11 @@ impl SubmitAction {
                 ));
             }
         }
-        if self
-            .env
-            .keys()
-            .any(|name| name.is_empty() || name.contains(['=', '\0']))
-        {
+        if self.env.keys().any(|name| {
+            name.is_empty()
+                || name.contains(['=', '\0'])
+                || name.starts_with("PRISMABUILD_ACTION_PROGRESS_")
+        }) {
             return Err(Error::InvalidInput(
                 "invalid environment variable name".into(),
             ));
