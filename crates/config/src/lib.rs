@@ -34,6 +34,8 @@ fn invalid(field: impl Into<String>, message: impl Into<String>) -> Error {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub store: Store,
     pub limits: Limits,
     pub github: GitHub,
     pub models: Models,
@@ -42,6 +44,58 @@ pub struct Config {
     pub hindsight: Hindsight,
     pub status: Status,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Store {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+    pub password_file: Option<PathBuf>,
+    pub connect_timeout_secs: u32,
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "tl3".into(),
+            user: "tl3".into(),
+            password_file: None,
+            connect_timeout_secs: 10,
+        }
+    }
+}
+
+impl Store {
+    pub fn validate(&self) -> Result<(), Error> {
+        for (field, value) in [
+            ("store.host", &self.host),
+            ("store.database", &self.database),
+            ("store.user", &self.user),
+        ] {
+            nonempty(field, value)?;
+        }
+        if self.host.contains("://") || self.host.chars().any(char::is_whitespace) {
+            return Err(invalid(
+                "store.host",
+                "use a hostname, IP address, or Unix socket directory",
+            ));
+        }
+        if self.port == 0 || self.connect_timeout_secs == 0 {
+            return Err(invalid(
+                "store",
+                "port and connect_timeout_secs must be greater than zero",
+            ));
+        }
+        if let Some(path) = &self.password_file {
+            absolute("store.password_file", path)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -203,6 +257,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        self.store.validate()?;
         let limits = &self.limits;
         if limits.context_tokens == 0 {
             return Err(invalid(
@@ -364,7 +419,14 @@ impl Config {
                 &self.github.app_credentials_file,
             ),
             ("models.key_file", &self.models.key_file),
-        ] {
+        ]
+        .into_iter()
+        .chain(
+            self.store
+                .password_file
+                .as_ref()
+                .map(|path| ("store.password_file", path)),
+        ) {
             let metadata = fs::metadata(path).map_err(|source| Error::File {
                 field: field.into(),
                 path: path.clone(),

@@ -1,0 +1,21 @@
+[package]
+name = "tl3-store"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tl3-config = { path = "../config" }
+
+[dev-dependencies]
+postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "theseus", "tls-rustls-ring"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "time", "net"] }
+
+[[test]]
+name = "postgres"
+path = "tests/postgres.rs"
+harness = false

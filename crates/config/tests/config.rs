@@ -4,6 +4,41 @@ use toml::Value;
 
 const EXAMPLE: &str = include_str!("../example.toml");
 
+#[test]
+fn store_settings_default_and_validate_without_reading_credentials() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(config.store.database, "tl3");
+    assert!(config.store.password_file.is_none());
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document.as_table_mut().unwrap().remove("store");
+    assert_eq!(
+        Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap()
+            .store
+            .port,
+        5432
+    );
+    for (key, value) in [
+        ("port", Value::Integer(0)),
+        ("connect_timeout_secs", Value::Integer(0)),
+        ("host", Value::String("postgres://credentials@host".into())),
+        ("database", Value::String("".into())),
+        ("user", Value::String(" ".into())),
+        ("password_file", Value::String("relative/secret".into())),
+        ("unexpected", Value::Boolean(true)),
+    ] {
+        assert!(
+            Config::parse(&changed(&["store", key], value)).is_err(),
+            "{key}"
+        );
+    }
+    let source = changed(
+        &["store", "password_file"],
+        Value::String("/does-not-exist/fixture".into()),
+    );
+    assert!(Config::parse(&source).is_ok());
+}
+
 fn changed(path: &[&str], value: Value) -> String {
     let mut document: Value = EXAMPLE.parse().unwrap();
     let mut target = &mut document;

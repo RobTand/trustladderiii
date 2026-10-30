@@ -48,6 +48,14 @@ tools. The harness image uses `sha256:<64 lowercase hex digits>` or
 `repository@sha256:<64 lowercase hex digits>`, matching `harness.Container`.
 PB's `content:sha256:` form is not a harness image reference.
 
+`store` configures `tl3-store` with `host`, `port`, `database`, `user`,
+`connect_timeout_secs` and an optional `password_file`. Omitting the section
+uses local TCP port 5432 and database/user `tl3`. The store uses local TCP or
+a Unix socket without TLS; remote deployment needs a protected tunnel.
+Config validates an optional password file's metadata, and the store alone
+reads its bytes at runtime. It never searches environment variables or default
+credential files. Omitting the file uses the server's local authentication.
+
 All paths are absolute. No tilde or environment-variable expansion occurs.
 The worktrees root and tools directory need not exist during offline validation.
 Allowances use positive integer seconds. Expiry triggers a look at the upstream,
