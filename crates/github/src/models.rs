@@ -202,7 +202,6 @@ pub struct ServedRepo {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PullClosed {
-    pub id: u64,
     pub actor: Actor,
     pub created_at: DateTime<Utc>,
 }
