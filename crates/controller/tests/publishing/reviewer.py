@@ -29,7 +29,17 @@ def model(request):
         reply = {"verdict": "changes", "blocking_findings": [{
             "citation": {"kind": "goal", "id": inputs["goals"][0]["id"]},
             "problem": "Check the result once more.", "evidence": "A fixture requests one fix round."}], "findings": []}
-    return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
+    class Model(FakeMessagesListChatModel):
+        def _generate(self, messages, **kwargs):
+            if mode == "changes" and not first:
+                previous = [m for m in messages if m.type == "ai"]
+                assert len(previous) == 1
+                assert json.loads(previous[0].content)["verdict"] == "changes"
+                assert previous[0].additional_kwargs["reasoning_content"] == "The goal needs another check."
+            return super()._generate(messages, **kwargs)
+
+    return Model(responses=[AIMessage(content=json.dumps(reply), additional_kwargs={
+        "reasoning_content": "The goal needs another check."})])
 
 
 def no_network(*args, **kwargs):

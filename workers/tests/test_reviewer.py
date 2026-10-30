@@ -208,3 +208,89 @@ def test_prompt_blocks_test_report_tampering():
     prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
     assert "breaks the standing\nrule that protects test reports" in prompt
     assert "is not\ntampering" in prompt
+
+
+@pytest.fixture
+def session_model(monkeypatch):
+    observed = []
+    responses = []
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(copy.deepcopy(messages))
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, "create_model", lambda request: Model(responses=responses))
+    return observed, responses
+
+
+def start_review_session(request, session_model, tmp_path):
+    observed, responses = session_model
+    request["session_file"] = str(tmp_path / "sessions/35/plan-0/reviewer-attempt-1.json")
+    request["resume_session"] = False
+    responses[:] = [AIMessage(content=json.dumps(changes(blocker())),
+                              additional_kwargs={"reasoning_content": "The implementation contradicts g1."})]
+    runtime.run(request, lambda event: None)
+    request["last_accepted_generation"] = request["operation"]["generation"]
+    request["operation"]["generation"] += 2
+    request["resume_session"] = True
+    request["inputs"].update(base_sha=HEAD, head_sha="c" * 40, diff="fix greeting",
+                              checks=[])
+    observed.clear()
+    responses[:] = [AIMessage(content=json.dumps({**APPROVE, "head_sha": "c" * 40}))]
+
+
+def test_round_one_sees_round_zero_findings_and_reasoning(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    runtime.run(review_request, lambda event: None)
+    history = observed[0]
+    humans = [json.loads(m.content) for m in history if m.type == "human"]
+    assert len(humans) == 2
+    assert humans[0]["head_sha"] == HEAD
+    assert humans[1] == review_request["inputs"]
+    previous = next(m for m in history if m.type == "ai")
+    assert json.loads(previous.content) == changes(blocker())
+    assert previous.additional_kwargs["reasoning_content"] == "The implementation contradicts g1."
+
+
+def test_new_attempt_starts_fresh_reviewer_session(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    review_request["session_file"] = str(tmp_path / "sessions/35/plan-0/reviewer-attempt-2.json")
+    review_request["resume_session"] = False
+    review_request.pop("last_accepted_generation")
+    runtime.run(review_request, lambda event: None)
+    assert len([m for m in observed[0] if m.type == "human"]) == 1
+    assert not any(m.type == "ai" for m in observed[0])
+    from pathlib import Path
+    assert Path(review_request["session_file"]).is_file()
+
+
+@pytest.mark.parametrize("crash_event", ["model_turn", "reply"])
+@pytest.mark.parametrize("new_generation", [False, True])
+def test_round_one_crash_and_retry_do_not_duplicate_turns(
+        review_request, session_model, tmp_path, crash_event, new_generation):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+
+    def crash(event):
+        if event.get("unit", event["event"]) == crash_event:
+            raise RuntimeError("injected crash after durable completion")
+
+    with pytest.raises(RuntimeError, match="injected crash"):
+        runtime.run(review_request, crash)
+    if new_generation:
+        review_request["operation"]["generation"] += 1
+    events = []
+    runtime.run(review_request, events.append)
+    assert len(observed) == 1, "retry must recover the completed model turn"
+    assert events[-1]["reply"]["head_sha"] == "c" * 40
+    from pathlib import Path
+    checkpoint = Path(review_request["session_file"]).read_bytes()
+    runtime.run(review_request, events.append)
+    assert len(observed) == 1
+    assert Path(review_request["session_file"]).read_bytes() == checkpoint

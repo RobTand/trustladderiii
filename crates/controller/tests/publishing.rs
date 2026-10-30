@@ -664,6 +664,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             1
         }
     );
+    if mode == "changes" {
+        assert_eq!(reviews[0]["resume_session"], false);
+        assert_eq!(reviews[1]["resume_session"], true);
+        assert_eq!(reviews[0]["session_file"], reviews[1]["session_file"]);
+        assert_eq!(reviews[1]["inputs"]["base_sha"], reviews[0]["inputs"]["head_sha"]);
+        assert_eq!(reviews[1]["inputs"]["diff"], "");
+        assert!(Path::new(reviews[0]["session_file"].as_str().unwrap()).is_file());
+    }
     for review in &reviews {
         assert_ne!(review["model"]["name"], config.models.maker[0].name);
         assert!(
@@ -728,6 +736,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "a closed node must leave no check reports"
         );
     }
+    assert!(
+        !config.workers.runs.join("sessions/0").exists(),
+        "closed node must retire maker and reviewer sessions"
+    );
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
     assert!(!root.path().join("pb-records/0").exists());
