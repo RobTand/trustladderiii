@@ -21,21 +21,21 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 | `create_branch` | Branch name and durable current base commit |
 | `create_worktree`, `remove_worktree` | Reconcile a checkout at an explicit path |
 | `head`, `remote_head` | Local or remote commit, with absent remote branches returning `None` |
-| `push` | Publish the local head, allowing only fast forwards |
-| `push_rebased` | Publish with an explicit expected remote head and a force-with-lease check |
-| `delete_remote_branch`, `delete_local_branch` | Remove the leaf's branch and local base ref |
-| `rebase_onto_main` | New base and head, or conflicting files and the unchanged old head |
+| `publish` | Publish an immutable head with a lease against the recorded remote head |
+| `delete_remote_branch_at`, `delete_local_branch` | Lease remote deletion; remove the local branch and base |
+| `rebase_onto` | Rebase onto an exact target; return base and head or conflicts |
+| `branch_state` | Current `(head, base)` from the branch and recorded base refs |
+| `finish_prepare` | Verify an unfinished checkout; repair only at its recorded base |
+| `verify_removal_clean`, `resume_removal` | Record a clean preflight, then resume deletion-only retries |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-The controller refreshes local `refs/heads/main` before `create_branch` or
-`rebase_onto_main`. For recorded effects, `fetch_main` fetches into the private
+`create_branch` reads local main. For recorded effects, `fetch_main` fetches into the private
 `refs/tl3/upstream-main` ref, then `create_branch_at` and `rebase_onto` use the
 exact recorded commit without changing a checked-out main.
-This adapter does not fetch,
-choose effect identities, persist controller state, retry network failures, or mark
+The controller chooses effect identities. This client does not persist controller state, retry network failures, or mark
 a new head approved. Every new head still needs checks and review.
 
 `BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
@@ -66,6 +66,8 @@ A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
+The controller records a clean preflight in its Remove intent. Only that record
+authorizes `resume_removal`, which also accepts deletion-only interrupted removals.
 It recovers a missing registration before removing a checkout. Repeating removal or branch
 deletion after success has no effect.
 
@@ -77,11 +79,10 @@ or Git failures during abort return `Recovery` so the controller retains the
 resource and reports the problem. There is no automatic conflict resolution.
 A per-checkout marker recovers detached rebases interrupted before or after the atomic branch and base update.
 
-Pushes use immutable commit ids and explicit refs. Ordinary pushes refuse divergent
-remote history. `push_rebased` requires the previously published head from the
-controller's record. Its lease prevents a concurrent collaborator push from being
+Pushes use immutable commit ids and explicit refs. `publish` requires the
+previously published head from the controller's record. Its lease prevents a concurrent collaborator push from being
 overwritten. A retry that finds the intended head already published succeeds.
-Remote deletion reads and leases the ref, and an absent ref already counts as done.
+Remote deletion leases the recorded ref, and an absent ref already counts as done.
 
 ## Credentials
 

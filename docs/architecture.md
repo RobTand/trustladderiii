@@ -229,11 +229,21 @@ Git commands across handles. No OS file locks are used.
 
 Each effect records its exact prepare base, push head and lease, rebase target,
 or teardown lease before changing request state. Completed records preserve the
-original acknowledgement and observations, including after teardown. Pending
+original acknowledgement and observations, including after teardown. Unfinished
 records reconcile the local refs, checkout registration and remote ref. Missing
 intent proves the adapter never started that effect's Git mutation. Network and
 filesystem errors prove no terminal outcome. Old epochs can read existing results
 and confirm already-applied Git evidence, but cannot resume unfinished writes.
+Opening a repository advances its durable fence to the adapter's configured
+controller epoch, before any execute or reconcile. A fenced intent with no
+terminal Git evidence returns `Absent`: its Git steps converge and the prior
+controller and all its Git children have ended. Transport or filesystem errors
+still prove no absence.
+
+An unfinished Prepare verifies the checkout against its branch head. It repairs
+missing tracked files only while the head and recorded base still match, before
+a maker can run. Remove records a clean preflight before deletion begins. A retry
+may finish a checkout with only deletions; edits and new files remain errors.
 
 A clean rebase updates branch and recorded base atomically in the client. Recovery
 restores an interrupted checkout before returning its new SHA through controller

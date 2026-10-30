@@ -1,10 +1,19 @@
 use super::record::Records;
 use crate::{
-    Result,
+    Error, Repository, Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
-use std::path::Path;
-use tl3_kernel::{EffectKind, Out};
+
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
+use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
 pub struct Fake(Records);
 impl Fake {
@@ -38,18 +47,6 @@ impl Executor for Fake {
     }
 }
 
-use crate::{Error, Repository};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::Write,
-    path::PathBuf,
-    sync::{Arc, Mutex, OnceLock, Weak},
-};
-use tl3_kernel::{Event, Reply};
-use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     BeforeApply,
@@ -60,6 +57,7 @@ pub enum Boundary {
 /// Keep the common Git directory when restarting, including tl3-controller records.
 pub struct Real {
     root: PathBuf,
+    epoch: i64,
     repositories: Vec<Served>,
 }
 
@@ -86,6 +84,8 @@ enum Intent {
     },
     Remove {
         expected: Option<String>,
+        #[serde(default)]
+        clean_verified: bool,
     },
 }
 
@@ -101,10 +101,11 @@ fn adapter(error: impl std::error::Error + Send + Sync + 'static) -> Error {
 }
 
 impl Real {
-    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
+    pub fn new(root: impl AsRef<Path>, epoch: i64) -> Result<Self> {
         fs::create_dir_all(root.as_ref())?;
         Ok(Self {
             root: fs::canonicalize(root)?,
+            epoch,
             repositories: vec![],
         })
     }
@@ -180,6 +181,10 @@ impl Real {
             .and_then(Weak::upgrade)
             .unwrap_or_default();
         mutexes.insert(journal.clone(), Arc::downgrade(&mutex));
+        drop(mutexes);
+        let guard = mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
         let binding = journal.join("repository.json");
         if let Some(existing) = read::<(Repository, PathBuf)>(&binding)? {
             if !same_repo(&existing.0, &identity) || existing.1 != self.root {
@@ -190,6 +195,9 @@ impl Real {
         } else {
             write(&binding, &(&identity, &self.root))?;
         }
+        let fence = read::<i64>(&journal.join("epoch.json"))?.unwrap_or(0);
+        write(&journal.join("epoch.json"), &fence.max(self.epoch))?;
+        drop(guard);
         self.repositories.push(Served {
             identity,
             git,
@@ -269,7 +277,7 @@ impl Served {
         Ok(record)
     }
 
-    fn intent(&self, delivery: &Delivery, branch: &BranchName) -> Result<Intent> {
+    fn intent(&self, delivery: &Delivery, branch: &BranchName, checkout: &Path) -> Result<Intent> {
         match delivery.output {
             Out::Effect {
                 kind: EffectKind::PrepareWorktree,
@@ -315,9 +323,15 @@ impl Served {
             Out::Effect {
                 kind: EffectKind::RemoveWorktree,
                 ..
-            } => Ok(Intent::Remove {
-                expected: read(&self.published_path(branch))?,
-            }),
+            } => {
+                self.git
+                    .verify_removal_clean(branch, checkout)
+                    .map_err(adapter)?;
+                Ok(Intent::Remove {
+                    expected: read(&self.published_path(branch))?,
+                    clean_verified: true,
+                })
+            }
             _ => Err(Error::Invalid("unsupported worktree effect")),
         }
     }
@@ -344,7 +358,12 @@ impl Served {
                 if self.git.branch_state(branch).map_err(adapter)?.is_none()
                     || !self
                         .git
-                        .checkout_exists(branch, checkout)
+                        .finish_prepare(
+                            branch,
+                            checkout,
+                            &CommitId::new(base).map_err(adapter)?,
+                            writable,
+                        )
                         .map_err(adapter)?
                 {
                     return Ok(None);
@@ -418,16 +437,23 @@ impl Served {
                     }),
                 });
             }
-            Intent::Remove { expected } => {
+            Intent::Remove {
+                expected,
+                clean_verified,
+            } => {
                 let token = self.token()?;
                 let remote = self
                     .git
                     .remote_head(branch, &self.remote, token.as_ref())
                     .map_err(adapter)?;
                 if writable {
-                    self.git
-                        .remove_worktree(branch, checkout)
-                        .map_err(adapter)?;
+                    if *clean_verified {
+                        self.git.resume_removal(branch, checkout).map_err(adapter)?;
+                    } else {
+                        self.git
+                            .remove_worktree(branch, checkout)
+                            .map_err(adapter)?;
+                    }
                     if let Some(remote) = remote {
                         if expected.as_deref() != Some(remote.as_str()) {
                             return Err(Error::Invalid("teardown remote branch changed"));
@@ -485,7 +511,7 @@ impl Real {
             None => {
                 let record = Record {
                     delivery: delivery.clone(),
-                    intent: repo.intent(delivery, &branch)?,
+                    intent: repo.intent(delivery, &branch, &self.checkout(delivery))?,
                     completion: None,
                 };
                 write(&repo.record_path(delivery), &record)?;
@@ -537,6 +563,7 @@ impl Executor for Real {
                 &mut |_| {},
             )? {
                 Some(completion) => Reconciliation::Found(completion),
+                None if !writable => Reconciliation::Absent,
                 None => Reconciliation::Pending,
             },
         )
@@ -571,3 +598,6 @@ fn write(path: &Path, value: &impl Serialize) -> Result<()> {
     .sync_all()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,7 +1,7 @@
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -87,6 +87,7 @@ fn main() {
         ("status_is_read_only", status_is_read_only),
         ("config_permissions_and_pool", config_permissions_and_pool),
         ("mixed_registry", mixed_registry),
+        ("mixed_registry_conflict", mixed_registry_conflict),
     ];
     for (name, test) in cases {
         test(&database.create(name));
@@ -1781,12 +1782,29 @@ mod worktree_fixture;
 struct GitHeadWorker {
     fake: adapters::workers::Fake,
     root: PathBuf,
+    conflict: bool,
+    heads: BTreeMap<String, String>,
 }
 impl GitHeadWorker {
-    fn actual_head(&self, delivery: &Delivery, mut completion: Completion) -> Completion {
+    fn actual_head(&mut self, delivery: &Delivery, mut completion: Completion) -> Completion {
         for observation in &mut completion.observations {
             if let Observation::Made { sha, .. } = observation {
-                *sha = worktree_fixture::Fixture::open(&self.root).head(delivery);
+                *sha = self
+                    .heads
+                    .entry(delivery.key.clone())
+                    .or_insert_with(|| {
+                        let fixture = worktree_fixture::Fixture::open(&self.root);
+                        worktree_fixture::commit(
+                            &fixture.adapter().checkout(delivery),
+                            if self.conflict {
+                                "shared.txt"
+                            } else {
+                                "leaf.txt"
+                            },
+                            &format!("maker {}\n", delivery.key),
+                        )
+                    })
+                    .clone();
             }
         }
         completion
@@ -1810,6 +1828,7 @@ struct ConflictQueue {
     fake: adapters::mergify::Fake,
     root: PathBuf,
     first: Option<String>,
+    conflict: bool,
 }
 impl ConflictQueue {
     fn result(&self, delivery: &Delivery, mut completion: Completion) -> Completion {
@@ -1825,7 +1844,7 @@ impl ConflictQueue {
 impl Executor for ConflictQueue {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         if self.first.is_none() {
-            worktree_fixture::Fixture::open(&self.root).advance_main(false);
+            worktree_fixture::Fixture::open(&self.root).advance_main(self.conflict);
             self.first = Some(delivery.key.clone());
         }
         let completion = self.fake.execute(delivery)?;
@@ -1841,6 +1860,12 @@ impl Executor for ConflictQueue {
     }
 }
 fn mixed_registry(settings: &tl3_config::Store) {
+    mixed_registry_case(settings, false);
+}
+fn mixed_registry_conflict(settings: &tl3_config::Store) {
+    mixed_registry_case(settings, true);
+}
+fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
     let root = tempfile::tempdir().unwrap();
@@ -1853,6 +1878,8 @@ fn mixed_registry(settings: &tl3_config::Store) {
         GitHeadWorker {
             fake: adapters::workers::Fake::new(&records),
             root: root.path().into(),
+            conflict,
+            heads: BTreeMap::new(),
         },
     );
     registry.register(
@@ -1861,6 +1888,7 @@ fn mixed_registry(settings: &tl3_config::Store) {
             fake: adapters::mergify::Fake::new(&records),
             root: root.path().into(),
             first: None,
+            conflict,
         },
     );
     let mut controller =
@@ -1873,6 +1901,10 @@ fn mixed_registry(settings: &tl3_config::Store) {
     let mut pushed = false;
     let mut rebased = false;
     let mut original = None;
+    let mut needs_changes = false;
+    let mut queued_credit = 0;
+    let mut maker_contents = String::new();
+    let mut returned_to_maker = false;
     for _ in 0..300 {
         let world = controller.world().unwrap();
         if checkout.join(".git").is_file() {
@@ -1880,13 +1912,55 @@ fn mixed_registry(settings: &tl3_config::Store) {
         }
         if world.nodes[0].phase == Phase::Queued && !pushed {
             original = Some(fixture.head(&prepare));
+            queued_credit = world.nodes[0].credit.balance();
+            maker_contents =
+                fs::read_to_string(checkout.join(if conflict { "shared.txt" } else { "leaf.txt" }))
+                    .unwrap();
             assert_eq!(
                 git(&fixture.remote, &["rev-parse", branch.as_str()]),
                 original.clone().unwrap()
             );
+            assert_eq!(
+                git(
+                    &fixture.repo,
+                    &[
+                        "rev-list",
+                        "--count",
+                        &format!("refs/tl3/bases/{}..{}", branch.as_str(), branch.as_str())
+                    ]
+                ),
+                "1"
+            );
             pushed = true;
         }
-        if pushed && world.nodes[0].phase == Phase::Checking {
+        if conflict && pushed && world.nodes[0].phase == Phase::Rebasing {
+            let snapshot = controller.snapshot().unwrap();
+            needs_changes |= snapshot.rows.iter().any(|row| {
+                row.table == "inbox"
+                    && serde_json::from_value::<Observation>(row.value.clone()).is_ok_and(
+                        |observation| {
+                            matches!(
+                                observation,
+                                Observation::Kernel(Event::Reply {
+                                    reply: tl3_kernel::Reply::RebaseNeedsChanges,
+                                    ..
+                                })
+                            )
+                        },
+                    )
+            });
+            if needs_changes {
+                assert_eq!(Some(fixture.head(&prepare)), original);
+                assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+            }
+        }
+        if needs_changes && world.nodes[0].phase == Phase::Making {
+            returned_to_maker = true;
+            assert_eq!(world.nodes[0].attempt, 1);
+            assert_eq!(world.nodes[0].round, 1);
+            assert_eq!(world.nodes[0].credit.balance(), queued_credit - 1);
+        }
+        if pushed && world.nodes[0].phase == Phase::Checking && !conflict {
             let head = fixture.head(&prepare);
             assert_ne!(Some(head.clone()), original);
             let snapshot = controller.snapshot().unwrap();
@@ -1896,6 +1970,21 @@ fn mixed_registry(settings: &tl3_config::Store) {
                     .iter()
                     .any(|i| i.kind == tl3_store::InternKind::Commit && i.value == head)
             );
+            assert_eq!(
+                fs::read_to_string(checkout.join("leaf.txt")).unwrap(),
+                maker_contents
+            );
+            assert_eq!(
+                git(
+                    &fixture.repo,
+                    &[
+                        "rev-list",
+                        "--count",
+                        &format!("refs/tl3/bases/{}..{}", branch.as_str(), branch.as_str())
+                    ]
+                ),
+                "1"
+            );
             rebased = true;
         }
         if !controller.drive_once().unwrap() {
@@ -1903,7 +1992,13 @@ fn mixed_registry(settings: &tl3_config::Store) {
         }
     }
     assert!(
-        created && pushed && rebased,
+        created
+            && pushed
+            && if conflict {
+                needs_changes && returned_to_maker
+            } else {
+                rebased
+            },
         "real lifecycle incomplete: created={created}, pushed={pushed}, rebased={rebased}, phase={:?}",
         controller.world().unwrap().nodes[0].phase
     );

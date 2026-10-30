@@ -17,9 +17,13 @@ tl3-github = { path = "../github" }
 tokio = { version = "1", features = ["rt", "time", "net"] }
 
 [dev-dependencies]
+rand = "0.8"
+rsa = { version = "0.9", features = ["pem"] }
+wiremock = "0.6"
 postgres = "0.19"
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
 tempfile = "3"
+
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"

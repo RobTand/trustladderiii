@@ -2569,6 +2569,8 @@ version = "0.1.0"
 dependencies = [
  "postgres",
  "postgresql_embedded",
+ "rand 0.8.8",
+ "rsa",
  "serde",
  "serde_json",
  "socket2",
@@ -2580,6 +2582,7 @@ dependencies = [
  "tl3-store",
  "tl3-worktrees",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]

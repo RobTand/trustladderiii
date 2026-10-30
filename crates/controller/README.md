@@ -37,7 +37,10 @@ and persistence. Executors own authoritative reconciliation and epoch fencing.
 with it and replaces one entry with `register`. The `mixed_registry` scenario
 registers `worktrees::Real` for all four worktree effects against local bare
 repositories over `file://`. The other four upstreams stay fake. The worker
-fixture reports the actual local head so real pushes can use it.
+fixture commits a real change and reports its head. Separate runs move main
+with a nonconflicting or conflicting commit. The conflict reply passes through
+the adapter and controller inbox to the kernel, which returns to Making and
+spends one credit in the same attempt and round.
 
 Each adapter ticket extends `Delivery` with the fields its real client needs.
 The tracer does not predefine issue text, branch text, or PR text fields.
@@ -107,7 +110,7 @@ record, log, and CAS receipt before reporting a pass.
 
 ## Worktree adapter
 
-`worktrees::Real::new(&config.worktrees_root)` uses the existing configurable
+`worktrees::Real::new(&config.worktrees_root, epoch)` uses the existing configurable
 root. Add each repository with `serve_github(identity, local_repository, github)`.
 The GitHub client must match the repository's installation. The client supplies
 cached installation tokens at runtime. For simulation, use `serve_local` with a
@@ -125,12 +128,15 @@ group before starting a replacement. Do not run another Git writer or maintenanc
 process against an owned repository.
 
 Keep `<common-git-dir>/tl3-controller` across restarts. It binds the repository
-and worktree root, records the highest accepted epoch, and journals immutable
+and worktree root, advances the epoch fence as soon as the repository opens, and journals immutable
 operation intents and terminal evidence. Changing that root requires an explicit
 migration of existing checkouts and records. Records use atomic replacement and
 sync both the file and its directory. No store migration is required.
 
 Prepare pins the fetched main commit before creating branch, base and checkout.
+Before confirming an unfinished Prepare, it verifies the checkout matches its head.
+A partial checkout is repopulated only if its head is still the recorded base.
+No maker has run at that point. Completed Prepare records never repair maker files.
 Push pins the delivery's exact head and leases against the last head this adapter
 published. Rebase pins its target before execution, so recovery cannot silently
 use a newer main. A clean rebase reports `Observation::Rebased`; the controller
@@ -138,14 +144,25 @@ interns its SHA before the kernel receives `RebaseClean`. A conflict reports
 `RebaseNeedsChanges` after aborting and verifying a clean checkout at the old
 head. The kernel alone selects the next phase.
 
-Teardown removes the clean checkout, leases deletion of the recorded remote
-head, then removes the local branch and base. A dirty checkout or changed remote
+Teardown records that the checkout is clean before deletion begins. A retry may
+finish removal if its only changes are deletions. Edits and new files are refused.
+It leases deletion of the recorded remote head, then removes the local branch
+and base. A dirty checkout or changed remote
 ref returns an adapter error. Unknown outcomes keep their original effect key.
 Interrupted current-epoch operations reconcile against Git and finish their
 original intent. Older epochs may read terminal evidence, but cannot resume
-unfinished Git writes. No duration or silence establishes absence.
+unfinished Git writes. Once fenced, an unfinished intent with no terminal Git
+evidence returns `Absent`, so a Cancelling delivery can settle. Git steps converge;
+transport errors remain unknown. No duration or silence establishes absence.
 
 The `worktrees` test executable kills adapter children with SIGKILL before and
 after Git applies each effect, including conflict and stale-epoch cases. The
 workspace verification script runs it, the mixed registry lifecycle, and the
 existing controller and store scenarios through PrismaBuild.
+
+Tickets #12 and #13 open `tl3_worktrees::Worktrees` for the served repository and
+call `branch_state(&Real::branch(delivery)?)` to read its recorded base and current
+head. The tuple is `(head, base)`. `changed_files(&base, &head)` returns the changed
+paths for the check harness and publication footprint. After a clean rebase,
+read both values again: the base and head move together. `Delivery::head_sha`
+remains the exact commit requested by an individual push effect.

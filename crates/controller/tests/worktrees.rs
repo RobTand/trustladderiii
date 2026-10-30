@@ -2,8 +2,11 @@ mod worktree_fixture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     env, fs,
-    io::{BufRead, BufReader, Write},
-    os::unix::process::ExitStatusExt,
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::{
+        net::{UnixListener, UnixStream},
+        process::ExitStatusExt,
+    },
     path::Path,
     process::{Command, Stdio},
 };
@@ -338,14 +341,14 @@ fn old_epoch_partial_attempts() {
             };
             kill(&f, &delivery, boundary);
             let head = f.head(&delivery);
-            let mut newer = prepare.clone();
-            newer.key = "new-epoch".into();
-            newer.epoch = 2;
-            f.adapter().execute(&newer).unwrap();
+            // Opening the replacement fences stale handles before any new execute.
+            let mut stale = f.adapter();
+            let mut replacement = f.adapter_at(2);
             assert!(f.adapter().execute(&delivery).is_err());
-            let result = f.adapter().reconcile(&delivery).unwrap();
+            let result = stale.reconcile(&delivery).unwrap();
+            same_reconciliation(&result, &replacement.reconcile(&delivery).unwrap());
             if boundary == "before" {
-                assert!(matches!(result, Reconciliation::Pending));
+                assert!(matches!(result, Reconciliation::Absent));
                 if kind == EffectKind::Push {
                     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
                 }
@@ -374,8 +377,208 @@ fn old_epoch_partial_attempts() {
     }
 }
 
+fn same_reconciliation(a: &Reconciliation, b: &Reconciliation) {
+    match (a, b) {
+        (Reconciliation::Absent, Reconciliation::Absent) => {}
+        (Reconciliation::Found(a), Reconciliation::Found(b)) => same(a, b),
+        _ => panic!("reconciliation changed across the fence"),
+    }
+}
+
+fn incomplete_prepare() {
+    for changed_head in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+        kill(&f, &prepare, "before");
+        let branch = Real::branch(&prepare).unwrap();
+        let base = git(&f.remote, &["rev-parse", "main"]);
+        let checkout = f.adapter().checkout(&prepare);
+        fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+        git(&f.repo, &["branch", branch.as_str(), &base]);
+        git(
+            &f.repo,
+            &[
+                "update-ref",
+                &format!("refs/tl3/bases/{}", branch.as_str()),
+                &base,
+            ],
+        );
+        git(
+            &f.repo,
+            &[
+                "worktree",
+                "add",
+                "--no-checkout",
+                checkout.to_str().unwrap(),
+                branch.as_str(),
+            ],
+        );
+        assert!(!checkout.join("shared.txt").exists());
+        assert!(!git(&checkout, &["status", "--porcelain"]).is_empty());
+        if changed_head {
+            git(&checkout, &["reset", "--hard", "HEAD"]);
+            commit(&checkout, "maker.txt", "maker ran unexpectedly\n");
+            fs::remove_file(checkout.join("shared.txt")).unwrap();
+            assert!(f.adapter().reconcile(&prepare).is_err());
+            assert!(checkout.join("maker.txt").exists());
+            assert!(!checkout.join("shared.txt").exists());
+        } else {
+            let completion = found(f.adapter().reconcile(&prepare).unwrap());
+            assert!(matches!(completion.ack, Ack::Confirmed));
+            assert_eq!(
+                fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+                "base\n"
+            );
+            assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+        }
+    }
+}
+
+fn incomplete_remove() {
+    for dirt in ["deletions", "modified", "untracked", "staged", "renamed"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        let push = made(&f, &prepare, false);
+        f.adapter().execute(&push).unwrap();
+        let remove = f.delivery(EffectKind::RemoveWorktree, 3);
+        kill(&f, &remove, "before");
+        fs::remove_file(checkout.join("shared.txt")).unwrap();
+        match dirt {
+            "modified" | "staged" => {
+                fs::write(checkout.join("leaf.txt"), "unsaved\n").unwrap();
+                if dirt == "staged" {
+                    git(&checkout, &["add", "leaf.txt"]);
+                }
+            }
+            "untracked" => {
+                fs::write(checkout.join("new.txt"), "keep\n").unwrap();
+            }
+            "renamed" => {
+                git(&checkout, &["mv", "leaf.txt", "renamed.txt"]);
+            }
+            _ => {}
+        }
+        if dirt == "deletions" {
+            found(f.adapter().reconcile(&remove).unwrap());
+            assert_removed(&f, &remove);
+        } else {
+            let status = git(
+                &checkout,
+                &["status", "--porcelain", "--untracked-files=all"],
+            );
+            assert!(f.adapter().reconcile(&remove).is_err());
+            assert!(f.adapter().execute(&remove).is_err());
+            assert_eq!(
+                git(
+                    &checkout,
+                    &["status", "--porcelain", "--untracked-files=all"]
+                ),
+                status
+            );
+            assert!(checkout.exists());
+        }
+    }
+    // Deletions without a preflight receipt must not authorize destructive recovery.
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    let prepare = prepared(&f);
+    let checkout = f.adapter().checkout(&prepare);
+    fs::remove_file(checkout.join("shared.txt")).unwrap();
+    assert!(
+        f.adapter()
+            .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
+            .is_err()
+    );
+    assert!(checkout.exists());
+}
+
+fn killed_git_add() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    commit(&f.source, ".gitattributes", "shared.txt filter=park\n");
+    git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    kill(&f, &prepare, "before");
+    let branch = Real::branch(&prepare).unwrap();
+    let base = git(&f.remote, &["rev-parse", "main"]);
+    let checkout = f.adapter().checkout(&prepare);
+    fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+    git(&f.repo, &["branch", branch.as_str(), &base]);
+    git(
+        &f.repo,
+        &[
+            "update-ref",
+            &format!("refs/tl3/bases/{}", branch.as_str()),
+            &base,
+        ],
+    );
+    let socket = f.root.join("smudge.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    // Git blocks in a real checkout filter after registering the worktree.
+    git(
+        &f.repo,
+        &[
+            "config",
+            "filter.park.smudge",
+            &format!(
+                "'{}' --smudge '{}'",
+                env::current_exe().unwrap().display(),
+                socket.display()
+            ),
+        ],
+    );
+    git(&f.repo, &["config", "filter.park.required", "true"]);
+    let mut child = Command::new("git")
+        .current_dir(&f.repo)
+        .env_clear()
+        .env("PATH", env::var_os("PATH").unwrap())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args([
+            "worktree",
+            "add",
+            "--",
+            checkout.to_str().unwrap(),
+            branch.as_str(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let (mut filter, _) = listener.accept().unwrap();
+    let mut ready = [0];
+    filter.read_exact(&mut ready).unwrap();
+    assert_eq!(ready, [1]);
+    assert!(checkout.join(".git").is_file());
+    child.kill().unwrap();
+    assert_eq!(child.wait().unwrap().signal(), Some(9));
+    VERIFIED_KILLS.fetch_add(1, Ordering::Relaxed);
+    filter.write_all(&[1]).unwrap();
+    // EOF proves the smudge process has exited before recovery changes Git state.
+    assert_eq!(filter.read(&mut ready).unwrap(), 0);
+    git(&f.repo, &["config", "--remove-section", "filter.park"]);
+    assert!(!checkout.join("shared.txt").exists());
+    found(f.adapter().reconcile(&prepare).unwrap());
+    assert_eq!(
+        fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+    println!("SIGKILL during git worktree add: populated before confirmation");
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--smudge") {
+        let mut socket = UnixStream::connect(&args[2]).unwrap();
+        socket.write_all(&[1]).unwrap();
+        let mut release = [0];
+        socket.read_exact(&mut release).unwrap();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--child") {
         child(&args);
         return;
@@ -385,6 +588,9 @@ fn main() {
     fences_and_unknowns();
     leases_and_exact_heads();
     old_epoch_partial_attempts();
+    incomplete_prepare();
+    incomplete_remove();
+    killed_git_add();
     println!(
         "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
         VERIFIED_KILLS.load(Ordering::Relaxed)
