@@ -134,9 +134,10 @@ fn check_nodes(before: &World, after: &World) {
 
 /// Rules about the effects a transition emits. `exempt` is a node allowed to
 /// emit while paused: one finishing an effect already in flight, or resuming.
-fn check_outputs(before: &World, after: &World, out: &[Out], exempt: Option<usize>) {
-    for o in out {
-        if let Out::Effect { node, seq, kind, head } = *o {
+fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usize>) {
+    let mut slot = 0;
+    while slot < OUTBOX {
+        if let Some(Out::Effect { node, seq, kind, head }) = out.get(slot) {
             assert!(node < after.nodes.len());
             // Look the node up by a concrete index. A read at a symbolic index
             // into nodes the event just rewrote made the merge proofs need
@@ -149,6 +150,7 @@ fn check_outputs(before: &World, after: &World, out: &[Out], exempt: Option<usiz
                 i += 1;
             }
         }
+        slot += 1;
     }
 }
 fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, head: Option<u8>, exempt: bool) {
@@ -171,7 +173,7 @@ fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, hea
 fn check_apply(event: Event) {
     let before = any_settled_world(None);
     let mut after = before.clone();
-    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
+    let mut out = Outbox::new();
     apply(&mut after, event, &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
@@ -202,7 +204,7 @@ fn check_advance(phase: Phase, moves: bool) {
     let before = any_world(Some(phase));
     let rank = before.nodes[0].settle_rank();
     let mut after = before.clone();
-    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
+    let mut out = Outbox::new();
     let changed = advance(&mut after, 0, &mut out);
     // Not vacuous: settle takes a transition from this phase, or, for a phase
     // that only waits on outside events, a world in it exists. One cover per
@@ -231,7 +233,7 @@ fn check_witness(phase: Phase) {
     assert!(event.is_some());
     if let Some(event) = event {
         let mut after = world;
-        let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
+        let mut out = Outbox::new();
         apply(&mut after, event, &mut out);
         assert!(after.measure() < before);
     }
@@ -350,7 +352,7 @@ fn check_pr_merged(phase: Phase) {
     let checks_passed: bool = kani::any();
     let event = fact(Fact::PrMerged { head, checks_passed });
     let mut after = before.clone();
-    let mut out = Vec::with_capacity(8); // pre-sized: growing a Vec is costly for Kani
+    let mut out = Outbox::new();
     apply(&mut after, event, &mut out);
     kani::cover!(after != before, "the merge changes the world");
     require_consistent(&after);
@@ -361,10 +363,7 @@ fn check_pr_merged(phase: Phase) {
         assert!(m.merged == Some(head));
         assert!(m.phase == Phase::Stopping(Outcome::Merged));
         if !(has(n.approved, head) && checks_passed) {
-            let noted = out.iter().any(|o| {
-                matches!(o, Out::Notice { node: 0, notice: Notice::Note(NoteKind::UnapprovedMerge) })
-            });
-            assert!(noted);
+            assert!(out.contains(Out::Notice { node: 0, notice: Notice::Note(NoteKind::UnapprovedMerge) }));
         }
     }
 }

@@ -587,6 +587,57 @@ pub enum Out {
     Notice { node: usize, notice: Notice },
 }
 
+/// Most outputs one transition emits. A late merge with an unapproved head
+/// emits four notices, the most of any transition.
+pub const OUTBOX: usize = 5;
+
+/// The outputs of one transition: one event applied, or one internal
+/// transition of settle. A fixed array holds them, not a list on the heap,
+/// because Kani reasons about a growable list far more expensively: the merge
+/// proofs ran out of memory reading one. `step` collects them into its list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Outbox {
+    items: [Option<Out>; OUTBOX],
+    len: usize,
+}
+
+impl Outbox {
+    pub const fn new() -> Self {
+        Outbox { items: [None; OUTBOX], len: 0 }
+    }
+
+    fn push(&mut self, o: Out) {
+        assert!(self.len < OUTBOX, "a transition emitted more than OUTBOX outputs");
+        self.items[self.len] = Some(o);
+        self.len += 1;
+    }
+
+    /// The output in slot `i`, if any. Slots fill in order.
+    pub fn get(&self, i: usize) -> Option<Out> {
+        self.items[i]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Whether this transition emitted `o`.
+    pub fn contains(&self, o: Out) -> bool {
+        let mut i = 0;
+        while i < OUTBOX {
+            if self.items[i] == Some(o) {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    fn drain_into(&self, out: &mut Outbox) {
+        out.extend(self.items.iter().flatten().copied());
+    }
+}
+
 /// One step of a phase's agenda.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Item {
@@ -685,7 +736,7 @@ fn has(bits: u8, head: u8) -> bool {
     head < MAX_HEADS && bits & (1u8 << head) != 0
 }
 
-fn notice(out: &mut Vec<Out>, node: usize, notice: Notice) {
+fn notice(out: &mut Outbox, node: usize, notice: Notice) {
     out.push(Out::Notice { node, notice });
 }
 
@@ -717,7 +768,7 @@ impl World {
     /// True when settle has nothing left to do.
     pub fn is_settled(&self) -> bool {
         let mut w = self.clone();
-        let mut out = Vec::new();
+        let mut out = Outbox::new();
         let mut i = 0;
         while i < w.nodes.len() {
             if advance(&mut w, i, &mut out) {
@@ -1242,8 +1293,10 @@ pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
 pub fn step_with_passes(mut world: World, event: Event) -> (World, Vec<Out>, u32) {
+    let mut outbox = Outbox::new();
+    apply(&mut world, event, &mut outbox);
     let mut out = Vec::new();
-    apply(&mut world, event, &mut out);
+    outbox.drain_into(&mut out);
     let passes = settle(&mut world, &mut out, None);
     (world, out, passes)
 }
@@ -1251,15 +1304,17 @@ pub fn step_with_passes(mut world: World, event: Event) -> (World, Vec<Out>, u32
 /// `step`, also returning the world after the event and after every internal
 /// transition. Tests check each one.
 pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<World>) {
-    let mut out = Vec::new();
+    let mut outbox = Outbox::new();
     let mut trace = Vec::new();
-    apply(&mut world, event, &mut out);
+    apply(&mut world, event, &mut outbox);
+    let mut out = Vec::new();
+    outbox.drain_into(&mut out);
     trace.push(world.clone());
     settle(&mut world, &mut out, Some(&mut trace));
     (world, out, trace)
 }
 
-fn apply(w: &mut World, event: Event, out: &mut Vec<Out>) {
+fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
         Event::NewRequest { repo } => {
             if (repo as usize) < w.gates.len() {
@@ -1346,7 +1401,7 @@ fn merge_credit(m: &mut Node) {
     }
 }
 
-fn close(w: &mut World, i: usize, outcome: Outcome, out: &mut Vec<Out>) {
+fn close(w: &mut World, i: usize, outcome: Outcome, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.phase = Phase::Closed(outcome);
     m.pos = 0;
@@ -1360,7 +1415,7 @@ fn close(w: &mut World, i: usize, outcome: Outcome, out: &mut Vec<Out>) {
     }
 }
 
-fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut Vec<Out>) {
+fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut Outbox) {
     let id = w.next_question;
     w.next_question += 1;
     let m = &mut w.nodes[i];
@@ -1370,7 +1425,7 @@ fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8, out: &mut
     notice(out, i, Notice::Ask { question: id });
 }
 
-fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Vec<Out>) {
+fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
@@ -1383,7 +1438,7 @@ fn raise_incident(w: &mut World, i: usize, needs_rob: bool, out: &mut Vec<Out>) 
     notice(out, i, Notice::Incident { needs_rob });
 }
 
-fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Vec<Out>) {
+fn emit(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     let seq = m.next_seq;
     m.next_seq += 1;
@@ -1432,7 +1487,7 @@ fn accepts(n: &Node, reply: Reply) -> bool {
     }
 }
 
-fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Vec<Out>) {
+fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Outbox) {
     let n = w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
@@ -1563,7 +1618,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ve
     }
 }
 
-fn run_failed(w: &mut World, i: usize, out: &mut Vec<Out>) {
+fn run_failed(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -1578,7 +1633,7 @@ fn run_failed(w: &mut World, i: usize, out: &mut Vec<Out>) {
     }
 }
 
-fn failed_round(w: &mut World, i: usize, out: &mut Vec<Out>) {
+fn failed_round(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -1591,7 +1646,7 @@ fn failed_round(w: &mut World, i: usize, out: &mut Vec<Out>) {
 
 /// The ladder after a failed fix round: a bigger budget, then a different
 /// model, then one re-plan, then Rob. Each step costs 1.
-fn next_rung(w: &mut World, i: usize, out: &mut Vec<Out>) {
+fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     if m.attempt < 3 {
         m.attempt += 1;
@@ -1617,7 +1672,7 @@ fn next_rung(w: &mut World, i: usize, out: &mut Vec<Out>) {
     }
 }
 
-fn out_of_room(w: &mut World, i: usize, out: &mut Vec<Out>) {
+fn out_of_room(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.holds = false;
     if m.credit.can_spend(1) {
@@ -1629,7 +1684,7 @@ fn out_of_room(w: &mut World, i: usize, out: &mut Vec<Out>) {
     }
 }
 
-fn plan_retry(w: &mut World, i: usize, out: &mut Vec<Out>) {
+fn plan_retry(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
     let phase = m.phase;
@@ -1644,7 +1699,7 @@ fn plan_retry(w: &mut World, i: usize, out: &mut Vec<Out>) {
 }
 
 /// A new head is checked and reviewed again. The first few rechecks are free.
-fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Vec<Out>) {
+fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -1663,7 +1718,7 @@ fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Vec<Out>) {
 
 // ---------------------------------------------------------------- acknowledgements
 
-fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Vec<Out>) {
+fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outbox) {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -1701,7 +1756,7 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
     }
 }
 
-fn delivery_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Vec<Out>) {
+fn delivery_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.fx_failures += 1;
     if m.fx_failures < 2 {
@@ -1719,7 +1774,7 @@ fn delivery_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Vec<Out>
     raise_incident(w, i, needs_rob, out);
 }
 
-fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Vec<Out>) {
+fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Outbox) {
     notice(out, i, Notice::Incident { needs_rob: true });
     if w.nodes[i].phase.is_stopping() {
         // Cleanup stays put, keeping what it holds, until Rob retries or marks the step handled.
@@ -1753,7 +1808,7 @@ fn effect_failed(w: &mut World, i: usize, kind: EffectKind, out: &mut Vec<Out>) 
 
 // ---------------------------------------------------------------- facts
 
-fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Vec<Out>) {
+fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
     match fact {
         Fact::PrMerged { head, checks_passed } => pr_merged(w, i, head, checks_passed, out),
         Fact::PrClosedByPerson => {
@@ -1830,7 +1885,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Vec<Out>) {
     }
 }
 
-fn pr_merged(w: &mut World, i: usize, head: u8, checks_passed: bool, out: &mut Vec<Out>) {
+fn pr_merged(w: &mut World, i: usize, head: u8, checks_passed: bool, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     if !m.had_pr || head >= MAX_HEADS || m.merged.is_some() {
         return;
@@ -1862,7 +1917,7 @@ fn pr_merged(w: &mut World, i: usize, head: u8, checks_passed: bool, out: &mut V
 
 // ---------------------------------------------------------------- commands
 
-fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Vec<Out>) {
+fn on_command(w: &mut World, i: usize, id: u64, command: Command, out: &mut Outbox) {
     if id <= w.nodes[i].last_cmd {
         return; // a repeated command
     }
@@ -1893,7 +1948,7 @@ fn allowed(kind: QKind, answer: Answer) -> bool {
     }
 }
 
-fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Vec<Out>) {
+fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox) {
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open
@@ -1991,7 +2046,9 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
         let mut changed = false;
         let mut i = 0;
         while i < w.nodes.len() {
-            if advance(w, i, out) {
+            let mut outbox = Outbox::new();
+            if advance(w, i, &mut outbox) {
+                outbox.drain_into(out);
                 changed = true;
                 if let Some(t) = trace.as_mut() {
                     t.push(w.clone());
@@ -2007,7 +2064,7 @@ fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>)
 }
 
 /// One internal transition for node `i`, if the facts allow one.
-fn advance(w: &mut World, i: usize, out: &mut Vec<Out>) -> bool {
+fn advance(w: &mut World, i: usize, out: &mut Outbox) -> bool {
     let n = w.nodes[i];
     if n.phase.is_closed() {
         return false;
