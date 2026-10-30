@@ -62,6 +62,10 @@ impl Store {
         let mut store = Self {
             client: connection.connect(NoTls)?,
         };
+        if store.client.query_one("SHOW fsync", &[])?.get::<_, &str>(0) != "on" {
+            return Err(Error::Invalid("store requires Postgres fsync = on"));
+        }
+        store.client.batch_execute("SET synchronous_commit = on")?;
         store.migrate()?;
         Ok(store)
     }

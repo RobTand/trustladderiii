@@ -30,13 +30,14 @@ fn main() {
         ("epochs_and_upgrades", epochs_and_upgrades),
         ("migrations_and_append_only", migrations_and_append_only),
         ("killed_writer_recovers", killed_writer_recovers),
+        ("durability_settings", durability_settings),
     ] {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
     database.stop();
-    println!("7 Postgres integration scenarios passed; no skips");
+    println!("8 Postgres integration scenarios passed; no skips");
 }
 
 struct Database {
@@ -404,6 +405,27 @@ fn concurrent_writers(settings: &tl3_config::Store) {
         1
     );
     assert_eq!(store.events_after(Revision::ZERO, 10).unwrap().len(), 1);
+    let snapshot = store.load().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let settings = settings.clone();
+            let snapshot = snapshot.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                let mut store = Store::open(&settings).unwrap();
+                let change = Commit::new("concurrent-duplicate", json!("same event"), &snapshot);
+                barrier.wait();
+                store.commit(&change).unwrap()
+            })
+        })
+        .collect();
+    let receipts: Vec<_> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect();
+    assert_eq!(receipts[0], receipts[1]);
+    assert_eq!(store.events_after(Revision::ZERO, 10).unwrap().len(), 2);
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let handles: Vec<_> = (0..2)
         .map(|_| {
@@ -510,6 +532,36 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
         Store::open(settings),
         Err(Error::MigrationMismatch)
     ));
+}
+
+fn durability_settings(settings: &tl3_config::Store) {
+    let _store = Store::open(settings).unwrap();
+    let mut client = raw(settings);
+    client
+        .batch_execute("ALTER SYSTEM SET fsync = 'off'")
+        .unwrap();
+    client.query_one("SELECT pg_reload_conf()", &[]).unwrap();
+    until(|| {
+        client
+            .query_one("SHOW fsync", &[])
+            .unwrap()
+            .get::<_, &str>(0)
+            == "off"
+    });
+    assert!(matches!(
+        Store::open(settings),
+        Err(Error::Invalid("store requires Postgres fsync = on"))
+    ));
+    client.batch_execute("ALTER SYSTEM RESET fsync").unwrap();
+    client.query_one("SELECT pg_reload_conf()", &[]).unwrap();
+    until(|| {
+        client
+            .query_one("SHOW fsync", &[])
+            .unwrap()
+            .get::<_, &str>(0)
+            == "on"
+    });
+    Store::open(settings).unwrap();
 }
 
 struct KillOnDrop(Child);

@@ -41,6 +41,8 @@ Only an explicitly configured password file is read, at runtime. No default
 credential file or environment variable is consulted. The client supports
 local TCP and Unix sockets without TLS. A remote deployment needs a protected
 tunnel or a later TLS adapter. Connection errors omit connection parameters.
+Opening refuses a server with fsync disabled and enables synchronous commits
+on its connection, so a successful commit waits for local WAL durability.
 
 Migrations run on open under a transaction-scoped advisory lock. Each numbered
 SQL file and its exact text is recorded in `tl3_schema_migrations`, in the
@@ -112,7 +114,7 @@ the job log. The first run also compiles the Rust dependencies.
 
 The scenarios exercise rollback after partially writing a transaction,
 redelivery, all 49 pairs of effect states, pending/final loading, concurrent
-writers, scoped interning, credit deduplication, schema migration checks,
+writers and redelivery, scoped interning, credit deduplication, schema migration checks,
 append-only guards, row deletion, and epochs. The crash scenario starts a
 separate store writer. Its first commit succeeds; a database trigger blocks
 its second transaction after writing the event, rows and effects. The parent
