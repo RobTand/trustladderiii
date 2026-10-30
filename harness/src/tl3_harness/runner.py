@@ -92,7 +92,7 @@ def main():
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
     if summary:
-        return int(pytest.main(["--", *(tests or ["."])], plugins=[Reporter(tests, descriptor, True)]))
+        return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[Reporter(tests, descriptor, True)]))
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})
     if not files:
         reporter = Reporter(tests, descriptor)
@@ -100,7 +100,7 @@ def main():
         reporter.emit(event="collection", tests=[])
         reporter.pytest_sessionfinish(5)
         return 5
-    return int(pytest.main(files, plugins=[Reporter(tests, descriptor)]))
+    return int(pytest.main(["--rootdir=.", *files], plugins=[Reporter(tests, descriptor)]))
 
 
 if __name__ == "__main__":

@@ -143,3 +143,13 @@ def test_missing_settings_is_explicit(submission):
         result = make_test_tool(tree)()
     assert result["status"] == "infrastructure_error"
     assert "settings" in result["message"]
+
+
+def test_harness_inside_role_worktree_is_refused(submission, monkeypatch):
+    from tl3_harness import execution
+
+    monkeypatch.setattr(execution, "__file__", str(submission[0] / "untrusted/execution.py"))
+    (submission[0] / "untrusted").mkdir()
+    result = call(submission, Summary().result)
+    assert result["status"] == "infrastructure_error"
+    assert not (submission[1] / "submitted.json").exists()

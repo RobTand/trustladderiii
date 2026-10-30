@@ -49,6 +49,10 @@ def _selectors(tests):
 def _stage(worktree, root):
     from tl3_harness import execution
 
+    harness = Path(execution.__file__).resolve().parent
+    owner = os.fstat(worktree._root)
+    if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
+        raise ValueError("Install the trusted harness outside the role worktree")
     checkout = root / "checkout"
     checkout.mkdir()
     with worktree._directory(()) as directory:
@@ -61,7 +65,7 @@ def _stage(worktree, root):
                     shutil.copyfileobj(source.buffer, destination)
     trusted = root / "trusted"
     trusted.mkdir()
-    shutil.copytree(Path(execution.__file__).parent, trusted / "tl3_harness",
+    shutil.copytree(harness, trusted / "tl3_harness",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (root / "action.py").write_text(
         'import sys\nfrom pathlib import Path\n'
