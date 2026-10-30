@@ -168,8 +168,9 @@ Production integration still requires:
    caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
    and planner check plan to this store API. The supervisor supplies kernel fields
    and deployment settings; it does not invent a brief or checks.
-2. Mergify #63, PR #69, must emit `Observation::CiFailed` with the failed check's
-   name and link or summary. Its current bare fact is supported but lacks details.
+2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
+   feedback with the failed check's name and link or summary remains pending.
+   Its current bare fact is supported but lacks details.
 
 The merged PrismaBuild checks observation supplies changed paths and up to 20
 failing test IDs with messages capped at 1,000 characters each. The trusted
