@@ -24,6 +24,10 @@ python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE
 python3 deploy/dl380g10/deploy.py start
 ```
 
+`--image`, `--primary` and `--alternate` only shape a new `tl3.toml`. Once the
+file exists, a rerun keeps it and says which flags had no effect. Edit the file,
+or run `deploy.py model-defaults`, to change those settings later.
+
 For the same sequence with an issue-identity assertion and service restart
 checks, submit `bash deploy/dl380g10/prepare.sh --binaries ARTIFACTS --image IMAGE`
 through PrismaBuild with `--tag dl380g10`, 2 CPUs, 3 GiB, and
