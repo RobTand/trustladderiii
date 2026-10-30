@@ -5,7 +5,10 @@
 # See deploy/dl380g10/README.md for sources and the proxy smoke command.
 ingest = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 32000 }]
 audit = [{ name = "claude-sonnet-5-5", family = "anthropic", effort = "high", budget_tokens = 32000 }]
-planner = [{ name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 }]
+planner = [
+    { name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 },
+    { name = "claude-fable-5-1", family = "anthropic", effort = "high", budget_tokens = 32000 },
+]
 maker = [
     { name = "gpt-6.1-sol", family = "openai", effort = "high", budget_tokens = 32000 },
     { name = "gpt-6.1-sol", family = "openai", effort = "max", budget_tokens = 128000 },

@@ -195,6 +195,18 @@ fn reviewer_ladder_must_cover_every_maker_family() {
 }
 
 #[test]
+fn planner_ladder_has_a_next_model_for_a_rerun() {
+    let document: Value = EXAMPLE.parse().unwrap();
+    let mut planner = document["models"]["planner"].clone();
+    planner.as_array_mut().unwrap().truncate(1);
+    let error = Config::parse(&changed(&["models", "planner"], planner))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("models.planner"), "{error}");
+    assert!(error.contains("next model"), "{error}");
+}
+
+#[test]
 fn invalid_values_name_the_setting_and_the_fix() {
     let cases = [
         (

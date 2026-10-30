@@ -61,7 +61,11 @@ key_file = "/run/tl3/model-key"
 # An omitted effort becomes JSON null, as the workers protocol permits.
 ingest = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
 audit = [{ name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 32000 }]
-planner = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
+# A plan that can't meet re-runs with the next model on this ladder.
+planner = [
+    { name = "default-model", family = "default", effort = "high", budget_tokens = 32000 },
+    { name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 32000 },
+]
 # Q22: attempts 1 and 2 share a model; set attempt 2 to its maximum effort/budget.
 # The proxy decides its supported maximum. These sample values need calibration.
 # Attempt 3 uses the strongest available model from a different family.
