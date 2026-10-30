@@ -6,7 +6,7 @@ mod support;
 use std::{
     collections::BTreeSet,
     fs,
-    io::{BufReader, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
