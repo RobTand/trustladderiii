@@ -50,8 +50,9 @@ PB's `content:sha256:` form is not a harness image reference.
 
 `store` configures `tl3-store` with `host`, `port`, `database`, `user`,
 `connect_timeout_secs` and an optional `password_file`. Omitting the section
-uses local TCP port 5432 and database/user `tl3`. The store uses local TCP or
-a Unix socket without TLS; remote deployment needs a protected tunnel.
+uses local TCP port 5432 and database/user `tl3`. The store accepts only
+`localhost`, `127.0.0.1`, `::1`, or an absolute Unix socket directory, without
+TLS. A remote deployment needs a protected tunnel with a loopback endpoint.
 Config validates an optional password file's metadata, and the store alone
 reads its bytes at runtime. It never searches environment variables or default
 credential files. Omitting the file uses the server's local authentication.

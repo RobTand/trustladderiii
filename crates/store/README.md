@@ -39,8 +39,9 @@ writer thread.
 This PR adds its optional `[store]` section. Credentials are never in a URL.
 Only an explicitly configured password file is read, at runtime. No default
 credential file or environment variable is consulted. The client supports
-local TCP and Unix sockets without TLS. A remote deployment needs a protected
-tunnel or a later TLS adapter. Connection errors omit connection parameters.
+TCP through `localhost`, `127.0.0.1`, or `::1`, and absolute Unix socket
+directories, without TLS. Other hosts are rejected. A remote deployment needs
+a protected tunnel with a loopback endpoint. Connection errors omit connection parameters.
 Opening refuses a server with fsync disabled and enables synchronous commits
 on its connection, so a successful commit waits for local WAL durability.
 
@@ -52,9 +53,10 @@ to open. Add a new migration rather than editing an applied one.
 ## Commit and recovery
 
 `commit` locks the singleton world revision before checking the event key.
-Duplicate keys return the original revision, epoch and JSON result, including
-after later commits or an upgrade. The first committed payload wins. New
-events require the loaded revision and epoch; `Error::Stale` tells the caller
+Duplicate keys with identical JSONB payloads return the original revision,
+epoch and JSON result, including after later commits or an upgrade. A different
+payload returns `Error::EventKeyReused` without changes. New events require
+the loaded revision and epoch; `Error::Stale` tells the caller
 to reload and apply the event again. Independent writers cannot silently
 overwrite a world they loaded before another commit.
 
