@@ -39,6 +39,9 @@ Owning a vector in each node proved too costly, even with small file sets held i
 A minimized probe checked the arbitrary starting world in 2.9 GiB, but cloning it exhausted 20 GiB before taking a transition.
 Interning large sets preserves `Node: Copy` and avoids that clone path. The PR records the before and after action keys and memory peaks.
 
+The controller-facing interner normalizes incoming file lists. Transitions union already-sorted sets with a linear merge.
+This keeps Rust's recursive sort out of the transition proofs. A diagnostic found Kani expanding that sort even in a reply proof with only inline footprints.
+
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
 The message adapter supplies the plain-language text.

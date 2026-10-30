@@ -34,6 +34,10 @@ impl World {
         let mut files: Vec<_> = files.into_iter().collect();
         files.sort_unstable();
         files.dedup();
+        self.intern_sorted_files(files)
+    }
+
+    fn intern_sorted_files(&mut self, files: Vec<FileId>) -> Footprint {
         if files.last().is_none_or(|f| f.0 < 64) {
             let mut bits = 0;
             for f in files {
@@ -95,12 +99,28 @@ impl World {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return Footprint::inline(a | b);
         }
-        let files: Vec<_> = self
-            .files(a)
-            .expect("interned footprint")
-            .chain(self.files(b).expect("interned footprint"))
-            .collect();
-        self.intern_footprint(files)
+        let files = {
+            let mut left = self.files(a).expect("interned footprint").peekable();
+            let mut right = self.files(b).expect("interned footprint").peekable();
+            let mut files = Vec::new();
+            loop {
+                let file = match (left.peek().copied(), right.peek().copied()) {
+                    (Some(a), Some(b)) if a == b => {
+                        left.next();
+                        right.next()
+                    }
+                    (Some(a), Some(b)) if a < b => left.next(),
+                    (Some(_), Some(_)) => right.next(),
+                    (Some(_), None) => left.next(),
+                    (None, Some(_)) => right.next(),
+                    (None, None) => None,
+                };
+                let Some(file) = file else { break };
+                files.push(file);
+            }
+            files
+        };
+        self.intern_sorted_files(files)
     }
 }
 
