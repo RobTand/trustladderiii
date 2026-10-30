@@ -87,6 +87,7 @@ fn changed(path: &[&str], value: Value) -> String {
 fn example_parses_with_sourced_numbers_and_different_reviewer_family() {
     let config = Config::parse(EXAMPLE).unwrap();
     config.validate().unwrap();
+    assert!(config.status.listen.ip().is_loopback());
     assert_eq!(config.limits.fit_tokens, 100_000);
     assert_eq!(config.limits.context_tokens, 150_000);
     assert_eq!(config.limits.credit_reserve, 3);

@@ -3,9 +3,11 @@ mod support;
 use std::{
     collections::BTreeSet,
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    time::Duration,
 };
 use support::Database;
 use tl3_controller::{
@@ -14,7 +16,7 @@ use tl3_controller::{
     status,
 };
 use tl3_kernel::{Outcome, Phase};
-use tl3_store::{EffectState, Store};
+use tl3_store::{EffectState, Reader, Store};
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
@@ -35,6 +37,7 @@ fn labelled() -> LabelledIssue {
         repo: "tl3-sandbox".into(),
         installation: 1,
         number: 42,
+        title: "Fix the sandbox build".into(),
         actor: 24923402,
         label: "tl3".into(),
     }
@@ -62,8 +65,12 @@ fn main() {
     acknowledged_operation_look(&database.create("look"));
     retry_uses_the_kernels_new_key(&database.create("retry"));
     println!("test restart_without_duplicate_deliveries ... ok");
+    status_page_and_command(&database.create("status"));
+    println!("test status_page_and_command ... ok");
     database.stop();
-    println!("2 required controller scenarios and 3 recovery edge cases passed; no skips");
+    println!(
+        "2 required controller scenarios, 3 recovery edge cases and status HTTP simulation passed; no skips"
+    );
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {
@@ -129,7 +136,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     );
     let initial = cli_status(&config);
     assert!(
-        initial.contains("Ingesting\tStartRun(Ingest)\t0"),
+        initial.contains("Understanding the request\trequest reader to start\t0"),
         "{initial}"
     );
     let mut seen = BTreeSet::new();
@@ -137,9 +144,12 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
         let world = controller.world().unwrap();
         assert!(world.valid() && world.is_settled());
         seen.insert(world.nodes[0].phase.name());
-        let mut reader = Store::open(settings).unwrap();
-        let rendered = status::render(&mut reader).unwrap();
-        assert!(rendered.contains(&format!("\t{}\n", world.nodes[0].credit.balance())));
+        let mut reader = Reader::open(settings).unwrap();
+        let rendered = status::render_text(&status::load(&mut reader).unwrap());
+        assert!(rendered.contains(&format!(
+            "\t{}\tnone recorded\tnone recorded\n",
+            world.nodes[0].credit.balance()
+        )));
         if !controller.drive_once().unwrap() {
             break;
         }
@@ -162,7 +172,8 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
     assert_finished(&mut controller, &records);
     let final_status = cli_status(&config);
     assert!(
-        final_status.contains("RobTand/tl3-sandbox#42\tClosed(Merged)\tnone\t5"),
+        final_status
+            .contains("RobTand/tl3-sandbox#42: Fix the sandbox build\tClosed: merged\tnone\t5"),
         "{final_status}"
     );
     let snapshot = controller.snapshot().unwrap();
@@ -293,7 +304,7 @@ fn restart_without_duplicate_deliveries(settings: &tl3_config::Store) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_finished(&mut open(settings, &records), &records);
-    assert!(cli_status(&config).contains("Closed(Merged)\tnone\t5"));
+    assert!(cli_status(&config).contains("Closed: merged\tnone\t5"));
 }
 
 fn kill_at(config: &Path, records: &Path, boundary: &str) {
@@ -470,4 +481,127 @@ fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
         EffectState::Cancelled
     );
     assert!(calls.borrow().values().all(|count| *count == 1));
+}
+
+struct StatusServer(Child);
+impl Drop for StatusServer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn http(address: std::net::SocketAddr, method: &str, path: &str) -> (String, String) {
+    let mut connection = TcpStream::connect(address).unwrap();
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    write!(connection, "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").unwrap();
+    let mut response = String::new();
+    connection.read_to_string(&mut response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    (headers.to_ascii_lowercase(), body.into())
+}
+
+fn status_page_and_command(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let records = root.path().join("upstreams");
+    let mut controller = open(settings, &records);
+    assert!(
+        status::load(&mut Reader::open(settings).unwrap())
+            .unwrap()
+            .requests
+            .is_empty()
+    );
+    let mut issue = labelled();
+    issue.title = "Fix <script>alert('oops')</script> & spacing\t\n".into();
+    controller.intake(issue).unwrap();
+    for iteration in 0..100 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Making {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+        assert!(iteration < 99);
+    }
+    let before = controller.snapshot().unwrap();
+    let mut reader = Reader::open(settings).unwrap();
+    let model = status::load(&mut reader).unwrap();
+    assert_eq!(model.requests.len(), 1);
+    let row = &model.requests[0];
+    assert_eq!(
+        row.issue,
+        "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing"
+    );
+    assert_eq!(row.phase, "Making the change");
+    assert_eq!(row.waiting_on, "worktree preparation");
+    assert_eq!(row.credit, 4);
+    assert_eq!(row.details, status::RequestDetails::default());
+    let expected_text = concat!(
+        "Request\tPhase\tWaiting on\tCredit\tLast progress\tOpen incidents\n",
+        "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing\t",
+        "Making the change\tworktree preparation\t4\tnone recorded\tnone recorded\n"
+    );
+    assert_eq!(status::render_text(&model), expected_text);
+    let expected_html = status::render_html(&model);
+    assert!(expected_html.contains("<td>RobTand/tl3-sandbox#42: Fix &lt;script&gt;alert(&#39;oops&#39;)&lt;/script&gt; &amp; spacing</td>"));
+    assert!(expected_html.contains("<td>Making the change</td><td>worktree preparation</td><td>4</td><td>none recorded</td><td>none recorded</td>"));
+    assert!(!expected_html.contains("<script>"));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = config_file(settings, root.path());
+    let contents = fs::read_to_string(&config)
+        .unwrap()
+        .replace("127.0.0.1:8033", &address.to_string());
+    fs::write(&config, contents).unwrap();
+    drop(listener);
+    let mut server = StatusServer(
+        Command::new(env!("CARGO_BIN_EXE_tl3"))
+            .args(["status-serve", "--config"])
+            .arg(&config)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut ready = String::new();
+    BufReader::new(server.0.stdout.take().unwrap())
+        .read_line(&mut ready)
+        .unwrap();
+    assert!(
+        ready.contains(&address.to_string()),
+        "server failed to start: {ready}"
+    );
+    assert_eq!(cli_status(&config), expected_text);
+    let (headers, body) = http(address, "GET", "/");
+    assert!(headers.starts_with("http/1.1 200"), "{headers}");
+    assert!(!headers.contains("www-authenticate") && !headers.contains("set-cookie"));
+    assert!(headers.contains("cache-control: no-store"));
+    assert_eq!(body, expected_html);
+    let (headers, body) = http(address, "HEAD", "/");
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(headers.contains(&format!("content-length: {}", expected_html.len())));
+    assert!(body.is_empty());
+    for method in ["POST", "PUT", "DELETE", "OPTIONS"] {
+        let (headers, _) = http(address, method, "/");
+        assert!(headers.starts_with("http/1.1 405"), "{method}: {headers}");
+        assert!(headers.contains("allow: get, head"));
+    }
+    assert!(
+        http(address, "GET", "/missing")
+            .0
+            .starts_with("http/1.1 404")
+    );
+    assert_eq!(
+        controller.snapshot().unwrap(),
+        before,
+        "status must write nothing"
+    );
+    drain(&mut controller);
+    let final_model = status::load(&mut reader).unwrap();
+    assert_ne!(final_model, model);
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+    assert_eq!(cli_status(&config), status::render_text(&final_model));
 }

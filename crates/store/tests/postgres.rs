@@ -30,13 +30,14 @@ fn main() {
         ("migrations_and_append_only", migrations_and_append_only),
         ("killed_writer_recovers", killed_writer_recovers),
         ("durability_settings", durability_settings),
+        ("read_only_reader", read_only_reader),
     ] {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
     }
     database.stop();
-    println!("8 Postgres integration scenarios passed; no skips");
+    println!("9 Postgres integration scenarios passed; no skips");
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -626,4 +627,63 @@ fn crash_writer(args: &[String]) {
     fs::write(Path::new(&args[5]), b"committed").unwrap();
     store.commit(&second_commit(&snapshot)).unwrap();
     panic!("parent should kill the writer before the second commit returns");
+}
+
+fn read_only_reader(settings: &tl3_config::Store) {
+    let mut reader = Reader::open(settings).unwrap();
+    {
+        let mut tx = reader.transaction().unwrap();
+        assert!(
+            !tx.query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'tl3_schema_migrations')",
+                &[]
+            )
+            .unwrap()
+            .get::<_, bool>(0)
+        );
+        let error = tx
+            .batch_execute("CREATE TABLE forbidden (id int)")
+            .unwrap_err();
+        assert_eq!(error.code().unwrap().code(), "25006");
+    }
+    let mut writer = Store::open(settings).unwrap();
+    let change = seed(&mut writer);
+    writer.commit(&change).unwrap();
+    let before = writer.load().unwrap();
+    assert_eq!(reader.load().unwrap(), before);
+    for sql in [
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
+        "UPDATE tl3_world SET value = '{}'",
+        "DELETE FROM tl3_world",
+    ] {
+        let mut tx = reader.transaction().unwrap();
+        assert_eq!(
+            tx.query_one("SHOW transaction_read_only", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "on"
+        );
+        assert_eq!(
+            tx.query_one("SHOW default_transaction_read_only", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "on"
+        );
+        assert_eq!(
+            tx.query_one("SHOW transaction_isolation", &[])
+                .unwrap()
+                .get::<_, &str>(0),
+            "repeatable read"
+        );
+        let error = tx.batch_execute(sql).unwrap_err();
+        assert_eq!(error.code().unwrap().code(), "25006");
+    }
+    assert_eq!(writer.load().unwrap(), before);
+    assert_eq!(
+        raw(settings)
+            .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
 }

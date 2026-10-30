@@ -4,19 +4,20 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. This release
-supports explicit simulation only. It never loads deployment GitHub or model
-credentials.
+All commands use the same TOML configuration as `tl3-config`. Controller execution
+supports explicit simulation only. Status commands read the configured store
+and do not load GitHub or model credentials.
 
 ```text
 tl3 status --config /absolute/path/to/config.toml
+tl3 status-serve --config /absolute/path/to/config.toml
 tl3d --config /absolute/path/to/config.toml --simulate /absolute/path/to/fake-records
 ```
 
 The daemon reads one JSON `cli::Input` per line on stdin. For example:
 
 ```json
-{"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"actor":24923402,"label":"tl3"}}
+{"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"title":"Fix the sandbox build","actor":24923402,"label":"tl3"}}
 ```
 
 The example repository, installation and actor must match the configuration.
@@ -27,6 +28,25 @@ without reading stdin. EOF ends an interactive simulation.
 Register a replacement executor with one `Registry::register` call. The five
 modules under `src/adapters` each contain a fake. The controller owns interning
 and persistence. Executors own authoritative reconciliation and epoch fencing.
+
+`tl3 status` and the page share `status::load`, one typed model and one set
+of columns. They show the issue title and number, phase, wait, credit, last
+progress and open incidents. Older requests without a title show "title not
+recorded". Both progress and incidents show "none recorded" until their store
+data exists. Tickets #9 and #15 fill `status::load_request_details` with queries
+on its existing read-only transaction. Return public summaries there, never
+worker payloads, connection settings or tokens.
+
+`tl3 status-serve` is a separate process from `tl3d`. It serves `/` with GET
+and HEAD, needs no login and refuses other methods with 405. Reload the page
+to refresh it. The server uses `config.status.listen`; the example binds only
+to `127.0.0.1:8033`. Initialize the database through the controller before
+opening status. Status never runs migrations or creates request data.
+
+Ticket #19 owns deployment on dl380g10, the systemd unit and the LAN address.
+Run the status process in its own unit and set `[status].listen` to that LAN
+address. The status connection uses the `[store]` settings. A SELECT-only
+Postgres role can also restrict the status process's credentials.
 
 Run development verification through PrismaBuild from a clean commit:
 

@@ -61,7 +61,8 @@ The worktrees root and tools directory need not exist during offline validation.
 Allowances use positive integer seconds. Expiry triggers a look at the upstream,
 not a work-duration deadline. Credit reserve and free rechecks allow zero;
 W must be 1 for slice one. Listen addresses are numeric socket addresses with a
-fixed nonzero port. HTTP endpoints allow LAN HTTP and reject embedded credentials,
+fixed nonzero port. The example status address is `127.0.0.1:8033`; deployment
+sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP and reject embedded credentials,
 queries, and fragments. Parse diagnostics omit source lines.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
