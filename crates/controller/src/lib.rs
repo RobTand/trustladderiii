@@ -556,13 +556,16 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        self.adapters.retire(&mut self.store);
         Ok(progressed)
     }
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = serde_json::from_value(row.value.clone())?;
         if executor::upstream(delivery.output) == executor::Upstream::Mergify {
-            self.adapters.adapter(&delivery)?.retire(&delivery)?;
+            self.adapters
+                .adapter(&delivery)?
+                .retire_delivery(&delivery)?;
         }
         let mut commit = Commit::new(
             format!("retire:{}:{}", row.id, snapshot.revision.get()),

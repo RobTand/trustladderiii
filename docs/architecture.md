@@ -155,9 +155,19 @@ Each effect key has immutable attempt directories. Atomic hard-link claims
 fence delayed launchers without file locks. Machine ID, boot ID, PID, process
 start time and a pidfd recheck identify processes. Stop waits on pidfd readiness.
 An active-node index bounds teardown work. The source rebuilds active runs from
-the store and directories once, then uses inotify and pidfd events, with no
-wake-up polling. It retires finished watches and reports only Found evidence.
-Confirmed absence is handled by the controller's retained watch.
+the store's worker watches and their attempts, then uses inotify and pidfd events,
+with no wake-up polling. Historical directories are never opened at startup.
+Ready markers live in a separate inbox, so recovery and overflow rescans need no
+history scan. It retires finished inotify watches and reports only Found evidence.
+Confirmed absence is handled by the controller's retained watch and needs a
+controller wake from ticket #15's looks if no other input arrives.
+
+At the end of a controller drain, the registry calls `Executor::retire`, a default
+no-op for other adapters. The worker adapter selects progress rows whose effect
+is terminal and has no store watch. It fences and stops both processes, durably
+removes the run directory and notification, then deletes the progress row.
+The row remains a cleanup queue across a crash, including partial filesystem
+deletion. Retirement never changes kernel rules or chooses a retry.
 
 Worker progress is liveness data, not a kernel verdict. Migration 3 creates
 `tl3_worker_progress`, including a start time before progress and a nullable

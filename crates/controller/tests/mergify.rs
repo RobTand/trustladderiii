@@ -1241,8 +1241,13 @@ impl Executor for RetireError {
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
         self.0.reconcile(delivery)
     }
-    fn retire(&mut self, _: &Delivery) -> tl3_controller::Result<()> {
+    fn retire_delivery(&mut self, _: &Delivery) -> tl3_controller::Result<()> {
         Err(tl3_controller::Error::Invalid("fixture retire error"))
+    }
+    fn retire(&mut self, _: &mut Store) -> tl3_controller::Result<()> {
+        Err(tl3_controller::Error::Invalid(
+            "fixture background retire error",
+        ))
     }
 }
 

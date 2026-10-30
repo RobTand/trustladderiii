@@ -300,7 +300,7 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
-    fn retire(&mut self, delivery: &Delivery) -> Result<()> {
+    fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
         for extension in ["intent", "applied", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
                 Ok(()) => {}
