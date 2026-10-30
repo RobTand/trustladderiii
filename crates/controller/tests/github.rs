@@ -1321,6 +1321,46 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     }
     let marker = root.path().join("entered");
     let runs = root.path().join("runs");
+    let worktrees = root.path().join("worktrees");
+    let checkout = worktrees
+        .join(hex::encode("owner"))
+        .join(hex::encode("sandbox"))
+        .join("issue-12-node-0");
+    fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--quiet", "--template="]);
+    fs::write(
+        checkout.join("greeting.py"),
+        "def greet(): return 'goodbye'\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "Base"]);
+    let base = git(&["rev-parse", "HEAD"]);
     let config = include_str!("../../config/example.toml")
         .replace("port = 5432", &format!("port = {}", settings.port))
         .replace(
@@ -1349,6 +1389,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             package.join(".venv/bin/python").to_str().unwrap(),
         )
         .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace("/srv/tl3/worktrees", worktrees.to_str().unwrap())
         .replace(
             "command = [\"-m\", \"tl3_workers\", \"run\"]",
             &format!(
@@ -1359,9 +1400,16 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     let config_path = root.path().join("config.toml");
     fs::write(&config_path, config).unwrap();
     let mut store = Store::open(settings).unwrap();
-    store.put_worker_materials("0", &json!({
+    let inputs = json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
         "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]}
+    });
+    store.put_worker_materials("0", &json!({
+        "ingest": inputs, "audit": inputs, "repo": inputs["repo"],
+        "maker": {
+            "brief": "Return hello.", "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
+            "plan": {"files": ["greeting.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["tests/test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]}
+        }
     })).unwrap();
     struct Daemon(std::process::Child);
     impl Drop for Daemon {
@@ -1462,7 +1510,12 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         "agree"
     );
     let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 3);
+    assert_eq!(progress.len(), 4, "ingest, audit, planner and maker");
+    assert_ne!(git(&["rev-parse", "HEAD"]), base);
+    assert_eq!(
+        fs::read_to_string(checkout.join("greeting.py")).unwrap(),
+        "def greet(): return 'hello'\n"
+    );
     assert!(progress.iter().all(|p| p.last_progress_ms.is_some()));
     let snapshot = store.load().unwrap();
     assert_eq!(

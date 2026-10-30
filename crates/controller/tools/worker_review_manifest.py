@@ -18,7 +18,7 @@ env = {
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
 }
 rows = [{
-    "cwd": str(root), "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--locked"] if args.suite == "maker" else ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
+    "cwd": str(root), "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--test", "github", "--locked"] if args.suite == "maker" else ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
     "cpus": 2, "demand": {"mem_gb": 6}, "tags": [host], "env": env, "priority": -10,
 } for host in ("dl380g10", "sparky", "sparklina")]
 workspace = {
