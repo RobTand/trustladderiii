@@ -759,3 +759,29 @@ fn planning_cannot_remove_protection_or_overhead_evidence() {
     config.planning.overhead_tokens.clear();
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn planning_overhead_must_leave_room_under_the_fit_limit() {
+    for (overhead, valid) in [
+        (99_999, true),
+        (100_000, false),
+        (100_001, false),
+        (u32::MAX, false),
+    ] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.planning.overhead_tokens = [("prompt".into(), overhead)].into();
+        let result = config.validate();
+        assert_eq!(result.is_ok(), valid, "{overhead}");
+        if !valid {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("planning.overhead_tokens")
+            );
+        }
+    }
+    let mut config = Config::parse(EXAMPLE).unwrap();
+    config.planning.overhead_tokens = [("prompt".into(), u32::MAX), ("making".into(), 1)].into();
+    assert!(config.validate().is_err(), "sum must not overflow");
+}

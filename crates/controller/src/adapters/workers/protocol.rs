@@ -229,5 +229,48 @@ fn forecast(reply: &Value) -> Result<(u64, u64)> {
     if sum != Some(tokens) || fit >= context || f["fits"].as_bool() != Some(tokens < fit) {
         return Err(Error::Invalid("inconsistent forecast evidence"));
     }
+    let declared: std::collections::BTreeSet<_> = if reply["kind"] == "split" {
+        reply["pieces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|piece| piece["files"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect()
+    } else {
+        reply["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect()
+    };
+    let measured: std::collections::BTreeSet<_> = files.keys().map(String::as_str).collect();
+    if declared != measured {
+        return Err(Error::Invalid("forecast files differ from declared files"));
+    }
     Ok((tokens, fit))
 }
+
+pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Result<()> {
+    if let Some(forecast) = reply.get("forecast") {
+        let overhead = settings["overhead_tokens"].as_object().and_then(|values| {
+            values
+                .values()
+                .try_fold(0u64, |sum, value| sum.checked_add(value.as_u64()?))
+        });
+        if forecast["fit_tokens"] != settings["fit_tokens"]
+            || forecast["context_tokens"] != settings["context_tokens"]
+            || forecast["overhead_tokens"].as_u64() != overhead
+        {
+            return Err(Error::Invalid(
+                "forecast differs from configured limits or overhead",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;

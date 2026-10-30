@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("workers", "maker", "workspace"))
+parser.add_argument("suite", choices=("workers", "planning", "maker", "workspace"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -16,9 +16,16 @@ env = {
     "KANI_HOME": "/home/rob/.kani", "CARGO_BUILD_JOBS": "2",
     "RUST_TEST_THREADS": "2", "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
+    "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
+    "TL3_TEST_UV": "/home/rob/.local/bin/uv",
+}
+commands = {
+    "maker": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--test", "github", "--locked"],
+    "planning": ["bash", "crates/controller/tools/verify-planning.sh"],
+    "workers": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
 }
 rows = [{
-    "cwd": str(root), "argv": ["cargo", "test", "-p", "tl3-controller", "--test", "workers", "--test", "github", "--locked"] if args.suite == "maker" else ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-store", "--tests", "--locked"],
+    "cwd": str(root), "argv": commands.get(args.suite, commands["workers"]),
     "cpus": 2, "demand": {"mem_gb": 6}, "tags": [host], "env": env, "priority": -10,
 } for host in ("dl380g10", "sparky", "sparklina")]
 workspace = {

@@ -26,8 +26,9 @@ def no_network(*args, **kwargs):
 
 
 def create_model(request):
-    marker.write_text(str(__import__("os").getpid()))
-    if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit"):
+    if mode != "plan-blocked" or request["role"] == "planner":
+        marker.write_text(str(os.getpid()))
+    if mode == "blocked" or (mode == "audit-blocked" and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}
@@ -35,7 +36,9 @@ def create_model(request):
         reply = {"kind": "leaf", "files": ["greeting.py", "tests/test_greeting.py"],
                  "checks": [{"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"], "goal_ids": [0]}],
                  "no_design_questions": True, "lands_on_its_own": True}
-        if mode == "plan-invalid":
+        if mode == "plan-bad-schema":
+            reply["checks"][0]["kind"] = "invalid"
+        elif mode == "plan-invalid":
             reply["files"] = ["conftest.py"]
         elif mode in {"plan-split", "plan-bad-split"}:
             reply = {"kind": "split", "reason": "does_not_fit", "pieces": [
@@ -61,13 +64,25 @@ def create_model(request):
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 
-if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash"}:
+if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash", "oversized-size", "forged-fit", "forged-context", "forged-overhead", "forged-files"}:
     request = json.load(sys.stdin)
     reply = dict(brief) if mode != "bad-schema" else {"kind": "brief", "brief": "Missing goals"}
     if mode != "bad-schema":
-        from tl3_workers.forecast import measure
+        from tl3_workers.forecast import Forecaster
         os.chdir(request["worktree"])
-        reply["forecast"] = measure(reply["brief"], reply["files"], request["inputs"]["forecast"])
+        reply["forecast"] = Forecaster(request["inputs"]["forecast"]).measure(reply["brief"], reply["files"])
+    if mode == "oversized-size":
+        reply["forecast"]["brief_tokens"] = 256 * request["inputs"]["forecast"]["fit_tokens"]
+        reply["forecast"]["tokens"] = reply["forecast"]["brief_tokens"] + sum(reply["forecast"]["file_tokens"].values()) + reply["forecast"]["overhead_tokens"]
+        reply["forecast"]["fits"] = False
+    elif mode in {"forged-fit", "forged-context"}:
+        field = "fit_tokens" if mode == "forged-fit" else "context_tokens"
+        reply["forecast"][field] += 1
+    elif mode == "forged-overhead":
+        reply["forecast"]["overhead_tokens"] += 1
+        reply["forecast"]["tokens"] += 1
+    elif mode == "forged-files":
+        reply["forecast"]["file_tokens"] = {"forged.py": sum(reply["forecast"]["file_tokens"].values())}
     if mode == "duplicate-key":
         print('{"event":"reply","role":"ingest","reply":{"kind":"brief","brief":"x","brief":"y","goals":[{"description":"x","verification":"test"}],"memory_ids":[]}}', flush=True)
     elif mode in {"partial", "partial-crash"}:

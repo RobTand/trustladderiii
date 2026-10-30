@@ -192,8 +192,10 @@ fn main() {
         let config_text = fs::read_to_string(&args[2]).unwrap();
         let settings: tl3_config::Store = serde_json::from_str(&config_text).unwrap();
         let root = Path::new(&args[3]);
-        let config = config(&settings, root, "blocked");
-        let (registry, _) = ingest_audit_simulation(&root.join("fakes"), &config).unwrap();
+        let mode = args.get(4).map(String::as_str).unwrap_or("blocked");
+        let config = config(&settings, root, mode);
+        let (registry, mut source) =
+            worker_simulation(&root.join("fakes"), &config, mode != "plan-blocked").unwrap();
         let mut controller = Controller::open(
             Store::open(&settings).unwrap(),
             registry,
@@ -202,8 +204,14 @@ fn main() {
         .unwrap();
         controller.intake(labelled()).unwrap();
         while controller.drive_once().unwrap() {}
+        let mut store = Store::open(&settings).unwrap();
         loop {
-            thread::park();
+            if mode == "plan-blocked" {
+                drive(&mut controller, &mut source, &mut store);
+                thread::sleep(Duration::from_millis(10));
+            } else {
+                thread::park();
+            }
         }
     }
     prepare_workers();
@@ -221,7 +229,8 @@ fn main() {
     println!("test sigkill_worker_failure_retries_through_kernel ... ok");
     late_launcher(&database.create("workers_late"));
     println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
-    killed_controller(&database.create("controller_kill"));
+    killed_controller(&database.create("controller_kill"), "blocked");
+    killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
     println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
     invalid_replies(&database.create("workers_invalid"));
     println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
@@ -247,13 +256,15 @@ fn main() {
         "plan-invalid",
         "plan-cant-meet",
         "plan-bad-split",
+        "plan-bad-schema",
     ] {
         planning::planning(&database.create(&mode.replace('-', "_")), mode);
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
+    planning::stop(&database.create("planner_stop"));
     maker::run(&mut database);
     database.stop();
-    println!("30 required worker supervisor, planning and maker scenarios passed; no skips");
+    println!("33 required worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
@@ -484,7 +495,7 @@ fn killed_worker(settings: &tl3_config::Store) {
     );
 }
 
-fn killed_controller(settings: &tl3_config::Store) {
+fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     materials(&mut Store::open(settings).unwrap());
     let settings_path = root.path().join("settings.json");
@@ -493,16 +504,17 @@ fn killed_controller(settings: &tl3_config::Store) {
         .arg("--controller-child")
         .arg(settings_path)
         .arg(root.path())
+        .arg(mode)
         .stdin(Stdio::null())
         .spawn()
         .unwrap();
     wait(|| root.path().join("entered").exists());
-    let config = config(settings, root.path(), "blocked");
+    let config = config(settings, root.path(), mode);
     let worker_pid = fs::read_to_string(root.path().join("entered")).unwrap();
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
     let (registry, mut source) =
-        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+        worker_simulation(&root.path().join("fakes"), &config, mode != "plan-blocked").unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -510,7 +522,14 @@ fn killed_controller(settings: &tl3_config::Store) {
     )
     .unwrap();
     while controller.drive_once().unwrap() {}
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Ingesting);
+    if mode == "plan-blocked" {
+        assert!(matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Planning { .. }
+        ));
+    } else {
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Ingesting);
+    }
     fs::write(root.path().join("entered.release"), "go").unwrap();
     let mut store = Store::open(settings).unwrap();
     wait(|| {
@@ -522,14 +541,23 @@ fn killed_controller(settings: &tl3_config::Store) {
         .map(|e| e.unwrap().path())
         .filter(|p| p.is_dir())
         .collect();
-    assert_eq!(records.len(), 2, "one ingest and one audit");
+    assert_eq!(
+        records.len(),
+        if mode == "plan-blocked" { 3 } else { 2 },
+        "one process per real worker role"
+    );
     assert!(records.iter().all(|p| attempts(p) == 1));
     let ingest = records
         .iter()
         .find(|p| {
             let record: Value =
                 serde_json::from_slice(&fs::read(p.join("delivery.json")).unwrap()).unwrap();
-            record["output"]["Effect"]["kind"]["StartRun"] == "Ingest"
+            record["output"]["Effect"]["kind"]["StartRun"]
+                == if mode == "plan-blocked" {
+                    "Plan"
+                } else {
+                    "Ingest"
+                }
         })
         .unwrap();
     let identity: Value =
@@ -550,6 +578,11 @@ fn invalid_replies(settings: &tl3_config::Store) {
         "wrong-role",
         "malformed",
         "partial",
+        "oversized-size",
+        "forged-fit",
+        "forged-context",
+        "forged-overhead",
+        "forged-files",
     ] {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
