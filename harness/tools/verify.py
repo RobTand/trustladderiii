@@ -26,7 +26,7 @@ def main():
              "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
              "--pids-limit=128", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
              "--mount", f"type=bind,src={source},dst=/source,readonly",
-             "--env", "HOME=/tmp", "--env", "PYTHONPATH=/source/src",
+             "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTHONPATH=/source/src",
              "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", "--env", "OMP_NUM_THREADS=1",
              "--env", "MKL_NUM_THREADS=1", "--env", "OPENBLAS_NUM_THREADS=1",
              "--workdir=/source", "--entrypoint=python3", container.image,

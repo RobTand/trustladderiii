@@ -31,7 +31,7 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
-        "--env", "HOME=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
+        "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
         "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
         container.image, "-I", "-B", "/harness/runner.py", json.dumps(tests),
