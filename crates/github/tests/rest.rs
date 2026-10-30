@@ -97,6 +97,8 @@ async fn signs_rs256_jwt_and_caches_the_installation_token_across_clones() {
         .expect(2)
         .mount(&server)
         .await;
+    assert_eq!(github.installation_id(), 3);
+    assert_eq!(github.installation_token().await.unwrap(), "fake-token");
     let clone = github.clone();
     let (a, b) = tokio::join!(
         github.issue("owner/sandbox", 12),

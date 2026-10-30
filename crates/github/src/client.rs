@@ -131,6 +131,10 @@ impl GitHub {
         })))
     }
 
+    pub fn installation_id(&self) -> u64 {
+        self.0.installation
+    }
+
     pub fn app_jwt(&self, now: DateTime<Utc>) -> Result<String, Error> {
         #[derive(Serialize)]
         struct Claims {
@@ -150,7 +154,8 @@ impl GitHub {
         .map_err(|_| Error::Jwt)
     }
 
-    async fn installation_token(&self) -> Result<String, Error> {
+    /// Installation credential for GitHub HTTPS Git operations. Never log or persist it.
+    pub async fn installation_token(&self) -> Result<String, Error> {
         let mut cache = self.0.token.lock().await;
         if let Some(token) = cache.as_ref()
             && token.expires_at > Utc::now() + chrono::Duration::seconds(60)
