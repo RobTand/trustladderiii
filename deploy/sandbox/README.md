@@ -61,3 +61,10 @@ PrismaBuild. Test records and live results are documented on issue #17.
 The trial also found that GitHub Actions check outputs can have a null title.
 The GitHub model preserves that absence; Mergify treats it as an unknown title.
 The regression fixture is a real response from sandbox PR #16.
+
+For the nullable-title integration change, submit `bash deploy/sandbox/verify.sh`
+with 2 CPUs and 6 GiB on each of `dl380g10`, `sparky`, and `sparklina`. Those
+suites use sockets and child processes, so the shared brief requires all three
+hosts. Pass the Rust paths and bound `CARGO_BUILD_JOBS=2` and
+`RUST_TEST_THREADS=2` as in the Mergify client README. The controller suite starts
+an embedded disposable Postgres. No installed database is required.

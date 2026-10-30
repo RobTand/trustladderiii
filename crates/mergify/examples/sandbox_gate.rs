@@ -2,7 +2,9 @@
 use chrono::Utc;
 use serde_json::json;
 use std::{fs, path::PathBuf};
-use tl3_github::{AppConfig, CheckConclusion, CheckStatus, ClientOptions, GitHub, NewCheckRun};
+use tl3_github::{
+    AppConfig, CheckConclusion, CheckStatus, ClientOptions, GitHub, NewCheckRun, NewPullRequest,
+};
 use tl3_mergify::Mergify;
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +28,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let destination = PathBuf::from(subject);
         fs::create_dir_all(&destination)?;
         let mut url = "https://api.github.com/app/hook/deliveries?per_page=100".to_owned();
-        for _ in 0..20 {
+        for page in 1..=20 {
             let response = http
                 .get(&url)
                 .header("User-Agent", "tl3-sandbox-gate")
@@ -57,6 +59,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("delivery API unavailable".into());
             }
             let deliveries: Vec<serde_json::Value> = serde_json::from_value(body)?;
+            fs::write(
+                destination.join(format!("page-{page}.json")),
+                serde_json::to_vec_pretty(&deliveries)?,
+            )?;
             for delivery in &deliveries {
                 if !matches!(
                     delivery["event"].as_str(),
@@ -120,6 +126,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let repo = "RobTand/tl3-sandbox";
     match operation.as_str() {
+        "open" => {
+            let pull = github.open_pull_request(repo, &NewPullRequest {
+                title: head.ok_or("title required")?,
+                head: subject,
+                base: "main".into(),
+                body: "Correct the live-trial configuration deadlock from RobTand/trustladderiii#17. Keep TL3 approval on the original head and sandbox CI on the draft. GitHub still enforces both checks on the original PR, with no ruleset bypass. Requires coordinator review before bootstrap recovery.".into(),
+            }).await?;
+            println!("sandbox PR {}", pull.number);
+        }
         "approve" => {
             let check = github
                 .create_check_run(
