@@ -93,6 +93,23 @@ impl Adapter {
             .cloned()
             .ok_or(Error::Invalid("missing GitHub installation client"))
     }
+    fn request_notice(delivery: &Delivery) -> Option<Notice> {
+        match delivery.output {
+            Out::Notice {
+                notice:
+                    notice @ (Notice::Ask { .. }
+                    | Notice::MeasuresPosted
+                    | Notice::Summary(_)
+                    | Notice::Note(_)),
+                ..
+            } => Some(notice),
+            Out::Notice {
+                notice: Notice::Incident { .. } | Notice::FileReplacement,
+                ..
+            }
+            | Out::Effect { .. } => None,
+        }
+    }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
         match delivery.output {
             Out::Notice {
@@ -111,7 +128,7 @@ impl Adapter {
 impl Executor for Adapter {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        let Out::Notice { notice, .. } = delivery.output else {
+        let Some(notice) = Self::request_notice(delivery) else {
             return self.fake.execute(delivery);
         };
         let client = self.client(delivery)?;
@@ -159,7 +176,7 @@ impl Executor for Adapter {
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.fence(delivery)?;
-        if !matches!(delivery.output, Out::Notice { .. }) {
+        if Self::request_notice(delivery).is_none() {
             return self.fake.reconcile(delivery);
         }
         let client = self.client(delivery)?;
@@ -202,6 +219,11 @@ fn writer_input(
     title: &str,
     request: &str,
 ) -> Result<WriteRequest> {
+    let request = if request.trim().is_empty() {
+        title
+    } else {
+        request
+    };
     let (kind, facts) = match notice {
         Notice::Ask { question } => {
             let binding = delivery
@@ -325,7 +347,7 @@ fn writer_input(
                 Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
-                Notice::Ask { .. } | Notice::Summary(_) => unreachable!(),
+                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
             }}),
         ),
     };

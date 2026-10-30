@@ -99,6 +99,7 @@ struct ApiState {
     gap: bool,
     catch_up_passes: usize,
     fail_reads: bool,
+    empty_body: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -143,6 +144,9 @@ impl Respond for Api {
             }
             ("GET", "/repos/owner/sandbox/issues/12") => {
                 let mut issue = fixture(false)["issue"].clone();
+                if state.empty_body {
+                    issue["body"] = Value::Null;
+                }
                 if state.closed {
                     issue["state"] = json!("closed");
                 }
@@ -533,6 +537,7 @@ fn message_reconciliation() {
     let root = tempfile::tempdir().unwrap();
     let mut adapter = adapter(&api.uri(), root.path());
     let note = delivery(Notice::MeasuresPosted);
+    api.state.lock().unwrap().empty_body = true;
     assert!(matches!(
         adapter.reconcile(&note).unwrap(),
         Reconciliation::Absent
@@ -592,6 +597,15 @@ fn message_reconciliation() {
         adapter.reconcile(&pr).unwrap(),
         Reconciliation::Found(_)
     ));
+    let before = api.state.lock().unwrap().posts;
+    let mut incident = delivery(Notice::Incident { needs_rob: false });
+    incident.key = "notice:0:4".into();
+    adapter.execute(&incident).unwrap();
+    assert!(matches!(
+        adapter.reconcile(&incident).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert_eq!(api.state.lock().unwrap().posts, before);
 }
 struct ScriptWriter {
     calls: Arc<Mutex<Vec<WriteRequest>>>,

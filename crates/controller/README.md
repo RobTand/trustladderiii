@@ -78,7 +78,9 @@ Rob's comments stay in `github_comments` for ticket #14 to classify.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13.
+PR effects still use this module's fake until ticket #13. Incident and replacement
+notices also stay on the fake for their owning tickets. Incidents need the
+operations issue, and replacements need a new request, not another comment.
 The checker includes TL3's tracked paths, generated during the build, the
 request's declared paths, and any further paths supplied in the adapter policy.
 

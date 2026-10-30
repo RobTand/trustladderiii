@@ -52,6 +52,12 @@ impl Writer for FakeWriter {
         let title = input.facts["issue_title"]
             .as_str()
             .ok_or(Error::Invalid("writer needs the original issue title"))?;
+        if input.facts["request"]
+            .as_str()
+            .is_none_or(|request| request.trim().is_empty())
+        {
+            return Err(Error::Invalid("writer needs the original request"));
+        }
         match input.kind {
             MessageKind::Question => Ok(WriterReply::Question(QuestionDraft {
                 request_quote: title.into(),
