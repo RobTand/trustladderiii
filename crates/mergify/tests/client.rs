@@ -51,7 +51,7 @@ fn documented_queue_title_distinguishes_waiting_from_running() {
         .iter_mut()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
         .unwrap();
-    check.output.as_mut().unwrap().title = "In merge queue".into();
+    check.output.as_mut().unwrap().title = Some("In merge queue".into());
     assert_eq!(observe(pr, &checks, &approved).state, QueueState::Queued);
 }
 
@@ -120,7 +120,7 @@ fn latest_check_wins() {
         .unwrap()
         .clone();
     older.id = 1;
-    older.output.as_mut().unwrap().title = "Dequeued — checks failed".into();
+    older.output.as_mut().unwrap().title = Some("Dequeued — checks failed".into());
     older.output.as_mut().unwrap().summary = None;
     checks.push(older);
     checks.reverse();
@@ -446,7 +446,7 @@ fn future_encoding_and_unrecorded_titles_stay_unknown() {
         "Waiting for queue conditions to match",
         "A future queue state",
     ] {
-        check.output.as_mut().unwrap().title = title.into();
+        check.output.as_mut().unwrap().title = Some(title.into());
         assert_eq!(
             observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
             QueueState::Unknown,

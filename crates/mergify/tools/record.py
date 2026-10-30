@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Record public queue observations. Makes only GitHub REST GET requests."""
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -36,6 +37,7 @@ def main():
                 break
         else:
             raise RuntimeError("pagination did not terminate")
+    head_checks = checks
     checks = [fields(c, "id name head_sha external_id status conclusion app output")
               for c in checks if c.get("app", {}).get("slug") == "mergify"]
     for check in checks:
@@ -46,7 +48,27 @@ def main():
                 for c in comments if c["user"]["login"] == "mergify[bot]"]
     for comment in comments:
         comment["user"] = fields(comment["user"], "id login")
-    pull = fields(pull, "number user state merged_at head base updated_at")
+    suites = get(f"{prefix}/commits/{pull['head']['sha']}/check-suites?per_page=100")
+    if suites["total_count"] > len(suites["check_suites"]):
+        raise RuntimeError("check suite recording requires pagination")
+    events = []
+    for page in range(1, 1001):
+        batch = get(f"{prefix}/issues/{args.number}/events?per_page=100&page={page}")
+        events.extend(batch)
+        if len(batch) < 100:
+            break
+    else:
+        raise RuntimeError("event pagination did not terminate")
+    events = [fields(event, "id event actor label created_at") for event in events]
+    for event in events:
+        if event["actor"]:
+            event["actor"] = fields(event["actor"], "id login")
+    merge_checks = None
+    if pull.get("merged_at") and pull.get("merge_commit_sha"):
+        merge_checks = get(f"{prefix}/commits/{pull['merge_commit_sha']}/check-runs?filter=all&per_page=100")
+        if merge_checks["total_count"] > len(merge_checks["check_runs"]):
+            raise RuntimeError("merge check recording requires pagination")
+    pull = fields(pull, "number user state merged merged_at merge_commit_sha head base updated_at")
     pull["user"] = fields(pull["user"], "id login")
     for name in ["head", "base"]:
         pull[name] = fields(pull[name], "ref sha repo")
@@ -55,10 +77,31 @@ def main():
             pull[name]["repo"] = fields(repo, "id name owner")
             pull[name]["repo"]["owner"] = fields(repo["owner"], "id login")
     args.destination.mkdir(parents=True, exist_ok=False)
-    for name, value in [("pull", pull), ("checks", checks), ("comments", comments)]:
+    def check_fields(check):
+        result = fields(check, "id name head_sha external_id status conclusion app output")
+        if result["app"]:
+            result["app"] = fields(result["app"], "id slug")
+        if result["output"]:
+            result["output"] = fields(result["output"], "title summary text")
+        return result
+
+    suite_records = []
+    for suite in suites["check_suites"]:
+        record = fields(suite, "id head_sha status conclusion app")
+        if record["app"]:
+            record["app"] = fields(record["app"], "id slug")
+        suite_records.append(record)
+    for name, value in [
+        ("pull", pull), ("checks", checks), ("comments", comments),
+        ("head-checks", [check_fields(check) for check in head_checks]),
+        ("suites", suite_records), ("events", events),
+        ("merge-checks", None if merge_checks is None else
+         [check_fields(check) for check in merge_checks["check_runs"]]),
+    ]:
         (args.destination / f"{name}.json").write_text(json.dumps(value, indent=2) + "\n")
     (args.destination / "source.json").write_text(json.dumps({
         "repository": args.repo, "pull_request": args.number,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
         "head": pull["head"]["sha"],
     }, indent=2) + "\n")
 

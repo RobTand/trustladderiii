@@ -1,0 +1,87 @@
+[
+  {
+    "id": 124096752620,
+    "name": "Summary",
+    "head_sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "external_id": "15",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "1 potential rule",
+      "summary": "\u26a0\ufe0f The pull request has been merged by @RobTand\n\n### Rule: Queue TL3\\-approved PRs (queue)\n- [ ] `-closed` [\ud83d\udccc queue requirement]\n- [ ] `check-success = @tl3-robtand/TL3 approval`\n- [ ] `label = tl3-queue`\n- [ ] any of: [\ud83d\udd00 queue conditions]\n  - [ ] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [ ] `check-success = @tl3-robtand/TL3 approval`\n    - [ ] `label = tl3-queue`\n    - [X] `base = main`\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [X] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-success = @mergify/Mergify Merge Protections`\n  - [ ] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  },
+  {
+    "id": 124096727358,
+    "name": "Configuration changed",
+    "head_sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "external_id": "",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "The new Mergify configuration is valid",
+      "summary": "This new configuration will be used for the next pull requests once it is merged.",
+      "text": null
+    }
+  },
+  {
+    "id": 124096363929,
+    "name": "Mergify Merge Queue",
+    "head_sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "external_id": "engine:15",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merge queue is ready",
+      "summary": "This pull request can be added to the merge queue.\n\nUse `@Mergifyio queue` or the [Mergify dashboard](https://dashboard.mergify.com) to queue this pull request for merging.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1jbG9zZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiLWNvbmZsaWN0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6Ii1kcmFmdCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvQ29uZmlndXJhdGlvbiBjaGFuZ2VkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiLW1lcmdpZnktY29uZmlndXJhdGlvbi1jaGFuZ2VkIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9Db25maWd1cmF0aW9uIGhhcyBiZWVuIGRlbGV0ZWQiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgLT4gY29uZmlndXJhdGlvbiBjaGFuZ2UgcmVxdWlyZW1lbnRzIn0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9NZXJnaWZ5IE1lcmdlIFByb3RlY3Rpb25zIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stbmV1dHJhbCA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc2tpcHBlZCA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiYWxsIG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIGNvbmRpdGlvbnMgb2YgcXVldWUgcnVsZSBgZGVmYXVsdGAifV0sIm5vdGUiOiJcdWQ4M2RcdWRkMDAgcXVldWUgY29uZGl0aW9ucyJ9XX0\"></span>",
+      "text": null
+    }
+  },
+  {
+    "id": 124096358861,
+    "name": "Mergify Merge Protections",
+    "head_sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "external_id": "15",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "1 applicable rule, 1 validating requirements",
+      "summary": "# Merge Protections\n\n\ud83d\udfe2 **Merge protection satisfied** \u2014 ready to merge.\n\n<details><summary>Show 1 satisfied protection</summary>\n\n## \ud83d\udfe2 \ud83d\udcc3 Configuration Change Requirements\n\nMergify configuration change\n- [X] any of:\n  - [X] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n\n</details>",
+      "text": null
+    }
+  },
+  {
+    "id": 124096354981,
+    "name": "Sandbox tests",
+    "head_sha": "614e2032d89e36607e3ceb2278a72ddcd6786bba",
+    "external_id": "d2eccd6b-a555-5a91-baf4-67c3ca9312e6",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 15368,
+      "slug": "github-actions"
+    },
+    "output": {
+      "title": null,
+      "summary": null,
+      "text": null
+    }
+  }
+]

@@ -1,0 +1,47 @@
+[
+  {
+    "number": 18,
+    "draft": true,
+    "state": "closed",
+    "head": "3fff5c3ee9bbf57d37fcc4633927b13118a3a49b",
+    "branch": "mergify/merge-queue/5ee88b77ff",
+    "author": "mergify[bot]",
+    "branch_deleted": true
+  },
+  {
+    "number": 19,
+    "draft": true,
+    "state": "closed",
+    "head": "714f3123ced0e98b36db0d55d864dc7cef0c073f",
+    "branch": "mergify/merge-queue/0fa8bd42c7",
+    "author": "mergify[bot]",
+    "branch_deleted": true
+  },
+  {
+    "number": 22,
+    "draft": true,
+    "state": "closed",
+    "head": "59cfea90d1147584bd119d88909f35cd270c57df",
+    "branch": "mergify/merge-queue/4e4feb60b1",
+    "author": "mergify[bot]",
+    "branch_deleted": true
+  },
+  {
+    "number": 24,
+    "draft": true,
+    "state": "closed",
+    "head": "40b540699938a58dd94eb3cff03e0d56797275d8",
+    "branch": "mergify/merge-queue/beb9dfe86b",
+    "author": "mergify[bot]",
+    "branch_deleted": true
+  },
+  {
+    "number": 26,
+    "draft": true,
+    "state": "closed",
+    "head": "50b8ffb28841d33890e02d60bf8ae037c9295604",
+    "branch": "mergify/merge-queue/44795101c2",
+    "author": "mergify[bot]",
+    "branch_deleted": true
+  }
+]

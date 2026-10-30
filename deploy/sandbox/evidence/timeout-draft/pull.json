@@ -1,0 +1,36 @@
+{
+  "number": 26,
+  "user": {
+    "id": 37929162,
+    "login": "mergify[bot]"
+  },
+  "state": "open",
+  "merged": false,
+  "merged_at": null,
+  "merge_commit_sha": "4df89f3d3263cea00ecd2d50a0f956ad4d934162",
+  "head": {
+    "ref": "mergify/merge-queue/44795101c2",
+    "sha": "50b8ffb28841d33890e02d60bf8ae037c9295604",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "8901bccfca30f1297c1c6312e6a239ec3b669d76",
+    "repo": {
+      "id": 1438778443,
+      "name": "tl3-sandbox",
+      "owner": {
+        "id": 24923402,
+        "login": "RobTand"
+      }
+    }
+  },
+  "updated_at": "2026-10-30T14:05:26Z"
+}
