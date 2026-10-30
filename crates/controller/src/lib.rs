@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod findings;
+
 pub mod adapters;
 pub mod cli;
 pub mod clock;
@@ -909,6 +911,7 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                replanned: n.replanned,
                 checks,
                 job_generation: n.job,
                 question: n.question,
@@ -1021,6 +1024,21 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        let ci_checks = match &observation {
+            Observation::CiFailed { checks, .. } => checks
+                .iter()
+                .take(20)
+                .map(|check| findings::CiFailure {
+                    name: findings::clipped(&check.name, 256),
+                    summary: findings::clipped(&check.summary, findings::MAX_MESSAGE_CHARS),
+                    url: check.url.as_ref().map(|url| findings::clipped(url, 4096)),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut failed_tests = Vec::new();
+        let mut outside_paths = Vec::new();
+        let mut outside_paths_total = 0;
         let event = match observation {
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
@@ -1118,6 +1136,10 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::CiFailed { node, infra, .. } => Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra },
+            },
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
                 commit
@@ -1130,6 +1152,7 @@ impl Controller {
                 generation,
                 sha,
                 changed_paths,
+                failed_tests: tests,
                 report,
                 pass,
                 ..
@@ -1147,8 +1170,22 @@ impl Controller {
                 let mut in_footprint = true;
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
-                    in_footprint &= footprint.contains(&tl3_kernel::FileId(id.get() as u64));
+                    if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
+                        outside_paths_total += 1;
+                        if outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
+                            outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
+                        }
+                        in_footprint = false;
+                    }
                 }
+                failed_tests = tests
+                    .into_iter()
+                    .take(findings::MAX_FAILED_TESTS)
+                    .map(|test| findings::FailedTest {
+                        test: findings::clipped(&test.test, 4096),
+                        message: findings::clipped(&test.message, findings::MAX_MESSAGE_CHARS),
+                    })
+                    .collect();
                 Event::Reply {
                     node,
                     generation,
@@ -1168,6 +1205,7 @@ impl Controller {
                 let n = world
                     .nodes
                     .get(node.0 as usize)
+                    .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
                 if n.run != Some(generation) || n.generation != generation {
                     return Ok(None);
@@ -1176,6 +1214,7 @@ impl Controller {
                     (n.phase, role.as_str()),
                     (tl3_kernel::Phase::Ingesting, "ingest")
                         | (tl3_kernel::Phase::Auditing, "audit")
+                        | (tl3_kernel::Phase::Making, "maker")
                         | (tl3_kernel::Phase::Planning { .. }, "planner")
                 );
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
@@ -1191,6 +1230,7 @@ impl Controller {
                 let document = match role.as_str() {
                     "ingest" => "briefs",
                     "audit" => "audits",
+                    "maker" => "maker_replies",
                     _ => "plans",
                 };
                 if role == "planner" {
@@ -1217,17 +1257,22 @@ impl Controller {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let Reply::PlanLeaf { fits, .. } = mapped {
+                    if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                        fits,
+                        ..
+                    }) = mapped
+                    {
                         let paths = reply["files"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .map(|p| p.as_str().unwrap().to_owned())
                             .collect::<Vec<_>>();
-                        mapped = Reply::PlanLeaf {
-                            footprint: self.footprint(snapshot, world, node, &paths)?,
-                            fits,
-                        };
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                                footprint: self.footprint(snapshot, world, node, &paths)?,
+                                fits,
+                            });
                     }
                 }
                 commit
@@ -1238,6 +1283,59 @@ impl Controller {
                         "goals",
                         node.0.to_string(),
                         reply.get("goals").cloned().unwrap_or(json!([])),
+                    ));
+                }
+                let mapped = match mapped {
+                    adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
+                    adapters::workers::protocol::MappedReply::Made(sha) => {
+                        let inputs = self
+                            .store
+                            .worker_materials(&node.0.to_string())?
+                            .ok_or(Error::Invalid("maker materials missing"))?;
+                        let goals = inputs.get("maker").unwrap_or(&inputs)["goals"]
+                            .as_array()
+                            .ok_or(Error::Invalid("maker goals missing"))?;
+                        let checks = reply["self_check"].as_array().unwrap();
+                        let expected: BTreeSet<_> =
+                            goals.iter().map(|g| g["id"].as_str()).collect();
+                        let checked: BTreeSet<_> =
+                            checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        if expected != checked || checks.len() != goals.len() {
+                            Reply::RunFailed
+                        } else {
+                            Reply::MakerDone {
+                                head: self.head(node, &sha)?,
+                            }
+                        }
+                    }
+                    adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        let request = request(snapshot, node)?;
+                        let repo = self
+                            .store
+                            .intern_repo(&request.repo.owner, &request.repo.name)?;
+                        let mut files = world
+                            .files(n.footprint)
+                            .ok_or(Error::Invalid("unknown footprint"))?
+                            .collect::<Vec<_>>();
+                        for path in paths {
+                            files.push(tl3_kernel::FileId(
+                                self.store.intern_path(repo, &path)?.get() as u64,
+                            ));
+                        }
+                        Reply::MakerNeedsFiles {
+                            files: world.intern_footprint(files),
+                            fits,
+                        }
+                    }
+                };
+                if role == "maker" && mapped != Reply::RunFailed {
+                    commit.rows.push(put(
+                        "maker_session",
+                        node.0.to_string(),
+                        json!({
+                            "attempt": n.attempt, "replanned": n.replanned, "generation": generation,
+                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
+                        }),
                     ));
                 }
                 Event::Reply {
@@ -1317,6 +1415,99 @@ impl Controller {
                 return Ok(None);
             }
         };
+        let finding = match event {
+            Event::Reply {
+                node,
+                generation,
+                reply,
+            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
+                (n.run == Some(generation) || n.job == Some(generation))
+                    && n.generation == generation
+            }) =>
+            {
+                let n = &world.nodes[node.0 as usize];
+                let report = match (n.phase, reply) {
+                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
+                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
+                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                        findings::Kind::ReviewFinding,
+                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
+                    )),
+                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
+                        findings::Kind::ReviewFinding,
+                        commit.rows.iter().find_map(|row| match row {
+                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                            _ => None,
+                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
+                    )),
+                    _ => None,
+                };
+                report.map(|(kind, report)| (node, kind, report))
+            }
+            Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra: false },
+            } if world
+                .nodes
+                .get(node.0 as usize)
+                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
+            {
+                Some((
+                    node,
+                    findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((node, kind, report)) = finding {
+            let materials = self.store.worker_materials(&node.0.to_string())?;
+            let goals = materials
+                .as_ref()
+                .and_then(|materials| materials.get("maker").unwrap_or(materials).get("goals"));
+            let goal_ids = match goals {
+                Some(goals) => goals
+                    .as_array()
+                    .ok_or(Error::Invalid("maker goals must be an array"))?
+                    .iter()
+                    .map(|goal| {
+                        goal["id"]
+                            .as_str()
+                            .filter(|id| !id.trim().is_empty())
+                            .map(str::to_owned)
+                            .ok_or(Error::Invalid("maker goal needs a string id"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                None => {
+                    eprintln!(
+                        "maker finding for node {} has no goal materials; retaining unbound evidence",
+                        node.0
+                    );
+                    Vec::new()
+                }
+            };
+            let mut findings = self
+                .store
+                .worker_document(&node.0.to_string(), "maker_findings")?
+                .unwrap_or(json!([]));
+            let finding = findings::Finding {
+                kind,
+                report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
+                goal_ids,
+                failed_tests,
+                outside_paths,
+                outside_paths_total,
+                ci_checks,
+            };
+            findings
+                .as_array_mut()
+                .ok_or(Error::Invalid("invalid maker findings"))?
+                .push(serde_json::to_value(finding)?);
+            commit
+                .rows
+                .push(put("maker_findings", node.0.to_string(), findings));
+        }
         Ok(Some(event))
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {

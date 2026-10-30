@@ -44,8 +44,12 @@
         "type": "object",
         "properties": {
           "kind": {"enum": ["failed_check", "review_finding"]},
-          "report": {"$ref": "#/$defs/text"},
-          "goal_ids": {"$ref": "#/$defs/strings"}
+          "report": {"$ref": "#/$defs/text", "maxLength": 16000},
+          "goal_ids": {"$ref": "#/$defs/strings"},
+          "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
+          "outside_paths": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/text", "maxLength": 4096}},
+          "outside_paths_total": {"type": "integer", "minimum": 0},
+          "ci_checks": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text", "maxLength": 1000}, "url": {"type": ["string", "null"], "maxLength": 4096}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
         },
         "required": ["kind", "report", "goal_ids"], "additionalProperties": false
       }
@@ -61,6 +65,12 @@
       },
       "required": ["image", "tools_path"], "additionalProperties": false
     },
+    "hindsight": {
+      "type": "object",
+      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}, "bank": {"$ref": "#/$defs/text"}},
+      "required": ["endpoint", "bank"], "additionalProperties": false
+    },
+    "fit_tokens": {"type": "integer", "minimum": 1},
     "context_size": {"type": "integer", "minimum": 1}
   },
   "required": ["brief", "goals", "plan", "attempt", "round", "tests", "context_size"],

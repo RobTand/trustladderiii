@@ -3,10 +3,17 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use tl3_kernel::{EarlyEnd, Reply, Role};
 
+pub(crate) enum MappedReply {
+    Kernel(Reply),
+    Made(String),
+    NeedsFiles { paths: Vec<String>, fits: bool },
+}
+
 pub(super) fn role(role: Role) -> Option<&'static str> {
     match role {
         Role::Ingest => Some("ingest"),
         Role::Audit => Some("audit"),
+        Role::Make => Some("maker"),
         Role::Plan => Some("planner"),
         _ => None,
     }
@@ -27,10 +34,11 @@ pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
     }
 }
 
-pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
+pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
     static INGEST: OnceLock<jsonschema::Validator> = OnceLock::new();
     static PLANNER: OnceLock<jsonschema::Validator> = OnceLock::new();
     static AUDIT: OnceLock<jsonschema::Validator> = OnceLock::new();
+    static MAKER: OnceLock<jsonschema::Validator> = OnceLock::new();
     let (cell, schema) = match role {
         "ingest" => (
             &INGEST,
@@ -39,6 +47,10 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
         "audit" => (
             &AUDIT,
             include_str!("../../../../../workers/src/tl3_workers/schemas/audit-reply.json"),
+        ),
+        "maker" => (
+            &MAKER,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/maker-reply.json"),
         ),
         "planner" => (
             &PLANNER,
@@ -53,7 +65,39 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
     if !validator.is_valid(reply) {
         return Err(Error::Invalid("worker reply breaks role schema"));
     }
-    Ok(match role {
+    if role == "maker" {
+        return Ok(match reply["kind"].as_str().unwrap() {
+            "done"
+                if reply["self_check"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|check| check["status"] != "met") =>
+            {
+                MappedReply::Kernel(Reply::MakerCantMeet)
+            }
+            "done" => MappedReply::Made(reply["head"].as_str().unwrap().into()),
+            "needs_files" => {
+                let paths = reply["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["path"].as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>();
+                if paths.iter().any(|path| !relative_file(path)) {
+                    return Err(Error::Invalid("maker requested an invalid path"));
+                }
+                MappedReply::NeedsFiles {
+                    paths,
+                    fits: reply["fits"].as_bool().unwrap_or(false),
+                }
+            }
+            "cant_meet" => MappedReply::Kernel(Reply::MakerCantMeet),
+            "out_of_room" => MappedReply::Kernel(Reply::MakerOutOfRoom),
+            _ => unreachable!(),
+        });
+    }
+    Ok(MappedReply::Kernel(match role {
         "ingest" if reply["kind"] == "brief" => {
             let forecast = forecast(reply)?;
             let size = forecast
@@ -89,10 +133,34 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
             }
         }
         _ => unreachable!(),
-    })
+    }))
+}
+
+fn relative_file(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains(['\\', '\0'])
+        && path
+            .split('/')
+            .all(|part| !matches!(part, "" | "." | ".." | ".git"))
 }
 
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
+    if role == "maker" {
+        static MAKER: OnceLock<jsonschema::Validator> = OnceLock::new();
+        let validator = MAKER.get_or_init(|| {
+            let schema: Value = serde_json::from_str(include_str!(
+                "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
+            ))
+            .unwrap();
+            jsonschema::validator_for(&schema).unwrap()
+        });
+        return if validator.is_valid(inputs) {
+            Ok(())
+        } else {
+            Err(Error::Invalid("maker inputs break role schema"))
+        };
+    }
     if role == "classifier" {
         return classifier_schema(inputs, false);
     }

@@ -33,7 +33,9 @@ The trusted outer process needs Python 3.14 and Git.
 
 `run_checks` returns immutable `Result` objects. Each contains the check's name,
 kind, verdict, and each named test's base outcome, head outcome, pre-existing
-failure flag, and pass flag. `execution.result_json` serializes these objects.
+failure flag, pass flag, and an optional failure message capped at 1,000 characters.
+Older result readers can ignore the additive `message` field. The controller sends
+at most 20 failing tests back to a maker. `execution.result_json` serializes these objects.
 Every result also records its report custody. Today that is always `in-process`:
 pytest's reporting plugin runs in the tests' own interpreter. Slice one accepts
 this. Rob decided on 2026-10-30 that hostile code isn't a concern at this point.

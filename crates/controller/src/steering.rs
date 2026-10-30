@@ -201,6 +201,7 @@ impl Controller {
             paths: vec![],
             attempt: 1,
             round: 0,
+            replanned: n.replanned,
             checks: None,
             job_generation: None,
             question: n.question,

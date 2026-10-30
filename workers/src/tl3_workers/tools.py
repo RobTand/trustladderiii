@@ -12,6 +12,7 @@ from threading import Lock
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
 from tl3_workers.pb_tests import make_test_tool
+from tl3_workers.recall import make_recall_tool
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
@@ -297,6 +298,7 @@ class Worktree:
 
 # Never expose execute or a local shell.
 TOOL_FACTORIES = {
+    "recall": make_recall_tool,
     "run_tests": make_test_tool,
     "list": lambda worktree: worktree.list_files,
     "read": lambda worktree: worktree.read,

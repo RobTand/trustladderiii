@@ -1,0 +1,67 @@
+{
+  "action_key": "43c6c12c102576fbaad76442e58930fee409e2e4095ea558510904e59c8da652",
+  "action_manifest_sha256": "74f01238d3d001261a08eb37ce701a3ee7954c31a4ee01693a9ac6efb825514a",
+  "producer": {
+    "action_key": "43c6c12c102576fbaad76442e58930fee409e2e4095ea558510904e59c8da652",
+    "attestation_sha256": "c6f864ce9f70cad2f7727a165e59467ebd68287509e5e33a1e1bad9e6b4d1f88",
+    "evidence": {
+      "accelerators": [],
+      "hostname": "dl380g10",
+      "libc": "glibc-2.43",
+      "machine": "x86_64",
+      "slurm": null,
+      "source": "local",
+      "system": "linux"
+    },
+    "executable": {
+      "bytes": 1540520,
+      "path": "/bin/bash",
+      "resolved_path": "/usr/bin/bash",
+      "sha256": "3efccc187bafa75ff1e37d246270ab3e7aa559f242c7a52bf3ec2a1b5450bdbd"
+    },
+    "host_class": null,
+    "inputs": [
+      {
+        "bytes": 1380594,
+        "id": "pbrun.checkout-snapshot",
+        "sha256": "5706918b237da3e938c4c127fc0fda3e84d071f0272fe15ce42981c2747c0a4e"
+      }
+    ],
+    "platform_key": "linux-x86_64",
+    "runtime": {
+      "core": {
+        "bytes": 305687,
+        "path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/src/prismabuild/core.py",
+        "resolved_path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/src/prismabuild/core.py",
+        "sha256": "d398c3541cdc26e808191dd98d1674bd9c9c3a33c320967ca4b9a3323ad5e461"
+      },
+      "digest_primitives": {
+        "bytes": 5078,
+        "path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/src/prismabuild/digest_primitives.py",
+        "resolved_path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/src/prismabuild/digest_primitives.py",
+        "sha256": "25bd3fa7e4609773825df3b4cd6893f7bd0456221857d9474e273383cf5bb5bf"
+      },
+      "launch_kind": "script",
+      "launcher": {
+        "bytes": 2285,
+        "path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/tools/prismabuild_worker.py",
+        "resolved_path": "/mnt/shared/prismabuild-fleet/runtime-generations/4f93835c8656-1793070920-291773253e78/tools/prismabuild_worker.py",
+        "sha256": "9d6851f927ddf09e75d7eb187b49be9dbfba05274536d765077d93e26ec79418"
+      },
+      "runtime_sha256": "96beb253ca2f920b27313bcd0ac91308ae615464c919239a16b36840e408435f",
+      "schema": "prismaquant.prismabuild.worker_runtime.v1"
+    },
+    "schema": "prismaquant.prismabuild.worker_attestation.v2",
+    "toolchain": {
+      "declared": {},
+      "verified": {}
+    },
+    "worker_id": "dl380g10"
+  },
+  "receipt_sha256": "3e9f5d69d8449d2785224c56482f07f25cd6448febab2365100aae8902e8e217",
+  "result": {
+    "bytes": 13099,
+    "sha256": "cb3abc65d813ba5a5bd5ab110705eb64cab6fe2196994598bc08a747b9cb61ba"
+  },
+  "schema": "prismaquant.prismabuild.cas_receipt.v3"
+}

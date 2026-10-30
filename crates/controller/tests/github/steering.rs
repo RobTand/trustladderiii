@@ -17,9 +17,17 @@ impl Daemon {
         let api = Server::new();
         let (config, marker, runs) = worker_daemon_config(settings, root.path(), mode);
         let mut store = Store::open(settings).unwrap();
-        store.put_worker_materials("0", &json!({
+        let inputs = json!({
             "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
             "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]}
+        });
+        store.put_worker_materials("0", &json!({
+            "ingest": inputs, "audit": inputs, "repo": inputs["repo"],
+            "maker": {
+                "brief": "Return hello.",
+                "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
+                "plan": {"files": ["greeting.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["tests/test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]}
+            }
         })).unwrap();
         if matches!(mode, "steering-queue" | "steering-credit") {
             fs::create_dir_all(root.path().join("fakes")).unwrap();
@@ -700,7 +708,9 @@ pub(super) fn concurrent_requests(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-answers");
     d.wait(|s| !s.node()["question"].is_null());
     let mut materials = d.store.worker_materials("0").unwrap().unwrap();
-    materials["issue"]["number"] = json!(13);
+    for role in ["ingest", "audit"] {
+        materials[role]["issue"]["number"] = json!(13);
+    }
     d.store.put_worker_materials("1", &materials).unwrap();
     let mut label = fixture(false);
     label["issue"]["number"] = json!(13);

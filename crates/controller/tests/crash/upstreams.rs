@@ -385,6 +385,7 @@ pub fn verify_contracts() {
             paths: vec![],
             attempt: 1,
             round: 1,
+            replanned: false,
             checks: None,
             job_generation: None,
             note: None,
