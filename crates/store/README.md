@@ -49,11 +49,6 @@ SQL file and its exact text is recorded in `tl3_schema_migrations`, in the
 same transaction as the schema change. A changed or newer migration refuses
 to open. Add a new migration rather than editing an applied one.
 
-`Store::open_read_only` never migrates. It requires the exact current schema
-and sets Postgres's default transactions to read-only before connecting.
-An empty database returns an uninitialized-store error. Status callers use
-this constructor. `load` also uses an explicit read-only transaction.
-
 ## Commit and recovery
 
 `commit` locks the singleton world revision before checking the event key.
@@ -85,6 +80,11 @@ the operation or generation in reasons for repeatable charges. Credit policy
 and balances stay in the kernel. The event log and ledger reject SQL update,
 delete and truncate operations. The application database role should not own
 schema DDL privileges after deployment migrations.
+
+`Reader::open` opens a separate connection with `default_transaction_read_only`
+enabled and never runs migrations. It exposes only read-only, repeatable-read
+transactions and snapshot loading. `load_snapshot` lets a status reader query
+additional tables in the same transaction.
 
 `load` uses a read-only repeatable-read transaction. It returns the current
 rows, all Intended/Sent/Uncertain/Cancelling effects, the credit ledger and
