@@ -31,6 +31,8 @@ pub enum Error {
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("writer drafts failed the message checker after two reruns")]
+    MessageRejected,
 }
 
 impl From<tl3_github::Error> for Error {

@@ -694,4 +694,25 @@ fn writer_checks() {
         .to_owned();
     assert!(comment.contains("I recommend option 1"));
     assert!(comment.contains("Change the request"));
+    calls.lock().unwrap().clear();
+    let rejected = ScriptWriter {
+        calls: calls.clone(),
+        failures: usize::MAX,
+    };
+    draft.key = "notice:rejected:0".into();
+    let mut rejecting = adapters::github::Adapter::new(
+        BTreeMap::from([(3, client(&api.uri()))]),
+        rejected,
+        0,
+        Policy::default(),
+        root.path(),
+    )
+    .unwrap();
+    let posted = api.state.lock().unwrap().posts;
+    assert_eq!(
+        rejecting.execute(&draft).unwrap().ack,
+        tl3_kernel::Ack::Permanent
+    );
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    assert_eq!(api.state.lock().unwrap().posts, posted);
 }

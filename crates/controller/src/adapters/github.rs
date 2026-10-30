@@ -4,7 +4,7 @@ use crate::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{EffectKind, Out};
+use tl3_kernel::{Ack, EffectKind, Out};
 
 pub struct Fake(Records);
 impl Fake {
@@ -161,7 +161,16 @@ impl Executor for Adapter {
                     .filter(|path| path.contains('/'))
                     .cloned(),
             );
-            let draft = checked_draft(self.writer.as_mut(), &delivery.key, input, &policy)?;
+            let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
+                Ok(draft) => draft,
+                Err(Error::MessageRejected) => {
+                    return Ok(Completion {
+                        ack: Ack::Permanent,
+                        observations: vec![],
+                    });
+                }
+                Err(error) => return Err(error),
+            };
             self.fence(delivery)?;
             self.runtime.block_on(client.post_comment(
                 &repo,

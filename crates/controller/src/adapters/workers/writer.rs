@@ -152,9 +152,7 @@ pub fn checked_draft(
             Err(violations) => input.violations = feedback(&reply, &violations, policy),
         }
     }
-    Err(Error::Invalid(
-        "writer drafts failed the message checker after two reruns",
-    ))
+    Err(Error::MessageRejected)
 }
 
 fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> Vec<String> {

@@ -87,6 +87,8 @@ Rob's comments stay in `github_comments` for ticket #14 to classify.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
+Three rejected drafts return a permanent acknowledgement, so recovery does not
+restart the writer loop. A worker transport error stays uncertain.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
