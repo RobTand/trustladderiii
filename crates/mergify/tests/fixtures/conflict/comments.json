@@ -1,0 +1,13 @@
+[
+  {
+    "id": 6441086225,
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-10-27T11:45:53.222133+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-10-27T11:51:41.600132+00:00\", \"dequeue_reason\": {\"code\": \"CONFLICT_WITH_BASE_BRANCH\", \"label\": \"conflict with base branch\", \"message\": \"The pull request conflicts with the base branch\"}}\n-*- Mergify Payload End -*-\n-->\n\n### \ud83d\udeab Left the queue\n\n6 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Tue 27 Oct, 11:45 \u00b7 rule `default` \u00b7 triggered by rule `Queue enqueue PRs`\n- \ud83d\udeab **Left the queue** 11:51 \u00b7 `1137b74`\n\n**Reason**\n\nThe pull request conflicts with the base branch\n\n**Hint**\n\nYou should update or rebase your pull request.\n\nIf you want to requeue this pull request, you can post a `@mergifyio queue` comment.\n\nTick the box to put this pull request back in the merge queue (same as `@mergifyio queue`).\n\n- [ ] Requeue this pull request <!-- mergify:queue-control:requeue -->\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/altendky/repos/carl/queues/status?branch=main&pull=84) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-27T11:46:01Z",
+    "updated_at": "2026-10-27T17:31:08Z",
+    "issue_url": "https://api.github.com/repos/altendky/carl/issues/84"
+  }
+]

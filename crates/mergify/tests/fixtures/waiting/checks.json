@@ -1,0 +1,53 @@
+[
+  {
+    "id": 123044973613,
+    "name": "Mergify Merge Queue",
+    "head_sha": "b25d71303944c15d8997e8467314e33147279623",
+    "external_id": "engine:2425",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merge queue is ready",
+      "summary": "This pull request can be added to the merge queue.\n\nUse `@Mergifyio queue` or the [Mergify dashboard](https://dashboard.mergify.com) to queue this pull request for merging.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1jbG9zZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiLWNvbmZsaWN0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6Ii1kcmFmdCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiItbWVyZ2lmeS1jb25maWd1cmF0aW9uLWNoYW5nZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvQ29uZmlndXJhdGlvbiBjaGFuZ2VkIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9Db25maWd1cmF0aW9uIGhhcyBiZWVuIGRlbGV0ZWQiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgLT4gY29uZmlndXJhdGlvbiBjaGFuZ2UgcmVxdWlyZW1lbnRzIn0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBAbWVyZ2lmeS9NZXJnaWZ5IE1lcmdlIFByb3RlY3Rpb25zIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc2tpcHBlZCA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiYWxsIG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiYmFzZSA9IG1haW4iLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItcmV2aWV3LWFwcHJvdmVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gaXNzdWUtbGluayIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBpc3N1ZS1saW5rIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXNraXBwZWQgPSBpc3N1ZS1saW5rIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSBjb25kaXRpb25zIG9mIHF1ZXVlIHJ1bGUgYGRlZmF1bHRgIn0seyJkZXNjcmlwdGlvbiI6ImFsbCBvZiIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJsYWJlbCA9IHJlbGVhc2UiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiYmFzZSA9IG1haW4iLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItcmV2aWV3LWFwcHJvdmVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gaXNzdWUtbGluayIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBpc3N1ZS1saW5rIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXNraXBwZWQgPSBpc3N1ZS1saW5rIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSBjb25kaXRpb25zIG9mIHF1ZXVlIHJ1bGUgYHJlbGVhc2VgIn1dLCJub3RlIjoiXHVkODNkXHVkZDAwIHF1ZXVlIGNvbmRpdGlvbnMifV19\"></span>",
+      "text": null
+    }
+  },
+  {
+    "id": 123044968959,
+    "name": "Mergify Merge Protections",
+    "head_sha": "b25d71303944c15d8997e8467314e33147279623",
+    "external_id": "2425",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "No merge protections matched",
+      "summary": "This pull request does not match any conditions of the merge protections.",
+      "text": null
+    }
+  },
+  {
+    "id": 123044963912,
+    "name": "Summary",
+    "head_sha": "b25d71303944c15d8997e8467314e33147279623",
+    "external_id": "2425",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "no workflow automation rules configured",
+      "summary": "<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]

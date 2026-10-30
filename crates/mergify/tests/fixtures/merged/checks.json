@@ -1,0 +1,53 @@
+[
+  {
+    "id": 122540114117,
+    "name": "Mergify Merge Queue",
+    "head_sha": "f3422fa5133d0e4a001a0a5b894314b568c94917",
+    "external_id": "queue:2408",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merged via merge queue",
+      "summary": "### \u2705 Merged into `main` as `d732d07` at 23:46 UTC\n\n1 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Tue 27 Oct, 23:46 \u00b7 rule `default` \u00b7 triggered by @RobTand with the [`@mergifyio queue` command](https://github.com/RobTand/prismabuild/pull/2408#issuecomment-6456388243)\n- \u2705 **Passed** \u00b7 in place\n- \u2705 **Merged** 23:46 \u00b7 `d732d07` \u00b7 merge\n\n<details>\n<summary>Merge conditions: 2 of 2 met</summary>\n\n**This pull request**\n\n| | Condition | Required by |\n|:--:|:--|:--|\n| \u2705 | [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) | GitHub branch protection |\n\n**The batch, tested in place**\n\n| | Condition | Required by |\n|:--:|:--|:--|\n| \u2705 | any of: `check-success = issue-link`, `check-neutral = issue-link`, `check-skipped = issue-link` | GitHub branch protection |\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/prismabuild/queues/status?branch=main&pull=2408) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null
+    }
+  },
+  {
+    "id": 122540110941,
+    "name": "Mergify Merge Protections",
+    "head_sha": "f3422fa5133d0e4a001a0a5b894314b568c94917",
+    "external_id": "2408",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "No merge protections matched",
+      "summary": "This pull request does not match any conditions of the merge protections.",
+      "text": null
+    }
+  },
+  {
+    "id": 122540107665,
+    "name": "Summary",
+    "head_sha": "f3422fa5133d0e4a001a0a5b894314b568c94917",
+    "external_id": "2408",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "no workflow automation rules configured",
+      "summary": "<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]

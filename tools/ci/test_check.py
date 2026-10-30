@@ -12,17 +12,18 @@ class DiscoveryTests(unittest.TestCase):
     def test_rust_finds_new_crates_and_root_but_ignores_spikes_and_fixtures(self):
         files = list(map(Path, [
             "Cargo.toml", "crates/github/Cargo.toml", "crates/new/nested/Cargo.toml",
+            "services/api/Cargo.toml", "services/spikes/old/Cargo.toml",
             "crates/new/tests/fixtures/example/Cargo.toml", "spikes/old/Cargo.toml",
         ]))
         self.assertEqual(check.rust_manifests(files), list(map(Path, [
             "Cargo.toml", "crates/github/Cargo.toml", "crates/new/nested/Cargo.toml",
+            "services/api/Cargo.toml",
         ])))
 
     def test_python_finds_packages_and_standalone_tests_without_collecting_fixtures(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifests = {
-                "pyproject.toml": "[tool.ruff]\n",
                 "workers/pyproject.toml": '[project]\nname = "workers"\n',
                 "new/package/pyproject.toml": '[project]\nname = "new"\n',
                 "harness/tests/fixtures/pyproject.toml": '[project]\nname = "fixture"\n',
@@ -44,17 +45,61 @@ class DiscoveryTests(unittest.TestCase):
                 Path("deploy/github-app"), Path("tools/ci"),
             ])
 
+    def test_python_projects_use_the_nearest_ancestor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifests = [
+                "workers/nested/pyproject.toml", "pyproject.toml", "workers/pyproject.toml",
+            ]
+            for name in manifests:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('[project]\nname = "example"\n')
+            files = list(map(Path, manifests + [
+                "tests/test_root.py", "workers/tests/test_worker.py",
+                "workers/nested/tests/test_nested.py",
+            ]))
+            with patch.object(check, "ROOT", root), patch.object(check, "run") as run:
+                check.python(files)
+            pytest_calls = {
+                call.kwargs["cwd"].relative_to(root): call.args
+                for call in run.call_args_list if "pytest" in call.args
+            }
+            self.assertEqual(set(pytest_calls), {
+                Path("."), Path("workers"), Path("workers/nested"),
+            })
+            self.assertIn("--ignore=workers", pytest_calls[Path(".")])
+            self.assertIn("--ignore=nested", pytest_calls[Path("workers")])
+            self.assertFalse(any(
+                str(arg).startswith("--ignore=")
+                for arg in pytest_calls[Path("workers/nested")]
+            ))
+            self.assertFalse(any("unittest" in call.args for call in run.call_args_list))
+
+    def test_python_rejects_manifest_without_project_before_running_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = Path("config/pyproject.toml")
+            (root / manifest).parent.mkdir()
+            (root / manifest).write_text("[tool.ruff]\n")
+            with patch.object(check, "ROOT", root), patch.object(check, "run") as run:
+                with self.assertRaisesRegex(
+                    RuntimeError, r"config/pyproject\.toml.*\[project\]",
+                ):
+                    check.python([manifest, Path("config/test_config.py")])
+            run.assert_not_called()
+
     def test_workspace_members_run_once_and_standalone_crates_still_run(self):
         calls = []
 
         def command(*args, **kwargs):
             calls.append(args)
             if args[:2] == ("cargo", "metadata"):
-                workspace = "standalone" if "crates/standalone/Cargo.toml" in map(str, args) else "."
+                workspace = "standalone" if "services/standalone/Cargo.toml" in map(str, args) else "."
                 return json.dumps({"workspace_root": str(check.ROOT / workspace)})
 
         files = list(map(Path, [
-            "Cargo.toml", "crates/member/Cargo.toml", "crates/standalone/Cargo.toml",
+            "Cargo.toml", "crates/member/Cargo.toml", "services/standalone/Cargo.toml",
         ]))
         with patch.object(check, "run", command):
             check.rust(files)
