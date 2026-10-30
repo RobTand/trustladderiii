@@ -10,7 +10,11 @@ dependencies = [
     "deepagents==0.7.32",
     "langchain-openai==1.7.3",
     "jsonschema==4.26.0",
+    "tl3-harness",
 ]
+
+[tool.uv.sources]
+tl3-harness = { path = "../harness" }
 
 [dependency-groups]
 dev = ["pytest==9.0.2"]

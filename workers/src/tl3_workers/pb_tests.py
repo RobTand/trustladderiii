@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tempfile
 
+from tl3_harness import execution
+from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure
+
 
 @dataclass(frozen=True)
 class TestSettings:
@@ -47,8 +50,6 @@ def _selectors(tests):
 
 
 def _stage(worktree, root):
-    from tl3_harness import execution
-
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -98,8 +99,6 @@ def _json_command(command):
 
 
 def _summary(ending, key):
-    from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES
-
     if (ending["action_key"] != key or ending["status"] not in ("executed", "cache_hit")
             or ending["exit_code"] != 0 or not ending["succeeded"]):
         raise ValueError("PrismaBuild action did not succeed")
@@ -130,8 +129,6 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
 
     def run_tests(tests: list[str] | None = None) -> dict:
         """Run relative pytest paths/node IDs, or the whole suite when omitted."""
-        from tl3_harness.test_tool import infrastructure
-
         selected = _selectors([] if tests is None else tests)
         key = None
         try:

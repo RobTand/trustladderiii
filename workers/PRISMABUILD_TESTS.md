@@ -42,7 +42,9 @@ reattaches to the same action.
 
 The admitted action reuses the check harness's `container_command`, admission
 check, progress writer and report plugin. The checkout and harness mounts are
-read-only. Tests get no network, fleet mount, host socket, inherited credentials,
+read-only. Both check mode and the test tool pass `--rootdir=.` to pytest, so
+node IDs are rooted at the checkout, including tests in nested projects.
+Tests get no network, fleet mount, host socket, inherited credentials,
 or PB progress token. The summary has the harness's existing in-process report
 custody: test code shares the reporter's interpreter. This is not a tamper-proof
 check verdict.
@@ -54,6 +56,9 @@ Results contain `status`, `tests`, `totals`, `note`, and, after submission,
 Outcomes are `passed`, `failed` for assertions, `error` for setup, teardown,
 collection or runtime errors, and `skipped`. Xfail and xpass count as skipped,
 as in the check harness. Collection failures name the collector.
+Missing selector paths are reported before pytest starts. Pytest exit 4 reports
+"Selector not found" with the requested selectors. Both return completed results
+with `error` outcomes, so a bad selector does not trigger an infrastructure retry.
 
 The JSON result is at most 16,384 bytes using Python's default JSON encoding.
 Messages are clipped to 1,000 characters. Entries that exceed the remaining
@@ -61,6 +66,9 @@ budget are omitted. A plain truncation note explains either cut; totals include
 all reported tests. An empty suite reports zero totals and an explicit note.
 Submission, containment, missing reports and unverifiable PB evidence return
 `status="infrastructure_error"` with zero test totals, never a failed test.
+If a test produces no new result for `quiet_seconds`, PrismaBuild ends the action
+under its progress contract. The tool reports an infrastructure error, not a test
+failure. Printed output does not advance that contract.
 
 ## Verification
 
