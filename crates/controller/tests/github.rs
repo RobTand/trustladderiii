@@ -382,8 +382,14 @@ fn main() {
     steering::correction(&database.create("steering_correction"));
     steering::queued_pause(&database.create("steering_queue"));
     steering::answer_recovery(&database.create("steering_answer_recovery"));
+    steering::classifier_failures(&database.create("classifier_failures"));
+    steering::concurrent_requests(&database.create("concurrent_requests"));
+    steering::guidance(&database.create("steering_guidance"));
+    steering::credit(&database.create("steering_credit"));
+    steering::answer_replacement(&database.create("answer_replacement"));
+    steering::writer_rejection();
     database.stop();
-    println!("18 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("24 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -626,6 +632,7 @@ fn delivery(notice: Notice) -> Delivery {
         question: None,
         question_context: None,
         steering: None,
+        request_text: None,
         note: None,
     }
 }
@@ -738,10 +745,15 @@ impl Writer for ScriptWriter {
         let mut calls = self.calls.lock().unwrap();
         calls.push(input.clone());
         let mut reply = FakeWriter.draft("fake", input)?;
-        if calls.len() <= self.failures
-            && let WriterReply::Question(question) = &mut reply
-        {
-            question.obstacle = "The leaf needs attention.".into();
+        if calls.len() <= self.failures {
+            match &mut reply {
+                WriterReply::Question(question) => {
+                    question.obstacle = "The leaf needs attention.".into()
+                }
+                WriterReply::Text(text) => {
+                    text.text = "About \"Maybe do that\", did the leaf fail?".into()
+                }
+            }
         }
         Ok(reply)
     }

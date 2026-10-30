@@ -104,6 +104,8 @@ struct Request {
     #[serde(default)]
     title: String,
     issue_id: i64,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,16 +277,13 @@ impl Controller {
             .map_err(|_| Error::Invalid("invalid repository index"))?;
         let repo_id = self.store.intern_repo(&repo.owner, &repo.name)?;
         let issue_id = self.store.intern_issue(repo_id, issue.number)?.get();
-        // Distinct deliveries of the same label still name one request.
-        let existing = snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == "requests")
-            .map(|r| serde_json::from_value::<Request>(r.value.clone()))
-            .collect::<std::result::Result<Vec<_>, _>>()?
-            .iter()
-            .any(|r| r.issue_id == issue_id);
-        if !existing {
+        let existing = latest_request(snapshot, &repo, issue.number);
+        let replaceable = existing.is_none_or(|row| {
+            row.id.parse::<usize>().ok().is_some_and(|id| {
+                world.nodes[id].phase == tl3_kernel::Phase::Closed(tl3_kernel::Outcome::Replaced)
+            })
+        });
+        if replaceable {
             let node = world.nodes.len().to_string();
             commit.rows.push(put(
                 "requests",
@@ -293,7 +292,8 @@ impl Controller {
                     repo,
                     issue: issue.number,
                     title: issue.title.clone(),
-                    issue_id
+                    issue_id,
+                    source: None,
                 }),
             ));
             return Ok(Some(Event::NewRequest {
@@ -319,10 +319,12 @@ impl Controller {
                 repository.installation,
                 comment.id
             );
-            if snapshot.rows.iter().any(|row| {
-                (row.table == "github_comments" && row.id == id)
-                    || (row.table == "inbox" && row.id == format!("external:{key}"))
-            }) {
+            if self.store.comment_retired(&id)?
+                || snapshot.rows.iter().any(|row| {
+                    (row.table == "github_comments" && row.id == id)
+                        || (row.table == "inbox" && row.id == format!("external:{key}"))
+                })
+            {
                 return Ok(());
             }
         }
@@ -363,7 +365,7 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
-        if self.schedule_comment(&snapshot)? {
+        if self.retire_comment(&snapshot)? || self.schedule_comment(&snapshot)? {
             return Ok(true);
         }
         let mut progressed = false;
@@ -775,6 +777,7 @@ impl Controller {
                 note: None,
                 question_context,
                 steering: None,
+                request_text: request.source,
             };
             self.steering_delivery(snapshot, commit, &mut delivery)?;
             if matches!(
@@ -871,10 +874,11 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !snapshot
-                        .rows
-                        .iter()
-                        .any(|row| row.table == "github_comments" && row.id == id)
+                    if !self.store.comment_retired(&id)?
+                        && !snapshot
+                            .rows
+                            .iter()
+                            .any(|row| row.table == "github_comments" && row.id == id)
                     {
                         let value =
                             json!({"repository": repository, "issue": issue, "comment": comment});
@@ -1057,6 +1061,20 @@ impl Controller {
             self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
         ))
     }
+}
+
+fn latest_request<'a>(
+    snapshot: &'a Snapshot,
+    repo: &Repository,
+    issue: u64,
+) -> Option<&'a tl3_store::WorldRow> {
+    snapshot
+        .rows
+        .iter()
+        .filter(|r| {
+            r.table == "requests" && r.value["repo"] == json!(repo) && r.value["issue"] == issue
+        })
+        .max_by_key(|r| r.id.parse::<u64>().unwrap_or(0))
 }
 
 fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {

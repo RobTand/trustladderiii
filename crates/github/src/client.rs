@@ -345,12 +345,21 @@ impl GitHub {
         &self,
         repo: &str,
         effect_key: &str,
+        since: &str,
     ) -> Result<Option<Issue>, Error> {
         let marker = Self::marker(effect_key);
+        let since = DateTime::parse_from_rfc3339(since)
+            .map_err(|_| Error::Config("invalid request filing timestamp"))?
+            - chrono::Duration::seconds(1);
         let issues: Vec<Value> = self
             .list(
                 format!("{}/issues", repo_path(repo)?),
-                vec![("state".into(), "all".into())],
+                vec![
+                    ("state".into(), "all".into()),
+                    ("since".into(), since.to_rfc3339()),
+                    ("sort".into(), "created".into()),
+                    ("direction".into(), "desc".into()),
+                ],
                 None,
             )
             .await?;
@@ -375,12 +384,13 @@ impl GitHub {
         &self,
         repo: &str,
         effect_key: &str,
+        since: &str,
         title: &str,
         body: &str,
     ) -> Result<Issue, Error> {
         let body = marked_body(effect_key, body)?;
         let _guard = self.0.comments.lock().await;
-        if let Some(issue) = self.reconcile_issue(repo, effect_key).await? {
+        if let Some(issue) = self.reconcile_issue(repo, effect_key, since).await? {
             return Ok(issue);
         }
         self.request(

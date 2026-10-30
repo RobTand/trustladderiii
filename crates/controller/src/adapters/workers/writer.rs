@@ -7,6 +7,7 @@ use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
     Question,
+    Clarification,
     Note,
     Summary,
 }
@@ -79,6 +80,13 @@ impl Writer for FakeWriter {
                     .ok_or(Error::Invalid("missing answer instructions"))?
                     .into(),
             })),
+            MessageKind::Clarification => Ok(WriterReply::Text(TextDraft {
+                text: format!(
+                    "About \"{}\", {}",
+                    input.facts["comment_excerpt"].as_str().unwrap(),
+                    input.facts["question"].as_str().unwrap()
+                ),
+            })),
             MessageKind::Note | MessageKind::Summary => {
                 let field = if input.kind == MessageKind::Note {
                     "change"
@@ -88,9 +96,6 @@ impl Writer for FakeWriter {
                 let fact = input.facts[field]
                     .as_str()
                     .ok_or(Error::Invalid("missing message fact"))?;
-                if input.facts["comment_question"] == true {
-                    return Ok(WriterReply::Text(TextDraft { text: fact.into() }));
-                }
                 let mut text = format!("You asked for \"{title}\".\n\n{fact}");
                 if let Some(goals) = input.facts["unmet_goals"].as_array() {
                     for goal in goals {
@@ -129,11 +134,18 @@ pub fn checked_draft(
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
     for attempt in 0..3 {
-        let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
-        if input.facts["comment_question"] == true
-            && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text))
+        let reply = match writer.draft(&format!("{key}:writer:{attempt}"), &input) {
+            Ok(reply) => reply,
+            Err(_) => {
+                input.violations = vec!["The previous draft failed. Return the requested message in the required format.".into()];
+                continue;
+            }
+        };
+        if input.kind == MessageKind::Clarification
+            && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text)
+                && text.text.contains(&format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap())))
         {
-            input.violations = vec!["Write one nonempty question on a single line, at most 300 characters, ending in a question mark.".into()];
+            input.violations = vec!["Write one question on one line, at most 300 characters, ending in a question mark. Quote the supplied comment excerpt exactly in double quotes.".into()];
             continue;
         }
         let checked = match &reply {
@@ -152,7 +164,15 @@ pub fn checked_draft(
             WriterReply::Text(text) if input.kind != MessageKind::Question => {
                 let prefix = format!("You asked for \"{title}\".");
                 let written = text.text.strip_prefix(&prefix).unwrap_or(&text.text);
-                message::check_prose(written, policy).map(|_| text.text.clone())
+                let written = if input.kind == MessageKind::Clarification {
+                    written.replace(
+                        &format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap()),
+                        "your comment",
+                    )
+                } else {
+                    written.to_owned()
+                };
+                message::check_prose(&written, policy).map(|_| text.text.clone())
             }
             _ => Err(vec![Violation::MissingRequest]),
         };

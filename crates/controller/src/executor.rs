@@ -70,6 +70,8 @@ pub struct Delivery {
     pub question_context: Option<serde_json::Value>,
     #[serde(default)]
     pub steering: Option<crate::steering::Task>,
+    #[serde(default)]
+    pub request_text: Option<String>,
 }
 
 impl Delivery {

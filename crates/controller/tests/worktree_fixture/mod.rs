@@ -117,6 +117,7 @@ impl Fixture {
             note: None,
             question_context: None,
             steering: None,
+            request_text: None,
         }
     }
     pub fn advance_main(&self, conflict: bool) -> String {

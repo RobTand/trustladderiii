@@ -43,5 +43,23 @@
     "kind": "answer",
     "question_id": "current",
     "answer": "unclear"
+  },
+  "Try again using the public API": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "try_again",
+    "guidance": "Use the public API."
+  },
+  "Add 3 credits": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "add_credit",
+    "amount": 3
+  },
+  "Use a smaller request": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "change_request",
+    "new_text": "Return goodbye instead of hello."
   }
 }

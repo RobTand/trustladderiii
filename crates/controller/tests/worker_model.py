@@ -42,7 +42,15 @@ def create_model(request):
     if request["role"] == "classifier":
         body = request["inputs"]["comment"]["body"]
         replies = json.loads((Path(__file__).parent / "fixtures/steering/classifications.json").read_text())
-        reply = replies[body]
+        if body in {"Fail classification once", "Always fail classification", "Return an invalid classification"}:
+            if body != "Fail classification once" or not marker.with_suffix(".failed-once").exists():
+                publish_marker(marker.with_suffix(".failed-once"), "failed")
+                if body == "Return an invalid classification":
+                    return FakeMessagesListChatModel(responses=[AIMessage(content='{"kind":"pause","extra":true}')])
+                raise ValueError("fixture classifier failure")
+            reply = {"kind": "pause"}
+        else:
+            reply = replies[body]
         if reply.get("question_id") == "current":
             reply["question_id"] = request["inputs"]["state"]["open_question"]["id"]
         if body == "Answer the old question":
@@ -50,10 +58,14 @@ def create_model(request):
             while not marker.with_suffix(".answer").exists():
                 time.sleep(0.01)
         return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
-    if mode.startswith("steering") and request["role"] == "ingest" and request["inputs"]["issue"]["number"] != 12:
+    if mode.startswith("steering") and request["role"] == "ingest" and request["operation"]["node"] != 0:
         while True:
             time.sleep(1)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}
+    if mode == "steering-guidance" and request["role"] == "planner" and request["inputs"]["findings"]:
+        publish_marker(marker.with_suffix(".guided"), "ready")
+        while not marker.with_suffix(".release").exists():
+            time.sleep(0.01)
     if request["role"] == "planner":
         reply = {"kind": "leaf", "files": ["greeting.py", "tests/test_greeting.py"],
                  "checks": [{"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"], "goal_ids": [0]}],
@@ -67,7 +79,7 @@ def create_model(request):
                 {"brief": "Fix greeting.", "goal_ids": [0], "files": ["greeting.py"]},
                 {"brief": "Test greeting.", "goal_ids": [0], "files": ["tests/test_greeting.py"]}]}
             if mode == "plan-bad-split": reply["pieces"] = reply["pieces"][:1]
-        elif mode == "plan-cant-meet":
+        elif mode in {"plan-cant-meet", "steering-guidance"}:
             reply = {"kind": "cant_meet", "report": "Need a decision on the greeting.", "files": []}
     if mode == "early":
         reply = {"kind": "early_end", "outcome": "duplicate", "reason": "Already requested."} if request["role"] == "ingest" else reply

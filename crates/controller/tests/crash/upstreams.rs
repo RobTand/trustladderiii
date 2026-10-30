@@ -388,6 +388,7 @@ pub fn verify_contracts() {
             question: None,
             question_context: None,
             steering: None,
+            request_text: None,
         };
         let mut executor = fake(root.path(), "merge", 1, upstream);
         let _ = executor.execute(&delivery);

@@ -13,12 +13,15 @@ pub enum Task {
     },
     ClarifyComment {
         question: String,
+        excerpt: String,
     },
     FileRequest {
         text: String,
         comment: u64,
         correction: bool,
         revert: bool,
+        since: String,
+        comment_issue: u64,
     },
 }
 
@@ -53,42 +56,49 @@ fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
 
 impl Controller {
     pub(crate) fn schedule_comment(&mut self, snapshot: &Snapshot) -> Result<bool> {
-        // One outstanding classification preserves comment order across restarts.
-        if snapshot.rows.iter().any(|r| r.table == "comment_jobs") {
+        if !snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "unclassified_comments")
+        {
             return Ok(false);
         }
         let world = snapshot::decode(snapshot)?;
-        let Some(row) = snapshot
+        let mut selected = None;
+        for row in snapshot
             .rows
             .iter()
-            .find(|r| r.table == "unclassified_comments")
-        else {
+            .filter(|r| r.table == "unclassified_comments")
+        {
+            let repository: Repository = serde_json::from_value(row.value["repository"].clone())?;
+            if row.value["comment"]["user"]["id"] != self.bootstrap.rob
+                || !self.bootstrap.repos.contains(&repository)
+            {
+                return self.ignore_comment(snapshot, &row.id);
+            }
+            let Some(binding) =
+                comment_binding(snapshot, &repository, row.value["issue"].as_u64().unwrap())
+            else {
+                return self.ignore_comment(snapshot, &row.id);
+            };
+            let node = NodeId(
+                binding
+                    .id
+                    .parse()
+                    .map_err(|_| Error::Invalid("invalid request node"))?,
+            );
+            // Keep comment order within a request while other requests can classify.
+            if snapshot.rows.iter().any(|r| {
+                r.table == "comment_jobs" && r.value["output"]["Comment"]["node"] == json!(node)
+            }) {
+                continue;
+            }
+            selected = Some((row, repository, binding, node));
+            break;
+        }
+        let Some((row, repository, binding, node)) = selected else {
             return Ok(false);
         };
-        let repository: Repository = serde_json::from_value(row.value["repository"].clone())?;
-        if row.value["comment"]["user"]["id"] != self.bootstrap.rob
-            || !self.bootstrap.repos.contains(&repository)
-        {
-            return self.ignore_comment(snapshot, &row.id);
-        }
-        let Some(binding) = snapshot.rows.iter().find(|r| {
-            r.table == "requests"
-                && r.value["repo"] == json!(repository)
-                && (r.value["issue"] == row.value["issue"]
-                    || snapshot.rows.iter().any(|pr| {
-                        pr.table == "pull_requests"
-                            && pr.id == r.id
-                            && pr.value["number"] == row.value["issue"]
-                    }))
-        }) else {
-            return self.ignore_comment(snapshot, &row.id);
-        };
-        let node = NodeId(
-            binding
-                .id
-                .parse()
-                .map_err(|_| Error::Invalid("invalid request node"))?,
-        );
         let n = &world.nodes[node.0 as usize];
         let open_question = n.question.map(|q| {
                 let (kind, answers) = question(q.kind);
@@ -123,6 +133,7 @@ impl Controller {
             question: n.question,
             note: None,
             question_context: None,
+            request_text: binding.source,
             steering: Some(Task::Classify {
                 comment_key: row.id.clone(),
                 inputs,
@@ -133,24 +144,55 @@ impl Controller {
             json!({"classify": row.id}),
             snapshot,
         );
-        commit
-            .rows
-            .push(put("comment_jobs", key.clone(), json!(delivery)));
-        commit
-            .rows
-            .push(put("watches", key.clone(), json!(delivery)));
-        commit.effects.push(NewEffect {
-            key,
-            kind: "Workers".into(),
-            payload: json!(delivery),
-        });
+        queue_classifier(&mut commit, delivery);
         self.store.commit(&commit)?;
         Ok(true)
     }
 
+    pub(crate) fn retire_comment(&mut self, snapshot: &Snapshot) -> Result<bool> {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "github_comments" && r.value.get("classification").is_some())
+        {
+            let Some(node) = row.value["node"].as_u64() else {
+                continue;
+            };
+            let closed = snapshot.rows.iter().any(|r| {
+                r.table == "nodes"
+                    && r.id == node.to_string()
+                    && r.value["phase"].get("Closed").is_some()
+            });
+            let pending = snapshot.rows.iter().any(|r| {
+                (matches!(
+                    r.table.as_str(),
+                    "unclassified_comments" | "comment_questions"
+                ) && r.id == row.id)
+                    || (r.table == "comment_jobs"
+                        && r.value["steering"]["Classify"]["comment_key"] == row.id)
+            }) || snapshot.pending_effects.iter().any(|e| {
+                e.key == format!("clarify:{}", row.id) || e.key == format!("correction:{}", row.id)
+            });
+            if closed && !pending {
+                let mut commit = Commit::new(
+                    format!("retire-comment:{}", row.id),
+                    json!({"comment_retired": row.id}),
+                    snapshot,
+                );
+                commit.rows.push(RowChange::Delete {
+                    table: "github_comments".into(),
+                    id: row.id.clone(),
+                });
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn ignore_comment(&mut self, snapshot: &Snapshot, id: &str) -> Result<bool> {
         let mut commit = Commit::new(
-            format!("ignore-comment:{id}"),
+            format!("retire-comment:{id}"),
             json!({"comment_ignored": id}),
             snapshot,
         );
@@ -158,15 +200,10 @@ impl Controller {
             table: "unclassified_comments".into(),
             id: id.into(),
         });
-        if let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "github_comments" && r.id == id)
-        {
-            let mut value = row.value.clone();
-            value["ignored"] = json!(true);
-            commit.rows.push(put("github_comments", id.into(), value));
-        }
+        commit.rows.push(RowChange::Delete {
+            table: "github_comments".into(),
+            id: id.into(),
+        });
         self.store.commit(&commit)?;
         Ok(true)
     }
@@ -196,8 +233,25 @@ impl Controller {
         };
         let node = delivery.node();
         let n = &world.nodes[node.0 as usize];
-        let reply = reply.filter(|r| crate::adapters::workers::protocol::validate_classification(inputs, r).is_ok())
-            .unwrap_or(json!({"kind": "unsure", "question": "What would you like me to do with your comment?"}));
+        let reply = reply.filter(|r| {
+            crate::adapters::workers::protocol::validate_classification(inputs, r).is_ok()
+        });
+        if reply.is_none() && delivery.attempt < 3 {
+            let mut retry = delivery.clone();
+            retry.attempt += 1;
+            retry.key = format!("classify:{comment_key}:attempt:{}", retry.attempt);
+            commit.rows.push(RowChange::Delete {
+                table: "comment_jobs".into(),
+                id: key.into(),
+            });
+            commit.rows.push(RowChange::Delete {
+                table: "watches".into(),
+                id: key.into(),
+            });
+            queue_classifier(commit, retry);
+            return Ok(None);
+        }
+        let reply = reply.unwrap_or(json!({"kind": "unsure", "question": "I couldn't act on your comment. Could you rephrase it?"}));
         for (table, id) in [
             ("comment_jobs", key),
             ("watches", key),
@@ -216,6 +270,7 @@ impl Controller {
             .ok_or(Error::Invalid("classifier comment missing"))?;
         let mut recorded = comment.value.clone();
         recorded["classification"] = reply.clone();
+        recorded["node"] = json!(node);
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
@@ -239,7 +294,10 @@ impl Controller {
                 node,
                 kind: CommentKind::Clarify,
             };
-            clarification.steering = Some(Task::ClarifyComment { question });
+            clarification.steering = Some(Task::ClarifyComment {
+                question,
+                excerpt: excerpt(inputs["comment"]["body"].as_str().unwrap()),
+            });
             queue_comment(commit, clarification);
             return Ok(None);
         }
@@ -251,10 +309,19 @@ impl Controller {
                 kind: CommentKind::FileCorrection,
             };
             correction.steering = Some(Task::FileRequest {
-                text: reply["summary"].as_str().unwrap().into(),
+                text: format!(
+                    "{}\n\nRob's comment:\n{}",
+                    reply["summary"].as_str().unwrap(),
+                    inputs["comment"]["body"].as_str().unwrap()
+                ),
                 comment: comment.value["comment"]["id"].as_u64().unwrap(),
                 correction: true,
                 revert: reply["revert"].as_bool().unwrap(),
+                since: comment.value["comment"]["created_at"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+                comment_issue: comment.value["issue"].as_u64().unwrap(),
             });
             queue_comment(commit, correction);
             return Ok(None);
@@ -306,6 +373,11 @@ impl Controller {
                     comment: comment.value["comment"]["id"].as_u64().unwrap(),
                     correction: false,
                     revert: false,
+                    since: comment.value["comment"]["created_at"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    comment_issue: comment.value["issue"].as_u64().unwrap(),
                 }),
             ));
         }
@@ -396,11 +468,7 @@ impl Controller {
         let node = match event {
             Some(_) => NodeId(snapshot::decode(snapshot)?.nodes.len() as u64),
             None => {
-                let Some(row) = snapshot.rows.iter().find(|r| {
-                    r.table == "requests"
-                        && r.value["repo"] == json!(repository)
-                        && r.value["issue"] == issue.number
-                }) else {
+                let Some(row) = crate::latest_request(snapshot, &repository, issue.number) else {
                     return Ok(None);
                 };
                 NodeId(
@@ -410,6 +478,16 @@ impl Controller {
                 )
             }
         };
+        if event.is_some() {
+            for row in &mut commit.rows {
+                if let RowChange::Put { table, id, value } = row
+                    && table == "requests"
+                    && *id == node.0.to_string()
+                {
+                    value["source"] = json!(issue.body);
+                }
+            }
+        }
         commit.rows.push(put(
             "request_links",
             node.0.to_string(),
@@ -425,4 +503,53 @@ fn queue_comment(commit: &mut Commit, delivery: Delivery) {
         kind: "GitHub".into(),
         payload: json!(delivery),
     });
+}
+
+fn comment_binding<'a>(
+    snapshot: &'a Snapshot,
+    repository: &Repository,
+    issue: u64,
+) -> Option<&'a tl3_store::WorldRow> {
+    let issue = snapshot
+        .rows
+        .iter()
+        .find_map(|pr| {
+            if pr.table != "pull_requests" || pr.value["number"] != issue {
+                return None;
+            }
+            snapshot
+                .rows
+                .iter()
+                .find(|r| {
+                    r.table == "requests" && r.id == pr.id && r.value["repo"] == json!(repository)
+                })?
+                .value["issue"]
+                .as_u64()
+        })
+        .unwrap_or(issue);
+    crate::latest_request(snapshot, repository, issue)
+}
+
+fn queue_classifier(commit: &mut Commit, delivery: Delivery) {
+    commit
+        .rows
+        .push(put("comment_jobs", delivery.key.clone(), json!(delivery)));
+    commit
+        .rows
+        .push(put("watches", delivery.key.clone(), json!(delivery)));
+    commit.effects.push(NewEffect {
+        key: delivery.key.clone(),
+        kind: "Workers".into(),
+        payload: json!(delivery),
+    });
+}
+
+fn excerpt(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(80)
+        .map(|c| if c == '?' { ' ' } else { c })
+        .collect()
 }
