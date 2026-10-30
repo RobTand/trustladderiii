@@ -129,8 +129,8 @@ opens historical run directories or replies. Bad records are logged and skipped.
 Stop indexes active runs by node. Attempt events matter only for `claim.json`,
 `process.json`, `stdout.jsonl`, and `exit.json`. An inotify queue overflow causes
 one rescan of watches and the notification inbox, then event-driven ingress resumes.
-Startup consumes stale inbox markers and removes legacy `.ready-*` markers by
-progress key, without scanning historical directories.
+Startup consumes stale inbox markers and removes legacy `.ready-*` markers for
+watched keys. Retirement removes them for finished keys. Neither scans history.
 
 After the controller drains work, `Executor::retire` reclaims runs whose effects
 are terminal in the store and have no watch. A Confirmed start remains watched

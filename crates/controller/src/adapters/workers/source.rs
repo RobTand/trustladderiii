@@ -258,6 +258,8 @@ impl WorkerOutputSource {
     fn rescan(&mut self, store: &mut Store) -> Result<()> {
         for delivery in watched_deliveries(store)? {
             let root = run_root(&self.root, &delivery.key);
+            let name = root.file_name().unwrap().to_string_lossy();
+            remove_ready(&self.root.join(format!(".ready-{name}")))?;
             if root.is_dir() {
                 self.add(root, delivery)?;
             }
@@ -266,12 +268,6 @@ impl WorkerOutputSource {
         for entry in fs::read_dir(self.root.join(".ready"))? {
             let name = entry?.file_name();
             self.ready(&name.to_string_lossy(), store)?;
-        }
-        // Pre-inbox releases left markers next to run directories.
-        for progress in store.worker_progress(None)? {
-            let root = run_root(&self.root, &progress.key);
-            let name = root.file_name().unwrap().to_string_lossy();
-            remove_ready(&self.root.join(format!(".ready-{name}")))?;
         }
         Ok(())
     }
