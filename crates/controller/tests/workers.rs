@@ -408,7 +408,7 @@ fn simulation(settings: &tl3_config::Store) {
         ["- Return hello."]
     );
     let progress = store.worker_progress(Some("0")).unwrap();
-    assert_eq!(progress.len(), 3);
+    assert_eq!(progress.len(), 2);
     assert!(
         progress
             .iter()
@@ -521,7 +521,7 @@ fn killed_controller(settings: &tl3_config::Store) {
         .map(|e| e.unwrap().path())
         .filter(|p| p.is_dir())
         .collect();
-    assert_eq!(records.len(), 3, "ingest, audit and planner");
+    assert_eq!(records.len(), 2, "one ingest and one audit");
     assert!(records.iter().all(|p| attempts(p) == 1));
     let ingest = records
         .iter()
@@ -680,8 +680,8 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
         .collect();
     assert_eq!(
         runs.len(),
-        4,
-        "one failed ingest, its kernel-directed retry, audit and planner"
+        3,
+        "one failed ingest, its kernel-directed retry, and audit"
     );
     assert!(runs.iter().all(|p| attempts(p) == 1));
 }
@@ -891,9 +891,10 @@ fn fake_stop(settings: &tl3_config::Store) {
     run.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
-        kind: EffectKind::StartRun(Role::Make),
+        kind: EffectKind::StartRun(Role::Review),
         head: None,
     };
+    run.head_sha = Some("a".repeat(40));
     supervisor.execute(&run).unwrap();
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
