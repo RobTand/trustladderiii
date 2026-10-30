@@ -47,7 +47,7 @@ use tl3_github::{
     CloseReason, GitHub,
     message::{OptionDraft, Policy},
 };
-use tl3_kernel::{Ack, NoteKind, Notice, Outcome, QKind};
+use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
 /// PR effects stay on the tracer fake until ticket 13 replaces them here.

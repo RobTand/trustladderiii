@@ -1182,7 +1182,7 @@ impl Controller {
     }
 
     fn operations_comment(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         repository: &Repository,
         issue: u64,
