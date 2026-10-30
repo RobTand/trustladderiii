@@ -51,16 +51,16 @@ GitHub keeps job logs, while local diagnostics disappear with the container.
 The Containerfile pins the official Actions runner base by manifest digest.
 It adds build tools, a checksum-pinned rustup installer, Rust 1.99.1 with clippy
 and rustfmt, ShellCheck, `systemd-analyze`, and shared libraries for embedded Postgres.
-The existing workflow installs Python 3.14 and uv. Job names, steps, and tests
-keep their required check names. Rust's overall job budget is 40 minutes and
+The existing workflow installs Python 3.14 and uv. The required check names stay
+`Rust` and `Python`. Rust's overall job budget is 40 minutes and
 Python's is 30 minutes. Test deadlines and assertions stay intact. Mergify allows
 60 minutes for checks, including time spent waiting for a free runner.
 
 ## Capacity
 
 Each container has `--cpus=4 --cpuset-cpus=40-79 --memory=6g --memory-swap=6g`
-and at most 1,024 processes. Six slots use at most 24 CPU equivalents and 36 GiB RAM, enough for
-three Mergify batches with two jobs each. Native thread limits remain in the
+and at most 1,024 processes. Six slots use at most 24 CPU equivalents and 36 GiB
+RAM, enough for three Mergify batches with two jobs each. Native thread limits remain in the
 workflow and image. Image builds also have a two-CPU, six-GiB limit.
 
 On 2026-10-30, the published PrismaBuild configuration at
@@ -74,7 +74,8 @@ or claim a reservation in its ledger.
 
 Set `CI_RUNNER_CPUSET=...` when installing to override the default. An ordinary
 reinstall preserves existing CPU placement, while an absent or empty placement
-uses 40-79. For the upgrade from #98, run `CI_RUNNER_CPUSET=40-79 install.sh 0`.
+uses 40-79. For the upgrade from #98, run
+`CI_RUNNER_CPUSET=40-79 deploy/ci-runners/install.sh 0`.
 Restart idle slots one at a time to apply image or CPU-placement changes. Check
 the REST runners list for `busy=false` immediately before each restart. If all
 slots are busy, wait for a runner's exit through systemd rather than polling or
