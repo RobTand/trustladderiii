@@ -252,6 +252,18 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--maker-failure") {
+        maker::scenario(&database.create("maker_failure"), &args[2], false);
+        println!("test maker_failure_{} ... ok", args[2]);
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-legacy") {
+        maker::legacy_session(&database.create("maker_legacy_session"));
+        println!("test maker_legacy_session_fails_closed ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-trial") {
         maker::trial(&database.create("maker_real_trial"), Path::new(&args[2]));
         database.stop();

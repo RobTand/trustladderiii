@@ -780,11 +780,22 @@ def test_ci_feedback_summary_has_a_character_cap(maker_request):
 
 
 @pytest.mark.parametrize('failure', ['killed', 'session-save'])
-def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, monkeypatch, failure):
+@pytest.mark.parametrize('failures', [1, 2])
+@pytest.mark.parametrize('fix_round', [False, True])
+def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, monkeypatch, failure, failures, fix_round):
     root = Path(maker_request['worktree'])
     base = git(root, 'rev-parse', 'HEAD')
     maker_request['session_file'] = str(tmp_path / 'session.json')
     launcher = worker_process.LAUNCH
+    if fix_round:
+        accepted = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+        assert accepted.exit_code == 0, accepted.stderr
+        maker_request['last_accepted_generation'] = maker_request['operation']['generation']
+        maker_request['operation']['generation'] += 1
+        maker_request['inputs']['round'] = 1
+        maker_request['resume_session'] = True
+    visit_base = git(root, 'rev-parse', 'HEAD')
+    visit_generation = maker_request['operation']['generation']
     injection = """
 from tl3_workers.roles import maker
 commit = maker._commit
@@ -801,18 +812,23 @@ def fail_save(path, value):
     injection += ("maker._commit = crash_commit\n" if failure == 'killed'
                   else "maker._save = fail_save\n")
     monkeypatch.setattr(worker_process, 'LAUNCH', launcher.replace('def no_network', injection + '\ndef no_network'))
-    failed = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
-    assert failed.exit_code == (-9 if failure == 'killed' else 1), failed.stderr
-    assert all(event['event'] != 'reply' for event in failed.events)
-    head = git(root, 'rev-parse', 'HEAD')
-    assert head != base
+    for index in range(failures):
+        turns = [write_turn(content="def greet(): return 'hello fixed'\n")] if index == 0 else []
+        failed = start_worker(tmp_path, maker_request, [*turns, turn(DONE)])
+        assert failed.exit_code == (-9 if failure == 'killed' else 1), failed.stderr
+        assert all(event['event'] != 'reply' for event in failed.events)
+        head = git(root, 'rev-parse', 'HEAD')
+        assert head != visit_base
+        assert git(root, 'rev-list', '--count', f'{visit_base}..HEAD') == '1'
+        maker_request['operation']['generation'] += 1
     monkeypatch.setattr(worker_process, 'LAUNCH', launcher)
-    maker_request['operation']['generation'] += 1
     recovered = start_worker(tmp_path, maker_request, [turn(DONE)])
     assert recovered.exit_code == 0, recovered.stderr
     assert recovered.events[-1]['reply'] == {**DONE, 'head': head}
-    assert git(root, 'rev-list', '--count', f'{base}..HEAD') == '1'
+    assert git(root, 'rev-list', '--count', f'{base}..HEAD') == str(2 if fix_round else 1)
     assert git(root, 'rev-parse', 'HEAD') == head
+    checkpoint = Path(maker_request['session_file']).with_suffix('.head')
+    assert json.loads(checkpoint.read_text()) == {'generation': visit_generation, 'head': visit_base}
 
 
 @pytest.mark.parametrize('paths', [['outside.py'] * 101, ['é' * 4097]])

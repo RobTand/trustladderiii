@@ -146,11 +146,12 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let materials = if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
-            inputs.clone()
-        } else {
-            self.materials(delivery, store, snapshot)?
-        };
+        let materials =
+            if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
+                inputs.clone()
+            } else {
+                self.materials(delivery, store, snapshot)?
+            };
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
         let worktree = if role == "maker" {
             if !inputs.is_object() || !inputs["plan"].is_object() {

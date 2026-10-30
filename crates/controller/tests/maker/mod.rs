@@ -273,11 +273,11 @@ impl Executor for CiFailureOnce {
     }
 }
 
-fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
+pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let root = tempfile::tempdir().unwrap();
     let (config, worktree, base) = fixture(settings, root.path(), mode);
     let (mut adapters, source, checks_source) = registry(&config, &root.path().join("fakes"), fail);
-    if mode.starts_with("ci-") {
+    if mode.starts_with("ci-") || mode == "fix-killed" {
         adapters.register(
             Upstream::Mergify,
             CiFailureOnce {
@@ -299,6 +299,24 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     controller.intake(labelled()).unwrap();
     loop {
         let world = controller.world().unwrap();
+        if mode == "twice-killed"
+            && world
+                .nodes
+                .first()
+                .is_some_and(|node| node.waiting_incident)
+        {
+            assert_eq!(world.nodes[0].run_failures, 2);
+            controller
+                .observe(
+                    "maker-health-restored",
+                    Observation::Kernel(Event::Fact {
+                        node: NodeId(0),
+                        fact: tl3_kernel::Fact::IncidentCleared { by_rob: false },
+                    }),
+                )
+                .unwrap();
+            continue;
+        }
         assert!(
             world.nodes.iter().all(|node| !node.waiting_incident),
             "maker retry raised an incident"
@@ -327,9 +345,35 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     source_thread.take().unwrap().join().unwrap()
                 )
             });
-            let Input::Observation { key, observation } = input else {
+            let Input::Observation {
+                key,
+                mut observation,
+            } = input
+            else {
                 panic!("worker observation required")
             };
+            if mode == "self-check-mismatch"
+                && let Observation::WorkerReply { reply, .. } = &mut observation
+                && requests(&config).len() == 1
+            {
+                assert_ne!(git(&worktree, &["rev-parse", "HEAD"]), base);
+                reply["self_check"][0]["goal_id"] = json!("unexpected-goal");
+                observe(&mut controller, &key, observation, &worktree, &base);
+                let node = controller.world().unwrap().nodes[0];
+                assert_eq!(node.phase, Phase::Making);
+                assert_eq!(
+                    node.run_failures, 1,
+                    "self-check mismatch must become RunFailed"
+                );
+                assert!(
+                    Store::open(settings)
+                        .unwrap()
+                        .worker_document("0", "maker_session")
+                        .unwrap()
+                        .is_none()
+                );
+                continue;
+            }
             if fail
                 && matches!(&observation, Observation::Checks { pass: false, .. })
                 && controller.world().unwrap().nodes[0].attempt == 1
@@ -417,8 +461,22 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         );
     }
     let runs = requests(&config);
-    if matches!(mode, "killed-after-commit" | "session-save-fails") {
-        assert_eq!(runs.len(), 2);
+    if matches!(
+        mode,
+        "killed-after-commit"
+            | "session-save-fails"
+            | "twice-killed"
+            | "fix-killed"
+            | "self-check-mismatch"
+    ) {
+        assert_eq!(
+            runs.len(),
+            if matches!(mode, "twice-killed" | "fix-killed") {
+                3
+            } else {
+                2
+            }
+        );
         assert_ne!(
             runs[0]["operation"]["generation"],
             runs[1]["operation"]["generation"]
@@ -428,8 +486,19 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 &root.path().join("repo"),
                 &["rev-list", "--count", &format!("{base}..maker-fixture")]
             ),
-            "1"
+            if mode == "fix-killed" { "2" } else { "1" }
         );
+        if mode == "fix-killed" {
+            assert_eq!(runs[1]["inputs"]["round"], 1);
+            assert_eq!(
+                runs[1]["last_accepted_generation"],
+                runs[0]["operation"]["generation"]
+            );
+            assert_eq!(
+                runs[2]["last_accepted_generation"],
+                runs[0]["operation"]["generation"]
+            );
+        }
         assert_eq!(
             world.nodes[0].phase,
             Phase::Closed(tl3_kernel::Outcome::Merged)
@@ -522,8 +591,8 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 .unwrap()
                 .contains("'hello'")
         );
-        if mode.starts_with("ci-") {
-            assert_eq!(runs.len(), 2);
+        if mode.starts_with("ci-") || mode == "fix-killed" {
+            assert_eq!(runs.len(), if mode == "fix-killed" { 3 } else { 2 });
             assert_eq!(runs[1]["inputs"]["round"], 1);
             let finding = &runs[1]["inputs"]["feedback"][0];
             assert!(finding["report"].as_str().unwrap().contains("CI"));
@@ -706,7 +775,55 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     assert!(git(&worktree, &["show", "HEAD:greeting.py"]).contains("replanned attempt"));
 }
 
+pub(super) fn legacy_session(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (config, worktree, _) = fixture(settings, root.path(), "normal");
+    let mut delivery = super::delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Make),
+        head: None,
+    };
+    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    let accepted_head = git(&worktree, &["rev-parse", "HEAD"]);
+    let mut store = Store::open(settings).unwrap();
+    let mut commit =
+        tl3_store::Commit::new("legacy-accepted-session", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "maker_session".into(),
+        id: "0".into(),
+        value: json!({"attempt": 1, "replanned": false, "needs_files": false}),
+    });
+    store.commit(&commit).unwrap();
+    drop(supervisor);
+    delivery.key = "legacy-session-revisit".into();
+    delivery.generation += 1;
+    delivery.round = 1;
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let result = supervisor.execute(&delivery);
+    assert!(
+        matches!(
+            result,
+            Err(tl3_controller::Error::Invalid(
+                "maker session has no accepted generation"
+            ))
+        ),
+        "a legacy accepted session must fail closed before reusing its checkpoint"
+    );
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), accepted_head);
+    assert!(
+        !root_for(&config, &delivery.key).exists(),
+        "rejected legacy sessions must not launch a worker"
+    );
+}
+
 pub(super) fn run(database: &mut Database) {
+    legacy_session(&database.create("maker_legacy_session"));
+    println!("test maker_legacy_session_fails_closed ... ok");
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));
     println!("test maker_outside_paths_bounded ... ok");
     real::recorded_failure_feedback(&database.create("maker_recorded_failure"));
@@ -728,6 +845,9 @@ pub(super) fn run(database: &mut Database) {
         ("normal", false),
         ("killed-after-commit", false),
         ("session-save-fails", false),
+        ("twice-killed", false),
+        ("fix-killed", false),
+        ("self-check-mismatch", false),
         ("normal", true),
         ("outside", false),
         ("cant-meet", false),

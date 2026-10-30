@@ -30,14 +30,16 @@ def create_model(request):
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
-    if mode in ('killed-after-commit', 'session-save-fails'):
+    if mode in ('killed-after-commit', 'session-save-fails', 'twice-killed', 'fix-killed'):
         marker = record.parent / 'failure-injected'
-        if not marker.exists():
-            if mode == 'killed-after-commit':
+        failures = int(marker.read_text()) if marker.exists() else 0
+        inject = failures < (2 if mode == 'twice-killed' else 1)
+        if inject and (mode != 'fix-killed' or inputs['round'] == 1):
+            if mode != 'session-save-fails':
                 commit = maker._commit
                 def kill_after_commit(*args):
                     commit(*args)
-                    marker.touch()
+                    marker.write_text(str(failures + 1))
                     import os, signal
                     os.kill(os.getpid(), signal.SIGKILL)
                 maker._commit = kill_after_commit
@@ -45,7 +47,7 @@ def create_model(request):
                 save = maker._save
                 def fail_session_save(path, value):
                     if path.suffix == '.json':
-                        marker.touch()
+                        marker.write_text(str(failures + 1))
                         raise OSError('injected session save failure')
                     save(path, value)
                 maker._save = fail_session_save
