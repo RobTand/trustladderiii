@@ -26,7 +26,7 @@ impl Delivery {
 }
 
 fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
-    let (kind, answers) = match kind {
+    match kind {
         QKind::AuditDisagreement => (
             "audit_disagreement",
             vec!["continue", "change_request", "stop"],
@@ -39,8 +39,7 @@ fn question(kind: QKind) -> (&'static str, Vec<&'static str>) {
         ),
         QKind::EffectFailed => ("effect_failed", vec!["continue", "stop"]),
         QKind::CleanupFailed => ("cleanup_cant_finish", vec!["retry", "mark_handled"]),
-    };
-    (kind, answers)
+    }
 }
 
 impl Controller {
@@ -50,89 +49,89 @@ impl Controller {
             return Ok(false);
         }
         let world = snapshot::decode(snapshot)?;
-        for row in snapshot
+        let Some(row) = snapshot
             .rows
             .iter()
-            .filter(|r| r.table == "unclassified_comments")
+            .find(|r| r.table == "unclassified_comments")
+        else {
+            return Ok(false);
+        };
+        let repository: Repository = serde_json::from_value(row.value["repository"].clone())?;
+        if row.value["comment"]["user"]["id"] != self.bootstrap.rob
+            || !self.bootstrap.repos.contains(&repository)
         {
-            let repository: Repository = serde_json::from_value(row.value["repository"].clone())?;
-            if row.value["comment"]["user"]["id"] != self.bootstrap.rob
-                || !self.bootstrap.repos.contains(&repository)
-            {
-                return self.ignore_comment(snapshot, &row.id);
-            }
-            let Some(binding) = snapshot.rows.iter().find(|r| {
-                r.table == "requests"
-                    && r.value["repo"] == json!(repository)
-                    && (r.value["issue"] == row.value["issue"]
-                        || snapshot.rows.iter().any(|pr| {
-                            pr.table == "pull_requests"
-                                && pr.id == r.id
-                                && pr.value["number"] == row.value["issue"]
-                        }))
-            }) else {
-                return self.ignore_comment(snapshot, &row.id);
-            };
-            let node = NodeId(
-                binding
-                    .id
-                    .parse()
-                    .map_err(|_| Error::Invalid("invalid request node"))?,
-            );
-            let n = &world.nodes[node.0 as usize];
-            let open_question = n.question.map(|q| {
+            return self.ignore_comment(snapshot, &row.id);
+        }
+        let Some(binding) = snapshot.rows.iter().find(|r| {
+            r.table == "requests"
+                && r.value["repo"] == json!(repository)
+                && (r.value["issue"] == row.value["issue"]
+                    || snapshot.rows.iter().any(|pr| {
+                        pr.table == "pull_requests"
+                            && pr.id == r.id
+                            && pr.value["number"] == row.value["issue"]
+                    }))
+        }) else {
+            return self.ignore_comment(snapshot, &row.id);
+        };
+        let node = NodeId(
+            binding
+                .id
+                .parse()
+                .map_err(|_| Error::Invalid("invalid request node"))?,
+        );
+        let n = &world.nodes[node.0 as usize];
+        let open_question = n.question.map(|q| {
                 let (kind, answers) = question(q.kind);
                 json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
             });
-            let inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
+        let inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
                 "state": {"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question}});
-            let binding: Request = serde_json::from_value(binding.value.clone())?;
-            let key = format!("classify:{}", row.id);
-            let delivery = Delivery {
-                key: key.clone(),
-                epoch: snapshot.epoch.get(),
-                output: Out::Effect {
-                    node,
-                    seq: 0,
-                    kind: EffectKind::StartRun(Role::Classify),
-                    head: None,
-                },
-                generation: n.generation,
-                head_sha: None,
-                repository,
-                issue: binding.issue,
-                pull_request: None,
-                paths: vec![],
-                attempt: 1,
-                round: 0,
-                question: n.question,
-                note: None,
-                question_context: None,
-                steering: Some(Task::Classify {
-                    comment_key: row.id.clone(),
-                    inputs,
-                }),
-            };
-            let mut commit = Commit::new(
-                format!("schedule:{key}"),
-                json!({"classify": row.id}),
-                snapshot,
-            );
-            commit
-                .rows
-                .push(put("comment_jobs", key.clone(), json!(delivery)));
-            commit
-                .rows
-                .push(put("watches", key.clone(), json!(delivery)));
-            commit.effects.push(NewEffect {
-                key,
-                kind: "Workers".into(),
-                payload: json!(delivery),
-            });
-            self.store.commit(&commit)?;
-            return Ok(true);
-        }
-        Ok(false)
+        let binding: Request = serde_json::from_value(binding.value.clone())?;
+        let key = format!("classify:{}", row.id);
+        let delivery = Delivery {
+            key: key.clone(),
+            epoch: snapshot.epoch.get(),
+            output: Out::Effect {
+                node,
+                seq: 0,
+                kind: EffectKind::StartRun(Role::Classify),
+                head: None,
+            },
+            generation: n.generation,
+            head_sha: None,
+            repository,
+            issue: binding.issue,
+            pull_request: None,
+            paths: vec![],
+            attempt: 1,
+            round: 0,
+            question: n.question,
+            note: None,
+            question_context: None,
+            steering: Some(Task::Classify {
+                comment_key: row.id.clone(),
+                inputs,
+            }),
+        };
+        let mut commit = Commit::new(
+            format!("schedule:{key}"),
+            json!({"classify": row.id}),
+            snapshot,
+        );
+        commit
+            .rows
+            .push(put("comment_jobs", key.clone(), json!(delivery)));
+        commit
+            .rows
+            .push(put("watches", key.clone(), json!(delivery)));
+        commit.effects.push(NewEffect {
+            key,
+            kind: "Workers".into(),
+            payload: json!(delivery),
+        });
+        self.store.commit(&commit)?;
+        Ok(true)
     }
 
     fn ignore_comment(&mut self, snapshot: &Snapshot, id: &str) -> Result<bool> {
@@ -362,13 +361,13 @@ impl Controller {
     pub(crate) fn linked_request(
         &mut self,
         snapshot: &Snapshot,
-        world: &World,
         repository: Repository,
         number: u64,
         title: String,
         original: NodeId,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        let world = snapshot::decode(snapshot)?;
         let old = request(snapshot, original)?;
         if old.repo != repository {
             return Err(Error::Invalid("linked request repository mismatch"));

@@ -204,7 +204,7 @@ pub(super) fn commands(settings: &tl3_config::Store) {
         .worker_progress(None)
         .unwrap()
         .into_iter()
-        .filter(|p| p.run_key.starts_with("classify:"))
+        .filter(|p| p.key.starts_with("classify:"))
         .count();
     assert_eq!(
         classifies, 5,
@@ -417,7 +417,7 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
         .worker_progress(None)
         .unwrap()
         .into_iter()
-        .filter(|p| p.run_key.starts_with("classify:"))
+        .filter(|p| p.key.starts_with("classify:"))
         .collect();
     assert_eq!(jobs.len(), 1);
     assert_eq!(

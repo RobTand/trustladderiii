@@ -824,8 +824,7 @@ impl Controller {
                 title,
                 original,
             } => {
-                return self
-                    .linked_request(snapshot, world, repository, number, title, original, commit);
+                return self.linked_request(snapshot, repository, number, title, original, commit);
             }
             Observation::GitHubComment {
                 repository,
