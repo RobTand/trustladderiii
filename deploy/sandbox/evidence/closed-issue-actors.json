@@ -1,0 +1,14 @@
+{
+  "issue": 27,
+  "events": [
+    {
+      "id": 34698248159,
+      "event": "closed",
+      "actor": {
+        "id": 350304049,
+        "login": "tl3-robtand[bot]"
+      },
+      "created_at": "2026-10-30T14:09:20Z"
+    }
+  ]
+}

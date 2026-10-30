@@ -1,0 +1,70 @@
+[
+  {
+    "id": 124106861246,
+    "name": "Rule: Queue TL3-approved PRs (queue)",
+    "head_sha": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "external_id": "",
+    "status": "in_progress",
+    "conclusion": null,
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "The pull request is queued to be merged",
+      "summary": "[#25](/RobTand/tl3-sandbox/pull/25) is queued for merge on branch **main** (8901bcc).\n\n**Stacked behind 1 pull request queued ahead of this batch**, not part of it. These checks run on a tip that also carries its commits, so a failure here can come from it as much as from [#25](/RobTand/tl3-sandbox/pull/25).\n\n**Queued ahead of this batch:**\n\n- [#17](/RobTand/tl3-sandbox/pull/17)\n\n**Required conditions of queue rule** `default` **for merge:**\n\n- [ ] `check-success = Sandbox tests`\n- [ ] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n  - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n  - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n  - [ ] `check-success = @tl3-robtand/TL3 approval`\n- [ ] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n  - [ ] `check-neutral = @github-actions/Sandbox tests`\n  - [ ] `check-skipped = @github-actions/Sandbox tests`\n  - [ ] `check-success = @github-actions/Sandbox tests`\n- `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n- [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n- [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n\n**Required conditions to stay in the queue:**\n\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [X] `label = tl3-queue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `base = main`\n    - [X] `check-success = @tl3-robtand/TL3 approval`\n    - [X] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `label = tl3-queue`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @tl3-robtand/TL3 approval`\n      - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n      - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @github-actions/Sandbox tests`\n      - [ ] `check-neutral = @github-actions/Sandbox tests`\n      - [ ] `check-skipped = @github-actions/Sandbox tests`\n- `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n- [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n  - [X] #25\n- `label = tl3-queue`\n  - [X] #25\n- [X] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n  - [X] `check-success = @tl3-robtand/TL3 approval`\n  - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n  - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n- [X] any of [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]:\n  - [X] `check-success = @github-actions/Sandbox tests`\n  - [ ] `check-neutral = @github-actions/Sandbox tests`\n  - [ ] `check-skipped = @github-actions/Sandbox tests`",
+      "text": null
+    }
+  },
+  {
+    "id": 124106556587,
+    "name": "Mergify Merge Queue",
+    "head_sha": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "external_id": "queue:25",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Dequeued \u2014 checks interrupted",
+      "summary": "### \u274c Left the queue \u00b7 checks interrupted\n\n12 min in the queue, 11 min of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 30 Oct, 14:05 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u274c **Checks interrupted** \u00b7 draft #26\n- \ud83d\udeab **Left the queue** 14:16 \u00b7 `c2c508e`\n\n**Reason**\n\nThe merge conditions cannot be satisfied: the checks were interrupted before producing a result\n\n- `Sandbox tests`\n\nFailing checks:\n- \ud83d\uded1 [`Sandbox tests`](https://github.com/RobTand/tl3-sandbox/actions/runs/41068756712/job/124106987964) ([job log](https://github.com/RobTand/tl3-sandbox/actions/runs/41068756712/job/124106987964))\n\n**Hint**\n\nAn interrupted check reported no result, so it says nothing about this pull request.\nLook at the check run to find out why it stopped. A reclaimed runner or a cancelled workflow run are the usual causes.\nYou can then requeue the pull request, without updating it, by posting a `@mergifyio queue` comment.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = Sandbox tests`\n- [ ] any of \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`:\n  - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n  - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n  - [ ] `check-success = @tl3-robtand/TL3 approval`\n- [ ] any of \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`:\n  - [ ] `check-neutral = @github-actions/Sandbox tests`\n  - [ ] `check-skipped = @github-actions/Sandbox tests`\n  - [ ] `check-success = @github-actions/Sandbox tests`\n\n<details>\n<summary>3 merge conditions met</summary>\n\n- [x] `#review-threads-unresolved = 0` \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n- [x] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n- [x] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) \u00b7 required by GitHub repository ruleset rule `TL3 main merge gate`\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=25) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null
+    }
+  },
+  {
+    "id": 124106553225,
+    "name": "Mergify Merge Protections",
+    "head_sha": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "external_id": "25",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "No merge protections matched",
+      "summary": "This pull request does not match any conditions of the merge protections.",
+      "text": null
+    }
+  },
+  {
+    "id": 124106549355,
+    "name": "Summary",
+    "head_sha": "c2c508e44ce145ea8fa84a335b7963d6ed71e0b3",
+    "external_id": "25",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "1 rule matches",
+      "summary": "### \u2705 Rule: Queue TL3\\-approved PRs (queue)\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] `check-success = @tl3-robtand/TL3 approval`\n- [X] `label = tl3-queue`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of: [\ud83d\udd00 queue conditions]\n  - [X] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [X] `#review-threads-unresolved = 0` [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `base = main`\n    - [X] `check-success = @tl3-robtand/TL3 approval`\n    - [X] [`github-code-owner-review-satisfied`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-code-owner-review-satisfied) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n    - [X] `label = tl3-queue`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @tl3-robtand/TL3 approval`\n      - [ ] `check-neutral = @tl3-robtand/TL3 approval`\n      - [ ] `check-skipped = @tl3-robtand/TL3 approval`\n    - [X] any of: [\ud83d\udee1 GitHub repository ruleset rule `TL3 main merge gate`]\n      - [X] `check-success = @github-actions/Sandbox tests`\n      - [ ] `check-neutral = @github-actions/Sandbox tests`\n      - [ ] `check-skipped = @github-actions/Sandbox tests`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]
