@@ -435,10 +435,10 @@ impl Executor for Supervisor {
                     Some((_, attempt)) => inspect(&attempt, delivery)?,
                     None => Reconciliation::Absent,
                 };
-                if !matches!(result, Reconciliation::Pending) {
-                    if let Some((number, _)) = latest(&self.root(&delivery.key))? {
-                        self.active.remove(delivery, number);
-                    }
+                if !matches!(result, Reconciliation::Pending)
+                    && let Some((number, _)) = latest(&self.root(&delivery.key))?
+                {
+                    self.active.remove(delivery, number);
                 }
                 Ok(result)
             }
