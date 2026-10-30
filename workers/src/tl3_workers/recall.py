@@ -18,7 +18,7 @@ async def _response(endpoint, bank, query):
             ) as response:
                 response.raise_for_status()
                 raw = bytearray()
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(4096):
                     raw.extend(chunk)
                     if len(raw) > 65536:
                         raise ValueError("Hindsight response exceeded its limit")

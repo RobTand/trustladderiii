@@ -679,6 +679,7 @@ def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, m
 
 @pytest.mark.parametrize('failure', ['schema', 'stream'])
 def test_failed_run_preserves_the_last_clean_session(maker_request, monkeypatch, tmp_path, failure):
+    maker_request['inputs']['context_size'] = 150000
     session = tmp_path / 'session.json'
     maker_request['session_file'] = str(session)
     reply = {'kind': 'cant_meet', 'report': 'Need another approach.'}
