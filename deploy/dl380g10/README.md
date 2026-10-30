@@ -27,9 +27,13 @@ python3 deploy/dl380g10/deploy.py start
 `operations` is the only account write in preparation. It uses the existing App
 installation, searches all issue pages including closed issues, and matches the
 exact title `TL3 operations` and marker `<!-- tl3:operations:v1 -->`.
-It never blindly retries an uncertain creation. Rerun to reconcile by marker.
-Multiple matches stop the command. The nonsecret `app-state.json` records the
-installation and issue numbers for config generation. The operations repo is
+It journals a pending creation before POST and records the returned number
+durably. Reruns read that issue directly, so a stale list cannot create another.
+An uncertain creation stays pending until discovery finds its marker.
+If duplicate App-authored copies exist, it keeps the oldest and closes the others
+with a duplicate marker. Copies by another author stop automatic reconciliation.
+The nonsecret `app-state.json` records the installation and issue numbers for
+config generation. The operations repo is
 not added to the served repositories. Pinning is an optional UI step for Rob.
 
 The installer preserves an existing config unless `--refresh-config` is passed.

@@ -4,6 +4,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2}
 export RUST_TEST_THREADS=2
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 cargo test --locked -p tl3-config
+cargo test --locked -p tl3-controller --example tl3-deploy
 cargo build --locked -p tl3-controller --bins --example tl3-deploy
 cargo_target=${CARGO_TARGET_DIR:-$PWD/target}
 export TL3_DEPLOY_HELPER="$cargo_target/debug/examples/tl3-deploy"

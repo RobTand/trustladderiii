@@ -1,7 +1,7 @@
 //! Deployment-only REST operations. Credentials never leave this process.
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
-use std::{fs, path::Path, time::Duration};
+use std::{fs, io::Write, path::Path, time::Duration};
 use tl3_github::{AppConfig, ClientOptions, GitHub};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -80,6 +80,7 @@ fn database(config: &tl3_config::Config) -> Result<()> {
 
 struct Api {
     http: Client,
+    root: String,
 }
 
 impl Api {
@@ -92,10 +93,11 @@ impl Api {
     ) -> Result<Value> {
         let mut request = self
             .http
-            .request(method, format!("https://api.github.com/{path}"))
+            .request(method, format!("{}{path}", self.root))
             .bearer_auth(token)
             .header("User-Agent", "tl3-deploy")
             .header("Accept", "application/vnd.github+json")
+            .header("Cache-Control", "no-cache")
             .header("X-GitHub-Api-Version", tl3_github::API_VERSION);
         if let Some(body) = body {
             request = request.json(&body);
@@ -131,6 +133,7 @@ async fn app(command: &str, config: &tl3_config::Config, args: &[String]) -> Res
     )?;
     let jwt = github.app_jwt(chrono::Utc::now())?;
     let api = Api {
+        root: "https://api.github.com/".into(),
         http: Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))
@@ -223,50 +226,11 @@ async fn app(command: &str, config: &tl3_config::Config, args: &[String]) -> Res
         if !repos.iter().any(|repo| repo == "RobTand/trustladderiii") {
             return Err("operations repository installation missing".into());
         }
-        let mut found = Vec::new();
-        let mut page = 1;
-        loop {
-            let rows = api
-                .get(
-                    &format!(
-                        "repos/RobTand/trustladderiii/issues?state=all&per_page=100&page={page}"
-                    ),
-                    &token,
-                )
-                .await?;
-            let rows = rows.as_array().ok_or("invalid issues")?;
-            for row in rows {
-                if row.get("pull_request").is_none()
-                    && row["title"] == TITLE
-                    && row["body"]
-                        .as_str()
-                        .is_some_and(|body| body.lines().any(|line| line == MARKER))
-                {
-                    found.push(row["number"].as_u64().ok_or("invalid issue number")?);
-                }
-            }
-            if rows.len() < 100 {
-                break;
-            }
-            page += 1;
-        }
-        let number = match found.as_slice() {
-            [number] => *number,
-            [] => api.request(Method::POST, "repos/RobTand/trustladderiii/issues", &token,
-                Some(json!({"title": TITLE, "body": format!("{MARKER}\n\nTL3 posts incidents here. Questions about a request stay on that request's issue.")})))
-                .await?["number"].as_u64().ok_or("missing new issue number")?,
-            _ => return Err("multiple operations issues match; reconcile manually".into()),
-        };
         let state = Path::new(&config.worktrees_root)
             .parent()
             .ok_or("invalid worktrees root")?
             .join("app-state.json");
-        fs::write(
-            state,
-            serde_json::to_vec(
-                &json!({"installation_id": installation, "operations_issue": number}),
-            )?,
-        )?;
+        let number = operations(&api, &token, github.app_slug(), installation, &state).await?;
         println!("Operations: https://github.com/RobTand/trustladderiii/issues/{number}");
     } else if command == "webhook-configure" {
         let [host] = args else {
@@ -296,4 +260,218 @@ async fn app(command: &str, config: &tl3_config::Config, args: &[String]) -> Res
         println!("Webhook URL and existing secret configured. Enable Active in the app settings.");
     }
     Ok(())
+}
+
+fn operations_match(row: &Value) -> bool {
+    row.get("pull_request").is_none_or(Value::is_null)
+        && row["title"] == TITLE
+        && row["body"]
+            .as_str()
+            .is_some_and(|body| body.lines().any(|line| line == MARKER))
+}
+
+fn save_state(path: &Path, value: Value) -> Result<()> {
+    let parent = path.parent().ok_or("invalid state path")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(&serde_json::to_vec(&value)?)?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|_| "cannot publish app state")?;
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+async fn operations(
+    api: &Api,
+    token: &str,
+    slug: &str,
+    installation: u64,
+    state: &Path,
+) -> Result<u64> {
+    let previous: Value = if state.exists() {
+        serde_json::from_slice(&fs::read(state)?)?
+    } else {
+        json!({})
+    };
+    let mut found = std::collections::BTreeMap::new();
+    // List results can lag a successful creation. Read the persisted issue by
+    // number before consulting the list; a stale list cannot authorize a POST.
+    if let Some(number) = previous["operations_issue"].as_u64() {
+        let issue = api
+            .get(
+                &format!("repos/RobTand/trustladderiii/issues/{number}"),
+                token,
+            )
+            .await?;
+        if !operations_match(&issue) {
+            return Err("saved operations issue no longer matches; reconcile manually".into());
+        }
+        found.insert(number, issue);
+    }
+    let mut page = 1;
+    loop {
+        let rows = api
+            .get(
+                &format!("repos/RobTand/trustladderiii/issues?state=all&per_page=100&page={page}"),
+                token,
+            )
+            .await?;
+        let rows = rows.as_array().ok_or("invalid issues")?;
+        for row in rows {
+            if operations_match(row) {
+                found.insert(
+                    row["number"].as_u64().ok_or("invalid issue number")?,
+                    row.clone(),
+                );
+            }
+        }
+        if rows.len() < 100 {
+            break;
+        }
+        page += 1;
+    }
+    let number = if let Some(number) = found.keys().next() {
+        *number
+    } else {
+        if previous["creation_pending"] == true {
+            return Err(
+                "operations creation outcome unknown; rerun discovery, never blindly retry POST"
+                    .into(),
+            );
+        }
+        save_state(
+            state,
+            json!({"installation_id": installation, "creation_pending": true}),
+        )?;
+        api.request(Method::POST, "repos/RobTand/trustladderiii/issues", token,
+            Some(json!({"title": TITLE, "body": format!("{MARKER}\n\nTL3 posts incidents here. Questions about a request stay on that request's issue.")})))
+            .await?["number"].as_u64().ok_or("missing new issue number")?
+    };
+    if found.len() > 1
+        && found
+            .values()
+            .any(|row| row["user"]["login"] != format!("{slug}[bot]"))
+    {
+        return Err("multiple operations issues include another author; reconcile manually".into());
+    }
+    save_state(
+        state,
+        json!({"installation_id": installation, "operations_issue": number}),
+    )?;
+    for duplicate in found.keys().filter(|other| **other != number) {
+        api.request(
+            Method::PATCH,
+            &format!("repos/RobTand/trustladderiii/issues/{duplicate}"),
+            token,
+            Some(json!({"state": "closed", "state_reason": "not_planned",
+                "title": format!("Duplicate of TL3 operations #{number}"),
+                "body": format!("<!-- tl3:operations:duplicate:v1 -->\n\nSee #{number}.")})),
+        )
+        .await?;
+    }
+    Ok(number)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    fn issue(number: u64) -> Value {
+        json!({"number": number, "title": TITLE, "body": format!("{MARKER}\n\nOperations"), "user": {"login": "tl3-robtand[bot]"}})
+    }
+
+    #[tokio::test]
+    async fn stale_list_cannot_duplicate_a_saved_creation() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/RobTand/trustladderiii/issues/81"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(issue(81)))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let api = Api {
+            http: Client::new(),
+            root: format!("{}/", server.uri()),
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let state = scratch.path().join("state.json");
+        save_state(&state, json!({"operations_issue":81})).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                operations(&api, "fixture", "tl3-robtand", 1, &state)
+                    .await
+                    .unwrap(),
+                81
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn uncertain_creation_never_blindly_posts_again() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api {
+            http: Client::new(),
+            root: format!("{}/", server.uri()),
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let state = scratch.path().join("state.json");
+        for _ in 0..2 {
+            assert!(
+                operations(&api, "fixture", "tl3-robtand", 1, &state)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicates_keep_the_oldest_app_issue() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/RobTand/trustladderiii/issues"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([issue(82), issue(81)])))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/RobTand/trustladderiii/issues/82"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api {
+            http: Client::new(),
+            root: format!("{}/", server.uri()),
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let state = scratch.path().join("state.json");
+        assert_eq!(
+            operations(&api, "fixture", "tl3-robtand", 1, &state)
+                .await
+                .unwrap(),
+            81
+        );
+    }
 }
