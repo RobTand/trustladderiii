@@ -1,3 +1,5 @@
+#[path = "workers/planning.rs"]
+mod planning;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use serde_json::{Value, json};
@@ -61,12 +63,23 @@ fn prepare_workers() {
         status.success(),
         "worker venv sync failed; uv must provide Python 3.14 and the locked worker dependencies"
     );
+    assert!(
+        Command::new(worker_package().join(".venv/bin/python"))
+            .args(["-c", "import tiktoken; tiktoken.get_encoding('o200k_base')"])
+            .env(
+                "TIKTOKEN_CACHE_DIR",
+                std::env::temp_dir().join("data-gym-cache")
+            )
+            .status()
+            .unwrap()
+            .success()
+    );
 }
 
 fn materials(store: &mut Store) {
     store.put_worker_materials("0", &json!({
         "issue": {"number": 42, "title": "Fix greeting", "body": "Return hello.", "author": "requester", "comments": []},
-        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"]},
+        "repo": {"readme": "Greeting library", "file_list": ["greeting.py"], "materials": [{"path": "greeting.py", "content": "def greet(): return 'hello'\n"}]},
     })).unwrap();
 }
 
@@ -105,6 +118,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        question_context: None,
     }
 }
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {
@@ -239,8 +253,18 @@ fn main() {
     println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
     overflow(&database.create("workers_overflow"));
     println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
+    for mode in [
+        "normal",
+        "plan-split",
+        "plan-invalid",
+        "plan-cant-meet",
+        "plan-bad-split",
+    ] {
+        planning::planning(&database.create(&mode.replace('-', "_")), mode);
+    }
+    println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     database.stop();
-    println!("18 required worker supervisor scenarios passed; no skips");
+    println!("23 required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -336,7 +360,7 @@ fn simulation(settings: &tl3_config::Store) {
             .iter()
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
-    assert_recorded_runs(root.path(), 2);
+    assert_recorded_runs(root.path(), 3);
     assert_retired(&config, &mut store);
 }
 fn attempts(root: &Path) -> usize {
@@ -423,7 +447,7 @@ fn killed_controller(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    assert_recorded_runs(root.path(), 2);
+    assert_recorded_runs(root.path(), 3);
     assert_retired(&config, &mut store);
     assert!(store.worker_document("0", "briefs").unwrap().is_some());
 }
@@ -562,7 +586,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
         drive(&mut controller, &mut source, &mut store);
         controller.world().unwrap().nodes[0].phase.is_closed()
     });
-    assert_recorded_runs(root.path(), 3);
+    assert_recorded_runs(root.path(), 4);
     assert_retired(&config, &mut store);
 }
 
@@ -771,7 +795,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     run.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
-        kind: EffectKind::StartRun(Role::Plan),
+        kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
     supervisor.execute(&run).unwrap();
@@ -1347,7 +1371,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
         1,
         "later looks cannot charge the missing run again"
     );
-    assert_recorded_runs(root.path(), 3);
+    assert_recorded_runs(root.path(), 4);
     assert_retired(&config, &mut store);
 }
 

@@ -64,6 +64,8 @@ impl ActiveRuns {
 pub struct Supervisor {
     settings: tl3_config::Workers,
     models: tl3_config::Models,
+    planning: tl3_config::Planning,
+    limits: tl3_config::Limits,
     store: tl3_config::Store,
     fake_root: PathBuf,
     active: ActiveRuns,
@@ -90,6 +92,8 @@ impl Supervisor {
             active,
             settings: config.workers.clone(),
             models: config.models.clone(),
+            planning: config.planning.clone(),
+            limits: config.limits.clone(),
             store: config.store.clone(),
             fake_root: fake_root.to_owned(),
         })
@@ -120,7 +124,20 @@ impl Supervisor {
         let mut inputs = store
             .worker_materials(&node)?
             .ok_or(Error::Invalid("worker materials are missing"))?;
-        if role == "audit" {
+        let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
+        let mut rung = usize::from(delivery.attempt.saturating_sub(1));
+        if role == "planner" {
+            let world = crate::snapshot::decode(&store.load()?)?;
+            let n = &world.nodes[delivery.node().0 as usize];
+            rung = usize::from(n.plan_retries);
+            let ingest = store
+                .worker_document(&node, "briefs")?
+                .ok_or(Error::Invalid("planner needs a brief"))?;
+            let findings = store
+                .worker_document(&node, "findings")?
+                .unwrap_or(json!([]));
+            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.planning.protected_paths, "forecast": forecast});
+        } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("audit needs an ingest reply"))?;
@@ -129,13 +146,18 @@ impl Supervisor {
         {
             inputs["audit_objections"] = audit["objections"].clone();
         }
+        if role == "ingest" {
+            inputs["forecast"] = forecast;
+        }
         protocol::validate_inputs(role, &inputs)?;
         let ladder = if role == "ingest" {
             &self.models.ingest
-        } else {
+        } else if role == "audit" {
             &self.models.audit
+        } else {
+            &self.models.planner
         };
-        let model = &ladder[usize::from(delivery.attempt.saturating_sub(1)).min(ladder.len() - 1)];
+        let model = &ladder[rung.min(ladder.len() - 1)];
         Ok(json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
@@ -248,6 +270,12 @@ impl Executor for Supervisor {
             attempt_number,
         )?;
         fs::create_dir_all(root.join("worktree"))?;
+        if role != "audit" {
+            let materials = store
+                .worker_materials(&delivery.node().0.to_string())?
+                .ok_or(Error::Invalid("worker materials missing"))?;
+            materialize(&root.join("worktree"), &materials["repo"])?;
+        }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
         write(&attempt.join("request.json"), &request)?;
@@ -415,4 +443,36 @@ fn watched_deliveries(store: &mut Store) -> Result<Vec<Delivery>> {
         }
     }
     Ok(deliveries)
+}
+
+fn materialize(root: &Path, repo: &Value) -> Result<()> {
+    let files = repo["file_list"]
+        .as_array()
+        .ok_or(Error::Invalid("repository file list missing"))?;
+    let materials = repo["materials"].as_array();
+    for path in files {
+        let path = path
+            .as_str()
+            .ok_or(Error::Invalid("invalid repository path"))?;
+        if path.is_empty()
+            || path.contains(['\\', '\0'])
+            || path
+                .split('/')
+                .any(|p| p.is_empty() || matches!(p, "." | ".." | ".git"))
+        {
+            return Err(Error::Invalid(
+                "repository path must be canonical and confined",
+            ));
+        }
+        let content = materials
+            .and_then(|items| items.iter().find(|m| m["path"] == path))
+            .and_then(|m| m["content"].as_str())
+            .ok_or(Error::Invalid(
+                "repository snapshot needs content for every listed file",
+            ))?;
+        let target = root.join(path);
+        fs::create_dir_all(target.parent().unwrap())?;
+        fs::write(target, content)?;
+    }
+    Ok(())
 }
