@@ -657,6 +657,21 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
         "progress and quota cannot retry even their own upstream's held writes"
     );
     c.observe(
+        "check-plan-news",
+        Observation::CheckPlan {
+            node: NodeId(0),
+            sha: "a".repeat(40),
+            run: adapters::prismabuild::CheckRun {
+                repository: root.path().to_path_buf(),
+                base_sha: "b".repeat(40),
+                plan: vec![],
+            },
+        },
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(calls.get(), 1, "check plans only release PrismaBuild holds");
+    c.observe(
         "github-news",
         Observation::PullRequest {
             node: NodeId(0),

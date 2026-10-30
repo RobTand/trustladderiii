@@ -1345,8 +1345,7 @@ fn observation_upstream(
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
-        Observation::CheckPlan { .. } => None,
-        Observation::Checks { .. } => Some(Upstream::PrismaBuild),
+        Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
         Observation::Rebased { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } => Some(Upstream::Mergify),
         Observation::Kernel(Event::Reply {
