@@ -8,6 +8,7 @@ pub mod clock;
 pub mod executor;
 mod http;
 pub mod ingress;
+pub mod memory;
 mod snapshot;
 pub mod status;
 pub mod status_web;
