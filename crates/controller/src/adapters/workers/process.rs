@@ -93,7 +93,7 @@ mod tests {
         for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
             assert!(!stat_matches(Err(std::io::Error::from(error)), 0).unwrap());
         }
-        assert!(stat_matches(Err(std::io::Error::from(rustix::io::Errno::ACCES)), 0).is_err());
+        assert!(stat_matches(Err(std::io::ErrorKind::PermissionDenied.into()), 0).is_err());
     }
 }
 
