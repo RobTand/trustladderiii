@@ -1,4 +1,5 @@
 mod fake;
+mod json;
 mod process;
 pub(crate) mod protocol;
 mod source;

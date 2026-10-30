@@ -35,6 +35,7 @@ def identity():
     stat = Path(f"/proc/{os.getpid()}/stat").read_text().rsplit(")", 1)[1].split()
     return {
         "pid": os.getpid(),
+        "machine": Path("/etc/machine-id").read_text().strip(),
         "start": int(stat[19]),
         "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
     }

@@ -44,11 +44,15 @@ pub(super) fn cancel(path: &Path) -> Result<()> {
 #[derive(Serialize, Deserialize)]
 struct Identity {
     pid: i32,
+    machine: String,
     start: u64,
     boot: String,
 }
 
 fn matches(identity: &Identity) -> Result<bool> {
+    if fs::read_to_string("/etc/machine-id")?.trim() != identity.machine {
+        return Err(Error::Invalid("worker record belongs to another machine"));
+    }
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }

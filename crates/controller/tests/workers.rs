@@ -155,6 +155,10 @@ fn main() {
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
     killed_worker(&database.create("workers_kill"));
     println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
+    kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
+    println!("test sigkill_worker_failure_retries_through_kernel ... ok");
+    late_launcher(&database.create("workers_late"));
+    println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
     killed_controller(&database.create("controller_kill"));
     println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
     invalid_replies(&database.create("workers_invalid"));
@@ -164,7 +168,7 @@ fn main() {
     early_and_objections(&mut database);
     println!("test early_end_and_audit_disagreement_mapping ... ok");
     database.stop();
-    println!("6 required worker supervisor scenarios passed; no skips");
+    println!("8 required worker supervisor scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -336,7 +340,15 @@ fn killed_controller(settings: &tl3_config::Store) {
 
 fn invalid_replies(settings: &tl3_config::Store) {
     materials(&mut Store::open(settings).unwrap());
-    for mode in ["bad-schema", "nonzero", "missing", "duplicate"] {
+    for mode in [
+        "bad-schema",
+        "nonzero",
+        "missing",
+        "duplicate",
+        "duplicate-key",
+        "wrong-role",
+        "malformed",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
         let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
@@ -429,4 +441,81 @@ fn early_and_objections(database: &mut Database) {
         }
         drop(controller);
     }
+}
+
+fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let (registry, mut source) =
+        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let pid = fs::read_to_string(root.path().join("entered")).unwrap();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+    wait(|| {
+        drive(&mut controller, &mut source, &mut store);
+        controller.world().unwrap().nodes[0].phase.is_closed()
+    });
+    let runs: Vec<_> = fs::read_dir(&config.workers.runs)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(
+        runs.len(),
+        3,
+        "one failed ingest, its kernel-directed retry, and audit"
+    );
+    assert!(runs.iter().all(|p| attempts(p) == 1));
+}
+
+fn late_launcher(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    materials(&mut Store::open(settings).unwrap());
+    let mut supervisor = Supervisor::new(&config, root.path()).unwrap();
+    let delivery = delivery();
+    let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
+    fs::create_dir_all(&attempt).unwrap();
+    fs::write(
+        attempt.join("supervisor.py"),
+        include_bytes!("../tools/worker_supervisor.py"),
+    )
+    .unwrap();
+    // This is the record left if the controller dies immediately before spawn.
+    assert!(matches!(
+        supervisor.reconcile(&delivery).unwrap(),
+        Reconciliation::Absent
+    ));
+    let status = Command::new(&config.workers.uv)
+        .args(["run", "--locked", "--project"])
+        .arg(&config.workers.package)
+        .args(["--python", "3.14+gil", "python"])
+        .arg(attempt.join("supervisor.py"))
+        .arg(&attempt)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(
+        !attempt.join("process.json").exists(),
+        "a cancelled delayed launch must never exec a worker"
+    );
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    assert_eq!(attempts(&root_for(&config, &delivery.key)), 2);
 }

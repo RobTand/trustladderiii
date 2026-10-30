@@ -69,7 +69,7 @@ impl WorkerOutputSource {
                         break;
                     }
                     *offset += n as u64;
-                    if let Ok(value) = serde_json::from_slice::<Value>(&line)
+                    if let Ok(value) = super::json::parse(&line)
                         && progress(&value)
                     {
                         store.record_worker_progress(&WorkerProgress {
@@ -132,7 +132,7 @@ pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observati
     };
     let mut reply = None;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
-        let value: Value = serde_json::from_slice(line)?;
+        let value: Value = super::json::parse(line)?;
         if reply.is_some() {
             return Err(Error::Invalid("event after worker reply"));
         }
