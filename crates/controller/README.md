@@ -28,7 +28,8 @@ The daemon reads one JSON `cli::Input` per line on stdin. For example:
 The example repository, installation and actor must match the configuration.
 Fake receipts live outside the controller process. Keep their directory when
 restarting against the same database. `--drain` recovers persisted work and exits
-without reading stdin. EOF ends an interactive simulation.
+without reading stdin. EOF ends a stdin-only simulation. Worker and webhook
+sources keep the daemon running after stdin closes.
 
 Register a replacement executor with one `Registry::register` call. The five
 modules under `src/adapters` each contain a fake. The controller owns interning
@@ -200,15 +201,14 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
-`adapters::simulation_with_workers` replaces ingest and audit with Python worker
-processes and returns a `WorkerOutputSource`. Other roles remain on the worker
-fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
+processes and returns a `WorkerOutputSource`. Making and review remain on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
-ingest and audit, with the remaining roles and upstreams simulated. Add
+ingest, audit and planning, with the remaining roles and upstreams simulated. Add
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
 sources against a local GitHub mock. Without `--workers`, workers stay simulated.
 Worker replies enter the same controller channel as webhook notifications. A
@@ -250,8 +250,8 @@ This is the safe path because nobody proved a successful process exit.
 No clock or liveness threshold makes this decision.
 
 `Store::worker_progress` reads the last progress for every run, optionally
-filtered by request node. `Store::worker_document` reads briefs, goals and audit
-replies. Replaying output does not refresh progress time. These reads do not
+filtered by request node. `Store::worker_document` reads briefs, goals, audit
+replies, plans and findings. Replaying output does not refresh progress time. These reads do not
 claim controller ownership. `tl3_worker_progress` records `run_key`, `node_id`,
 `epoch`, `attempt`, `started_ms`, `output_offset`, `unit`, and nullable
 `last_progress_ms`. A start row exists before the first progress event.
@@ -301,7 +301,7 @@ For #11, #12 and #13, update each boundary together:
 - Extend `lib.rs` `valid_role` and the document names in `translate`.
 - Add process scenarios for accepted replies, invalid output, recovery and stop.
 
-Ticket #11 replaces `IngestDone { size: 1 }`. The forecaster owns sizing.
+The forecaster supplies the size for `IngestDone`.
 Until these boundaries support a role, its starts and stops use the worker fake.
 
 Worker tests resolve `TL3_TEST_UV` first, then `uv` on PATH. Missing uv fails
@@ -313,3 +313,43 @@ the three host actions, including controller and store process scenarios.
 After they pass, generate the portable full check with
 `python3 crates/controller/tools/worker_review_manifest.py workspace`.
 Submit each generated manifest with `pbcampaign.py --detach`.
+
+## Planning evidence
+
+The supervisor runs `planner` with the accepted brief, `must_split`, accumulated
+`findings`, protected paths and forecast settings. Planner retries select the
+next configured planner model. The kernel owns the retry count and questions.
+The worker reports leaf-rule violations in `violations`, alongside its forecast.
+The controller maps those reports and `cant_meet` to `PlanCantMeet`. A valid split
+maps to `PlanSplit`. A valid leaf interns its declared paths before `PlanLeaf`.
+
+Ingest declares the root's files when it receives forecast settings. Worker code
+uses the same pinned offline tokenizer as planning to measure the brief and those
+files. The controller initializes size with `ceil(tokens / fit_tokens)`. The kernel
+adds the credit reserve. An unrepresentable size fails explicitly rather than
+wrapping or silently clamping the request's credit.
+
+Supply a complete text snapshot in `repo.materials` for each existing path in
+`repo.file_list`, through `Store::put_worker_materials`. Ingest and planner runs
+materialize that snapshot into their own worktree. Paths must be canonical and
+relative. New declared files have no base content. Deployment must preload the
+pinned o200k_base data in `TIKTOKEN_CACHE_DIR`. Files above 1 MiB fail measurement.
+
+`[planning.overhead_tokens]` contains named initial estimates. It is the seam for
+later MLflow calibration. No MLflow calls run in this flow. Protected paths can
+be extended in config, but the slice-one defaults cannot be removed.
+
+Accepted plans live in `plans`; `plan_reports` retains each generation's evidence.
+`findings` includes rejected-plan reasons and reports for the next planner run.
+Callers that record failed checks or review findings append them to that same
+text-list document before requesting a re-plan.
+
+Every `Ask` notice atomically stores `question_context`, keyed by question ID,
+and carries it as `Delivery.question_context`. `Store::question_context(id)` reads
+it after a restart. `pieces` contains the proposed briefs, goal IDs and files.
+Ticket #10's message pipeline consumes these briefs to draft the narrowing
+question. This adapter does not draft messages.
+
+Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
+with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
+store process scenarios and the worker package's offline fake-model tests.

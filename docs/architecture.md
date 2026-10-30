@@ -217,7 +217,9 @@ world capacity requires a snapshot migration.
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after
 each line, and exits at EOF. `--drain` performs recovery without reading stdin.
-Simulation is explicit. This binary makes no live upstream calls.
+That stdin-only command uses the fake registry. Optional GitHub ingress uses a
+loopback mock. `--workers` runs the configured worker command and model endpoint,
+and keeps the daemon running after stdin closes.
 
 Submit `bash crates/controller/tools/verify.sh` through PrismaBuild. It checks
 formatting and Clippy, tests every workspace crate, and builds the kernel without

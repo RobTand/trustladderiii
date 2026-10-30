@@ -87,3 +87,9 @@ launches it directly with `workers.command`, defaulting to `-m tl3_workers run`.
 Per-run launches do not invoke uv or take its environment locks. Keep the run
 root across controller restarts. Tests replace only the worker arguments and
 model construction. Never configure a fixture launcher in deployment.
+
+`planning` defaults to the slice-one protected paths and named overhead estimates
+of 5,000 prompt tokens, 20,000 making tokens and 5,000 review tokens.
+`planning.overhead_tokens` is the calibration seam for later MLflow measurements.
+It must contain at least one named nonnegative estimate.
+`planning.protected_paths` can add patterns, but it must retain the defaults.
