@@ -111,13 +111,20 @@ class DeployTests(unittest.TestCase):
         units = self.home / "units"
         units.mkdir()
         for source in (deploy.HERE / "units").glob("*.service"):
-            text = source.read_text().replace("%h", str(self.home))
-            for line in text.splitlines():
-                if line.startswith(("ExecStart=", "ExecStartPre=", "ExecStartPost=", "ExecStop=")):
-                    executable = line.split("=", 1)[1].split()[0]
-                    if executable.startswith(str(self.home)):
-                        deploy.write_file(Path(executable), b"#!/bin/sh\nexit 0\n", 0o700)
-            (units / source.name).write_text(text)
+            lines = []
+            for line in source.read_text().replace("%h", str(self.home)).splitlines():
+                key, _, command = line.partition("=")
+                if key in ("ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop"):
+                    executable = Path(command.split()[0])
+                    if not executable.is_relative_to(self.home):
+                        # CI runners lack host binaries such as cloudflared, so every
+                        # command runs a stub and verify checks syntax and ordering.
+                        stub = self.home / "host" / executable.name
+                        line = f"{key}={stub}{command[len(str(executable)):]}"
+                        executable = stub
+                    deploy.write_file(executable, b"#!/bin/sh\nexit 0\n", 0o700)
+                lines.append(line)
+            (units / source.name).write_text("\n".join(lines) + "\n")
         runtime = self.home / "runtime"
         runtime.mkdir(mode=0o700)
         environment = os.environ | {"XDG_RUNTIME_DIR": str(runtime)}
