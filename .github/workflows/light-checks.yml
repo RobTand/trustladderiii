@@ -60,5 +60,11 @@ jobs:
         with:
           version: '0.10.10'
           enable-cache: false
+      - name: Build deployment test helper
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
       - name: Lint and test every Python project
+        env:
+          TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy
         run: python tools/ci/check.py python

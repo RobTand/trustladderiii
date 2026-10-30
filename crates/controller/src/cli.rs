@@ -69,7 +69,11 @@ fn arguments(daemon: bool) -> Result<Arguments> {
         }
     }
     let path = path.ok_or(Error::Invalid("--config FILE is required"))?;
-    let config = tl3_config::Config::load(path)?;
+    let config = if daemon {
+        tl3_config::Config::load(path)?
+    } else {
+        tl3_config::Config::load_status(path)?
+    };
     Ok(Arguments {
         config,
         simulation,

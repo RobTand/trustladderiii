@@ -89,7 +89,7 @@ pub struct CheckRun {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckOutput {
-    pub title: String,
+    pub title: Option<String>,
     pub summary: Option<String>,
     pub text: Option<String>,
 }

@@ -2878,6 +2878,7 @@ dependencies = [
  "postgres",
  "postgresql_embedded",
  "rand 0.8.8",
+ "reqwest 0.12.28",
  "rsa",
  "rustix",
  "serde",
@@ -2931,6 +2932,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "jsonwebtoken",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror",

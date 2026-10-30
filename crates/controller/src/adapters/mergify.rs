@@ -161,7 +161,10 @@ impl From<&tl3_mergify::Observation> for Progress {
                 id: check.id,
                 status: check.status.clone(),
                 conclusion: check.conclusion.clone(),
-                title: check.output.as_ref().map(|output| output.title.clone()),
+                title: check
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.title.clone()),
             }),
         }
     }
@@ -439,45 +442,44 @@ async fn queue_facts(
     {
         return Ok(vec![]);
     }
-    let evidence = match state.state {
-        QueueState::Merged => {
-            // Mergify publishes its final queue result after GitHub records the merge.
-            if pull.head.sha == expected_head
-                && state
-                    .check
-                    .as_ref()
-                    .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
-            {
-                return Ok(vec![]);
+    let evidence =
+        match state.state {
+            QueueState::Merged => {
+                // Mergify publishes its final queue result after GitHub records the merge.
+                if pull.head.sha == expected_head
+                    && state.check.as_ref().is_some_and(|check| {
+                        check.status != "completed" || check.conclusion.is_none()
+                    })
+                {
+                    return Ok(vec![]);
+                }
+                let checks_passed = if state.check.as_ref().is_some_and(|check| {
+                    check.output.as_ref().is_some_and(|output| {
+                        output.title.as_deref() == Some("Merged via merge queue")
+                    })
+                }) {
+                    tl3_mergify::merged_via_queue(state)
+                } else if let Some(sha) = &pull.merge_commit_sha {
+                    checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
+                } else {
+                    false
+                };
+                Some(Evidence::Merged {
+                    head: pull.head.sha.clone(),
+                    checks_passed,
+                })
             }
-            let checks_passed = if state.check.as_ref().is_some_and(|check| {
-                check
-                    .output
-                    .as_ref()
-                    .is_some_and(|output| output.title == "Merged via merge queue")
-            }) {
-                tl3_mergify::merged_via_queue(state)
-            } else if let Some(sha) = &pull.merge_commit_sha {
-                checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
-            } else {
-                false
-            };
-            Some(Evidence::Merged {
+            QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
+                check: check.id,
                 head: pull.head.sha.clone(),
-                checks_passed,
-            })
-        }
-        QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
-            check: check.id,
-            head: pull.head.sha.clone(),
-            infra: tl3_mergify::ci_is_infrastructure(check),
-        }),
-        QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
-            check: check.id,
-            head: pull.head.sha.clone(),
-        }),
-        _ => None,
-    };
+                infra: tl3_mergify::ci_is_infrastructure(check),
+            }),
+            QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
+                check: check.id,
+                head: pull.head.sha.clone(),
+            }),
+            _ => None,
+        };
     Ok(evidence
         .into_iter()
         .map(|evidence| QueueFact {

@@ -155,13 +155,13 @@ fn check_state(check: &CheckRun) -> QueueState {
             .and_then(|json| payload_state(&json));
         return state.unwrap_or(QueueState::Unknown);
     }
-    match output.title.as_str() {
-        "In merge queue" => QueueState::Queued,
-        "Running merge queue checks" => QueueState::ChecksRunning,
-        "Merged via merge queue" => QueueState::Merged,
-        "Dequeued — checks failed" => QueueState::FailedCi,
-        "Dequeued — conflict with base branch" => QueueState::Conflict,
-        "Merge queue is ready" => QueueState::Waiting,
+    match output.title.as_deref() {
+        Some("In merge queue") => QueueState::Queued,
+        Some("Running merge queue checks") => QueueState::ChecksRunning,
+        Some("Merged via merge queue") => QueueState::Merged,
+        Some("Dequeued — checks failed") => QueueState::FailedCi,
+        Some("Dequeued — conflict with base branch") => QueueState::Conflict,
+        Some("Merge queue is ready") => QueueState::Waiting,
         _ => QueueState::Unknown,
     }
 }

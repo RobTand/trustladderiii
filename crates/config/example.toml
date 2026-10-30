@@ -3,6 +3,12 @@
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
 
+# Q17: set after deployment creates or reconciles the operations issue.
+# [operations]
+# owner = "RobTand"
+# repo = "trustladderiii"
+# issue = 123
+
 [store]
 host = "127.0.0.1"
 port = 5432
@@ -119,6 +125,8 @@ no_progress_secs = 120
 [workers]
 python = "/srv/tl3/workers/.venv/bin/python"
 runs = "/srv/tl3/worker-runs"
+# The deployment service wrapper exports this as TIKTOKEN_CACHE_DIR.
+# tiktoken_cache_dir = "/srv/tl3/tiktoken"
 command = ["-m", "tl3_workers", "run"]
 
 [planning]

@@ -5,6 +5,43 @@ use toml::Value;
 const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
+fn writer_defaults_to_ingest_and_rejects_invalid_explicit_budget() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(config.models.writer[0].name, config.models.ingest[0].name);
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let writer = document["models"]["ingest"].clone();
+    document["models"]
+        .as_table_mut()
+        .unwrap()
+        .insert("writer".into(), writer);
+    document["models"]["writer"][0]["budget_tokens"] = Value::Integer(0);
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
+#[test]
+fn status_load_checks_only_store_credential_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("config.toml");
+    let secret = scratch.path().join("postgres-password");
+    fs::write(&secret, "fixture").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o600)).unwrap();
+    let text = EXAMPLE
+        .replace("/home/rob/.config/tl3/github-app.json", "/missing/app.json")
+        .replace(
+            "# password_file = \"/run/tl3/postgres-password\"",
+            &format!("password_file = {:?}", secret),
+        );
+    fs::write(&path, text).unwrap();
+    Config::load_status(&path).unwrap();
+    assert!(Config::load(&path).is_err());
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(Config::load_status(&path).is_err());
+    fs::remove_file(&secret).unwrap();
+    assert!(Config::load_status(&path).is_err());
+}
+
+#[test]
 fn store_settings_default_and_validate_without_reading_credentials() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(config.store.database, "tl3");
@@ -279,6 +316,7 @@ fn all_paths_must_be_absolute() {
         vec!["github", "app_credentials_file"],
         vec!["models", "key_file"],
         vec!["prismabuild", "tools_dir"],
+        vec!["workers", "tiktoken_cache_dir"],
     ] {
         for value in [
             "",

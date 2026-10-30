@@ -1,0 +1,92 @@
+[
+  {
+    "suite": "settings",
+    "action_key": "cff4d73c5febdeb2c5cc8d907774e9ffb662acc5dbaedafaef924be80bd08aef",
+    "host": "dl380g10",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "f64a86a6f1859332508539dd6eb9b1a062096f1edc214ef6fc914c6a3a649113",
+    "stdout_sha256": "e199e8e14e477f2f1e2951f5aa50d7c369f2e1796edbe866c32472bea36793ab",
+    "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+  },
+  {
+    "suite": "regression-before",
+    "action_key": "afc2942468099e3e833c61233cf23d6d12770fd1728db2d5415f4a6cff703065",
+    "host": "dl380g10",
+    "exit_code": 101,
+    "receipt_verified": true,
+    "receipt_sha256": null,
+    "stdout_sha256": "309bcd845ea205960b4f627aa4594699ce05ee4aa82557f1ee999d811ff61710",
+    "stderr_sha256": "f411c0e799f980939358f6688afeb4623eca3edab52f90761cc985931986e26e"
+  },
+  {
+    "suite": "client-after",
+    "action_key": "45df18135cd4e99f2d61ac23e7b584626ae1662191371ef04f2ca269268c532b",
+    "host": "dl380g10",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "087a880ef2482a75b27f609fcd9f744043728c1fd69830020bdca22b75aedfd7",
+    "stdout_sha256": "8ef3e4451238e61b2a8a734a49bf20dd5732cfebe55492f27837f0c24537697b",
+    "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+  },
+  {
+    "suite": "host-verification",
+    "action_key": "e144120748f4a101fe0ccdfc7119ad7037b772483a3b85dadc5f0e9fdac198ac",
+    "host": "dl380g10",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "90f4a12f5ead0b7d9f3fb7b259c4e95520b8f4025824d14d3ec20fe598c08558",
+    "stdout_sha256": "25c8fa8e86c5a4e34261498ef82cdb086a61a660735d9a54ff2af84a93990f92",
+    "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+  },
+  {
+    "suite": "host-verification",
+    "action_key": "a823f720a96c6f0ff666f18126c3b1b7d8c589a371cff0501cbc13271d41c267",
+    "host": "sparky",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "36fdcab131d1df6f529f72150ecb739c597bf825b1f56abee6266dc11557ea8a",
+    "stdout_sha256": "42e4147a87b21d7c1049f09ea34a08ee2193c8cd594c50ffad557c962801948f",
+    "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+  },
+  {
+    "suite": "host-verification",
+    "action_key": "d3f804030616186d290f37defed701ba7c71096a119db4475415d335378d087e",
+    "host": "sparklina",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "bf1109f47bf4f44b1c23b64cdc9de29bbcc1d38b4feaba8342473e82399cf95f",
+    "stdout_sha256": "07d91eb2f7a8a85b6e2c3bff22c3fea9a5b93ee1ed98c6263153564017d822b7",
+    "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+  },
+  {
+    "suite": "recorded-adapter-replay",
+    "action_key": "0a49c9b268f92d50f2b94f04799ed68bd5928a2db76851985c77b72f3aa81b5f",
+    "host": "dl380g10",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "c5f5ab919612112681750b13ac1442ea4210d747290d46421e36aa4c8d82bff9",
+    "stdout_sha256": "cf852857746a41581c10bcc3440cc24c01ebefa72c83d732fd98a0fa53d53e35",
+    "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+  },
+  {
+    "suite": "recorded-adapter-replay",
+    "action_key": "86a682a08b55412431bbc62ea7e18396faaf184994f7402b1ed421edac6e01b0",
+    "host": "sparky",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "94dcc6727e0f78b83d7bee79c9b9bd4a1a9715fdb1295acb73d2dfd3f9395a31",
+    "stdout_sha256": "383fa4389d1b0bc4b167c35dcc2cbf5153723b4f9b57cbf3678404fff87ebcf5",
+    "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+  },
+  {
+    "suite": "recorded-adapter-replay",
+    "action_key": "41270b5e76f945b3d3013723490e772cd484691e7fc43dd3b32a5d8ea89f69b6",
+    "host": "sparklina",
+    "exit_code": 0,
+    "receipt_verified": true,
+    "receipt_sha256": "2817a44f2b518d5b62cacb4ad82ffc3c289a32223c4371e37f6fca96f5b3e6b0",
+    "stdout_sha256": "61afac545d8df9cd405f07831963673740afc52f4f4306ceda090cd61eaed497",
+    "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+  }
+]

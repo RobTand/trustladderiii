@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tl3-worktrees = { path = "../worktrees" }
 
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 loom = "0.7"
 rand = "0.8"
@@ -33,6 +34,10 @@ postgresql_embedded = { version = "0.22", default-features = false, features = [
 tempfile = "3"
 hmac = "0.12"
 hex = "0.4"
+
+[[example]]
+name = "tl3-deploy"
+path = "../../deploy/dl380g10/helper.rs"
 
 [[test]]
 name = "simulation"
