@@ -33,7 +33,7 @@ def main():
              "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", "--env", "OMP_NUM_THREADS=1",
              "--env", "MKL_NUM_THREADS=1", "--env", "OPENBLAS_NUM_THREADS=1",
              "--workdir=/source", "--entrypoint=python3", container.image,
-             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_harness.py"]
+             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_harness.py", "tests/test_review_fixes.py"]
     subprocess.run(suite, check=True)
     from verify_reproducing import verify
     verify(container)

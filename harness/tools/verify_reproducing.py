@@ -72,6 +72,9 @@ def verify(container):
             "@pytest.mark.skip(reason='fixture')\n"
             "def test_skipped(): assert False\n"
             "def uncollected(): assert True\n")
+        (repo / "test_import.py").write_text("from product import new_name\ndef test_import(): assert new_name() == 2\n")
+        (repo / "new_module.py").write_text("def value(): return 2\n")
+        (repo / "test_module.py").write_text("import new_module\ndef test_module(): assert new_module.value() == 2\n")
         fixed = save(repo, "fix with only round test edits for the reviewed tree")
         cases = [("test_reproduces", Verdict.PASS), ("test_wrongly_passes", Verdict.FAIL),
                  ("test_setup", Verdict.FAIL), ("test_error", Verdict.FAIL),
@@ -86,6 +89,14 @@ def verify(container):
         assert results[1].tests[0].base == "passed"
         assert results[2].tests[0].base == "error", "setup assertions cannot reproduce a finding"
         assert results[4].tests[0].base == "added-name"
+        imports = tuple(Check(name, kind, (test,)) for name, test in [
+            ("import added name", "test_import.py::test_import"),
+            ("import added module", "test_module.py::test_module"),
+            ("unaffected assertion", "test_value.py::test_reproduces")])
+        imported = run_checks(repo, base, fixed, imports, reviewed=reviewed, container=container)
+        assert [r.verdict for r in imported] == [Verdict.PASS] * 3, result_json(imported)
+        assert [r.tests[0].base for r in imported] == ["added-name", "added-name", "assertion"]
+        print("contained added-import and per-file collection fixtures passed", flush=True)
         verify_action_reviewed(repo, base, reviewed, fixed, container)
         # A reviewed commit need not be reachable from the final head after a rebase.
         git(repo, "checkout", "--quiet", "--detach", base)

@@ -855,7 +855,8 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
-    real::reproducing_fix(&database.create("maker_reproducing_fix"));
+    real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
+    real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
     println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
     real::review_feedback(&database.create("maker_review_feedback"));
     println!("test reviewer_blockers_reach_real_maker ... ok");
