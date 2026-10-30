@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -59,6 +59,7 @@ class Result:
     kind: Kind
     verdict: Verdict
     tests: tuple[TestResult, ...]
+    production_eligible: bool = field(default=False, init=False)
 
 
 def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome]) -> Result:

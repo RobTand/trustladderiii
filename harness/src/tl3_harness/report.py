@@ -21,7 +21,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
     for record in records[1:-1]:
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
-                if selected is not None or len(set(names)) != len(names) or not set(names) <= set(tests):
+                if (selected is not None or not all(isinstance(name, str) for name in names)
+                        or len(set(names)) != len(names) or not set(names) <= set(tests)):
                     raise InvalidReport("invalid test population")
                 selected = set(names)
             case {"event": "collection-error"} if len(record) == 1:
@@ -35,6 +36,10 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 if name is not None and (not isinstance(name, list) or len(name) != 2
                                          or not all(isinstance(part, str) for part in name)):
                     raise InvalidReport("invalid missing name")
+                previous = [phase for phase in ("setup", "call", "teardown") if (test, phase) in phases]
+                if (when == "setup" and previous or when == "call" and previous != ["setup"]
+                        or when == "teardown" and previous not in (["setup"], ["setup", "call"])):
+                    raise InvalidReport("test phases are out of order")
                 phases[test, when] = (outcome, assertion, tuple(name) if name else None)
             case _:
                 raise InvalidReport("unknown report event")

@@ -37,7 +37,10 @@ def run(tree, names, additions=frozenset()):
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     records = [decode(line) for line in child.stdout.splitlines()]
     missing = {test for test in tests if not (tree / test.split("::")[0]).exists()}
-    return tests, parse(records, tests, missing, child.returncode, additions)
+    try:
+        return tests, parse(records, tests, missing, child.returncode, additions)
+    except InvalidReport:
+        return tests, dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
 @pytest.mark.parametrize("kind,name,expected", [
@@ -63,6 +66,7 @@ def test_real_pytest_verdicts(trees, kind, name, expected):
     _, after = run(head, [name])
     result = judge(Check(name, kind, tests), before, after)
     assert result.verdict == expected, asdict(result)
+    assert result.production_eligible is False
     assert result.tests[0].pre_existing == (name == "test_pre_existing")
 
 
@@ -156,6 +160,20 @@ def test_report_rejects_duplicate_and_truncated_records(trees):
         decode(b'{"event":"finish","event":"start"}')
     with pytest.raises(InvalidReport):
         parse([{"event": "start", "schema": 1}], ("test.py::test_x",), set(), 0)
+
+
+@pytest.mark.parametrize("middle", [
+    [{"event": "collection", "tests": [{}]}],
+    [{"event": "collection", "tests": ["other.py::test_x"]}],
+    [{"event": "collection", "tests": ["test.py::test_x", "test.py::test_x"]}],
+    [{"event": "collection", "tests": ["test.py::test_x"]},
+     {"event": "phase", "test": "test.py::test_x", "when": "teardown", "outcome": "passed",
+      "assertion": False, "missing": None}],
+])
+def test_report_rejects_invalid_population_and_phase_order(middle):
+    records = [{"event": "start", "schema": 1}, *middle, {"event": "finish", "exit_code": 0}]
+    with pytest.raises(InvalidReport):
+        parse(records, ("test.py::test_x",), set(), 0)
 
 
 def test_config_edits_are_rejected(trees):
