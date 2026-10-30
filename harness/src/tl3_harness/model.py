@@ -19,6 +19,10 @@ class Outcome(StrEnum):
     NO_REPORT = "no-report"
 
 
+class Custody(StrEnum):
+    IN_PROCESS = "in-process"
+
+
 class Verdict(StrEnum):
     PASS = "pass"
     FAIL = "fail"
@@ -59,7 +63,7 @@ class Result:
     kind: Kind
     verdict: Verdict
     tests: tuple[TestResult, ...]
-    production_eligible: bool = field(default=False, init=False)
+    custody: Custody = field(default=Custody.IN_PROCESS, init=False)
 
 
 def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome]) -> Result:

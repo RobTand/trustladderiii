@@ -34,8 +34,10 @@ The trusted outer process needs Python 3.14 and Git.
 `run_checks` returns immutable `Result` objects. Each contains the check's name,
 kind, verdict, and each named test's base outcome, head outcome, pre-existing
 failure flag, and pass flag. `execution.result_json` serializes these objects.
-Every result also has `production_eligible=False`. The controller must reject
-such evidence as an approval gate. PB #2403 blocks authoritative reporting.
+Every result also records its report custody. Today that is always `in-process`:
+pytest's reporting plugin runs in the tests' own interpreter. Slice one accepts
+this. Rob decided on 2026-10-30 that hostile code isn't a concern at this point.
+Tamper-proof custody needs PB #2403.
 The verdict is `pass`, `fail`, or `infrastructure-failure`. Invalid inputs or
 changed test configuration raise `ValueError`. Missing admission raises
 `RuntimeError`. Git failures retain their subprocess error.
@@ -115,12 +117,10 @@ worker-owned report custody. These explicit flags exercise the ticket's
 container restrictions. They do not qualify PB's broader hostile-code lane.
 In particular, a read-only Python plugin shares an interpreter with the tests.
 Read-only files do not prevent deliberate in-process monkeypatching or forged
-events. This package cannot claim adversarial report authenticity until PB's
-trusted reporting contract is available. Do not use it as a production approval
-gate for hostile code on that basis.
-The result type keeps production eligibility false and callers cannot set it
-through its constructor. Completing PB's reporting contract needs a follow-up
-integration and qualification before this field can become true.
+events. So the reports are honest about their custody, not tamper-proof.
+Callers cannot set the custody through the result's constructor. Moving custody
+to PrismaBuild once PB #2403 lands needs a follow-up integration, which adds a
+second custody value.
 
 ## Verification
 

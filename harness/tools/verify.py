@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 from tl3_harness.execution import Container, require_admission, result_json, run_checks
-from tl3_harness.model import Check, Kind, Verdict
+from tl3_harness.model import Check, Custody, Kind, Verdict
 from tl3_harness.trees import git
 
 
@@ -88,7 +88,7 @@ def main():
         print(result_json(results), flush=True)
         expected = [expected for _, _, expected in cases] + [Verdict.PASS, Verdict.FAIL]
         assert [result.verdict for result in results] == expected
-        assert all(result.production_eligible is False for result in results)
+        assert all(result.custody == Custody.IN_PROCESS for result in results)
         assert results[7].tests[0].pre_existing
         for fixture, verdict in [("no_report.py", Verdict.INFRASTRUCTURE_FAILURE),
                                  ("collection_error.py", Verdict.FAIL)]:

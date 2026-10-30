@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from tl3_harness.execution import Container, Progress, container_command, run_checks
-from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
+from tl3_harness.model import Check, Custody, Kind, Outcome, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.trees import added_names, export, git, test_edits as apply_test_edits, validate_configuration
 
@@ -66,7 +66,7 @@ def test_real_pytest_verdicts(trees, kind, name, expected):
     _, after = run(head, [name])
     result = judge(Check(name, kind, tests), before, after)
     assert result.verdict == expected, asdict(result)
-    assert result.production_eligible is False
+    assert result.custody == Custody.IN_PROCESS
     assert result.tests[0].pre_existing == (name == "test_pre_existing")
 
 

@@ -1,4 +1,4 @@
 from .execution import Container, run_checks
-from .model import Check, Kind, Result, Verdict
+from .model import Check, Custody, Kind, Result, Verdict
 
-__all__ = ["Check", "Container", "Kind", "Result", "Verdict", "run_checks"]
+__all__ = ["Check", "Container", "Custody", "Kind", "Result", "Verdict", "run_checks"]
