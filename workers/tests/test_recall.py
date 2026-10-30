@@ -54,4 +54,4 @@ def test_recall_has_no_write_or_endpoint_argument(tmp_path):
     with Worktree(tmp_path) as tree:
         tool, = build_tools(tree, {'recall': 'Recall.'})
         assert 'error' in tool.invoke({'query': 'greeting'})
-        assert 'error' in tool.invoke({'query': ' '}).lower()
+        assert 'nonempty recall query' in tool.invoke({'query': ' '})

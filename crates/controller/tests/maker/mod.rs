@@ -365,7 +365,56 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     drop(controller);
 }
 
+fn process_contract(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut config, worktree, base) = fixture(settings, root.path(), "normal");
+    let mut delivery = super::delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Make),
+        head: None,
+    };
+    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    let completion = terminal(&mut supervisor, &delivery);
+    assert!(
+        matches!(completion.observations.as_slice(), [Observation::WorkerReply {role, reply, ..}] if role == "maker" && reply["kind"] == "done")
+    );
+    let head = git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(head, base);
+    drop(supervisor);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    assert!(matches!(
+        supervisor.reconcile(&delivery).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    supervisor.execute(&delivery).unwrap();
+    assert_eq!(
+        git(&worktree, &["rev-parse", "HEAD"]),
+        head,
+        "recovery cannot commit twice"
+    );
+    assert_eq!(attempts(&root_for(&config, &delivery.key)), 1);
+    config.workers.command[1] = "bad-schema".into();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    delivery.key = "maker-invalid".into();
+    supervisor.execute(&delivery).unwrap();
+    assert!(failed(&terminal(&mut supervisor, &delivery)));
+    config.workers.command[1] = "blocked".into();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    delivery.key = "maker-stop".into();
+    supervisor.execute(&delivery).unwrap();
+    let attempt = root_for(&config, &delivery.key).join("attempt-00000000");
+    wait(|| attempt.join("process.json").exists());
+    supervisor.stop_run(&delivery.key, 0).unwrap();
+    assert!(failed(&terminal(&mut supervisor, &delivery)));
+}
+
 pub(super) fn run(database: &mut Database) {
+    process_contract(&database.create("maker_process"));
+    println!("test maker_recovery_invalid_output_and_stop ... ok");
     for (mode, fail) in [
         ("normal", false),
         ("normal", true),

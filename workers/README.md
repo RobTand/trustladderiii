@@ -304,9 +304,9 @@ also describes file paths as absolute. TL3 instead supplies its own tools and
 keeps the required built-in `read_file` excluded over an empty `StateBackend`.
 The built-in `glob` and `grep` are absent; those names refer only to TL3 tools.
 
-No role can declare shell, network, delete, or delegation tools. The model
+No role can declare shell, general network, delete, or delegation tools. The model
 transport still connects to the configured proxy. Ticket #33 can extend the
-`TOOL_FACTORIES` table with one PrismaBuild test tool entry, without changing
+`TOOL_FACTORIES` table with PrismaBuild tests and read-only Hindsight recall, without changing
 `build_tools` or file confinement.
 It must submit admitted work rather than expose `execute` or a local shell.
 

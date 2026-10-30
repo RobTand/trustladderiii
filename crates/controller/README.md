@@ -92,11 +92,36 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
-`adapters::simulation_with_workers` replaces ingest and audit with Python worker
-processes and returns a `WorkerOutputSource`. Other roles remain on the worker
-fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit and maker with Python
+worker processes and returns a `WorkerOutputSource`. Plan and review remain on
+the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
+
+Maker materials use a `maker` object in that same per-node record. It contains
+the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
+accumulated `feedback`. A fix round requires feedback. Ingress supplies the
+brief slice and findings; the supervisor supplies authoritative `plan.files`,
+`attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
+endpoint from the delivery and config. Other roles can also use named objects
+in the materials record; the flat ingest/audit format still works.
+
+The maker uses `worktrees_root/OWNER/REPO/issue-ISSUE-node-NODE`, matching #61's
+worktree adapter. It never uses an empty per-run directory as a checkout.
+Until #61 merges, the maker acceptance fixture creates that git worktree itself.
+Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
+advances attempts. Each attempt has a conversation outside the worktree under
+`workers.runs/sessions`; round 1 resumes it, while a new attempt starts fresh.
+Worker code commits a completed change and computes a conservative fit bound
+for additional files. The controller interns returned heads and requested paths
+before delivering kernel replies. It stores the latest reply as `maker_replies`.
+
+Maker acceptance runs the actual Python entry point and maker graph with a
+scripted model, fake read-only Hindsight, and recorded self-check results.
+The worktree and PrismaBuild adapters stay fake until #61 and #62 merge.
+Scenarios cover success, failed checks through both rounds of all three attempts
+and one re-plan, an actual commit outside the footprint, requested files,
+context exhaustion, unmet goals, invalid output, recovery, and stop.
 
 Run `WorkerOutputSource::run(sender)` on its own ingress thread. It emits
 `cli::Input::Observation` and writes progress to a separate store table. Until

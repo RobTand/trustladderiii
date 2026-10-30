@@ -30,6 +30,8 @@ def create_model(request):
     record = Path(request['session_file']).parent / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
+    if mode == 'bad-schema':
+        return Model(responses=[AIMessage(content='{"kind":"done"}')])
     if mode == 'blocked':
         # The test releases or kills this process through its supervisor record.
         import threading
