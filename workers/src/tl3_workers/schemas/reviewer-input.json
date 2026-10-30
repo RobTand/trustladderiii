@@ -106,7 +106,8 @@
                   "type": "boolean"
                 },
                 "message": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 1000
                 }
               },
               "required": [

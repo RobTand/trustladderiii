@@ -804,6 +804,54 @@ impl Controller {
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
         let (world, outputs) = tl3_kernel::step(world, event);
+        for (index, node) in world.nodes.iter().enumerate() {
+            if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
+                || previous
+                    .nodes
+                    .get(index)
+                    .is_some_and(|node| matches!(node.phase, tl3_kernel::Phase::Planning { .. }))
+            {
+                continue;
+            }
+            let id = index.to_string();
+            let maker_findings = commit
+                .rows
+                .iter()
+                .rev()
+                .find_map(|row| match row {
+                    RowChange::Put {
+                        table,
+                        id: row_id,
+                        value,
+                    } if table == "maker_findings" && row_id == &id => Some(value),
+                    _ => None,
+                })
+                .or_else(|| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "maker_findings" && row.id == id)
+                        .map(|row| &row.value)
+                });
+            if let Some(maker_findings) = maker_findings {
+                let mut findings = self
+                    .store
+                    .worker_document(&id, "findings")?
+                    .unwrap_or(json!([]));
+                let reports = findings
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("findings must be text reports"))?;
+                for finding in maker_findings
+                    .as_array()
+                    .ok_or(Error::Invalid("invalid maker findings"))?
+                {
+                    if !reports.contains(&finding["report"]) {
+                        reports.push(finding["report"].clone());
+                    }
+                }
+                commit.rows.push(put("findings", id, findings));
+            }
+        }
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
@@ -1054,6 +1102,7 @@ impl Controller {
         let mut failed_tests = Vec::new();
         let mut outside_paths = Vec::new();
         let mut outside_paths_total = 0;
+        let mut review_feedback = None;
         let event = match observation {
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
@@ -1305,23 +1354,37 @@ impl Controller {
                                 head: n.head.ok_or(Error::Invalid("review has no head"))?,
                             });
                     }
-                    let mut findings = self
-                        .store
-                        .worker_document(&node.0.to_string(), "findings")?
-                        .unwrap_or(json!([]));
-                    for finding in reply["blocking_findings"].as_array().unwrap() {
-                        findings
-                            .as_array_mut()
-                            .ok_or(Error::Invalid("findings must be a list"))?
-                            .push(json!(format!(
-                                "{}: {}",
-                                finding["problem"].as_str().unwrap(),
-                                finding["evidence"].as_str().unwrap()
-                            )));
+                    if reply["verdict"] == "changes" {
+                        let mut report = String::new();
+                        let mut goal_ids = BTreeSet::new();
+                        let mut remaining = findings::MAX_REPORT_CHARS;
+                        for finding in reply["blocking_findings"].as_array().unwrap() {
+                            let text = findings::clipped(
+                                &format!(
+                                    "{}: {}\n",
+                                    findings::clipped(
+                                        finding["problem"].as_str().unwrap(),
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                    findings::clipped(
+                                        finding["evidence"].as_str().unwrap(),
+                                        findings::MAX_MESSAGE_CHARS
+                                    ),
+                                ),
+                                remaining,
+                            );
+                            remaining -= text.chars().count();
+                            report.push_str(&text);
+                            if finding["citation"]["kind"] == "goal" {
+                                goal_ids
+                                    .insert(finding["citation"]["id"].as_str().unwrap().to_owned());
+                            }
+                            if remaining == 0 {
+                                break;
+                            }
+                        }
+                        review_feedback = Some((report, goal_ids.into_iter().collect::<Vec<_>>()));
                     }
-                    commit
-                        .rows
-                        .push(put("findings", node.0.to_string(), findings));
                 }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
@@ -1529,7 +1592,8 @@ impl Controller {
                             findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
                     (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
                         findings::Kind::ReviewFinding,
-                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
+                        review_feedback.as_ref().map(|(report, _)| report.clone()).unwrap_or_else(||
+                            "The independent reviewer requested changes. No detailed review report was supplied.".into()),
                     )),
                     (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
                         findings::Kind::ReviewFinding,
@@ -1563,25 +1627,29 @@ impl Controller {
             let goals = materials
                 .as_ref()
                 .and_then(|materials| materials.get("maker").unwrap_or(materials).get("goals"));
-            let goal_ids = match goals {
-                Some(goals) => goals
-                    .as_array()
-                    .ok_or(Error::Invalid("maker goals must be an array"))?
-                    .iter()
-                    .map(|goal| {
-                        goal["id"]
-                            .as_str()
-                            .filter(|id| !id.trim().is_empty())
-                            .map(str::to_owned)
-                            .ok_or(Error::Invalid("maker goal needs a string id"))
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-                None => {
-                    eprintln!(
-                        "maker finding for node {} has no goal materials; retaining unbound evidence",
-                        node.0
-                    );
-                    Vec::new()
+            let goal_ids = if let Some((_, goal_ids)) = review_feedback {
+                goal_ids
+            } else {
+                match goals {
+                    Some(goals) => goals
+                        .as_array()
+                        .ok_or(Error::Invalid("maker goals must be an array"))?
+                        .iter()
+                        .map(|goal| {
+                            goal["id"]
+                                .as_str()
+                                .filter(|id| !id.trim().is_empty())
+                                .map(str::to_owned)
+                                .ok_or(Error::Invalid("maker goal needs a string id"))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                    None => {
+                        eprintln!(
+                            "maker finding for node {} has no goal materials; retaining unbound evidence",
+                            node.0
+                        );
+                        Vec::new()
+                    }
                 }
             };
             let mut findings = self
