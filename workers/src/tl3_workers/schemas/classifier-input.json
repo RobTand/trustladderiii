@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/classifier-input.json",
+  "type": "object",
+  "properties": {
+    "comment": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "open_question": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "enum": [
+                    "audit_disagreement",
+                    "needs_splitting",
+                    "cant_meet",
+                    "out_of_credit",
+                    "effect_failed",
+                    "cleanup_cant_finish",
+                    "unclear_answer"
+                  ]
+                },
+                "answers": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "continue",
+                      "change_request",
+                      "stop",
+                      "try_again",
+                      "add_credit",
+                      "retry",
+                      "mark_handled"
+                    ]
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "answers"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "closed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "comment",
+    "state"
+  ],
+  "additionalProperties": false
+}
