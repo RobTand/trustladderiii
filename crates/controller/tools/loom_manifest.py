@@ -21,7 +21,7 @@ env = {
 }
 rows = []
 for host in ["dl380g10", "sparky", "sparklina"]:
-    command = "bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
+    command = "cargo test -p tl3-prismabuild --lib --locked lookup_ && bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
     if host == "dl380g10":
         command += " && for iteration in {1..50}; do TL3_LOOM_BOUND=2 cargo test -p tl3-controller --features loom --lib --locked loom_bell_ -- --test-threads=1 || exit; done"
     rows.append({
