@@ -213,10 +213,14 @@ impl Store {
     /// Call only after every input in the delivery has reached the controller store.
     pub fn consume_ingress(&mut self, sequence: i64) -> Result<()> {
         let mut tx = self.client.transaction()?;
-        let row = tx.query_opt(
-            "SELECT source, delivery_key FROM tl3_ingress WHERE sequence = $1",
-            &[&sequence],
-        )?;
+        let row = if self.boundary_hook.is_some() {
+            tx.query_opt(
+                "SELECT source, delivery_key FROM tl3_ingress WHERE sequence = $1",
+                &[&sequence],
+            )?
+        } else {
+            None
+        };
         let key = row.map(|row| {
             format!(
                 "consume-ingress:{}:{}",

@@ -1,7 +1,6 @@
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(loom)");
-    println!("cargo::rerun-if-env-changed=TL3_LOOM");
-    if std::env::var("TL3_LOOM").is_ok_and(|value| value == "1") {
+    if std::env::var_os("CARGO_FEATURE_LOOM").is_some() {
         println!("cargo::rustc-cfg=loom");
     }
 }

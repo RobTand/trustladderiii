@@ -117,8 +117,8 @@ def main():
     path.write_text(mutated)
     try:
         result = subprocess.run(
-            ["cargo", "test", "-p", "tl3-controller", "--lib", "--locked", test, "--", "--test-threads=1", "--nocapture"],
-            cwd=ROOT, env={**os.environ, "TL3_LOOM": "1"}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            ["cargo", "test", "-p", "tl3-controller", "--features", "loom", "--lib", "--locked", test, "--", "--test-threads=1", "--nocapture"],
+            cwd=ROOT, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         print(result.stdout, flush=True)
         assert result.returncode != 0 and "could not compile" not in result.stdout and expected in result.stdout, f"mutant {args.mutant} did not fail at {expected!r}, exit {result.returncode}"
