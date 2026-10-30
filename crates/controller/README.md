@@ -33,19 +33,31 @@ and persistence. Executors own authoritative reconciliation and epoch fencing.
 of columns. They show the issue title and number, phase, wait, credit, last
 progress and open incidents. Older requests without a title show "title not
 recorded". Both progress and incidents show "none recorded" until their store
-data exists. Tickets #9 and #15 fill `status::load_request_details` with queries
-on its existing read-only transaction. Return public summaries there, never
+data exists. Tickets #9 and #15 fill `status::load_request_details`. It takes all
+node IDs at once and returns a map from node ID to `RequestDetails`, using batch
+queries on the existing read-only transaction. Missing entries use the empty
+details. Return public summaries there, never
 worker payloads, connection settings or tokens.
 
 `tl3 status-serve` is a separate process from `tl3d`. It serves `/` with GET
 and HEAD, needs no login and refuses other methods with 405. Reload the page
 to refresh it. The server uses `config.status.listen`; the example binds only
 to `127.0.0.1:8033`. Initialize the database through the controller before
-opening status. Status never runs migrations or creates request data.
+opening status. Status checks the schema and migration version before reading;
+an empty database reports "database not initialized". Status never runs migrations
+or creates request data. After a connection failure, the page reopens its single
+reader and retries once. Failed reads return a generic 503.
+
+The std-only HTTP server uses four handler threads and caps accepted open
+connections at eight, including queued clients. Extra connections close immediately.
+Read and write socket timeouts are two seconds. Request lines plus headers are
+limited to 8 KiB. Request bodies are rejected and every response closes its
+connection. Responses keep the content security policy and disable caching.
 
 Ticket #19 owns deployment on dl380g10, the systemd unit and the LAN address.
-Run the status process in its own unit and set `[status].listen` to that LAN
-address. The status connection uses the `[store]` settings. A SELECT-only
+The page has no authentication. Run the status process in its own unit and set
+`[status].listen` to the LAN interface's specific address, never `0.0.0.0` or
+`[::]`. The status connection uses the `[store]` settings. A SELECT-only
 Postgres role can also restrict the status process's credentials.
 
 Run development verification through PrismaBuild from a clean commit:

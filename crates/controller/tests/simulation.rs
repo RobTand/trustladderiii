@@ -58,6 +58,7 @@ fn main() {
         return;
     }
     let mut database = Database::start();
+    status_requires_initialized_database(&database.create("status_fresh"));
     labelled_issue_closes(&database.create("clean"));
     println!("test labelled_issue_closes ... ok");
     restart_without_duplicate_deliveries(&database.create("restart"));
@@ -65,7 +66,8 @@ fn main() {
     acknowledged_operation_look(&database.create("look"));
     retry_uses_the_kernels_new_key(&database.create("retry"));
     println!("test restart_without_duplicate_deliveries ... ok");
-    status_page_and_command(&database.create("status"));
+    let settings = database.create("status");
+    status_page_and_command(&settings, &database);
     println!("test status_page_and_command ... ok");
     database.stop();
     println!(
@@ -503,7 +505,7 @@ fn http(address: std::net::SocketAddr, method: &str, path: &str) -> (String, Str
     (headers.to_ascii_lowercase(), body.into())
 }
 
-fn status_page_and_command(settings: &tl3_config::Store) {
+fn status_page_and_command(settings: &tl3_config::Store, database: &Database) {
     let root = tempfile::tempdir().unwrap();
     let records = root.path().join("upstreams");
     let mut controller = open(settings, &records);
@@ -533,18 +535,18 @@ fn status_page_and_command(settings: &tl3_config::Store) {
         "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing"
     );
     assert_eq!(row.phase, "Making the change");
-    assert_eq!(row.waiting_on, "worktree preparation");
+    assert_eq!(row.waiting_on, "preparing the change files");
     assert_eq!(row.credit, 4);
     assert_eq!(row.details, status::RequestDetails::default());
     let expected_text = concat!(
         "Request\tPhase\tWaiting on\tCredit\tLast progress\tOpen incidents\n",
         "RobTand/tl3-sandbox#42: Fix <script>alert('oops')</script> & spacing\t",
-        "Making the change\tworktree preparation\t4\tnone recorded\tnone recorded\n"
+        "Making the change\tpreparing the change files\t4\tnone recorded\tnone recorded\n"
     );
     assert_eq!(status::render_text(&model), expected_text);
     let expected_html = status::render_html(&model);
     assert!(expected_html.contains("<td>RobTand/tl3-sandbox#42: Fix &lt;script&gt;alert(&#39;oops&#39;)&lt;/script&gt; &amp; spacing</td>"));
-    assert!(expected_html.contains("<td>Making the change</td><td>worktree preparation</td><td>4</td><td>none recorded</td><td>none recorded</td>"));
+    assert!(expected_html.contains("<td>Making the change</td><td>preparing the change files</td><td>4</td><td>none recorded</td><td>none recorded</td>"));
     assert!(!expected_html.contains("<script>"));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -576,6 +578,9 @@ fn status_page_and_command(settings: &tl3_config::Store) {
     assert!(headers.starts_with("http/1.1 200"), "{headers}");
     assert!(!headers.contains("www-authenticate") && !headers.contains("set-cookie"));
     assert!(headers.contains("cache-control: no-store"));
+    assert!(headers.contains("connection: close"));
+    assert!(headers.contains("x-content-type-options: nosniff"));
+    assert!(headers.contains("content-security-policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"));
     assert_eq!(body, expected_html);
     let (headers, body) = http(address, "HEAD", "/");
     assert!(headers.starts_with("http/1.1 200"));
@@ -604,4 +609,135 @@ fn status_page_and_command(settings: &tl3_config::Store) {
         status::render_html(&final_model)
     );
     assert_eq!(cli_status(&config), status::render_text(&final_model));
+    status_socket_limits(address);
+    let mut large = labelled();
+    large.delivery = "large-status-delivery".into();
+    large.number = 43;
+    large.title = "x".repeat(16 * 1024 * 1024);
+    controller.intake(large).unwrap();
+    let slow: Vec<_> = (0..4)
+        .map(|_| {
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            stream
+        })
+        .collect();
+    // The fifth request queues behind four replies larger than the TCP windows.
+    // Keep those clients open without reading while a normal client is served.
+    let (headers, body) = http(address, "HEAD", "/");
+    assert!(headers.starts_with("http/1.1 200"));
+    assert!(body.is_empty());
+    std::thread::sleep(Duration::from_secs(3));
+    for mut stream in slow {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut reply = Vec::new();
+        let result = stream.read_to_end(&mut reply);
+        assert!(
+            result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::ConnectionReset
+        );
+        let header_end = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let headers = std::str::from_utf8(&reply[..header_end]).unwrap();
+        let length: usize = headers
+            .split("Content-Length: ")
+            .nth(1)
+            .unwrap()
+            .split("\r\n")
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            reply.len() - header_end < length,
+            "stuck writer must time out before sending the full body"
+        );
+    }
+    let final_model = status::load(&mut reader).unwrap();
+    drop(controller);
+    database.restart();
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+    database.stop();
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 503"));
+    database.resume();
+    assert_eq!(
+        http(address, "GET", "/").1,
+        status::render_html(&final_model)
+    );
+}
+
+fn status_requires_initialized_database(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config_file(settings, root.path());
+    for command in ["status", "status-serve"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tl3"))
+            .args([command, "--config"])
+            .arg(&config)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("database not initialized"), "{error}");
+        assert!(!error.contains("Postgres operation failed"));
+    }
+}
+
+fn status_socket_limits(address: std::net::SocketAddr) {
+    let mut stalled = TcpStream::connect(address).unwrap();
+    stalled.write_all(b"GET / HTTP/1.1\r\nHost:").unwrap();
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
+    stalled
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut response = String::new();
+    stalled.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
+
+    let mut oversized = TcpStream::connect(address).unwrap();
+    let mut request = b"GET / HTTP/1.1\r\nX-Large: ".to_vec();
+    request.resize(8 * 1024, b'x');
+    oversized.write_all(&request).unwrap();
+    oversized
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut response = String::new();
+    oversized.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 431"), "{response}");
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
+
+    for header in [
+        "Content-Length: 1",
+        "Transfer-Encoding: chunked",
+        "Bad Header: value",
+    ] {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        write!(stream, "GET / HTTP/1.1\r\n{header}\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"), "{header}: {response}");
+    }
+
+    let blocked: Vec<_> = (0..8)
+        .map(|_| TcpStream::connect(address).unwrap())
+        .collect();
+    let mut refused = TcpStream::connect(address).unwrap();
+    refused
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let mut byte = [0];
+    match refused.read(&mut byte) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        result => panic!("ninth connection must be refused immediately: {result:?}"),
+    }
+    drop(blocked);
+    assert!(http(address, "GET", "/").0.starts_with("http/1.1 200"));
 }

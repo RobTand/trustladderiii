@@ -1,5 +1,5 @@
 use crate::{Result, request, snapshot};
-use std::fmt::Write;
+use std::{collections::BTreeMap, fmt::Write};
 use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
 use tl3_store::{Reader, Transaction};
 
@@ -35,8 +35,11 @@ pub struct RequestDetails {
 
 /// Tickets #9 and #15 fill this hook from their store tables. Keep queries in
 /// this read-only transaction and return only public progress/incident summaries.
-pub fn load_request_details(_tx: &mut Transaction<'_>, _node: NodeId) -> Result<RequestDetails> {
-    Ok(RequestDetails::default())
+pub fn load_request_details(
+    _tx: &mut Transaction<'_>,
+    _nodes: &[NodeId],
+) -> Result<BTreeMap<NodeId, RequestDetails>> {
+    Ok(BTreeMap::new())
 }
 
 pub fn load(reader: &mut Reader) -> Result<Status> {
@@ -45,6 +48,10 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
     let mut requests = Vec::new();
     if !snapshot.rows.is_empty() {
         let world = snapshot::decode(&snapshot)?;
+        let ids: Vec<_> = (0..world.nodes.len())
+            .map(|index| NodeId(index as u64))
+            .collect();
+        let mut details = load_request_details(&mut tx, &ids)?;
         for (index, node) in world.nodes.iter().enumerate() {
             let id = NodeId(index as u64);
             let request = request(&snapshot, id)?;
@@ -63,16 +70,25 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             } else if let Some(effect) = node.effect {
                 effect_wait(effect.kind)
             } else if node.run.is_some() {
-                "worker reply"
+                "the current task to finish"
             } else if node.job.is_some() {
                 "check results"
             } else {
                 match node.phase {
                     Phase::Queued => "merge queue",
-                    Phase::Ready(_) => "slot or files",
-                    Phase::Planning { .. } => "agent pool",
+                    Phase::Ready(_) => "another change to finish using these files",
+                    Phase::Planning { .. } => "a planner to become available",
+                    Phase::Ingesting => "the request to be read",
+                    Phase::Auditing => "the goals to be checked",
+                    Phase::Unplanned => "planning to begin",
+                    Phase::Making => "the change to be written",
+                    Phase::Checking => "checks to finish",
+                    Phase::Reviewing => "the review to finish",
+                    Phase::Publishing => "the pull request to be published",
+                    Phase::Rebasing => "the branch update to finish",
+                    Phase::AwaitingRob => "Rob's answer",
+                    Phase::Stopping(_) => "cleanup to finish",
                     Phase::Closed(_) => "none",
-                    _ => "upstream event",
                 }
             };
             requests.push(RequestStatus {
@@ -83,7 +99,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
                 phase: phase(node.phase),
                 waiting_on: waiting_on.into(),
                 credit: node.credit.balance(),
-                details: load_request_details(&mut tx, id)?,
+                details: details.remove(&id).unwrap_or_default(),
             });
         }
     }
@@ -95,8 +111,8 @@ impl RequestStatus {
     fn cells(&self) -> [String; 6] {
         [
             plain(&self.issue),
-            self.phase.clone(),
-            self.waiting_on.clone(),
+            plain(&self.phase),
+            plain(&self.waiting_on),
             self.credit.to_string(),
             self.details
                 .last_progress
@@ -151,7 +167,8 @@ pub fn render_html(status: &Status) -> String {
 fn plain(value: &str) -> String {
     value
         .chars()
-        .filter(|c| !c.is_control() || c.is_whitespace())
+        .filter(|c| (!c.is_control() || c.is_whitespace())
+            && !matches!(*c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200b}'..='\u{200f}' | '\u{feff}'))
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -205,19 +222,113 @@ fn effect_wait(kind: EffectKind) -> &'static str {
             Role::Ingest => "request reader to start",
             Role::Audit => "goals auditor to start",
             Role::Plan => "planner to start",
-            Role::Make => "maker to start",
+            Role::Make => "writer to start",
             Role::Review => "reviewer to start",
         },
         EffectKind::SubmitChecks => "checks to be submitted",
         EffectKind::StartRebase => "branch update to start",
-        EffectKind::PrepareWorktree => "worktree preparation",
+        EffectKind::PrepareWorktree => "preparing the change files",
         EffectKind::Push => "branch push",
         EffectKind::PostApproval => "approval to be posted",
         EffectKind::OpenPr => "pull request to open",
         EffectKind::Enqueue => "merge queue admission",
-        EffectKind::StopRun => "worker to stop",
-        EffectKind::WithdrawJob => "check job withdrawal",
+        EffectKind::StopRun => "the current task to stop",
+        EffectKind::WithdrawJob => "checks to stop",
         EffectKind::ClosePr => "pull request to close",
-        EffectKind::RemoveWorktree => "worktree removal",
+        EffectKind::RemoveWorktree => "removing temporary change files",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unescape(value: &str) -> String {
+        value
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+    }
+
+    #[test]
+    fn hostile_details_and_every_text_cell_match_unescaped_html() {
+        let hidden: String = (0x202a..=0x202e)
+            .chain(0x2066..=0x2069)
+            .chain(0x200b..=0x200f)
+            .chain([0xfeff])
+            .map(|n| char::from_u32(n).unwrap())
+            .collect();
+        let hostile = format!(
+            "<script title=\"'&\">&lt;مرحبا</script>\0\x1b{hidden}\t\r\n{}",
+            "long".repeat(32_768)
+        );
+        let cleaned = format!(
+            "<script title=\"'&\">&lt;مرحبا</script> {}",
+            "long".repeat(32_768)
+        );
+        let model = Status {
+            requests: vec![
+                RequestStatus {
+                    issue: hostile.clone(),
+                    phase: hostile.clone(),
+                    waiting_on: hostile.clone(),
+                    credit: -4,
+                    details: RequestDetails {
+                        last_progress: Some(hostile.clone()),
+                        open_incidents: vec![
+                            hostile.clone(),
+                            "second <incident> \"'&\"\u{202e}\0".into(),
+                        ],
+                    },
+                },
+                RequestStatus {
+                    issue: "another request".into(),
+                    phase: "Ready".into(),
+                    waiting_on: "a writer".into(),
+                    credit: 5,
+                    details: RequestDetails::default(),
+                },
+            ],
+        };
+        let text = render_text(&model);
+        let html = render_html(&model);
+        assert!(!html.contains("<script title"));
+        assert!(
+            html.contains(
+                "&lt;script title=&quot;&#39;&amp;&quot;&gt;&amp;lt;مرحبا&lt;/script&gt;"
+            )
+        );
+        assert!(html.contains("; second &lt;incident&gt; &quot;&#39;&amp;&quot;"));
+        assert!(
+            !text
+                .chars()
+                .any(|c| hidden.contains(c) || c == '\0' || c == '\x1b')
+        );
+        let text_rows: Vec<Vec<_>> = text
+            .lines()
+            .skip(1)
+            .map(|line| line.split('\t').collect())
+            .collect();
+        assert_eq!(
+            text_rows[0],
+            vec![
+                cleaned.as_str(),
+                cleaned.as_str(),
+                cleaned.as_str(),
+                "-4",
+                cleaned.as_str(),
+                &format!("{cleaned}; second <incident> \"'&\"")
+            ]
+        );
+        let html_cells: Vec<_> = html
+            .split("<td>")
+            .skip(1)
+            .map(|cell| unescape(cell.split_once("</td>").unwrap().0))
+            .collect();
+        let text_cells: Vec<_> = text_rows.into_iter().flatten().collect();
+        assert_eq!(html_cells.len(), 12);
+        assert_eq!(text_cells, html_cells);
     }
 }

@@ -98,7 +98,9 @@ and open incidents. The page serves GET and HEAD without login at the configured
 listen address, in a separate process from `tl3d`. Both commands use a reader
 that skips migrations and enforces read-only, repeatable-read transactions.
 They do not need worker or GitHub credential files. Tickets #9 and #15 fill
-`status::load_request_details` when their store tables exist.
+`status::load_request_details` when their store tables exist. It receives all
+node IDs together and returns a map of public progress and incident summaries,
+using batch queries in the same read-only transaction.
 
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after

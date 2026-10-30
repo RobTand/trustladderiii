@@ -683,3 +683,34 @@ fn secret_targets_reject_missing_files_directories_and_nonprivate_modes() {
             .contains("models.key_file: cannot inspect")
     );
 }
+
+#[test]
+fn status_listen_requires_a_specific_unicast_address_and_fixed_port() {
+    for address in [
+        "127.0.0.1:0",
+        "224.0.0.1:8033",
+        "[ff02::1]:8033",
+        "0.0.0.0:8033",
+        "[::]:8033",
+    ] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.status.listen = address.parse().unwrap();
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("status.listen"),
+            "{address}"
+        );
+        assert!(
+            Config::parse(&EXAMPLE.replace("127.0.0.1:8033", address)).is_err(),
+            "{address}"
+        );
+    }
+    for address in ["127.0.0.1:8033", "[::1]:8033", "192.168.1.2:8033"] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.status.listen = address.parse().unwrap();
+        config.validate().unwrap();
+    }
+}

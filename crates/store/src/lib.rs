@@ -3,8 +3,8 @@
 mod types;
 pub use types::*;
 
-pub use postgres::Transaction;
 use postgres::{Client, IsolationLevel, NoTls, Row};
+pub use postgres::{Error as DatabaseError, Transaction};
 use std::{fs, time::Duration};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -33,6 +33,10 @@ pub enum Error {
     ActiveDeliveries,
     #[error("database migration differs from this binary or is newer")]
     MigrationMismatch,
+    #[error("database not initialized")]
+    NotInitialized,
+    #[error("schema version {actual}, expected {expected}")]
+    SchemaVersion { actual: i32, expected: i32 },
     #[error("store counter exhausted")]
     CounterOverflow,
 }
@@ -295,14 +299,18 @@ pub struct Reader {
 
 impl Reader {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        Ok(Self {
+        let mut reader = Self {
             client: connect(settings, true)?,
-        })
+        };
+        reader.transaction()?.commit()?;
+        Ok(reader)
     }
 
     /// Extra status queries must use this transaction to share the snapshot.
     pub fn transaction(&mut self) -> Result<Transaction<'_>> {
-        read_transaction(&mut self.client)
+        let mut tx = read_transaction(&mut self.client)?;
+        check_schema(&mut tx)?;
+        Ok(tx)
     }
 
     pub fn load(&mut self) -> Result<Snapshot> {
@@ -311,6 +319,53 @@ impl Reader {
         tx.commit()?;
         Ok(snapshot)
     }
+}
+
+fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
+    if tx
+        .query_one("SELECT to_regclass('tl3_schema_migrations') IS NULL", &[])?
+        .get::<_, bool>(0)
+    {
+        return Err(Error::NotInitialized);
+    }
+    let applied = tx.query(
+        "SELECT version, sql FROM tl3_schema_migrations ORDER BY version",
+        &[],
+    )?;
+    let Some(last) = applied.last() else {
+        return Err(Error::NotInitialized);
+    };
+    let actual = last.get::<_, i32>(0);
+    let expected = MIGRATIONS.last().expect("store migration").0;
+    if actual != expected {
+        return Err(Error::SchemaVersion { actual, expected });
+    }
+    if applied.len() != MIGRATIONS.len()
+        || applied
+            .iter()
+            .zip(MIGRATIONS)
+            .any(|(row, &(version, sql))| {
+                row.get::<_, i32>(0) != version || row.get::<_, &str>(1) != sql
+            })
+    {
+        return Err(Error::MigrationMismatch);
+    }
+    for table in [
+        "tl3_meta",
+        "tl3_world",
+        "tl3_events",
+        "tl3_effects",
+        "tl3_credit",
+        "tl3_intern",
+    ] {
+        if tx
+            .query_one("SELECT to_regclass($1) IS NULL", &[&table])?
+            .get::<_, bool>(0)
+        {
+            return Err(Error::NotInitialized);
+        }
+    }
+    Ok(())
 }
 
 fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {

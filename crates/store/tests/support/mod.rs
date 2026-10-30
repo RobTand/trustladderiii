@@ -88,6 +88,17 @@ impl Database {
         }
     }
 
+    pub fn restart(&self) {
+        self.stop();
+        self.resume();
+    }
+
+    pub fn resume(&self) {
+        self.runtime
+            .block_on(self.postgres.start())
+            .expect("start embedded Postgres again");
+    }
+
     pub fn stop(&self) {
         self.runtime.block_on(self.postgres.stop()).unwrap();
         assert!(self.scratch.path().exists());
