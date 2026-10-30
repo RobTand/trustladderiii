@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -42,10 +42,46 @@ pub struct Config {
     pub worktrees_root: PathBuf,
     #[serde(default)]
     pub workers: Workers,
+    #[serde(default)]
+    pub planning: Planning,
     pub prismabuild: PrismaBuild,
     pub hindsight: Hindsight,
     pub status: Status,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Planning {
+    /// Calibration seam: replace these named estimates with measured overheads later.
+    pub overhead_tokens: BTreeMap<String, u32>,
+    pub protected_paths: Vec<String>,
+}
+
+impl Default for Planning {
+    fn default() -> Self {
+        Self {
+            overhead_tokens: [
+                ("prompt".into(), 5_000),
+                ("making".into(), 20_000),
+                ("review".into(), 5_000),
+            ]
+            .into(),
+            protected_paths: [
+                ".github/**",
+                ".mergify.yml",
+                ".mergify.yaml",
+                "**/conftest.py",
+                "pytest.ini",
+                "tox.ini",
+                "noxfile.py",
+                "setup.cfg",
+                "pyproject.toml",
+            ]
+            .map(String::from)
+            .to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -287,6 +323,26 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), Error> {
         self.store.validate()?;
+        if self.planning.overhead_tokens.is_empty()
+            || self
+                .planning
+                .overhead_tokens
+                .keys()
+                .any(|key| key.trim().is_empty())
+        {
+            return Err(invalid(
+                "planning.overhead_tokens",
+                "must contain named overhead estimates",
+            ));
+        }
+        for required in Planning::default().protected_paths {
+            if !self.planning.protected_paths.contains(&required) {
+                return Err(invalid(
+                    "planning.protected_paths",
+                    "must retain the slice-one protected paths",
+                ));
+            }
+        }
         let limits = &self.limits;
         if limits.context_tokens == 0 {
             return Err(invalid(

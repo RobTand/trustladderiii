@@ -44,6 +44,18 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "forecast": {
+          "$ref": "#/$defs/forecast"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Files in the root scope used by the forecaster. Required when forecast settings are supplied."
         }
       },
       "required": [
@@ -79,5 +91,57 @@
       ],
       "additionalProperties": false
     }
-  ]
+  ],
+  "$defs": {
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "tokenizer": {
+          "const": "o200k_base"
+        },
+        "brief_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_tokens": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "overhead_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fits": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tokenizer",
+        "brief_tokens",
+        "file_tokens",
+        "overhead_tokens",
+        "tokens",
+        "fit_tokens",
+        "context_tokens",
+        "fits"
+      ],
+      "additionalProperties": false,
+      "description": "Appended by the reply check. The model must omit this field."
+    }
+  }
 }
