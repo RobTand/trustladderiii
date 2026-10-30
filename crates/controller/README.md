@@ -115,8 +115,8 @@ POST deliveries to `/github/events`, matching the App manifest, with GitHub's
 delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
 The status page and receiver share `src/http.rs`. Four handlers cap open
 connections at eight, including queued sockets. Headers have an 8 KiB limit and
-webhook bodies have a 25 MiB limit. Each complete request has a two-second read
-deadline. Oversized bodies return 413, transfer encoding returns 400, and POST
+webhook bodies have a 25 MiB limit. Oversized bodies return 413, transfer
+encoding returns 400, and webhook POST
 requires `Content-Length`. Socket reads finish before reaching the receiver
 thread, so a stalled client cannot hold delivery persistence or catch-up.
 Accept errors are logged and skipped. Response writes have a total deadline too.
@@ -126,7 +126,8 @@ the event name, delivery id and unchanged raw bytes in `tl3_ingress` before retu
 202. Replay parses them into the current `GitHubDelivery::Webhook` type, including
 unknown event names. Rows that no longer parse log their delivery id and advance
 every consumer past the row, so an older payload cannot crash-loop startup.
-PR updates, check runs, check suites and merge groups remain available for their owning adapters. Persistence errors log their `Display`,
+PR updates, check runs, check suites and merge groups remain available for their
+owning adapters. Persistence errors log their `Display`,
 reopen the ingress connection and retry once. Only a failed retry returns 503.
 Delivery ids remain unique while retained. After retirement, repeated deliveries
 still use the same durable intake and observation keys. A crash between applying
@@ -155,7 +156,7 @@ The controller's separate connection advances cursors and retires rows.
 
 ### Register a delivery translator
 
-Ticket #63 registers its Mergify translator, and #13 registers its PR translator,
+PR #69 registers its Mergify translator, and #13 registers its PR translator,
 on the controller before `Sources::run` or `ingress::drain`:
 
 ```rust
