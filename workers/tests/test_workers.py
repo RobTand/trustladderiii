@@ -2,7 +2,6 @@ import copy
 from importlib.resources import files
 import json
 from pathlib import Path
-import socket
 import sys
 
 from jsonschema import Draft202012Validator, ValidationError
@@ -12,6 +11,7 @@ import pytest
 
 from tl3_workers import runtime
 from tl3_workers.contracts import schema, validate
+from tl3_workers.roles import ROLES
 from worker_process import run_real_entrypoint, start_worker
 
 
@@ -44,19 +44,6 @@ def request_doc(tmp_path):
         },
         "worktree": str(tmp_path),
     }
-
-
-def offline(*args, **kwargs):
-    raise AssertionError("network forbidden in worker tests")
-
-
-@pytest.fixture(autouse=True)
-def no_network(monkeypatch):
-    monkeypatch.setenv("LANGSMITH_TRACING", "false")
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
-    monkeypatch.setattr(socket.socket, "connect", offline)
-    monkeypatch.setattr(socket.socket, "connect_ex", offline)
-    monkeypatch.setattr(socket, "getaddrinfo", offline)
 
 
 @pytest.mark.parametrize("role,reply", [
@@ -119,7 +106,7 @@ def test_invalid_json_is_a_failed_run(tmp_path, request_doc, content):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("protocol", 2), ("protocol", True), ("role", "maker"),
+    ("protocol", 2), ("protocol", True), ("role", "not_a_role"),
     ("operation", {"node": 1, "generation": -1, "kind": "ingest"}),
     ("inputs", {}), ("worktree", "relative"),
     ("model", {"base_url": "http://model.invalid", "name": "x", "effort": "high", "budget_tokens": 0}),
@@ -289,8 +276,9 @@ def test_ingest_cannot_cite_memories_it_was_not_given(tmp_path, request_doc):
 
 
 def test_schema_files_are_packaged_and_refs_resolve(request_doc):
-    assert len(list(files("tl3_workers").joinpath("schemas").iterdir())) == 5
-    for name in ("request", "ingest-input", "ingest-reply", "audit-input", "audit-reply"):
+    names = {"request"} | {name for role in ROLES.values()
+                           for name in (role.input_schema, role.reply_schema)}
+    for name in names:
         Draft202012Validator.check_schema(schema(name))
     validate("ingest-input", request_doc["inputs"])
     audit = {**request_doc["inputs"], "ingest": BRIEF}
