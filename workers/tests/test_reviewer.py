@@ -8,6 +8,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import READ_TOOLS
+import worker_process
 from worker_process import start_worker
 
 
@@ -15,6 +16,20 @@ BASE = "a" * 40
 HEAD = "b" * 40
 NOTE = {"problem": "The helper name could be clearer.", "evidence": "greeting.py:1 uses greet."}
 APPROVE = {"verdict": "approve", "head_sha": HEAD, "blocking_findings": [], "findings": []}
+
+
+@pytest.fixture(autouse=True)
+def tool_capable_process_model(monkeypatch):
+    launcher = worker_process.LAUNCH.replace(
+        "model = FakeMessagesListChatModel(",
+        """class ReviewerModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        from tl3_workers.roles import ROLES
+        assert {tool.name: tool.description for tool in tools} == dict(ROLES['reviewer'].tools)
+        return self
+model = ReviewerModel(""",
+    )
+    monkeypatch.setattr(worker_process, "LAUNCH", launcher)
 
 
 def blocker(kind="goal", identifier="g1"):
