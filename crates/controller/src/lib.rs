@@ -318,6 +318,11 @@ impl Controller {
                     .store
                     .effect(&delivery.key)?
                     .ok_or(Error::Invalid("missing watched effect"))?;
+                // Pending starts belong to the delivery recovery path above.
+                // Only acknowledged work can fail through its retained watch.
+                if effect.state != EffectState::Confirmed {
+                    continue;
+                }
                 delivery.epoch = effect.epoch.get();
                 let result = self
                     .adapters
