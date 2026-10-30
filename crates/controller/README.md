@@ -923,8 +923,9 @@ starts at the last reviewed head in `base_sha` while that head contains the
 current check base. After a rebase moves the check base beyond that history,
 `base_sha` uses the new check base, so the diff contains only the leaf's change.
 `check_base_sha` names the recorded commit used for the check results' base
-outcomes (`CheckRun.base_sha`), including the new target after a clean rebase. If round 0 failed checks
-and never reached review, round 1 starts a fresh conversation.
+outcomes (`CheckRun.base_sha`), including the new target after a clean rebase.
+If round 0 failed checks and never reached review, round 1 starts a fresh
+conversation.
 
 The controller records each accepted review's generation, attempt, re-plan flag
 and head in the existing worker document store. A retry before acceptance keeps
@@ -948,7 +949,9 @@ within a visit. No new kernel reply or transition is needed.
 
 To reproduce #88's checks, generate a manifest with
 `python3 crates/controller/tools/reviewer_resume_manifest.py hosts` or `workspace`,
-then submit it with `pbcampaign.py`. The host rows run the Python workers,
+then submit it with `pbcampaign.py`. The `red` option generates the focused
+pre-fix scenarios; set its row's `cwd` to a clean detached worktree at the red
+commit before submission. The host rows run the Python workers,
 publishing and workers scenarios on each named host. The workers scenarios include
 the maker scenarios. The workspace row runs `crates/controller/tools/verify.sh`.
 

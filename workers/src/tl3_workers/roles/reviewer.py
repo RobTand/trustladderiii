@@ -94,6 +94,8 @@ def run(model, request, worktree, emit):
                     if session:
                         _save(session, state)
                     raise ValueError("reviewer out of room")
+                if isinstance(message, AIMessage) and session is None:
+                    emit({"event": "progress", "unit": "model_turn"})
                 if isinstance(message, AIMessage) and not message.tool_calls:
                     if message.invalid_tool_calls:
                         raise ValueError("invalid reviewer tool calls")
@@ -105,7 +107,7 @@ def run(model, request, worktree, emit):
             if session:
                 _save(session, state)
             for message in messages:
-                if isinstance(message, AIMessage):
+                if isinstance(message, AIMessage) and session is not None:
                     emit({"event": "progress", "unit": "model_turn"})
                 elif isinstance(message, ToolMessage):
                     emit({"event": "progress", "unit": "tool_result"})

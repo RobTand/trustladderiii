@@ -32,7 +32,8 @@ for mode in changes round-one-rebase; do
     cargo test --locked -p tl3-controller --test publishing -- "$mode" || status=1
 done
 /home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil pytest -c workers/pyproject.toml workers/tests/test_reviewer.py -q -k stops_before_context_exhaustion || status=1
-exit "$status"""],
+exit "$status"
+"""],
         "cpus": 2, "demand": {"mem_gb": 6}, "anywhere": True, "env": env,
     }]
 if args.suite == "workspace":
