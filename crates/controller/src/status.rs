@@ -87,7 +87,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             });
         }
     }
-    tx.commit()?;
+    tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status { requests })
 }
 
