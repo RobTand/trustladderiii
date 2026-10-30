@@ -80,6 +80,11 @@ def python(files):
     run("uv", "tool", "run", "--from", "ruff==0.14.14", "ruff", "check",
         "--isolated", "--select", "E9,F", *sources)
     for directory, config in sorted(projects.items()):
+        if not any(path.match("test_*.py") and path.is_relative_to(directory) for path in files):
+            # Deployment environments pin their own interpreter and have no tests to run.
+            if (ROOT / directory / "uv.lock").exists():
+                run("uv", "lock", "--check", "--project", ".", cwd=ROOT / directory)
+            continue
         command = ["uv", "run", "--project", ".", "--python", sys.executable]
         if (ROOT / directory / "uv.lock").exists():
             command.append("--locked")
