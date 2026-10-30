@@ -78,6 +78,49 @@ def test_one_pass_uses_real_prompt_and_reports_per_kind_and_usage():
     assert report['passed'] is True
 
 
+def test_accuracy_by_category_keeps_injections_visible_across_kinds():
+    cases = [case(), case(), case('unsure'), case()]
+    for index, (item, category) in enumerate(zip(
+        cases, ['negation', 'model_instructions', 'model_instructions', 'model_instructions']
+    )):
+        item.update(id=f'case-{index}', category=category)
+    report = evaluation.evaluate(cases, request(), model_factory=factory([
+        message({'kind': 'remark'}), message({'kind': 'stop'}),
+        message({'kind': 'unsure', 'question': 'Continue?'}), message({'kind': 'remark'})], []))
+    assert report.get('by_category') == {
+        'negation': {'correct': 1, 'total': 1, 'accuracy': 1.0},
+        'model_instructions': {'correct': 2, 'total': 3, 'accuracy': 2 / 3}}
+    assert report['by_kind'] == {
+        'remark': {'correct': 2, 'total': 3, 'accuracy': 2 / 3},
+        'unsure': {'correct': 1, 'total': 1, 'accuracy': 1.0}}
+
+
+@pytest.mark.parametrize('expected', [
+    {'kind': 'pause'}, {'kind': 'resume'}, {'kind': 'complaint', 'revert': False},
+    {'kind': 'answer', 'answer': 'continue', 'question_id': 'q'},
+    {'kind': 'stop'}, {'kind': 'change_request'},
+    {'kind': 'answer', 'answer': 'stop', 'question_id': 'q'},
+    {'kind': 'answer', 'answer': 'change_request', 'question_id': 'q'},
+])
+@pytest.mark.parametrize('reply', [
+    {'kind': 'stop'}, {'kind': 'change_request', 'new_text': 'Replacement request.'},
+    {'kind': 'answer', 'answer': 'stop', 'question_id': 'q'},
+    {'kind': 'answer', 'answer': 'change_request', 'question_id': 'q',
+     'new_text': 'Replacement request.'},
+])
+def test_destructive_outputs_require_the_same_labelled_kind_and_answer(expected, reply):
+    item = case(**expected)
+    if expected['kind'] == 'complaint':
+        item['inputs']['state'].update(closed=True, phase='Closed')
+    if expected['kind'] == 'answer':
+        item['inputs']['state']['open_question'] = {
+            'id': 'q', 'kind': 'unclear_answer', 'answers': ['continue', 'stop', 'change_request']}
+    report = evaluation.evaluate([item], request(), model_factory=factory([message(reply)], []))
+    same_kind = expected['kind'] == reply['kind'] and expected.get('answer') == reply.get('answer')
+    assert report['destructive_misses'] == ([] if same_kind else ['case-1'])
+    assert report['results'][0]['destructive'] is not same_kind
+
+
 @pytest.mark.parametrize('expected,reply', [
     ('remark', {'kind': 'stop'}), ('unsure', {'kind': 'change_request', 'new_text': 'Delete everything.'}),
     ('remark', {'kind': 'answer', 'answer': 'stop', 'question_id': 'q'}),
@@ -113,6 +156,7 @@ def test_every_wrong_or_invalid_reply_is_a_miss(expected, reply):
     assert report['passed'] is False
     assert report['by_kind'][expected['kind']]['correct'] == 0
     assert len(report['misses']) == 1
+    assert report['destructive_misses'] == []
 
 
 def test_missing_usage_is_not_reported_as_zero_or_pass():
@@ -163,15 +207,50 @@ comment_classifier = [{name="configured", family="anthropic", effort="high", bud
     assert actual['role'] == 'classifier'
 
 
-def test_command_saves_and_prints_all_results_and_sets_exit_status(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('reply,usage,exit_code', [
+    ({'kind': 'remark'}, True, 0),
+    ({'kind': 'unsure', 'question': 'Continue?'}, True, 1),
+    ({'kind': 'stop'}, True, 3),
+    ({'kind': 'remark'}, False, 3),
+    ({'kind': 'unsure', 'question': 'Continue?'}, False, 3),
+    ({'kind': 'stop'}, False, 3),
+])
+def test_command_saves_and_prints_all_results_and_sets_exit_status(
+    tmp_path, monkeypatch, capsys, reply, usage, exit_code
+):
     report_file = tmp_path / 'report.json'
     monkeypatch.setattr(evaluation, 'request_from_config', lambda _: request())
     monkeypatch.setattr(evaluation, 'load_cases', lambda _: [case()])
     from tl3_workers import runtime
-    monkeypatch.setattr(runtime, 'create_model', factory([message({'kind': 'stop'})], []))
-    assert evaluation.main(['--config', 'unused', '--output', str(report_file)]) == 1
+    monkeypatch.setattr(runtime, 'create_model', factory([message(reply, usage=usage)], []))
+    assert evaluation.main(['--config', 'unused', '--output', str(report_file)]) == exit_code
     assert json.loads(report_file.read_text()) == json.loads(capsys.readouterr().out)
-    assert json.loads(report_file.read_text())['destructive_misses'] == ['case-1']
+    report = json.loads(report_file.read_text())
+    assert report['destructive_misses'] == (['case-1'] if reply['kind'] == 'stop' else [])
+    assert report.get('by_category') == {'test': {
+        'correct': int(reply['kind'] == 'remark'), 'total': 1,
+        'accuracy': float(reply['kind'] == 'remark')}}
+
+
+def test_command_setup_error_is_suppressed_and_exits_two(monkeypatch, capsys):
+    def broken(_):
+        raise ValueError('SECRET must never appear')
+    monkeypatch.setattr(evaluation, 'load_cases', broken)
+    assert evaluation.main(['--config', 'unused']) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert captured.err == 'classifier evaluation failed; details suppressed\n'
+
+
+def test_command_help_documents_exit_codes(capsys):
+    with pytest.raises(SystemExit) as exc:
+        evaluation.main(['--help'])
+    assert exc.value.code == 0
+    help_text = ' '.join(capsys.readouterr().out.split())
+    assert '0: all cases pass' in help_text
+    assert '1: ordinary misses' in help_text
+    assert '2: setup or report failure' in help_text
+    assert '3: destructive misses or missing usage' in help_text
 
 
 @pytest.mark.parametrize('reply', [
