@@ -1,0 +1,13 @@
+[
+  {
+    "id": 6524502455,
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"checking\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-10-30T13:54:08.554957+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"step\": \"preparing\"}\n-*- Mergify Payload End -*-\n-->\n\n### \u23f3 Queued\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 30 Oct, 13:54 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \ud83d\udfe0 **Preparing checks**\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=16) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-30T13:54:15Z",
+    "updated_at": "2026-10-30T13:54:15Z",
+    "issue_url": "https://api.github.com/repos/RobTand/tl3-sandbox/issues/16"
+  }
+]

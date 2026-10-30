@@ -1,0 +1,36 @@
+[
+  {
+    "id": 124106316804,
+    "name": "Sandbox tests",
+    "head_sha": "40b540699938a58dd94eb3cff03e0d56797275d8",
+    "external_id": "15d36c35-dcb8-5e38-b9af-4ef1749b25ee",
+    "status": "completed",
+    "conclusion": "failure",
+    "app": {
+      "id": 15368,
+      "slug": "github-actions"
+    },
+    "output": {
+      "title": null,
+      "summary": null,
+      "text": null
+    }
+  },
+  {
+    "id": 124106292293,
+    "name": "Mergify Merge Protections",
+    "head_sha": "40b540699938a58dd94eb3cff03e0d56797275d8",
+    "external_id": "24",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merge protections ignored",
+      "summary": "Merge protections are ignored on the merge queue pull requests. Queue rules mechanism is used instead.",
+      "text": null
+    }
+  }
+]

@@ -1,0 +1,19 @@
+[
+  {
+    "id": 124101385440,
+    "name": "Mergify Merge Protections",
+    "head_sha": "3fff5c3ee9bbf57d37fcc4633927b13118a3a49b",
+    "external_id": "18",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Merge protections ignored",
+      "summary": "Merge protections are ignored on the merge queue pull requests. Queue rules mechanism is used instead.",
+      "text": null
+    }
+  }
+]
