@@ -199,6 +199,11 @@ directory failure, failed `.done` write or closed ingress receiver reaches
 no timed wake-up and never scans the directory during ordinary bell waits.
 It submits no fleet work from inside tests.
 
+Generate the adapter review campaign from a clean detached worktree with
+`python3 crates/controller/tools/prismabuild_review_manifest.py > /tmp/tl3-pb-review.json`.
+Submit that file with the published `pbcampaign.py`. It runs controller and
+client tests once on each fleet host and the full verification script once.
+
 The separate outer-session trial is reproducible from the repository root:
 
 ```sh
