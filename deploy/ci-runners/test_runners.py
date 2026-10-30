@@ -1,0 +1,112 @@
+"""Runner command boundaries. Execute through PrismaBuild."""
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parent
+IMAGE = "sha256:" + "a" * 64
+JIT = "synthetic-one-job-config"
+
+
+class RunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        self.bin = self.home / "bin"
+        self.bin.mkdir()
+        self.calls = self.home / "calls.jsonl"
+        self.env = {**os.environ, "HOME": str(self.home),
+                    "PATH": f"{self.bin}:{os.environ['PATH']}",
+                    "CALLS": str(self.calls), "CI_RUNNER_IMAGE": IMAGE}
+        self.env.pop("CI_RUNNER_CPUSET", None)
+        for tool in ("gh", "podman", "systemctl", "uname", "id"):
+            path = self.bin / tool
+            path.write_text("#!/usr/bin/env python3\n" + '''import json, os, sys
+from pathlib import Path
+name = Path(sys.argv[0]).name
+args = sys.argv[1:]
+with open(os.environ["CALLS"], "a") as file:
+    file.write(json.dumps([name, *args]) + "\\n")
+if name == "gh":
+    print("synthetic-one-job-config")
+elif name == "podman":
+    if args[0] == "info": print("true")
+    elif args[:2] == ["image", "inspect"]: print("sha256:" + "a" * 64)
+    elif args[0] == "run":
+        assert sys.stdin.read() == "synthetic-one-job-config\\n"
+elif name == "uname": print("x86_64")
+elif name == "id": print("1000")
+''')
+            path.chmod(0o700)
+
+    def run_script(self, script, *args):
+        return subprocess.run(["bash", str(ROOT / script), *args],
+                              env=self.env, text=True, capture_output=True)
+
+    def commands(self):
+        return [json.loads(line) for line in self.calls.read_text().splitlines()]
+
+    def assert_slot(self, profile, repository, label, prefix):
+        result = self.run_script("runner-slot.sh", "1", profile)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(JIT, result.stdout + result.stderr)
+        commands = self.commands()
+        registration = next(c for c in commands if c[0] == "gh")
+        self.assertIn(f"repos/RobTand/{repository}/actions/runners/generate-jitconfig", registration)
+        self.assertIn(f"labels[]={label}", registration)
+        container = next(c for c in commands if c[:2] == ["podman", "run"])
+        self.assertEqual(container[container.index("--name") + 1], f"{prefix}-1")
+        for option in ("--cpus=2", "--memory=6g", "--memory-swap=6g",
+                       "--cap-drop=all", "--security-opt=no-new-privileges"):
+            self.assertIn(option, container)
+        self.assertFalse(any(c.startswith(("--volume", "--mount", "--env")) for c in container))
+        self.assertNotIn(JIT, " ".join(container))
+
+    def test_default_slot_keeps_tl3_routing(self):
+        self.assert_slot("tl3-ci-runner", "trustladderiii", "tl3-fleet", "tl3-ci-runner")
+
+    def test_sandbox_slot_registers_only_for_sandbox(self):
+        self.assert_slot("tl3-ci-runner-sandbox", "tl3-sandbox", "tl3-sandbox-fleet",
+                         "tl3-ci-runner-sandbox")
+
+    def test_sandbox_rejects_third_slot_before_registration(self):
+        result = self.run_script("runner-slot.sh", "3", "tl3-ci-runner-sandbox")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists())
+
+    def test_sandbox_install_is_idempotent_and_separate(self):
+        config = self.home / ".config/tl3-ci-runners"
+        config.mkdir(parents=True)
+        original = f"CI_RUNNER_IMAGE={IMAGE}\nCI_RUNNER_CPUSET=2,4\n"
+        (config / "runner.env").write_text(original)
+        for _ in range(2):
+            result = self.run_script("install.sh", "2", "sandbox")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((config / "runner.env").read_text(), original)
+        unit = self.home / ".config/systemd/user/tl3-ci-runner-sandbox@.service"
+        self.assertTrue(unit.exists())
+        text = unit.read_text()
+        self.assertIn("%p-%i", text)
+        self.assertIn("runner-slot.sh %i %p", text)
+        self.assertIn("/%p.env", text)
+        self.assertFalse((unit.parent / "tl3-ci-runner@.service").exists())
+        calls = [c for c in self.commands() if c[0] == "systemctl"]
+        starts = [c[-1] for c in calls if "enable" in c]
+        self.assertEqual(starts, [f"tl3-ci-runner-sandbox@{i}.service" for i in (1, 2, 1, 2)])
+        self.assertFalse(any("restart" in c for c in calls))
+        env = config / "tl3-ci-runner-sandbox.env"
+        env.write_text(f"CI_RUNNER_IMAGE={IMAGE}\nCI_RUNNER_CPUSET=6,8\n")
+        result = self.run_script("install.sh", "0", "sandbox")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CI_RUNNER_CPUSET=6,8", env.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
