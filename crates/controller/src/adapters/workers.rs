@@ -1,5 +1,5 @@
-use crate::sync::{Arc, Mutex};
 use crate::executor::Output as Out;
+use crate::sync::{Arc, Mutex};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 

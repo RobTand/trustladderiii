@@ -1,9 +1,9 @@
-use crate::sync::mpsc::Sender;
 use super::{
     ActiveRuns, inspect, latest,
     process::{self, read},
     protocol, remove_ready, run_root, watched_deliveries,
 };
+use crate::sync::mpsc::Sender;
 use crate::{
     Error, Result,
     cli::Input,

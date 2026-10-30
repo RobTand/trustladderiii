@@ -1,6 +1,6 @@
-use crate::sync::{Arc, Mutex};
 use super::record::Records;
 use crate::executor::Output as Out;
+use crate::sync::{Arc, Mutex};
 use crate::{
     Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},

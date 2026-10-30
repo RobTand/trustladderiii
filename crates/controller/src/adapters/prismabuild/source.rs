@@ -1,8 +1,8 @@
-use crate::sync::{Arc, Mutex, mpsc::Sender};
 use super::{
     Job, Settings, WaitSubscription, job_paths, node_job_paths, node_root, read_job, record_path,
     results, retire_superseded, wait_paths, write,
 };
+use crate::sync::{Arc, Mutex, mpsc::Sender};
 use crate::{Result, cli::Input};
 use std::{
     collections::{BTreeMap, BTreeSet},

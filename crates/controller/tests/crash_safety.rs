@@ -158,7 +158,10 @@ fn child(args: &[String]) {
     .unwrap();
     let mut ingress = hooked_store(&settings, selected);
     if ingress.ingress_cursor("crash-fixture").unwrap().is_none() {
-        let mut payload: Value = serde_json::from_str(include_str!("../../github/tests/fixtures/issues-labeled.json")).unwrap();
+        let mut payload: Value = serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/issues-labeled.json"
+        ))
+        .unwrap();
         let issue = issue(seed);
         payload["repository"]["owner"]["login"] = json!(issue.owner);
         payload["repository"]["name"] = json!(issue.repo);
@@ -167,13 +170,27 @@ fn child(args: &[String]) {
         payload["issue"]["number"] = json!(issue.number);
         payload["issue"]["title"] = json!(issue.title);
         let bytes = serde_json::to_vec(&payload).unwrap();
-        ingress.receive_ingress("github-webhook", &issue.delivery, "issues", &bytes).unwrap();
+        ingress
+            .receive_ingress("github-webhook", &issue.delivery, "issues", &bytes)
+            .unwrap();
         let caught_up = tl3_controller::ingress::GitHubDelivery::Webhook(Box::new(
-            tl3_github::webhook::parse(&format!("{}-catch-up", issue.delivery), "issues", &bytes).unwrap()));
-        ingress.receive_catch_up("crash-fixture", &[("catch-up".into(), serde_json::to_vec(&caught_up).unwrap())], &json!({"through":1})).unwrap();
+            tl3_github::webhook::parse(&format!("{}-catch-up", issue.delivery), "issues", &bytes)
+                .unwrap(),
+        ));
+        ingress
+            .receive_catch_up(
+                "crash-fixture",
+                &[("catch-up".into(), serde_json::to_vec(&caught_up).unwrap())],
+                &json!({"through":1}),
+            )
+            .unwrap();
     }
     tl3_controller::ingress::drain(&mut controller).unwrap();
-    assert_eq!(controller.world().unwrap().nodes.len(), 1, "ingress lost or doubled request");
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        1,
+        "ingress lost or doubled request"
+    );
     for turn in 0..500 {
         clock.0.set(seed % 1_000_000_000 + turn * 86400);
         assert_eq!(controller.now(), clock.now());
@@ -476,11 +493,35 @@ fn verify_cuts(
                 event.key
             );
         }
-    } else if selected.starts_with("ReceiveIngress") || selected.starts_with("ConsumeIngress") || selected.starts_with("ReceiveCatchUp") || selected == "IngressApplied" {
-        assert!(Store::open(settings).unwrap().pending_ingress().unwrap().is_empty());
-        assert_eq!(Store::open(settings).unwrap().ingress_cursor("crash-fixture").unwrap(), Some(json!({"through":1})));
-        let expected = if selected.starts_with("Receive") {1} else {2};
-        assert_eq!(killed.len(), expected, "{selected}: ingress operations escaped injection");
+    } else if selected.starts_with("ReceiveIngress")
+        || selected.starts_with("ConsumeIngress")
+        || selected.starts_with("ReceiveCatchUp")
+        || selected == "IngressApplied"
+    {
+        assert!(
+            Store::open(settings)
+                .unwrap()
+                .pending_ingress()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            Store::open(settings)
+                .unwrap()
+                .ingress_cursor("crash-fixture")
+                .unwrap(),
+            Some(json!({"through":1}))
+        );
+        let expected = if selected.starts_with("Receive") {
+            1
+        } else {
+            2
+        };
+        assert_eq!(
+            killed.len(),
+            expected,
+            "{selected}: ingress operations escaped injection"
+        );
     } else if selected.starts_with("Intern") {
         for entry in store.load().unwrap().interned {
             let kind = match entry.kind {

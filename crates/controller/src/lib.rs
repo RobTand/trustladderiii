@@ -7,16 +7,16 @@ pub mod cli;
 pub mod clock;
 pub mod executor;
 mod http;
-mod sync;
+pub mod ingress;
+pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
-pub mod ingress;
-pub mod looks;
 mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+mod sync;
 
 use executor::{
     Completion, Delivery, Observation, Output as DeliveryOutput, Reconciliation, Registry,

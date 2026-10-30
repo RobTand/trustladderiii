@@ -1,5 +1,9 @@
 use crate::http;
-use crate::sync::{Arc, mpsc::{self, Sender}, thread};
+use crate::sync::{
+    Arc,
+    mpsc::{self, Sender},
+    thread,
+};
 use crate::{
     Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
