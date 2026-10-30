@@ -125,6 +125,10 @@ The worktree and PrismaBuild adapters stay fake until #61 and #62 merge.
 Scenarios cover success, failed checks through both rounds of all three attempts
 and one re-plan, an actual commit outside the footprint, requested files,
 context exhaustion, unmet goals, invalid output, recovery, and stop.
+Generate all-host verification with
+`python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
+the manifest with `pbcampaign.py --detach`. This also runs the Python worker and
+harness suites on each host. These tests use fixtures and never submit nested jobs.
 
 Run `WorkerOutputSource::run(sender)` on its own ingress thread. It emits
 `cli::Input::Observation` and writes progress to a separate store table. Until

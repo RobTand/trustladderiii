@@ -183,11 +183,13 @@ def run(model, request, worktree, emit):
     if reply["kind"] == "done":
         reply["head"] = _commit(request)
     elif reply["kind"] == "needs_files" and "fit_tokens" in inputs:
-        # One UTF-8 byte per token is an upper bound. Leave 32k for agent/tool
-        # overhead, matching the planner's default, rather than trusting the model.
+        # Bound file tokens by UTF-8 bytes and reserve 32k for tools/history.
         size = len(json.dumps(inputs, ensure_ascii=False).encode()) + 32000
         for path in set(inputs["plan"]["files"]) | {item["path"] for item in reply["files"]}:
             try:
+                parts = _parts(path)
+                with worktree._directory(parts[:-1]) as parent:
+                    os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
                 with worktree._file(path) as handle:
                     size += os.fstat(handle.fileno()).st_size
             except FileNotFoundError:
