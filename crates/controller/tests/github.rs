@@ -118,6 +118,7 @@ struct ApiState {
     lose_issue_reply: bool,
     forbidden_question: bool,
     question_status: Option<u16>,
+    rejected_question_posts: usize,
     forbidden_filing: bool,
 }
 #[derive(Clone)]
@@ -207,6 +208,7 @@ impl Respond for Api {
                     && original_path.contains("/sandbox/")
                     && String::from_utf8_lossy(&request.body).contains("recommend option")
                 {
+                    state.rejected_question_posts += 1;
                     return ResponseTemplate::new(state.question_status.unwrap_or(403));
                 }
                 state.posts += 1;

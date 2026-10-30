@@ -165,6 +165,7 @@ pub(super) fn run(db: &mut support::Database) {
         "rejected_ask",
         "cleanup_ask",
         "question_403",
+        "question_retry_rejected",
         "question_401",
         "question_404",
         "question_410",
@@ -250,6 +251,10 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         incident: name == "incident_no_loop",
         kind: kind.into(),
     }));
+    if name == "question_retry_rejected" {
+        api.state.lock().unwrap().question_status = Some(403);
+        faults.lock().unwrap().reject = false;
+    }
     if let Some(status) = name.strip_prefix("question_4") {
         api.state.lock().unwrap().question_status = Some(format!("4{status}").parse().unwrap());
     }
@@ -334,8 +339,23 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let incident_id = incident.id.clone();
     let detail = incident.value.to_string();
     assert!(detail.contains("Add a blue button"));
+    let notice_kind = match kind {
+        "question" | "cleanup" => "question",
+        "filing" => "replacement filing",
+        "dropped" => "dropped-change note",
+        "note" => "note",
+        "summary" => "closing summary",
+        _ => unreachable!(),
+    };
+    assert!(
+        incident.value["summary"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("The {notice_kind} could not be posted.")),
+        "{name}: incident must name the notice kind"
+    );
     assert!(detail.contains(match name {
-        "question_401" | "question_403" | "filing_403" => "permission",
+        "question_401" | "question_403" | "question_retry_rejected" | "filing_403" => "permission",
         "question_404" | "question_410" => "not_found",
         "question_422" => "invalid_request",
         _ => "message_rejected",
@@ -439,6 +459,34 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
             "failed incident must not loop"
         );
     }
+    if name == "question_retry_rejected" {
+        clear_incident(&mut c, &incident_id);
+        drain(&mut c);
+        let snapshot = c.snapshot().unwrap();
+        let incidents: Vec<_> = snapshot.rows.iter().filter(|r| r.table == "incidents").collect();
+        assert_eq!(incidents.len(), 2, "a rejected retry raises exactly one later incident");
+        let second = incidents.iter().find(|r| r.id != incident_id).unwrap();
+        assert_eq!(second.value["open"], true);
+        assert_eq!(second.value["needs_rob"], true, "a later notice incident requires Rob");
+        let retry_key = second.value["effect"].as_str().unwrap().to_owned();
+        assert_eq!(api.state.lock().unwrap().rejected_question_posts, 2);
+        for _ in 0..3 {
+            c.look_key(&retry_key).unwrap();
+            drain(&mut c);
+        }
+        drop(c);
+        let mut c = open(settings, root.path(), &api.uri(), faults);
+        c.look_key(&retry_key).unwrap();
+        drain(&mut c);
+        let after = c.snapshot().unwrap();
+        assert_eq!(after.rows.iter().filter(|r| r.table == "incidents").count(), 2);
+        assert!(after.rows.iter().any(|r| r.table == "incidents"
+            && r.id == second.id && r.value["open"] == true && r.value["needs_rob"] == true),
+            "a passing probe must not clear the second incident, including after restart");
+        assert_eq!(api.state.lock().unwrap().rejected_question_posts, 2,
+            "a passing probe must not cause a third post");
+        return;
+    }
     faults.lock().unwrap().reject = false;
     faults.lock().unwrap().incident = false;
     api.state.lock().unwrap().forbidden_question = false;
@@ -516,6 +564,13 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
             })
             .count()
     };
+    if name != "stale_ask" {
+        assert!(
+            !c.snapshot().unwrap().rows.iter().any(|r|
+                r.table == "notice_incidents" && r.id == failed.key),
+            "confirmed retry must delete its notice incident counter"
+        );
+    }
     let expected_posts = usize::from(name != "stale_ask");
     assert_eq!(
         count(&api),
