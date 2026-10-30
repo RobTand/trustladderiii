@@ -226,21 +226,32 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    let token_only = completion.progress.is_some() && completion.observations.is_empty();
+                    let token_only =
+                        completion.progress.is_some() && completion.observations.is_empty();
                     let changed = if completion.progress.is_some() {
                         let snapshot = self.store.load()?;
                         let mut commit = Commit::new(
-                            format!("look-progress:{}:{}", state.delivery.key, snapshot.revision.get()),
+                            format!(
+                                "look-progress:{}:{}",
+                                state.delivery.key,
+                                snapshot.revision.get()
+                            ),
                             json!({"progress_read":state.delivery.key}),
                             &snapshot,
                         );
-                        let changed = self.record_progress(&snapshot, &mut commit,
-                            &state.delivery.key, completion.progress.as_ref())?;
+                        let changed = self.record_progress(
+                            &snapshot,
+                            &mut commit,
+                            &state.delivery.key,
+                            completion.progress.as_ref(),
+                        )?;
                         if !commit.rows.is_empty() {
                             self.store.commit(&commit)?;
                         }
                         changed == Some(true)
-                    } else { false };
+                    } else {
+                        false
+                    };
                     // The typed watch row is the sole token store.
                     completion.progress = None;
                     if token_only {
@@ -418,11 +429,18 @@ impl Controller {
         token: Option<&crate::executor::ProgressToken>,
     ) -> Result<Option<bool>> {
         let Some(token) = token else { return Ok(None) };
-        let Some(row) = snapshot.rows.iter().find(|r| r.table == "watches" && r.id == key) else {
+        let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches" && r.id == key)
+        else {
             return Ok(None);
         };
-        let previous: Option<crate::executor::WatchProgress> = row.value.get("progress")
-            .map(|value| serde_json::from_value(value.clone())).transpose()?;
+        let previous: Option<crate::executor::WatchProgress> = row
+            .value
+            .get("progress")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()?;
         let progress = crate::executor::WatchProgress {
             previous: previous.as_ref().map(|p| p.current.clone()),
             current: token.clone(),
@@ -433,14 +451,22 @@ impl Controller {
             value["progress"] = json!(progress);
             commit.rows.push(put("watches", key.into(), value));
         }
-        if changed && let Some(row) = snapshot.rows.iter().find(|r| r.table == "allowances" && r.id == key) {
+        if changed
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "allowances" && r.id == key)
+        {
             let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
             state.progress_ms = self.now_ms();
             state.due_ms = Some(state.progress_ms.saturating_add(
-                u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000));
+                u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+            ));
             state.progress = None;
             state.found = None;
-            commit.rows.push(put("allowances", key.into(), json!(state)));
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
         }
         Ok(Some(changed))
     }
@@ -451,7 +477,9 @@ impl Controller {
         if changed {
             state.progress_ms = now;
             self.retry_held_effects(upstream(state.delivery.output));
-        } else if now.saturating_sub(state.progress_ms) >= u64::from(allowance.no_progress_secs) * 1000 {
+        } else if now.saturating_sub(state.progress_ms)
+            >= u64::from(allowance.no_progress_secs) * 1000
+        {
             match upstream(state.delivery.output) {
                 Upstream::Workers => {
                     state.stopping = true;
@@ -463,15 +491,24 @@ impl Controller {
                 Upstream::GitHub | Upstream::Mergify => {
                     self.observe(
                         &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
-                        Observation::Kernel(Event::Fact { node: state.delivery.node(), fact: Fact::UpstreamStalled }),
+                        Observation::Kernel(Event::Fact {
+                            node: state.delivery.node(),
+                            fact: Fact::UpstreamStalled,
+                        }),
                     )?;
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
                 Upstream::PrismaBuild | Upstream::Worktrees => {}
             }
         }
-        if changed || now.saturating_sub(state.progress_ms) < u64::from(allowance.no_progress_secs) * 1000 {
-            state.due_ms = Some(state.progress_ms.saturating_add(u64::from(allowance.no_progress_secs) * 1000));
+        if changed
+            || now.saturating_sub(state.progress_ms) < u64::from(allowance.no_progress_secs) * 1000
+        {
+            state.due_ms = Some(
+                state
+                    .progress_ms
+                    .saturating_add(u64::from(allowance.no_progress_secs) * 1000),
+            );
         }
         Ok(false)
     }

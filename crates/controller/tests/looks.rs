@@ -800,33 +800,78 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         }),
     }));
     let terminal = Rc::new(Cell::new(false));
-    let mut c = open(settings, root.path(), &clock, Upstream::Mergify,
-        TokenQueue { token: token.clone(), terminal: terminal.clone() });
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Mergify,
+        TokenQueue {
+            token: token.clone(),
+            terminal: terminal.clone(),
+        },
+    );
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
-    let row = c.snapshot().unwrap().rows.into_iter().find(|r| r.table == "watches").unwrap();
+    let row = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "watches")
+        .unwrap();
     let key = row.id;
     assert!(row.value["progress"]["current"].get("Mergify").is_some());
     clock.advance(2);
     token.borrow_mut().queue_check.as_mut().unwrap().title = Some("Next in queue".into());
     drain(&mut c);
     let progressed_at = clock.0.get();
-    let allowance = c.snapshot().unwrap().rows.into_iter()
-        .find(|r| r.table == "allowances" && r.id == key).unwrap().value;
+    let allowance = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "allowances" && r.id == key)
+        .unwrap()
+        .value;
     assert_eq!(allowance["progress_ms"], progressed_at);
     assert_eq!(allowance["due_ms"], progressed_at + 3000);
     assert!(allowance["progress"].is_null() && allowance["found"].is_null());
     let stable = c.snapshot().unwrap();
     assert!(!c.drive_once().unwrap());
-    assert_eq!(c.snapshot().unwrap(), stable, "unchanged token writes nothing");
+    assert_eq!(
+        c.snapshot().unwrap(),
+        stable,
+        "unchanged token writes nothing"
+    );
     drop(c);
     let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(Upstream::Mergify, TokenQueue { token: token.clone(), terminal: terminal.clone() });
-    c = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock.clone()).unwrap();
+    registry.register(
+        Upstream::Mergify,
+        TokenQueue {
+            token: token.clone(),
+            terminal: terminal.clone(),
+        },
+    );
+    c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
     c.set_allowances(allowances());
     drain(&mut c);
-    let allowance = c.snapshot().unwrap().rows.into_iter()
-        .find(|r| r.table == "allowances" && r.id == key).unwrap().value;
-    assert_eq!(allowance["progress_ms"], progressed_at, "restart is not fresh progress");
+    let allowance = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "allowances" && r.id == key)
+        .unwrap()
+        .value;
+    assert_eq!(
+        allowance["progress_ms"], progressed_at,
+        "restart is not fresh progress"
+    );
     clock.advance(1);
     c.look_due().unwrap();
     drain(&mut c);
@@ -834,14 +879,26 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
     clock.advance(2);
     c.look_due().unwrap();
     drain(&mut c);
-    assert!(c.world().unwrap().nodes[0].waiting_incident, "token-only Found must reach the queue stall rule");
+    assert!(
+        c.world().unwrap().nodes[0].waiting_incident,
+        "token-only Found must reach the queue stall rule"
+    );
     terminal.set(true);
     drain(&mut c);
     c.look_now().unwrap();
     drain(&mut c);
-    assert!(matches!(c.world().unwrap().nodes[0].phase, Phase::Closed(_)));
+    assert!(matches!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
+    ));
     assert!(c.next_look_in().unwrap().is_none());
-    assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "watches" && r.id == key));
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "watches" && r.id == key)
+    );
 }
 fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
