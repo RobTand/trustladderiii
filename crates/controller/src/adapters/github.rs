@@ -168,7 +168,19 @@ impl Executor for Adapter {
                 if Self::close_reason(delivery).is_some() {
                     match self.runtime.block_on(client.issue(&repo, delivery.issue)) {
                         Ok(issue) if issue.state == "closed" => {}
-                        Ok(_) => return Ok(Reconciliation::Absent),
+                        Ok(_) => {
+                            if self
+                                .runtime
+                                .block_on(client.close_issue(
+                                    &repo,
+                                    delivery.issue,
+                                    Self::close_reason(delivery).expect("summary reason"),
+                                ))
+                                .is_err()
+                            {
+                                return Ok(Reconciliation::Pending);
+                            }
+                        }
                         Err(_) => return Ok(Reconciliation::Pending),
                     }
                 }

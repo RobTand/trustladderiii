@@ -376,7 +376,10 @@ impl Source for Webhooks {
             let request = self.control.0.server.recv();
             let mut request = match request {
                 Ok(request) => request,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                Err(_)
+                    if self.control.0.stop.load(Ordering::Acquire)
+                        || self.control.0.gap.load(Ordering::Acquire) =>
+                {
                     if self.control.0.stop.load(Ordering::Acquire) {
                         break;
                     }

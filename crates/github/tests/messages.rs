@@ -327,7 +327,7 @@ fn common_inflections_and_words_containing_vocabulary_pass() {
 
 #[test]
 fn paths_are_known_names_explicit_paths_or_slash_paths_with_extensions() {
-    let known = ["deploy/github-app", "workers/src", "README.md", "workers"];
+    let known = ["deploy/github-app", "workers/src"];
     let policy = Policy {
         known_paths: known.into_iter().map(String::from).collect(),
         ..Policy::default()
@@ -387,4 +387,31 @@ fn paths_are_known_names_explicit_paths_or_slash_paths_with_extensions() {
     let mut d = draft();
     d.options[0].outcome = "Use other/workers/src or workers/src-extra.".into();
     assert!(check(&d, &policy).is_ok());
+}
+
+#[test]
+fn decorated_paths_and_line_suffixes_are_rejected() {
+    let policy = Policy {
+        known_paths: ["workers/src/".into(), "docs".into(), "tests".into()].into(),
+        ..Policy::default()
+    };
+    for text in [
+        "**src/main.rs**",
+        "_src/main.rs_",
+        "<src/main.rs>",
+        "“src/main.rs”",
+        "‘src/main.rs’",
+        "src/main.rs:12",
+        "**src/main.rs:12**",
+        "workers/src/",
+        "workers/src",
+    ] {
+        assert!(
+            check_prose(text, &policy)
+                .unwrap_err()
+                .contains(&Violation::FilePath),
+            "{text}"
+        );
+    }
+    assert!(check_prose("The docs and tests are ready.", &policy).is_ok());
 }

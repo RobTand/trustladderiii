@@ -82,9 +82,15 @@ impl Writer for FakeWriter {
                 let fact = input.facts[field]
                     .as_str()
                     .ok_or(Error::Invalid("missing message fact"))?;
-                Ok(WriterReply::Text(TextDraft {
-                    text: format!("You asked for \"{title}\".\n\n{fact}"),
-                }))
+                let mut text = format!("You asked for \"{title}\".\n\n{fact}");
+                if let Some(goals) = input.facts["unmet_goals"].as_array() {
+                    for goal in goals {
+                        if let Some(goal) = goal.as_str() {
+                            text.push_str(&format!("\n{goal}"));
+                        }
+                    }
+                }
+                Ok(WriterReply::Text(TextDraft { text }))
             }
         }
     }
