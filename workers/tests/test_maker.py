@@ -85,8 +85,8 @@ def maker_request(tmp_path):
         "worktree": str(root),
         "inputs": {
             "brief": "Return hello without changing greet's interface.",
-            "goals": [{"id": "greeting", "description": "Return hello."},
-                      {"id": "interface", "description": "Keep greet's interface."}],
+            "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"},
+                      {"id": "interface", "description": "Keep greet's interface.", "verification": "review"}],
             "plan": {
                 "files": ["greeting.py", "test_greeting.py"],
                 "checks": [

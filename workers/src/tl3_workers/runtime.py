@@ -60,7 +60,7 @@ def create_model(request) -> BaseChatModel:
     )
 
 
-def build_agent(model: BaseChatModel, role, worktree=None):
+def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None):
     descriptions = {**BUILTIN_TOOL_DESCRIPTIONS, **role.tools}
     profile = HarnessProfile(
         base_system_prompt="",
@@ -82,7 +82,8 @@ def build_agent(model: BaseChatModel, role, worktree=None):
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     prompt += "\n\nReply with one JSON object matching this schema:\n"
-    prompt += json.dumps(schema(role.reply_schema), ensure_ascii=False)
+    prompt += json.dumps(schema(role.reply_schema) if reply_schema is None else reply_schema,
+                         ensure_ascii=False)
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(

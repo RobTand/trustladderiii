@@ -1,5 +1,6 @@
 """Write a leaf's code, stop before context exhaustion, and commit in worker code."""
 
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -7,8 +8,9 @@ import subprocess
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
+from jsonschema import Draft202012Validator
 
-from tl3_workers.contracts import read_json, validate
+from tl3_workers.contracts import read_json, schema
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.tools import _parts
@@ -97,7 +99,12 @@ def run(model, request, worktree, emit):
     if isinstance(model, ChatOpenAI):
         model.stream_usage = True
         model.model_kwargs = {**model.model_kwargs, "parallel_tool_calls": False}
-    agent = build_agent(model, ROLE, worktree)
+    # The protocol requires a head, but the model must never supply one.
+    proposal = deepcopy(schema("maker-reply"))
+    done = proposal["oneOf"][0]
+    done["required"].remove("head")
+    del done["properties"]["head"]
+    agent = build_agent(model, ROLE, worktree, reply_schema=proposal)
     last_message = None
     stream = agent.stream(
         {"messages": [HumanMessage(content=json.dumps(inputs, ensure_ascii=False))]},
@@ -121,12 +128,10 @@ def run(model, request, worktree, emit):
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final maker reply")
     reply = read_json(last_message.text)
-    validate("maker-reply", reply)
+    Draft202012Validator(proposal).validate(reply)
     _check_reply(inputs, reply)
     json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if reply["kind"] == "done":
-        if "head" in reply:
-            raise ValueError("the worker supplies the commit head")
         reply["head"] = _commit(request)
     return reply
 

@@ -25,7 +25,7 @@
           }
         }
       },
-      "required": ["kind", "self_check"], "additionalProperties": false
+      "required": ["kind", "self_check", "head"], "additionalProperties": false
     },
     {
       "type": "object",
