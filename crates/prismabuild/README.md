@@ -135,3 +135,10 @@ work. Persist its key durably before calling `publish`, which uses only
 crash or runtime update. Publication validates that PB returned the requested
 key. Priority is publication policy, outside action identity; the controller
 uses -10 for its development trial. The ordinary `submit` interface is unchanged.
+
+Tool children set `PR_SET_PDEATHSIG=SIGKILL` before exec and check their parent
+PID afterward. The spawning thread must live until the tool finishes. Linux
+delivers the death signal when that thread exits, even if the process remains
+alive. The controller adapter spawns on its daemon owner thread through a
+current-thread runtime. This prevents a publisher from surviving controller
+SIGKILL and landing work after recovery has established absence.

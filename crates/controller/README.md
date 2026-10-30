@@ -346,3 +346,9 @@ question. This adapter does not draft messages.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
+
+PrismaBuild bindings and completion markers live in per-node directories.
+Ticket #13 teardown calls `prismabuild::Adapter::retire_node(node)` only after
+the request closes and every effect and watch for that node has settled.
+The call is idempotent and removes the final records as well as source watches.
+`action_key(&Delivery)` locates a binding directly by node and effect key.

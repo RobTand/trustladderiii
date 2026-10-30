@@ -154,7 +154,7 @@ fn main() {
             adapter.execute(&delivery).unwrap();
             println!(
                 "{}",
-                serde_json::json!({"action_key": adapter.action_key(&delivery.key).unwrap()})
+                serde_json::json!({"action_key": adapter.action_key(&delivery).unwrap()})
             );
         }
         "observe" | "observe-failure" => {

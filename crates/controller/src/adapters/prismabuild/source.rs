@@ -1,18 +1,23 @@
-use super::{Job, Settings, encoded, job_paths, read_job, results, retire_superseded, write};
+use super::{
+    Job, Settings, job_paths, node_job_paths, node_root, read_job, record_path, results,
+    retire_superseded, write,
+};
 use crate::{Result, cli::Input};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::mpsc::Sender,
+    sync::{Arc, Mutex, mpsc::Sender},
     thread,
     time::Duration,
 };
+use tl3_kernel::NodeId;
 use tl3_prismabuild::{ActionKey, ActionState, PrismaBuild, Watcher};
 use tokio::sync::{broadcast, oneshot};
 
 pub struct Source {
     settings: Settings,
     watcher: Watcher,
-    keys: broadcast::Receiver<String>,
+    keys: broadcast::Receiver<NodeId>,
+    records_lock: Arc<Mutex<()>>,
     active: Option<BTreeMap<ActionKey, Job>>,
     tool_errors: BTreeSet<ActionKey>,
 }
@@ -46,12 +51,14 @@ impl Source {
     pub(super) fn new(
         client: PrismaBuild,
         settings: Settings,
-        keys: broadcast::Receiver<String>,
+        keys: broadcast::Receiver<NodeId>,
+        records_lock: Arc<Mutex<()>>,
     ) -> Self {
         Self {
             watcher: client.watcher(),
             settings,
             keys,
+            records_lock,
             active: None,
             tool_errors: BTreeSet::new(),
         }
@@ -106,31 +113,19 @@ impl Source {
     }
 
     fn done(&self, job: &Job) -> std::path::PathBuf {
-        self.settings
-            .records
-            .join(format!("{}.done", encoded(&job.delivery.key)))
+        record_path(&self.settings.records, &job.delivery, "done")
     }
 
-    fn register(&mut self, key: String) -> Result<()> {
-        let path = self.settings.records.join(format!("{}.job", encoded(&key)));
-        if path.with_extension("done").exists() {
-            self.active
-                .as_mut()
-                .unwrap()
-                .retain(|_, job| job.delivery.key != key);
-            self.tool_errors
-                .retain(|action| self.active.as_ref().unwrap().contains_key(action));
-            return Ok(());
+    fn register(&mut self, node: NodeId) -> Result<()> {
+        let active = self.active.as_mut().expect("initialized active set");
+        active.retain(|_, job| job.delivery.node() != node);
+        for path in node_job_paths(&node_root(&self.settings.records, node), false)? {
+            if let Some(job) = read_job(&path) {
+                active.insert(job.action.clone(), job);
+            }
         }
-        let Some(job) = read_job(&path) else {
-            return Ok(());
-        };
-        if !self.done(&job).exists() {
-            self.active
-                .as_mut()
-                .expect("initialized active set")
-                .insert(job.action.clone(), job);
-        }
+        self.tool_errors
+            .retain(|action| active.contains_key(action));
         Ok(())
     }
 
@@ -161,8 +156,10 @@ impl Source {
                 continue; // A newer completion in this batch retired the job.
             };
             match record {
-                Ok(Some(record))
-                    if !matches!(record.state, ActionState::Queued | ActionState::Claimed) =>
+                Ok(record)
+                    if record.as_ref().is_none_or(|record| {
+                        !matches!(record.state, ActionState::Queued | ActionState::Claimed)
+                    }) =>
                 {
                     // Bell transport backoff is not news about a failed result tool.
                     if self.tool_errors.contains(&key) && !changes.bell_available {
@@ -178,6 +175,15 @@ impl Source {
                                 continue;
                             }
                         };
+                    // Teardown may run as soon as the controller consumes this observation.
+                    // Hold the lock through delivery and marker fsync, and discard cached
+                    // jobs removed by teardown while the result tool was running.
+                    let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
+                    if !record_path(&self.settings.records, &job.delivery, "job").try_exists()? {
+                        self.active.as_mut().unwrap().remove(&key);
+                        self.tool_errors.remove(&key);
+                        continue;
+                    }
                     for observation in &completion.observations {
                         sender
                             .send(Input::Observation {

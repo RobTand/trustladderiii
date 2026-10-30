@@ -153,6 +153,21 @@ impl PrismaBuild {
     pub(crate) fn tool(&self) -> Command {
         let mut command = Command::new(&self.options.tool.program);
         command.args(&self.options.tool.args).kill_on_drop(true);
+        let parent = rustix::process::getpid();
+        // Linux ties PDEATHSIG to the spawning thread. Callers must keep that thread
+        // alive until this tool ends; the controller uses its owner thread, never spawn_blocking.
+        // SAFETY: the child runs only async-signal-safe prctl/getppid calls before exec.
+        unsafe {
+            command.pre_exec(move || {
+                rustix::process::set_parent_process_death_signal(Some(
+                    rustix::process::Signal::KILL,
+                ))?;
+                if rustix::process::getppid() != Some(parent) {
+                    return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+                }
+                Ok(())
+            });
+        }
         command
     }
 

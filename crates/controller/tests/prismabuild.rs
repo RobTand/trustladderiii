@@ -268,7 +268,7 @@ fn unknown_outcomes() {
             .count(),
         1
     );
-    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
     fs::write(
         root.path().join(format!("queue/ready/{key}.json")),
         "malformed",
@@ -284,60 +284,118 @@ fn unknown_outcomes() {
     );
 }
 fn crash_reuses_seal() {
-    let root = tempfile::tempdir().unwrap();
-    let delivery = run(root.path(), false);
-    fs::write(
-        root.path().join("delivery.json"),
-        serde_json::to_vec(&delivery).unwrap(),
-    )
-    .unwrap();
-    fs::create_dir_all(root.path().join("queue")).unwrap();
-    fs::write(root.path().join("queue/hold_publish_response"), "hold").unwrap();
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .arg("--kill-child")
-        .arg(root.path())
-        .spawn()
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal},
+    };
+    use std::os::unix::net::UnixListener;
+    for stage in ["before", "after"] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        fs::write(
+            root.path().join("delivery.json"),
+            serde_json::to_vec(&delivery).unwrap(),
+        )
         .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !root.path().join("queue/at_publication").exists() {
+        fs::create_dir_all(root.path().join("queue")).unwrap();
+        let socket = root.path().join("queue/publish.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        fs::write(root.path().join("queue/publish_stage"), stage).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--kill-child")
+            .arg(root.path())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let connection = loop {
+            match listener.accept() {
+                Ok((connection, _)) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("publisher gate: {error}"),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fixture never reached publication"
+            );
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "adapter child exited before publication"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        connection
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut publisher = String::new();
+        let mut connection = BufReader::new(connection);
+        connection.read_line(&mut publisher).unwrap();
+        let pid = Pid::from_raw(publisher.trim().parse().unwrap()).unwrap();
+        let publisher = pidfd_open(pid, PidfdFlags::empty()).unwrap();
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        let mut events = [PollFd::new(&publisher, PollFlags::IN)];
+        let ended = poll(
+            &mut events,
+            Some(&Timespec {
+                tv_sec: 10,
+                tv_nsec: 0,
+            }),
+        )
+        .unwrap();
+        if ended == 0 {
+            pidfd_send_signal(&publisher, Signal::KILL, Default::default()).unwrap();
+        }
+        assert_eq!(ended, 1, "publisher must die with its controller");
+        assert!(events[0].revents().contains(PollFlags::IN));
+        fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
+        let mut adapter = fixture(root.path(), "pending");
+        let key = adapter.action_key(&delivery).unwrap().unwrap();
         assert!(
-            std::time::Instant::now() < deadline,
-            "fixture never reached publication"
+            matches!(
+                adapter.reconcile(&delivery).unwrap(),
+                Reconciliation::Absent
+            ) == (stage == "before")
         );
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "adapter child exited before publication"
+        // Recovery cannot depend on the old checkout, and must use the saved seal.
+        fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
+        adapter.execute(&delivery).unwrap();
+        assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key.clone()));
+        assert_eq!(
+            fs::read_to_string(root.path().join("queue/publications"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
         );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    child.kill().unwrap();
-    assert!(!child.wait().unwrap().success());
-    let mut adapter = fixture(root.path(), "pending");
-    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
-    // Re-execution can no longer depend on the old source tree or configured harness.
-    fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
-    adapter.execute(&delivery).unwrap();
-    assert_eq!(adapter.action_key(&delivery.key).unwrap(), Some(key));
-    assert_eq!(
-        fs::read_to_string(root.path().join("queue/publications"))
+        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
             .unwrap()
             .lines()
-            .count(),
-        1
-    );
-    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|c| c.contains(&"--seal-only".to_owned()))
-            .count(),
-        1
-    );
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| c.contains(&"--seal-only".to_owned()))
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| c.contains(&"--publish-sealed".to_owned()))
+                .count(),
+            if stage == "before" { 2 } else { 1 }
+        );
+        // The recovered action is watched, whether it landed before death or was republished.
+        let (sender, receiver) = mpsc::channel();
+        finish(root.path(), key.as_str(), "done");
+        let running = adapter.source().spawn(sender);
+        assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+        drop(running);
+    }
 }
+
 struct BellRequest {
     line: String,
     response: mpsc::SyncSender<serde_json::Value>,
@@ -427,7 +485,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
     let running = adapter.source().spawn(sender.clone());
     // There are no startup jobs. Only execute's channel notification can introduce this key.
     adapter.execute(&delivery).unwrap();
-    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
     let now = bell.request();
     assert!(now.line.contains("/v1/now"));
     now.reply(0, serde_json::json!([]));
@@ -453,7 +511,7 @@ fn source_thread_delivers_once_and_restarts_idle() {
     ));
     drop(running);
     assert_eq!(
-        fs::read_dir(root.path().join("records"))
+        fs::read_dir(root.path().join("records/0"))
             .unwrap()
             .filter(|e| e
                 .as_ref()
@@ -465,14 +523,12 @@ fn source_thread_delivers_once_and_restarts_idle() {
         1
     );
     assert!(
-        !fs::read_dir(root.path().join("records")).unwrap().any(|e| e
+        !fs::read_dir(root.path().join("records/0"))
             .unwrap()
-            .path()
-            .extension()
-            .is_some_and(|v| v == "input"))
+            .any(|e| e.unwrap().path().extension().is_some_and(|v| v == "input"))
     );
     // A delivered job is skipped before parsing, even if its old .job is unreadable.
-    let job = fs::read_dir(root.path().join("records"))
+    let job = fs::read_dir(root.path().join("records/0"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .find(|p| p.extension().is_some_and(|v| v == "job"))
@@ -542,7 +598,7 @@ fn invalid_evidence_is_reported_once() {
         let mut adapter = fixture(root.path(), "done");
         adapter.execute(&first).unwrap();
         adapter.execute(&second).unwrap();
-        let key = adapter.action_key(&first.key).unwrap().unwrap();
+        let key = adapter.action_key(&first).unwrap().unwrap();
         if damage == "digest" {
             fs::write(
                 root.path().join(format!("queue/{key}.stdout")),
@@ -612,7 +668,7 @@ fn reconcile_never_submits() {
     ));
     assert!(!root.path().join("queue/calls.jsonl").exists());
     adapter.execute(&delivery).unwrap();
-    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
     fs::remove_file(root.path().join(format!("queue/ready/{key}.json"))).unwrap();
     assert!(matches!(
         adapter.reconcile(&delivery).unwrap(),
@@ -626,7 +682,7 @@ fn reconcile_never_submits() {
         1
     );
     adapter.execute(&delivery).unwrap();
-    assert_eq!(adapter.action_key(&delivery.key).unwrap(), Some(key));
+    assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key));
 }
 fn footprint_paths_and_merge_base() {
     for case in ["rename", "deletion", "space", "newline", "case", "diverged"] {
@@ -684,7 +740,10 @@ fn footprint_paths_and_merge_base() {
 
 fn record_path(root: &Path, key: &str, extension: &str) -> PathBuf {
     let encoded: String = key.bytes().map(|b| format!("{b:02x}")).collect();
-    root.join("records").join(format!("{encoded}.{extension}"))
+    let node = key.split(':').nth(1).unwrap();
+    root.join("records")
+        .join(node)
+        .join(format!("{encoded}.{extension}"))
 }
 
 fn tool_errors_wait_for_news() {
@@ -701,7 +760,7 @@ fn tool_errors_wait_for_news() {
         }
         let mut adapter = Adapter::new(client, settings).unwrap();
         adapter.execute(&delivery).unwrap();
-        let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+        let key = adapter.action_key(&delivery).unwrap().unwrap();
         let (sender, receiver) = mpsc::channel();
         let running = adapter.source().spawn(sender.clone());
         bell.request().reply(0, serde_json::json!([]));
@@ -784,7 +843,7 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     let bell = Bell::new();
     let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
     adapter.execute(&delivery).unwrap();
-    let key = adapter.action_key(&delivery.key).unwrap().unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
     bell.request().reply(0, serde_json::json!([]));
@@ -926,6 +985,22 @@ fn completed_records_retire_only_when_superseded() {
         assert!(record_path(root.path(), &delivery.key, "done").exists());
         previous = Some(delivery.clone());
     }
+    // Supersession and teardown must never list another node's files.
+    // A regular file at another node's directory makes accidental global scans fail.
+    fs::write(root.path().join("records/999"), "unrelated node").unwrap();
+    adapter.retire_node(NodeId(0)).unwrap();
+    adapter.retire_node(NodeId(0)).unwrap();
+    assert!(!root.path().join("records/0").exists());
+    assert_eq!(
+        fs::read_to_string(root.path().join("records/999")).unwrap(),
+        "unrelated node"
+    );
+    assert!(adapter.action_key(&delivery).unwrap().is_none());
+    // Restore a completed current record for the withdrawal assertion below.
+    adapter.execute(&delivery).unwrap();
+    let running = adapter.source().spawn(sender.clone());
+    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    drop(running);
     // Delivered records are skipped before parsing when finding withdrawal targets.
     fs::write(
         record_path(root.path(), &delivery.key, "job"),
@@ -969,9 +1044,9 @@ fn completed_records_retire_only_when_superseded() {
         "retain another node's completion"
     );
     fs::remove_file(record_path(root.path(), &first.key, "done")).unwrap();
-    let first_key = adapter.action_key(&first.key).unwrap().unwrap();
+    let first_key = adapter.action_key(&first).unwrap().unwrap();
     fs::remove_file(root.path().join(format!("queue/ready/{first_key}.json"))).unwrap();
-    let key = adapter.action_key(&later.key).unwrap().unwrap();
+    let key = adapter.action_key(&later).unwrap().unwrap();
     finish(root.path(), key.as_str(), "done");
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
@@ -982,6 +1057,44 @@ fn completed_records_retire_only_when_superseded() {
         "newer delivered checks also retire a never-published cancelled seal"
     );
     assert!(record_path(root.path(), &other.key, "job").exists());
+    adapter.retire_node(first.node()).unwrap();
+    assert!(!root.path().join("records/0").exists());
+    assert!(record_path(root.path(), &other.key, "job").exists());
+    drop(adapter);
+    let adapter = fixture(root.path(), "pending");
+    assert!(adapter.action_key(&first).unwrap().is_none());
+    assert!(adapter.action_key(&other).unwrap().is_some());
+}
+
+fn endings_outlive_queue_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    fs::remove_file(root.path().join(format!("queue/done/{key}.json"))).unwrap();
+    assert!(observed(completion(&mut adapter, &delivery)).1);
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    drop(running);
+    // An upgrade from flat records must retain both the binding and its done marker.
+    for extension in ["job", "done"] {
+        let path = record_path(root.path(), &delivery.key, extension);
+        fs::rename(
+            &path,
+            root.path().join("records").join(path.file_name().unwrap()),
+        )
+        .unwrap();
+    }
+    drop(adapter);
+    let mut adapter = fixture(root.path(), "done");
+    assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key));
+    assert!(observed(completion(&mut adapter, &delivery)).1);
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    assert!(receiver.try_recv().is_err());
+    drop(running);
 }
 
 fn abandoned_inputs_are_removed() {
@@ -1341,6 +1454,7 @@ fn main() {
             completed_records_retire_only_when_superseded,
         ),
         ("abandoned_inputs_are_removed", abandoned_inputs_are_removed),
+        ("endings_outlive_queue_rows", endings_outlive_queue_rows),
         ("reconcile_never_submits", reconcile_never_submits),
         (
             "footprint_paths_and_merge_base",
@@ -1362,5 +1476,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("19 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("20 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }

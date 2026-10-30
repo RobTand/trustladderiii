@@ -4,7 +4,7 @@ use crate::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{EffectKind, Out};
+use tl3_kernel::{EffectKind, NodeId, Out};
 use tl3_kernel::{Event, Reply};
 
 pub struct Fake(Records);
@@ -56,6 +56,7 @@ use std::{
     fs::{self, File},
     io::Write,
     path::PathBuf,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tl3_prismabuild::{
@@ -88,7 +89,8 @@ pub struct Adapter {
     client: PrismaBuild,
     settings: Settings,
     runtime: tokio::runtime::Runtime,
-    keys: tokio::sync::broadcast::Sender<String>,
+    keys: tokio::sync::broadcast::Sender<NodeId>,
+    records_lock: Arc<Mutex<()>>,
 }
 
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
@@ -122,9 +124,20 @@ fn read_job(path: &Path) -> Option<Job> {
         }
     }
 }
-fn job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
+fn node_root(root: &Path, node: NodeId) -> PathBuf {
+    root.join(node.0.to_string())
+}
+fn record_path(root: &Path, delivery: &Delivery, extension: &str) -> PathBuf {
+    node_root(root, delivery.node()).join(format!("{}.{extension}", encoded(&delivery.key)))
+}
+fn node_job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
+    };
     let mut found = vec![];
-    for entry in fs::read_dir(root)? {
+    for entry in entries {
         let path = entry?.path();
         if path.extension().is_some_and(|v| v == "job")
             && path.with_extension("done").exists() == completed
@@ -134,23 +147,50 @@ fn job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
     }
     Ok(found)
 }
+fn job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
+    let mut found = vec![];
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            found.extend(node_job_paths(&entry.path(), completed)?);
+        }
+    }
+    Ok(found)
+}
 
 fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
-    for path in job_paths(root, false)?
+    let root = node_root(root, delivery.node());
+    for path in node_job_paths(&root, false)?
         .into_iter()
-        .chain(job_paths(root, true)?)
+        .chain(node_job_paths(&root, true)?)
     {
         let Some(job) = read_job(&path) else { continue };
-        if job.delivery.node() == delivery.node() && job.delivery.generation < delivery.generation {
+        if job.delivery.generation < delivery.generation {
             // A later delivered check proves the prior effect and watch have settled.
             // Delete the binding first so a crash cannot expose a job without its done marker.
             fs::remove_file(&path)?;
-            File::open(root)?.sync_all()?;
+            File::open(&root)?.sync_all()?;
             match fs::remove_file(path.with_extension("done")) {
-                Ok(()) => File::open(root)?.sync_all()?,
+                Ok(()) => File::open(&root)?.sync_all()?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
+        }
+    }
+    Ok(())
+}
+
+fn clean_inputs(root: &Path) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == "input") {
+            fs::remove_dir_all(path)?;
+            File::open(root)?.sync_all()?;
+        } else if path.extension().is_some_and(|ext| ext == "done")
+            && !path.with_extension("job").exists()
+        {
+            fs::remove_file(path)?;
+            File::open(root)?.sync_all()?;
         }
     }
     Ok(())
@@ -169,24 +209,38 @@ impl Adapter {
             ));
         }
         fs::create_dir_all(&settings.records)?;
-        // No staging process survives the controller's exclusive store claim.
+        // Upgrade flat bindings once, preserving completions before moving their jobs.
         for entry in fs::read_dir(&settings.records)? {
             let path = entry?.path();
-            if path.extension().is_some_and(|ext| ext == "input") {
-                fs::remove_dir_all(path)?;
+            if path.extension().is_some_and(|ext| ext == "job") {
+                let job: Job = serde_json::from_slice(&fs::read(&path)?)?;
+                let root = node_root(&settings.records, job.delivery.node());
+                fs::create_dir_all(&root)?;
+                let done = path.with_extension("done");
+                if done.try_exists()? {
+                    fs::rename(&done, record_path(&settings.records, &job.delivery, "done"))?;
+                    File::open(&root)?.sync_all()?;
+                }
+                fs::rename(&path, record_path(&settings.records, &job.delivery, "job"))?;
+                File::open(&root)?.sync_all()?;
                 File::open(&settings.records)?.sync_all()?;
-            } else if path.extension().is_some_and(|ext| ext == "done")
-                && !path.with_extension("job").exists()
-            {
-                // Retirement may have crashed after durably deleting the binding.
-                fs::remove_file(path)?;
-                File::open(&settings.records)?.sync_all()?;
+            }
+        }
+        // Staging processes are parent-bound and cannot outlive the exclusive store claim.
+        clean_inputs(&settings.records)?;
+        for entry in fs::read_dir(&settings.records)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                clean_inputs(&entry.path())?;
             }
         }
         Ok(Self {
             client,
             settings,
+            records_lock: Arc::new(Mutex::new(())),
             keys: tokio::sync::broadcast::channel(64).0,
+            // Tool spawning stays on the daemon's controller owner thread. That thread
+            // lives until daemon exit, as required by Linux's thread-scoped PDEATHSIG.
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
@@ -198,19 +252,45 @@ impl Adapter {
             self.client.clone(),
             self.settings.clone(),
             self.keys.subscribe(),
+            self.records_lock.clone(),
         )
     }
 
-    pub fn action_key(&self, effect_key: &str) -> Result<Option<ActionKey>> {
-        Ok(self.job(effect_key)?.map(|job| job.action))
+    pub fn action_key(&self, delivery: &Delivery) -> Result<Option<ActionKey>> {
+        Ok(self.job(delivery)?.map(|job| job.action))
     }
 
-    fn job(&self, key: &str) -> Result<Option<Job>> {
-        match fs::read(self.settings.records.join(format!("{}.job", encoded(key)))) {
+    fn job(&self, delivery: &Delivery) -> Result<Option<Job>> {
+        match fs::read(record_path(&self.settings.records, delivery, "job")) {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Call only after the request has closed and all its effects and watches have settled.
+    /// Ticket #13 teardown owns this boundary. Repeated calls are harmless.
+    pub fn retire_node(&mut self, node: NodeId) -> Result<()> {
+        let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
+        let root = node_root(&self.settings.records, node);
+        // Remove bindings durably before their completions, including after partial retirement.
+        for path in node_job_paths(&root, false)?
+            .into_iter()
+            .chain(node_job_paths(&root, true)?)
+        {
+            fs::remove_file(path)?;
+        }
+        match File::open(&root) {
+            Ok(directory) => {
+                directory.sync_all()?;
+                fs::remove_dir_all(&root)?;
+                File::open(&self.settings.records)?.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let _ = self.keys.send(node);
+        Ok(())
     }
 
     fn fence(&self, epoch: i64) -> Result<()> {
@@ -229,14 +309,14 @@ impl Adapter {
     }
 
     fn submit(&self, delivery: &Delivery) -> Result<Job> {
-        if let Some(job) = self.job(&delivery.key)? {
-            self.remove_input(&delivery.key)?;
+        if let Some(job) = self.job(delivery)? {
+            self.remove_input(delivery)?;
             return Ok(job);
         }
-        let input = self
-            .settings
-            .records
-            .join(format!("{}.input", encoded(&delivery.key)));
+        let root = node_root(&self.settings.records, delivery.node());
+        fs::create_dir_all(&root)?;
+        File::open(&self.settings.records)?.sync_all()?;
+        let input = record_path(&self.settings.records, delivery, "input");
         let changed_paths = checks::stage(
             &input,
             &self.settings.harness,
@@ -274,24 +354,15 @@ impl Adapter {
                 .ok_or(crate::Error::Invalid("missing check plan"))?,
         };
         // The sealed key reaches stable storage before PB may execute anything.
-        write(
-            &self
-                .settings
-                .records
-                .join(format!("{}.job", encoded(&delivery.key))),
-            &job,
-        )?;
-        self.remove_input(&delivery.key)?;
+        write(&record_path(&self.settings.records, delivery, "job"), &job)?;
+        self.remove_input(delivery)?;
         Ok(job)
     }
 
-    fn remove_input(&self, key: &str) -> Result<()> {
-        let input = self
-            .settings
-            .records
-            .join(format!("{}.input", encoded(key)));
+    fn remove_input(&self, delivery: &Delivery) -> Result<()> {
+        let input = record_path(&self.settings.records, delivery, "input");
         match fs::remove_dir_all(input) {
-            Ok(()) => File::open(&self.settings.records)?.sync_all()?,
+            Ok(()) => File::open(node_root(&self.settings.records, delivery.node()))?.sync_all()?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -300,7 +371,7 @@ impl Adapter {
 
     fn targets(&self, delivery: &Delivery) -> Result<Vec<Job>> {
         let mut targets = vec![];
-        for path in job_paths(&self.settings.records, false)? {
+        for path in node_job_paths(&node_root(&self.settings.records, delivery.node()), false)? {
             // An unreadable active binding cannot prove that withdrawal has finished.
             let job: Job = serde_json::from_slice(&fs::read(path)?)?;
             if job.delivery.node() == delivery.node()
@@ -313,10 +384,7 @@ impl Adapter {
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {
-        let done = self
-            .settings
-            .records
-            .join(format!("{}.done", encoded(&job.delivery.key)));
+        let done = record_path(&self.settings.records, &job.delivery, "done");
         match fs::read(done) {
             Ok(bytes) => return Ok(Reconciliation::Found(serde_json::from_slice(&bytes)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -326,10 +394,9 @@ impl Adapter {
             .runtime
             .block_on(self.client.read(&job.action))
             .map_err(adapter_error)?;
-        let Some(record) = record else {
-            return Ok(Reconciliation::Absent);
-        };
-        if matches!(record.state, ActionState::Queued | ActionState::Claimed) {
+        if record.as_ref().is_some_and(|record| {
+            matches!(record.state, ActionState::Queued | ActionState::Claimed)
+        }) {
             return Ok(Reconciliation::Pending);
         }
         Ok(
@@ -338,6 +405,7 @@ impl Adapter {
                 .block_on(results::ending(&self.settings.result_tool, job, false))?
             {
                 Some(completion) => Reconciliation::Found(completion),
+                None if record.is_none() => Reconciliation::Absent,
                 None => Reconciliation::Pending,
             },
         )
@@ -353,7 +421,7 @@ impl Executor for Adapter {
                 ..
             } => {
                 let job = self.submit(delivery)?;
-                let _ = self.keys.send(delivery.key.clone());
+                let _ = self.keys.send(delivery.node());
                 if self
                     .runtime
                     .block_on(self.client.read(&job.action))
@@ -370,10 +438,10 @@ impl Executor for Adapter {
                 kind: EffectKind::WithdrawJob,
                 ..
             } => {
-                self.remove_input(&delivery.key)?;
+                self.remove_input(delivery)?;
                 let targets = self.targets(delivery)?;
                 for job in &targets {
-                    self.remove_input(&job.delivery.key)?;
+                    self.remove_input(&job.delivery)?;
                     self.runtime
                         .block_on(self.client.withdraw(&job.action, "controller withdrawal"))
                         .map_err(adapter_error)?;
@@ -396,8 +464,8 @@ impl Executor for Adapter {
                 ..
             } => {
                 // Reconciliation also settles cancelled effects that will never execute again.
-                self.remove_input(&delivery.key)?;
-                let Some(job) = self.job(&delivery.key)? else {
+                self.remove_input(delivery)?;
+                let Some(job) = self.job(delivery)? else {
                     // Publication requires this durable binding, so no attempt can exist without it.
                     return Ok(Reconciliation::Absent);
                 };
@@ -408,7 +476,7 @@ impl Executor for Adapter {
                 ..
             } => {
                 for job in self.targets(delivery)? {
-                    self.remove_input(&job.delivery.key)?;
+                    self.remove_input(&job.delivery)?;
                     let Some(record) = self
                         .runtime
                         .block_on(self.client.read(&job.action))
@@ -416,13 +484,10 @@ impl Executor for Adapter {
                     else {
                         // Authoritative absence also ends a source watch for a cancelled seal.
                         write(
-                            &self
-                                .settings
-                                .records
-                                .join(format!("{}.done", encoded(&job.delivery.key))),
+                            &record_path(&self.settings.records, &job.delivery, "done"),
                             &Completion::confirmed(vec![]),
                         )?;
-                        let _ = self.keys.send(job.delivery.key.clone());
+                        let _ = self.keys.send(job.delivery.node());
                         continue;
                     };
                     if matches!(record.state, ActionState::Queued | ActionState::Claimed) {
