@@ -162,8 +162,8 @@ The controller's separate connection advances cursors and retires rows.
 
 ### Register a delivery translator
 
-PR #69 registers its Mergify translator, and #13 registers its PR translator,
-on the controller before `Sources::run` or `ingress::drain`:
+Register the Mergify translator on the controller before `Sources::run` or
+`ingress::drain`. It handles PR updates as well as queue facts:
 
 ```rust
 controller.register_github_translator("mergify", mergify_translator);
@@ -194,8 +194,8 @@ restart the writer loop. A worker transport error stays uncertain.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13. Incident and replacement
-notices also stay on the fake for their owning tickets. Incidents need the
+PR effects use the same adapter's publishing implementation. Incident and replacement
+notices stay on the fake for their owning tickets. Incidents need the
 operations issue, and replacements need a new request, not another comment.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
@@ -317,8 +317,8 @@ registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, recor
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
 check baselines and receipts by effect key. A label write alone leaves enqueue
 uncertain. Mergify must report queue membership or the attempt's terminal result.
-The kernel has no dequeue effect, so this adapter adds none. GitHub PR effects
-remain on the fake until ticket #13.
+The kernel has no dequeue effect, so this adapter adds none. The GitHub adapter
+owns approval checks and opening and closing PRs.
 
 Register queue translation on the controller before draining ingress:
 
