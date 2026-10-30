@@ -1,3 +1,5 @@
+#[path = "workers/retirement.rs"]
+mod retirement_review;
 #[path = "workers/planning.rs"]
 mod planning;
 #[path = "../../store/tests/support/mod.rs"]
@@ -164,6 +166,11 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--source-io-child") {
+        let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        retirement_review::io_child(&settings, Path::new(&args[3]));
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--source-child") {
         let settings: tl3_config::Store =
             serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
@@ -258,6 +265,12 @@ fn main() {
     println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    retirement_review::summaries_and_states(&database.create("retirement_summaries"));
+    println!("test retirement_states_keep_one_summary_until_closure ... ok");
+    retirement_review::blocked_identities(&database.create("retirement_blocked"));
+    println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+    retirement_review::transient_io(&database.create("source_emfile"));
+    println!("test live_source_fails_on_emfile_and_restart_reattaches ... ok");
     confirmed_absence(&database.create("workers_confirmed_absence"));
     println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
     overflow(&database.create("workers_overflow"));
@@ -275,7 +288,7 @@ fn main() {
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
     database.stop();
-    println!("23 required worker supervisor and planning scenarios passed; no skips");
+    println!("26 required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -1423,6 +1436,7 @@ fn overflow(settings: &tl3_config::Store) {
     run.key = "effect:0:2".into();
     supervisor.execute(&run).unwrap();
     source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(source.recovered_overflows(), 1, "the kernel queue really overflowed");
     assert_eq!(
         source.active_runs(),
         2,

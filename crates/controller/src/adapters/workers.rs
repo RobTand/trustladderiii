@@ -181,24 +181,13 @@ impl Supervisor {
         if Store::open(&self.store)?.load()?.epoch.get() != epoch {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
-        let root = self.root(key);
-        if let Some((_, attempt)) = latest(&root)? {
-            cancel(&attempt.join("claim.json"))?;
-            cancel(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("claim.json"))?;
-        }
+        stop_attempt(&self.root(key))?;
         Ok(())
     }
 
     fn retire_run(&self, key: &str, store: &mut Store) -> Result<()> {
         let root = self.root(key);
-        if let Some((_, attempt)) = latest(&root)? {
-            cancel(&attempt.join("claim.json"))?;
-            cancel(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("claim.json"))?;
-        }
+        stop_attempt(&root)?;
         match fs::remove_dir_all(&root) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -232,6 +221,16 @@ impl Supervisor {
             .remove(&delivery.node().0.to_string());
         Ok(())
     }
+}
+
+fn stop_attempt(root: &Path) -> Result<()> {
+    if let Some((_, attempt)) = latest(root)? {
+        cancel(&attempt.join("claim.json"))?;
+        cancel(&attempt.join("process.json"))?;
+        process::kill_and_wait(&attempt.join("process.json"))?;
+        process::kill_and_wait(&attempt.join("claim.json"))?;
+    }
+    Ok(())
 }
 
 impl Executor for Supervisor {
@@ -293,7 +292,6 @@ impl Executor for Supervisor {
         let mut script = File::create(attempt.join("supervisor.py"))?;
         script.write_all(include_bytes!("../../tools/worker_supervisor.py"))?;
         script.sync_all()?;
-        write(&root.join("delivery.json"), delivery)?;
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
@@ -329,6 +327,10 @@ impl Executor for Supervisor {
     fn retire(&mut self, store: &mut Store) -> Result<()> {
         for key in store.retired_workers()? {
             if let Err(error) = self.retire_run(&key, store) {
+                if matches!(error, Error::Json(_) | Error::Invalid("worker record belongs to another machine")) {
+                    store.block_worker_retirement(&key)?;
+                    self.active.remove_key(&key);
+                }
                 eprintln!("worker retirement retained {key}: {error}");
             }
         }
@@ -399,6 +401,7 @@ pub(super) fn failed(delivery: &Delivery) -> Completion {
     })])
 }
 
+/// Inspect one attempt directory, rather than the run root or historical attempts.
 pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliation> {
     // Claim cancellation closes the spawn-before-record crash window atomically.
     // A delayed launcher must lose this claim before it can start any worker.

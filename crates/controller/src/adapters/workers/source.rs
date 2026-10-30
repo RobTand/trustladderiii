@@ -41,6 +41,7 @@ pub struct WorkerOutputSource {
     active: ActiveRuns,
     inotify: Option<OwnedFd>,
     root_watch: i32,
+    overflows: u64,
     runs: BTreeMap<PathBuf, Run>,
     watches: BTreeMap<i32, PathBuf>,
 }
@@ -63,6 +64,7 @@ impl WorkerOutputSource {
             active,
             inotify: None,
             root_watch: -1,
+            overflows: 0,
             runs: BTreeMap::new(),
             watches: BTreeMap::new(),
         }
@@ -70,6 +72,11 @@ impl WorkerOutputSource {
 
     pub fn active_runs(&self) -> usize {
         self.runs.len()
+    }
+
+    /// Number of kernel queue overflows recovered by a rescan.
+    pub fn recovered_overflows(&self) -> u64 {
+        self.overflows
     }
 
     fn watch(&self, path: &std::path::Path) -> Result<i32> {
@@ -122,7 +129,7 @@ impl WorkerOutputSource {
             inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK,
         ))?);
         self.root_watch = self.watch(&self.root.join(".ready"))?;
-        self.rescan(store)?;
+        self.rescan(store, true)?;
         Ok(self.runs.keys().cloned().collect())
     }
 
@@ -161,6 +168,7 @@ impl WorkerOutputSource {
 
     /// Nonblocking event drain for simulations which drive Controller directly.
     pub fn poll_once(&mut self, store: &mut Store, sender: &Sender<Input>) -> Result<()> {
+        let startup = self.inotify.is_none();
         let mut dirty = self.initialize(store)?;
         dirty.extend(self.wait(Some(&rustix::event::Timespec {
             tv_sec: 0,
@@ -199,7 +207,8 @@ impl WorkerOutputSource {
             }
         }
         if overflow {
-            self.rescan(store)?;
+            self.overflows += 1;
+            self.rescan(store, false)?;
             dirty.extend(self.runs.keys().cloned());
         }
         for name in ready_names {
@@ -213,8 +222,9 @@ impl WorkerOutputSource {
             };
             let keep = match self.refresh(&mut run, store, sender) {
                 Ok(keep) => keep,
-                Err(error @ (Error::Json(_) | Error::Io(_)))
-                | Err(error @ Error::Invalid("worker record belongs to another machine")) => {
+                Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error @ Error::Json(_))
+                | Err(error @ Error::Invalid("worker record belongs to another machine")) if startup => {
                     eprintln!("worker source skipped {}: {error}", root.display());
                     false
                 }
@@ -243,7 +253,7 @@ impl WorkerOutputSource {
                 return Ok(None);
             }
             let root = run_root(&self.root, &delivery.key);
-            if !root.is_dir() {
+            if !root.try_exists()? {
                 return Ok(None);
             }
             if let Some(previous) = self.runs.remove(&root) {
@@ -252,33 +262,31 @@ impl WorkerOutputSource {
             self.add(root.clone(), delivery)?;
             Ok(Some(root))
         })();
-        let result = match result {
-            Err(error @ Error::Store(_)) => return Err(error),
-            result => result,
-        };
+        let root = result?;
         remove_ready(&path)?;
-        match result {
-            Ok(root) => Ok(root),
-            Err(error) => {
-                eprintln!("worker source skipped notification {name}: {error}");
-                Ok(None)
-            }
-        }
+        Ok(root)
     }
 
-    fn rescan(&mut self, store: &mut Store) -> Result<()> {
+    fn rescan(&mut self, store: &mut Store, startup: bool) -> Result<()> {
         for delivery in watched_deliveries(store)? {
             let root = run_root(&self.root, &delivery.key);
             let name = root.file_name().unwrap().to_string_lossy();
             remove_ready(&self.root.join(format!(".ready-{name}")))?;
-            if root.is_dir() {
+            if root.try_exists()? {
                 self.add(root, delivery)?;
             }
         }
         // Read only the notification inbox, never the historical run directories.
         for entry in fs::read_dir(self.root.join(".ready"))? {
             let name = entry?.file_name();
-            self.ready(&name.to_string_lossy(), store)?;
+            let name = name.to_string_lossy();
+            match self.ready(&name, store) {
+                Err(error @ Error::Json(_)) if startup => {
+                    eprintln!("worker source skipped notification {name}: {error}");
+                    remove_ready(&self.root.join(".ready").join(name.as_ref()))?;
+                }
+                result => { result?; }
+            }
         }
         Ok(())
     }
@@ -320,7 +328,12 @@ impl WorkerOutputSource {
                 run.processes.remove(name);
             }
         }
-        if let Ok(file) = File::open(attempt.join("stdout.jsonl")) {
+        let stdout = match File::open(attempt.join("stdout.jsonl")) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(file) = stdout {
             let mut reader = BufReader::new(file);
             reader.seek(SeekFrom::Start(run.offset))?;
             loop {

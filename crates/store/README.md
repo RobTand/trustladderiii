@@ -162,9 +162,33 @@ the unit is empty and `last_progress_ms` is NULL. Ticket #15 uses `started_ms`
 when a run never reports progress. Ticket #18's status hook receives a Postgres
 `Transaction` and queries this table directly within its read-only transaction.
 The `(node_id, last_progress_ms DESC)` index supports per-node reads.
-`worker_progress(None)` reads all runs by start time, newest first.
+`worker_progress(None)` reads unretired runs by start time, newest first.
 `worker_progress(Some(node))` filters by request node.
 
 The controller stores accepted ingest replies, goals and audits as world rows
 in the same transaction as their kernel event. `worker_document(node, name)`
 reads `briefs`, `goals` or `audits` for status and later worker inputs.
+
+
+`worker_watches()` reads only watched worker deliveries. Startup uses it instead
+of loading run history. `worker_reconcilable(key)` returns false for a terminal
+effect with no watch. Stale ready notifications cannot reattach that run.
+`retired_workers()` lists progress keys whose effects are Confirmed, Failed or
+Cancelled and unwatched. Sent, Uncertain and Cancelling effects retain their evidence.
+`forget_worker(key)` rechecks that predicate and deletes the progress row only
+after the caller has durably removed its files. It atomically folds any last
+progress into `tl3_worker_summary`. The summary keeps the newest progress time
+and unit in one row per open request node, regardless of the number of retired runs.
+World commits delete the summary when that node closes or is removed. Cleanup
+after closure cannot recreate it. Summary insertion serializes with world commits.
+
+Migration 5 adds this summary, a shared terminal-and-unwatched SQL view, and
+`tl3_worker_progress.retirement_blocked`. `block_worker_retirement(key)` marks
+a corrupt or foreign process identity after logging it once. Future drains and
+restarts skip that key, retaining its files and progress for operator repair.
+Other cleanup failures retain their queue row for a later drain.
+
+The status hook reads active progress first, or the per-request summary when
+no active run exists, within its existing read-only snapshot. A worker that
+never reported progress still shows no recorded progress. Closed requests have
+no summary. These side-table writes do not change the kernel revision.

@@ -46,7 +46,8 @@ The tracer does not predefine issue text, branch text, or PR text fields.
 of columns. They show the issue title and number, phase, wait, credit, last
 progress and open incidents. Older requests without a title show "title not
 recorded". Both progress and incidents show "none recorded" until their store
-data exists. Tickets #9 and #15 fill `status::load_request_details`. It takes all
+data exists. `status::load_request_details` reads active worker progress or the
+retired run summary. Ticket #15 adds incident details. It takes all
 node IDs at once and returns a map from node ID to `RequestDetails`, using batch
 queries on the existing read-only transaction. Missing entries use the empty
 details. Return public summaries there, never
@@ -237,7 +238,9 @@ The source watches only active runs with inotify for output and exit records,
 and pidfds for process exits. A durable per-key notification registers a new
 attempt through the `.ready/` inbox. Completed runs leave the watched set.
 Startup reads only the store's worker watches and their run attempts. It never
-opens historical run directories or replies. Bad records are logged and skipped.
+opens historical run directories or replies. Bad historical records are logged and skipped during startup. Malformed live
+notifications and I/O errors fail the source loudly so the daemon restarts.
+Only vanished-file races are skipped in live refreshes.
 Stop indexes active runs by node. Attempt events matter only for `claim.json`,
 `process.json`, `stdout.jsonl`, and `exit.json`. An inotify queue overflow causes
 one rescan of watches and the notification inbox, then event-driven ingress resumes.
@@ -252,8 +255,12 @@ directory and ready marker, syncs the parent directories, then deletes the
 `tl3_worker_progress` row. That row is the cleanup queue. A crash at any step
 leaves it available for the next controller drain, including after restart.
 Missing files are harmless. Failed cleanup logs the key and retains its row.
+Corrupt or foreign process identities are marked as blocked, logged once, and
+skipped by later drains and restarts until operator repair.
 Retirement uses no clock. Claims are stored before creating run directories,
 so a crash before launch also leaves a cleanup row.
+Deleting a progress row folds its last progress into one summary per open request.
+Closing a request removes its summary. Status uses it when no active run exists.
 
 Only a valid role reply followed by exit zero is accepted. A recorded failed
 exit reports `RunFailed`. A lost supervisor record is absent only after both
