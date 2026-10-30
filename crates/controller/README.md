@@ -264,9 +264,10 @@ no timed wake-up and never scans the directory during ordinary bell waits.
 It submits no fleet work from inside tests.
 
 Generate the adapter review campaign from a clean detached worktree with
-`python3 crates/controller/tools/prismabuild_review_manifest.py > /tmp/tl3-pb-review.json`.
+`python3 crates/controller/tools/prismabuild_review_manifest.py hosts > /tmp/tl3-pb-review.json`.
 Submit that file with the published `pbcampaign.py`. It runs controller, client and store
-process tests once on each fleet host and the full verification script once.
+process tests once on each fleet host. After those pass, generate and submit
+`prismabuild_review_manifest.py workspace` for the full verification script.
 
 The separate outer-session trial is reproducible from the repository root:
 

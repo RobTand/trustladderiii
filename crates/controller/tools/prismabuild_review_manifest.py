@@ -2,10 +2,14 @@
 
 Submit this JSON with the published pbcampaign.py. This script executes no tests.
 """
+import argparse
 import json
 from pathlib import Path
 import subprocess
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("suite", choices=("hosts", "workspace"))
+args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
     raise SystemExit("commit changes before generating verification actions")
@@ -36,9 +40,9 @@ rows = [{
     "argv": ["cargo", "test", "-p", "tl3-controller", "-p", "tl3-prismabuild",
              "-p", "tl3-store", "--all-targets", "--locked"],
 } for host in ("dl380g10", "sparky", "sparklina")]
-rows.append({
+workspace = {
     **common,
     "anywhere": True,
     "argv": ["bash", "crates/controller/tools/verify.sh"],
-})
-print(json.dumps(rows, indent=2))
+}
+print(json.dumps(rows if args.suite == "hosts" else [workspace], indent=2))
