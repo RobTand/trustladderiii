@@ -85,7 +85,7 @@ impl Fixture {
         }
     }
     pub fn adapter(&self) -> Real {
-        self.adapter_at(1)
+        self.adapter_at(0)
     }
     pub fn adapter_at(&self, epoch: i64) -> Real {
         let mut adapter = Real::new(self.root.join("worktrees"), epoch).unwrap();

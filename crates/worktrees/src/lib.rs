@@ -686,6 +686,9 @@ impl Worktrees {
                 return Err(Error::WorktreeOccupied);
             }
             if path.exists() {
+                if allow_deletions && !path.join(".git").exists() {
+                    self.restore_removal_gitlink(name, &path)?;
+                }
                 self.verify_checkout(&path, name)?;
                 if allow_deletions {
                     let status = self.status(&path)?;
@@ -721,6 +724,37 @@ impl Worktrees {
             }
         }
         Ok(())
+    }
+
+    fn restore_removal_gitlink(&self, name: &BranchName, path: &Path) -> Result<(), Error> {
+        let link = path.join(".git");
+        // A removal may delete the gitlink before any tracked files. Reattach only
+        // the surviving registration whose branch and recorded gitdir both match.
+        match fs::symlink_metadata(&link) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err(Error::WorktreeOccupied),
+        }
+        for entry in fs::read_dir(self.common.join("worktrees")).map_err(|_| Error::Io)? {
+            let admin = entry.map_err(|_| Error::Io)?.path();
+            let gitdir = fs::read(admin.join("gitdir")).map_err(|_| Error::Io)?;
+            if path_line(&gitdir)? != link {
+                continue;
+            }
+            if fs::read(admin.join("HEAD")).map_err(|_| Error::Io)?
+                != format!("ref: {}\n", name.reference()).as_bytes()
+            {
+                return Err(Error::WorktreeOccupied);
+            }
+            let mut temporary = tempfile::NamedTempFile::new_in(path).map_err(|_| Error::Io)?;
+            temporary.write_all(b"gitdir: ").map_err(|_| Error::Io)?;
+            temporary
+                .write_all(admin.as_os_str().as_encoded_bytes())
+                .map_err(|_| Error::Io)?;
+            temporary.write_all(b"\n").map_err(|_| Error::Io)?;
+            temporary.persist_noclobber(&link).map_err(|_| Error::Io)?;
+            return Ok(());
+        }
+        Err(Error::WorktreeOccupied)
     }
 
     fn delete_local_branch_locked(&self, name: &BranchName) -> Result<(), Error> {

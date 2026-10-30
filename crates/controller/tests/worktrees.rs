@@ -495,6 +495,47 @@ fn incomplete_remove() {
     assert!(checkout.exists());
 }
 
+fn removal_without_gitlink() {
+    for dirt in ["deletions", "modified", "untracked"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let f = Fixture::create(scratch.path());
+        let prepare = prepared(&f);
+        let push = made(&f, &prepare, false);
+        f.adapter().execute(&push).unwrap();
+        let remove = f.delivery(EffectKind::RemoveWorktree, 3);
+        kill(&f, &remove, "before");
+        let checkout = f.adapter().checkout(&prepare);
+        fs::remove_file(checkout.join(".git")).unwrap();
+        fs::remove_file(checkout.join("shared.txt")).unwrap();
+        match dirt {
+            "modified" => {
+                fs::write(checkout.join("leaf.txt"), "keep edit\n").unwrap();
+            }
+            "untracked" => {
+                fs::write(checkout.join("new.txt"), "keep new\n").unwrap();
+            }
+            _ => {}
+        }
+        if dirt == "deletions" {
+            found(f.adapter().reconcile(&remove).unwrap());
+            assert_removed(&f, &remove);
+        } else {
+            assert!(f.adapter().reconcile(&remove).is_err());
+            let file = if dirt == "modified" {
+                "leaf.txt"
+            } else {
+                "new.txt"
+            };
+            assert!(
+                fs::read_to_string(checkout.join(file))
+                    .unwrap()
+                    .starts_with("keep")
+            );
+            assert!(checkout.join(".git").is_file());
+        }
+    }
+}
+
 fn killed_git_add() {
     let scratch = tempfile::tempdir().unwrap();
     let f = Fixture::create(scratch.path());
@@ -590,6 +631,7 @@ fn main() {
     old_epoch_partial_attempts();
     incomplete_prepare();
     incomplete_remove();
+    removal_without_gitlink();
     killed_git_add();
     println!(
         "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
