@@ -309,6 +309,7 @@ impl Worktrees {
                 .stdout,
         )?;
         match fs::read(locked) {
+            // Git translates this reason. execute sets LC_ALL=C for every Git child.
             Ok(reason) => Ok(reason == b"initializing\n"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(_) => Err(Error::Io),

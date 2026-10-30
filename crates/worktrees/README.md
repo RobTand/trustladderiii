@@ -67,6 +67,11 @@ the orphan's gitlink before repairing the registration. It preserves working fil
 `finish_prepare` repairs files only while Git's administrative lock
 `<common-git-dir>/worktrees/<id>/locked` contains exactly `initializing\n`.
 Git creates this lock during `worktree add` and removes it on success.
+Only Git's own initialization lock is trusted. Operators must never run
+`git worktree lock --reason initializing` by hand. A manual lock with that reason
+on an uncommitted checkout at the base lets Prepare reset tracked edits.
+Untracked files can then make the cleanliness check fail with `DirtyWorktree`,
+leaving the lock in place. TL3 never creates this lock itself.
 Any effect key may repair that checkout if the branch head still equals
 `refs/tl3/bases/<branch>`, even if fetched main has moved. Repair clears a stale
 index lock, runs `reset --hard <branch>`, verifies cleanliness, then unlocks.
@@ -77,6 +82,28 @@ unfinished intent reconciles after a newer Prepare. The next maker run sees
 leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
+
+### Clear a half-registered add
+
+A kill after Git writes the admin `gitdir` but before it writes `HEAD` needs
+operator recovery. Prepare returns `WorktreeOccupied`, and Remove can return
+Git exit 128. Without `HEAD`, the adapter cannot prove which branch owns the
+registration. It preserves the checkout and registration for inspection.
+
+1. Stop the owning controller and all its Git children. Keep other Git writers stopped.
+2. Read the checkout's `.git` file to locate its admin directory. Verify that it
+   is a direct child of this repository's `<common-git-dir>/worktrees` directory.
+3. Verify that the admin `gitdir` points back to this checkout's `.git`, `HEAD`
+   is absent, and `locked` contains exactly `initializing\n`.
+4. Verify that the checkout contains only `.git`, including hidden entries,
+   and that the request branch head equals `refs/tl3/bases/<branch>`.
+5. Remove only that admin directory, then the checkout's `.git` file and empty
+   checkout directory. Preserve the branch, base ref, and `tl3-controller` journal.
+6. Restart the controller and retry Prepare or Remove. Prepare recreates the checkout.
+
+If any check fails, preserve the files and investigate rather than deleting them.
+
+### Remove a checkout
 
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
 The controller records a clean preflight in its Remove intent. Git's

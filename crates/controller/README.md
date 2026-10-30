@@ -281,6 +281,20 @@ The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
 
+For PR #64's receiver and status review evidence, create a clean detached worktree
+at the final commit. From that worktree, submit the three host checks:
+
+```bash
+python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
+```
+
+The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
+and `sparklina`. Controller targets include the status page and process tests.
+After they pass, submit the full workspace `tools/verify.sh` command shown above
+once with `--anywhere`. Record every action key and result in the PR body.
+
+
 ## Worktree adapter
 
 `worktrees::Real::new(&config.worktrees_root, epoch)` uses the existing configurable
@@ -349,18 +363,16 @@ paths for the check harness and publication footprint. After a clean rebase,
 read both values again: the base and head move together. `Delivery::head_sha`
 remains the exact commit requested by an individual push effect.
 
-For PR #64's receiver and status review evidence, create a clean detached worktree
-at the final commit. From that worktree, submit the three host checks:
 
-```bash
-python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
-```
+`tools/worktree_review_manifest.py worktrees` generates the three host-tagged
+PrismaBuild checks from a clean detached worktree at the final commit. Each runs
+all controller and worktrees targets, including the 50 SIGKILL boundaries and real
+killed-add recoveries. Submit its JSON with `pbcampaign.py --detach`. After those
+pass, submit `tools/worktree_review_manifest.py workspace` the same way to run
+`verify.sh` once with portable placement. Record every action key and result in
+the PR body. See the [worktrees recovery guide](../worktrees/README.md#recovery)
+for manual initialization locks and half-registered adds that need operator cleanup.
 
-The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
-and `sparklina`. Controller targets include the status page and process tests.
-After they pass, submit the full workspace `tools/verify.sh` command shown above
-once with `--anywhere`. Record every action key and result in the PR body.
 
 ## Add a worker role
 

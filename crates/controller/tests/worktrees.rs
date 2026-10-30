@@ -5,7 +5,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     os::unix::{
         net::{UnixListener, UnixStream},
-        process::ExitStatusExt,
+        process::{CommandExt, ExitStatusExt},
     },
     path::Path,
     process::{Command, Stdio},
@@ -901,11 +901,13 @@ fn kill_git_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
     );
     git(&f.repo, &["config", "filter.park.required", "true"]);
     let mut child = Command::new("git")
+        .process_group(0)
         .current_dir(&f.repo)
         .env_clear()
         .env("PATH", env::var_os("PATH").unwrap())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("LC_ALL", "C")
         .args([
             "worktree",
             "add",
@@ -932,10 +934,10 @@ fn kill_git_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
         "{}: $GIT_DIR/worktrees/<id>/locked = initializing\\n",
         git(&f.repo, &["--version"])
     );
-    child.kill().unwrap();
+    let group = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+    rustix::process::kill_process_group(group, rustix::process::Signal::KILL).unwrap();
     assert_eq!(child.wait().unwrap().signal(), Some(9));
     VERIFIED_KILLS.fetch_add(1, Ordering::Relaxed);
-    filter.write_all(&[1]).unwrap();
     // EOF proves the smudge process has exited before recovery changes Git state.
     assert_eq!(filter.read(&mut ready).unwrap(), 0);
     git(&f.repo, &["config", "--remove-section", "filter.park"]);
@@ -1018,6 +1020,57 @@ fn killed_git_add() {
     }
 }
 
+fn half_registered_add_requires_operator_recovery() {
+    let scratch = tempfile::tempdir().unwrap();
+    let f = Fixture::create(scratch.path());
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    let checkout = half_add(&f, &prepare);
+    let locked = initialization_lock(&checkout);
+    let admin = locked.parent().unwrap();
+    fs::write(&locked, "initializing\n").unwrap();
+    // Construct the add window after gitdir is written but before HEAD exists.
+    fs::remove_file(admin.join("HEAD")).unwrap();
+    let link = fs::read(checkout.join(".git")).unwrap();
+    let backlink = fs::read(admin.join("gitdir")).unwrap();
+    let head = f.head(&prepare);
+    assert_eq!(
+        head,
+        git(
+            &f.repo,
+            &[
+                "rev-parse",
+                &format!(
+                    "refs/tl3/bases/{}",
+                    Real::branch(&prepare).unwrap().as_str()
+                )
+            ]
+        )
+    );
+    assert_eq!(fs::read_dir(&checkout).unwrap().count(), 1);
+    assert!(f.adapter().execute(&prepare).is_err());
+    assert!(
+        f.adapter()
+            .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
+            .is_err()
+    );
+    assert_eq!(fs::read(checkout.join(".git")).unwrap(), link);
+    assert_eq!(fs::read(admin.join("gitdir")).unwrap(), backlink);
+    assert_eq!(fs::read(&locked).unwrap(), b"initializing\n");
+    assert!(!admin.join("HEAD").exists());
+    assert_eq!(f.head(&prepare), head);
+    assert_eq!(fs::read_dir(&checkout).unwrap().count(), 1);
+
+    // The README's operator procedure removes only this empty registration.
+    fs::remove_dir_all(admin).unwrap();
+    fs::remove_file(checkout.join(".git")).unwrap();
+    fs::remove_dir(&checkout).unwrap();
+    let completion = f.adapter().execute(&prepare).unwrap();
+    assert!(matches!(completion.ack, Ack::Confirmed));
+    assert_eq!(fs::read(checkout.join("shared.txt")).unwrap(), b"base\n");
+    assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+    println!("half-registered add preserved, then recovered after operator cleanup");
+}
+
 fn remove_ignores_unrelated_journal_records() {
     let scratch = tempfile::tempdir().unwrap();
     let f = Fixture::create(scratch.path());
@@ -1062,6 +1115,7 @@ fn main() {
     incomplete_remove();
     removal_without_gitlink();
     killed_git_add();
+    half_registered_add_requires_operator_recovery();
     remove_ignores_unrelated_journal_records();
     println!(
         "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",

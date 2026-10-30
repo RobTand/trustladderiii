@@ -5,12 +5,15 @@ behavior on every fleet host. The workspace suite is portable.
 """
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("suite", choices=("worktrees", "workspace"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
+if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
+    raise SystemExit("Commit changes and use a clean detached worktree before submitting.")
 env = {
     "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "RUSTUP_HOME": "/home/rob/.rustup", "CARGO_HOME": "/home/rob/.cargo",
@@ -20,7 +23,7 @@ env = {
 }
 rows = [{
     "cwd": str(root),
-    "argv": ["bash", "-ec", "cargo test -p tl3-worktrees --locked\ncargo test -p tl3-controller --test worktrees --locked"],
+    "argv": ["cargo", "test", "-p", "tl3-worktrees", "-p", "tl3-controller", "--all-targets", "--locked"],
     "cpus": 2, "demand": {"mem_gb": 6}, "tags": [host], "env": env,
     "priority": -10,
 } for host in ("dl380g10", "sparky", "sparklina")]
