@@ -85,7 +85,7 @@ impl State {
         pull["state"] = json!("open");
         pull["merged"] = json!(false);
         pull["merged_at"] = Value::Null;
-        pull["merge_commit_sha"] = json!("merge-tree");
+        pull["merge_commit_sha"] = json!("dddddddddddddddddddddddddddddddddddddddd");
         Self {
             pull,
             checks: fixture("waiting", "checks"),
@@ -95,7 +95,7 @@ impl State {
             lag: false,
             fail_post: false,
             events: vec![],
-            merge_checks: json!([{ "id": 900, "name": "CI", "head_sha": "merge-tree",
+            merge_checks: json!([{ "id": 900, "name": "CI", "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
                 "status": "completed", "conclusion": "success", "app": {"id": 2, "slug": "ci"} }]),
         }
     }
@@ -111,7 +111,7 @@ impl State {
         self.pull["merged"] = json!(true);
         self.pull["merged_at"] = json!("2026-10-30T01:00:00Z");
         if unapproved {
-            self.pull["head"]["sha"] = json!("unapproved-real-head");
+            self.pull["head"]["sha"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         }
         self.checks = fixture("merged", "checks");
     }
@@ -150,7 +150,7 @@ impl Respond for Api {
             ("GET", "/repos/owner/sandbox/issues" | "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200).set_body_json(json!([])),
             ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200).set_body_json(json!({"check_suites":[]})),
             ("GET", path) if path.ends_with("/check-runs") => ResponseTemplate::new(200).set_body_json(json!({"check_runs":
-                if path.contains("/commits/merge-tree/") { state.merge_checks.clone() } else {state.checks()} })),
+                if path.contains("/commits/dddddddddddddddddddddddddddddddddddddddd/") { state.merge_checks.clone() } else {state.checks()} })),
             _ => panic!("unexpected API request {method} {path}"),
         }
     }
@@ -377,7 +377,7 @@ fn merged(
     if unapproved {
         assert_eq!(
             facts[0]["evidence"]["Merged"]["head"],
-            "unapproved-real-head"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         );
     }
     if unapproved || !checks_passed {
@@ -482,7 +482,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         }
         "synchronize" => {
             body["before"] = body["pull_request"]["head"]["sha"].clone();
-            body["after"] = json!("someone-elses-head");
+            body["after"] = json!("cccccccccccccccccccccccccccccccccccccccc");
             body["pull_request"]["head"]["sha"] = body["after"].clone();
             api.state.lock().unwrap().pull = body["pull_request"].clone();
         }
