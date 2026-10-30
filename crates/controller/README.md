@@ -720,8 +720,7 @@ that clone.
 
 The controller retains each check's tests, outcomes and `custody: in-process` in
 `check_reports`. Each node keeps only its latest head's report, and closure deletes
-it. A review needs the matching check plan,
-base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
+it. A review needs the matching check plan, base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
 identifiers when ingest did not supply IDs. Optional `standing_rules` in worker
 materials supplement the controller's rules. The reserved `test-report-integrity`
 rule always replaces any supplied rule with the same ID. It protects test output
@@ -772,7 +771,8 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 ```
 
 This runs the publishing, GitHub and PrismaBuild adapter scenarios once per host
-on dl380g10, sparky and sparklina, plus the worker package's offline tests. The
+on dl380g10, sparky and sparklina. It also runs the affected Rust suites,
+including process recovery scenarios, and the worker package's offline tests. The
 `publishing` target combines local repositories, mock GitHub HTTP, recorded
 PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
 entry point with an offline model. Making uses the worker fake until ticket #12
