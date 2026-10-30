@@ -1033,18 +1033,15 @@ fn killed_supervisor(settings: &tl3_config::Store) {
 
 fn fake_stop(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "normal");
+    let config = config(settings, root.path(), "blocked");
     let fakes = root.path().join("fakes");
     let mut supervisor = Supervisor::new(&config, &fakes).unwrap();
+    materials(&mut Store::open(settings).unwrap());
     let mut run = delivery();
-    run.output = Out::Effect {
-        node: NodeId(0),
-        seq: 1,
-        kind: EffectKind::StartRun(Role::Review),
-        head: None,
-    };
-    run.head_sha = Some("a".repeat(40));
     supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let source = supervisor.source();
+    assert_eq!(source.active_runs(), 1);
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
@@ -1061,6 +1058,7 @@ fn fake_stop(settings: &tl3_config::Store) {
         head: None,
     };
     supervisor.execute(&run).unwrap();
+    assert_eq!(source.active_runs(), 0);
     assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),
