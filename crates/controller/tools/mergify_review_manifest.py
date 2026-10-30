@@ -9,7 +9,7 @@ if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True
 if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=root, capture_output=True).returncode == 0:
     raise SystemExit("Use git worktree add --detach at the final commit before submitting.")
 env = {
-    "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+    "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "RUSTUP_HOME": "/home/rob/.rustup",
     "CARGO_HOME": "/home/rob/.cargo",
     "KANI_HOME": "/home/rob/.kani",
