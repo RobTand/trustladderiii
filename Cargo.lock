@@ -2576,6 +2576,7 @@ dependencies = [
  "tl3-config",
  "tl3-kernel",
  "tl3-store",
+ "tl3-worktrees",
  "tokio",
 ]
 

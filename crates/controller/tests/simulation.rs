@@ -13,9 +13,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Registry, Upstream},
     status,
 };
-use tl3_kernel::{
-    Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase, Role,
-};
+use tl3_kernel::{Ack, Command as Control, EffectKind, Event, Fact, NodeId, Out, Outcome, Phase};
 use tl3_store::{Commit, EffectState, EffectTransition, Epoch, RowChange, Snapshot, Store};
 
 fn bootstrap() -> Bootstrap {
@@ -57,7 +55,8 @@ fn main() {
         return;
     }
     let mut database = Database::start();
-    let cases: &[(&str, fn(&tl3_config::Store))] = &[
+    type Scenario = (&'static str, fn(&tl3_config::Store));
+    let cases: &[Scenario] = &[
         ("labelled_issue_closes", labelled_issue_closes),
         (
             "restart_without_duplicate_deliveries",
@@ -83,6 +82,7 @@ fn main() {
         ("invalid_footprints", invalid_footprints),
         ("status_is_read_only", status_is_read_only),
         ("config_permissions_and_pool", config_permissions_and_pool),
+        ("mixed_registry", mixed_registry),
     ];
     for (name, test) in cases {
         test(&database.create(name));
@@ -1299,4 +1299,126 @@ fn config_permissions_and_pool(settings: &tl3_config::Store) {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("store.password_file"));
     }
+}
+
+// A test can wire a real client for part of one upstream, delegating its other
+// effects to that upstream's fake. Production adapters belong to their own tickets.
+struct LocalWorktrees {
+    git: tl3_worktrees::Worktrees,
+    checkout: PathBuf,
+    fake: adapters::worktrees::Fake,
+}
+impl Executor for LocalWorktrees {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        let branch = tl3_worktrees::BranchName::new("tl3/mixed-fixture").unwrap();
+        let map = |error| tl3_controller::Error::Adapter(Box::new(error));
+        match delivery.output {
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            } => {
+                self.git.create_branch(&branch).map_err(map)?;
+                self.git
+                    .create_worktree(&branch, &self.checkout)
+                    .map_err(map)?;
+            }
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            } => {
+                self.git
+                    .remove_worktree(&branch, &self.checkout)
+                    .map_err(map)?;
+                self.git.delete_local_branch(&branch).map_err(map)?;
+            }
+            _ => return self.fake.execute(delivery),
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        let found = match delivery.output {
+            Out::Effect {
+                kind: EffectKind::PrepareWorktree,
+                ..
+            } => self.checkout.join(".git").exists(),
+            Out::Effect {
+                kind: EffectKind::RemoveWorktree,
+                ..
+            } => !self.checkout.exists(),
+            _ => return self.fake.reconcile(delivery),
+        };
+        Ok(if found {
+            Reconciliation::Found(Completion::confirmed(vec![]))
+        } else {
+            Reconciliation::Absent
+        })
+    }
+}
+fn mixed_registry(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let repository = root.path().join("repo");
+    fs::create_dir(&repository).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&repository)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let worktrees = root.path().join("worktrees");
+    fs::create_dir(&worktrees).unwrap();
+    let checkout = worktrees.join("request");
+    let records = root.path().join("upstreams");
+    let mut registry = adapters::simulation(&records).unwrap();
+    registry.register(
+        Upstream::Worktrees,
+        LocalWorktrees {
+            git: tl3_worktrees::Worktrees::open(&repository, &worktrees).unwrap(),
+            checkout: checkout.clone(),
+            fake: adapters::worktrees::Fake::new(&records),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    for _ in 0..100 {
+        if checkout.join(".git").exists() {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    assert!(
+        checkout.join(".git").exists(),
+        "the registered real client must create the checkout"
+    );
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert!(
+        !checkout.exists(),
+        "the same real client must remove the checkout"
+    );
+    assert!(
+        adapters::delivery_counts(&records).unwrap().len() > 10,
+        "other upstreams use fakes"
+    );
 }
