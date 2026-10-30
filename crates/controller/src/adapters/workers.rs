@@ -47,6 +47,12 @@ impl ActiveRuns {
             }
         }
     }
+    fn remove_key(&self, key: &str) {
+        self.0.lock().unwrap().retain(|_, keys| {
+            keys.remove(key);
+            !keys.is_empty()
+        });
+    }
     fn keys(&self, node: &str) -> Vec<String> {
         self.0
             .lock()
@@ -70,20 +76,19 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(config: &tl3_config::Config, fake_root: &Path) -> Result<Self> {
-        fs::create_dir_all(&config.workers.runs)?;
+        fs::create_dir_all(config.workers.runs.join(".ready"))?;
         fs::create_dir_all(fake_root)?;
         let active = ActiveRuns::default();
-        for entry in fs::read_dir(&config.workers.runs)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let root = entry.path();
-            if let Some(value) = read(&root.join("delivery.json"))? {
-                let delivery: Delivery = serde_json::from_value(value)?;
-                if matches!(inspect(&root, &delivery)?, Reconciliation::Pending) {
-                    active.add(&delivery);
-                }
+        let mut store = Store::open(&config.store)?;
+        for delivery in watched_deliveries(&mut store)? {
+            let root = run_root(&config.workers.runs, &delivery.key);
+            match latest(&root).and_then(|attempt| match attempt {
+                Some((_, path)) => inspect(&path, &delivery),
+                None => Ok(Reconciliation::Absent),
+            }) {
+                Ok(Reconciliation::Pending) => active.add(&delivery),
+                Ok(_) => {}
+                Err(error) => eprintln!("worker startup skipped {}: {error}", delivery.key),
             }
         }
         Ok(Self {
@@ -176,13 +181,32 @@ impl Supervisor {
         if Store::open(&self.store)?.load()?.epoch.get() != epoch {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
+        stop_attempt(&self.root(key))?;
+        Ok(())
+    }
+
+    fn retire_run(&self, key: &str, store: &mut Store) -> Result<()> {
         let root = self.root(key);
-        if let Some((_, attempt)) = latest(&root)? {
-            cancel(&attempt.join("claim.json"))?;
-            cancel(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("process.json"))?;
-            process::kill_and_wait(&attempt.join("claim.json"))?;
+        stop_attempt(&root)?;
+        match fs::remove_dir_all(&root) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
+        // Keep the progress row as the durable cleanup queue until unlink is durable.
+        let name = root.file_name().unwrap().to_string_lossy();
+        remove_ready(&self.settings.runs.join(format!(".ready-{name}")))?;
+        remove_ready(
+            &self
+                .settings
+                .runs
+                .join(".ready")
+                .join(format!(".ready-{name}")),
+        )?;
+        File::open(&self.settings.runs)?.sync_all()?;
+        File::open(self.settings.runs.join(".ready"))?.sync_all()?;
+        store.forget_worker(key)?;
+        self.active.remove_key(key);
         Ok(())
     }
 
@@ -197,6 +221,16 @@ impl Supervisor {
             .remove(&delivery.node().0.to_string());
         Ok(())
     }
+}
+
+fn stop_attempt(root: &Path) -> Result<()> {
+    if let Some((_, attempt)) = latest(root)? {
+        cancel(&attempt.join("claim.json"))?;
+        cancel(&attempt.join("process.json"))?;
+        process::kill_and_wait(&attempt.join("process.json"))?;
+        process::kill_and_wait(&attempt.join("claim.json"))?;
+    }
+    Ok(())
 }
 
 impl Executor for Supervisor {
@@ -219,7 +253,13 @@ impl Executor for Supervisor {
         let Some(role) = role else {
             return Fake::new(&self.fake_root).execute(delivery);
         };
-        match inspect(&self.root(&delivery.key), delivery)? {
+        let root = self.root(&delivery.key);
+        let previous = latest(&root)?;
+        let result = match &previous {
+            Some((_, attempt)) => inspect(attempt, delivery)?,
+            None => Reconciliation::Absent,
+        };
+        match result {
             Reconciliation::Found(completion) => {
                 self.active.remove(delivery);
                 return Ok(completion);
@@ -230,16 +270,21 @@ impl Executor for Supervisor {
             }
             Reconciliation::Absent => {}
         }
-        let root = self.root(&delivery.key);
-        fs::create_dir_all(root.join("worktree"))?;
         let request = self.request(delivery, role, &mut store, &snapshot)?;
+        let attempt_number = previous.map_or(0, |(n, _)| n + 1);
+        store.claim_worker(
+            &delivery.key,
+            &delivery.node().0.to_string(),
+            delivery.epoch,
+            attempt_number,
+        )?;
+        fs::create_dir_all(root.join("worktree"))?;
         if role != "audit" {
             let materials = store
                 .worker_materials(&delivery.node().0.to_string())?
                 .ok_or(Error::Invalid("worker materials missing"))?;
             materialize(&root.join("worktree"), &materials["repo"])?;
         }
-        let attempt_number = latest(&root)?.map_or(0, |(n, _)| n + 1);
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
         write(&attempt.join("request.json"), &request)?;
@@ -247,16 +292,9 @@ impl Executor for Supervisor {
         let mut script = File::create(attempt.join("supervisor.py"))?;
         script.write_all(include_bytes!("../../tools/worker_supervisor.py"))?;
         script.sync_all()?;
-        write(&root.join("delivery.json"), delivery)?;
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
-        store.claim_worker(
-            &delivery.key,
-            &delivery.node().0.to_string(),
-            delivery.epoch,
-            attempt_number,
-        )?;
         let mut child = Command::new(&self.settings.python)
             .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
@@ -275,8 +313,31 @@ impl Executor for Supervisor {
         self.active.add(delivery);
         reap(child);
         let name = root.file_name().unwrap().to_string_lossy();
-        write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
+        let ready = self
+            .settings
+            .runs
+            .join(".ready")
+            .join(format!(".ready-{name}"));
+        write(&root.join("ready.json"), delivery)?;
+        fs::rename(root.join("ready.json"), ready)?;
+        File::open(self.settings.runs.join(".ready"))?.sync_all()?;
         Ok(Completion::confirmed(vec![]))
+    }
+
+    fn retire(&mut self, store: &mut Store) -> Result<()> {
+        for key in store.retired_workers()? {
+            if let Err(error) = self.retire_run(&key, store) {
+                if matches!(
+                    error,
+                    Error::Json(_) | Error::Invalid("worker record belongs to another machine")
+                ) {
+                    store.block_worker_retirement(&key)?;
+                    self.active.remove_key(&key);
+                }
+                eprintln!("worker retirement retained {key}: {error}");
+            }
+        }
+        Ok(())
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
@@ -285,7 +346,10 @@ impl Executor for Supervisor {
                 kind: EffectKind::StartRun(role),
                 ..
             } if protocol::role(role).is_some() => {
-                let result = inspect(&self.root(&delivery.key), delivery)?;
+                let result = match latest(&self.root(&delivery.key))? {
+                    Some((_, attempt)) => inspect(&attempt, delivery)?,
+                    None => Reconciliation::Absent,
+                };
                 if !matches!(result, Reconciliation::Pending) {
                     self.active.remove(delivery);
                 }
@@ -340,10 +404,8 @@ pub(super) fn failed(delivery: &Delivery) -> Completion {
     })])
 }
 
-pub(super) fn inspect(root: &Path, delivery: &Delivery) -> Result<Reconciliation> {
-    let Some((_, attempt)) = latest(root)? else {
-        return Ok(Reconciliation::Absent);
-    };
+/// Inspect one attempt directory, rather than the run root or historical attempts.
+pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliation> {
     // Claim cancellation closes the spawn-before-record crash window atomically.
     // A delayed launcher must lose this claim before it can start any worker.
     cancel(&attempt.join("claim.json"))?;
@@ -374,6 +436,31 @@ pub(super) fn inspect(root: &Path, delivery: &Delivery) -> Result<Reconciliation
         Ok(observation) => Completion::confirmed(vec![observation]),
         Err(_) => failed(delivery),
     }))
+}
+
+fn remove_ready(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn watched_deliveries(store: &mut Store) -> Result<Vec<Delivery>> {
+    let mut deliveries = Vec::new();
+    for (key, value) in store.worker_watches()? {
+        match serde_json::from_value::<Delivery>(value) {
+            Ok(delivery) if delivery.key == key => {
+                if matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
+                {
+                    deliveries.push(delivery);
+                }
+            }
+            Ok(_) => eprintln!("worker startup skipped mismatched watch {key}"),
+            Err(error) => eprintln!("worker startup skipped {key}: {error}"),
+        }
+    }
+    Ok(deliveries)
 }
 
 fn materialize(root: &Path, repo: &Value) -> Result<()> {
