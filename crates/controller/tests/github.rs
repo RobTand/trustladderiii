@@ -1633,10 +1633,15 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
                 event.key.contains(":worker:") && event.payload["WorkerReply"]["role"] == "audit"
             })
     });
-    wait(&mut || store.worker_document("0", "plans").unwrap().is_some());
-    // This ingress fixture has fake maker/check evidence. Publishing tests own real review.
+    wait(&mut || {
+        store
+            .worker_document("0", "maker_replies")
+            .unwrap()
+            .is_some()
+    });
+    // This ingress fixture uses a real maker and fake checks. Publishing tests own real review.
     let stop = Input::Observation {
-        key: "stop-after-planning".into(),
+        key: "stop-after-maker".into(),
         observation: Observation::Kernel(tl3_kernel::Event::Command {
             node: NodeId(0),
             id: 1,
