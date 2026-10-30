@@ -234,6 +234,7 @@ fn observe(
                         base_sha: base.into(),
 
                         reviewed_sha: None,
+                        reproducing_unavailable: None,
                         plan: vec![adapters::prismabuild::Check {
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,

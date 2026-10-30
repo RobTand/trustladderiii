@@ -47,7 +47,7 @@ def create_model(request):
         ]
         blockers.extend({'citation': {'kind': 'goal', 'id': 'greeting'},
                          'problem': f'Problem {i} ' + 'é' * 2000,
-                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(30))
+                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(18))
         return Model(responses=[AIMessage(content=json.dumps({
             'verdict': 'changes', 'blocking_findings': blockers,
             'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],

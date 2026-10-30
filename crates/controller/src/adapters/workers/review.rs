@@ -67,7 +67,7 @@ pub(super) fn inputs(
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let mut inputs = json!({"goals": criteria["goals"], "base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let mut inputs = json!({"goals": criteria["goals"], "base_sha": run.base_sha, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
     {

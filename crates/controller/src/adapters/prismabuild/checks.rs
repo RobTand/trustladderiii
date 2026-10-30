@@ -12,6 +12,8 @@ pub struct CheckRun {
     pub base_sha: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reproducing_unavailable: Option<String>,
     pub plan: Vec<Check>,
 }
 

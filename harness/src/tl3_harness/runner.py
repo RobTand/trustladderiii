@@ -1,4 +1,5 @@
 """Loaded from the read-only harness mount before any checkout imports."""
+import ast
 import json
 import os
 from pathlib import Path
@@ -6,6 +7,41 @@ import sys
 import types
 
 import pytest
+
+
+def missing_name(error):
+    root = Path.cwd()
+    if isinstance(error, AttributeError) and isinstance(error.obj, types.ModuleType):
+        source = getattr(error.obj, "__file__", None)
+        if source and Path(source).is_relative_to(root):
+            return [str(Path(source).relative_to(root)), error.name]
+    if isinstance(error, ModuleNotFoundError) and error.name:
+        # The host matches these candidates against committed additions, never error text.
+        return [[error.name.replace(".", "/") + suffix, ""]
+                for suffix in (".py", "/__init__.py")]
+    if isinstance(error, ImportError) and error.name and error.path:
+        source = Path(error.path)
+        if source.is_relative_to(root):
+            # ImportError.name is the module, not the missing symbol. Read the
+            # failing import statement rather than interpreting Python's error message.
+            traceback = error.__traceback__
+            while traceback:
+                frame = traceback.tb_frame
+                filename = Path(frame.f_code.co_filename)
+                if filename.is_file() and filename.is_relative_to(root):
+                    try:
+                        module = ast.parse(filename.read_bytes())
+                        for node in ast.walk(module):
+                            if (isinstance(node, ast.ImportFrom)
+                                    and node.lineno <= traceback.tb_lineno <= node.end_lineno):
+                                loaded = sys.modules.get(error.name)
+                                for alias in node.names:
+                                    if loaded is None or not hasattr(loaded, alias.name):
+                                        return [str(source.relative_to(root)), alias.name]
+                    except (SyntaxError, OSError):
+                        pass
+                traceback = traceback.tb_next
+    return None
 
 
 class Reporter:
@@ -31,6 +67,11 @@ class Reporter:
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected])
 
+    @pytest.hookimpl(wrapper=True)
+    def pytest_exception_interact(self, node, call, report):
+        report.tl3_missing = missing_name(call.excinfo.value)
+        yield
+
     def pytest_collectreport(self, report):
         if report.failed:
             if self.summary:
@@ -38,7 +79,9 @@ class Reporter:
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
             else:
-                self.emit(event="collection-error", message=str(report.longrepr)[:1000])
+                self.emit(event="collection-error", test=report.nodeid,
+                          missing=getattr(report, "tl3_missing", None),
+                          message=str(report.longrepr)[:1000])
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):
@@ -47,13 +90,7 @@ class Reporter:
                      and call.excinfo.errisinstance(AssertionError))
         # Xfail and xpass cannot supply evidence for a named test.
         outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
-        missing = None
-        if call.when == "call" and call.excinfo is not None:
-            error = call.excinfo.value
-            if isinstance(error, AttributeError) and isinstance(error.obj, types.ModuleType):
-                source = getattr(error.obj, "__file__", None)
-                if source and Path(source).is_relative_to(Path.cwd()):
-                    missing = [str(Path(source).relative_to(Path.cwd())), error.name]
+        missing = missing_name(call.excinfo.value) if call.when == "call" and call.excinfo else None
         if self.summary:
             message = str(report.longrepr) if report.failed else ""
             self.phases.setdefault(item.nodeid, []).append(
@@ -101,7 +138,7 @@ def main():
         reporter.emit(event="collection", tests=[])
         reporter.pytest_sessionfinish(5)
         return 5
-    return int(pytest.main(["--rootdir=.", *files], plugins=[Reporter(tests, descriptor)]))
+    return int(pytest.main(["--rootdir=.", "--continue-on-collection-errors", *files], plugins=[Reporter(tests, descriptor)]))
 
 
 if __name__ == "__main__":

@@ -143,8 +143,11 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         config = configuration(old)
         validate_configuration(old, new)
         tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
-        if any(not is_test(test.split("::")[0], config["test-files"]) for test in tests):
-            raise ValueError("a named test is outside the configured test files")
+        invalid = {test for test in tests if not is_test(test.split("::")[0], config["test-files"])}
+        if invalid:
+            outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
+            messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
+            return tuple(judge(check, outcomes, outcomes, messages=messages) for check in plan)
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests))

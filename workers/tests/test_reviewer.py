@@ -217,3 +217,10 @@ def test_review_check_message_bound(review_request, length, valid):
 
     review_request["inputs"]["checks"][0]["tests"][0]["message"] = "é" * length
     assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"]) == valid
+
+
+@pytest.mark.parametrize('count,valid', [(20, True), (21, False)])
+def test_blocking_findings_are_bounded(count, valid):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+    assert Draft202012Validator(schema('reviewer-reply')).is_valid(changes(*[blocker()] * count)) == valid

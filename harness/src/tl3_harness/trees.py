@@ -75,6 +75,8 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
             name = path.relative_to(tree).as_posix()
             if is_test(name, patterns):
                 continue
+            # An empty name identifies the module itself, including empty new modules.
+            found.add((name, ""))
             try:
                 module = ast.parse(path.read_bytes())
             except SyntaxError:

@@ -49,6 +49,7 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
         base_sha: base,
 
         reviewed_sha: None,
+        reproducing_unavailable: None,
         plan: vec![Check {
             name: "value".into(),
             kind: Kind::Demonstrating,

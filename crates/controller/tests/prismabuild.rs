@@ -123,6 +123,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
             base_sha: base,
 
             reviewed_sha: None,
+            reproducing_unavailable: None,
             plan: vec![Check {
                 name: "value".into(),
                 kind: Kind::Demonstrating,

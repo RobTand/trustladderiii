@@ -1,3 +1,4 @@
+mod reproducing;
 use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
@@ -321,6 +322,12 @@ impl Served {
                     .git
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
+                if let Some(run) = &delivery.checks
+                    && let Some(reviewed) = &run.reviewed_sha
+                {
+                    // Pin before rewriting the branch, including across a controller crash.
+                    let _ = reproducing::pin(self.git.common_directory(), branch, reviewed);
+                }
                 Ok(Intent::Rebase {
                     target: target.as_str().into(),
                 })
@@ -435,6 +442,17 @@ impl Served {
                 match result {
                     RebaseResult::Clean { base, head } => {
                         if let Some(mut run) = record.delivery.checks.clone() {
+                            if run.reviewed_sha.is_some() {
+                                if !writable {
+                                    return Ok(None);
+                                }
+                                reproducing::rebase(
+                                    self.git.common_directory(),
+                                    branch,
+                                    &mut run,
+                                    base.as_str(),
+                                );
+                            }
                             run.base_sha = base.as_str().into();
                             observations.push(Observation::CheckPlan {
                                 node: record.delivery.node(),
@@ -483,6 +501,7 @@ impl Served {
                             .map_err(adapter)?;
                     }
                     self.git.delete_local_branch(branch).map_err(adapter)?;
+                    reproducing::remove(self.git.common_directory(), branch)?;
                 }
                 if self.git.branch_state(branch).map_err(adapter)?.is_some()
                     || self

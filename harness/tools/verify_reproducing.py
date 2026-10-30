@@ -1,5 +1,9 @@
 """Fixture repos for review fixes, run inside an admitted PrismaBuild action."""
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -14,6 +18,29 @@ def save(repo, message):
     git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
         "commit", "-qm", message)
     return git(repo, "rev-parse", "HEAD").decode().strip()
+
+
+def verify_action_reviewed(repo, base, reviewed, head, container):
+    with tempfile.TemporaryDirectory(prefix="tl3-action-fixture-") as directory:
+        root = Path(directory)
+        source = Path(__file__).resolve().parents[2]
+        shutil.copytree(source / "harness/src/tl3_harness", root / "trusted/tl3_harness")
+        shutil.copyfile(source / "crates/controller/src/adapters/prismabuild/action.py", root / "action.py")
+        git(repo, "bundle", "create", str(root / "served.bundle"), "HEAD")
+        request = {"effect_key": "fixture-reviewed", "base": base, "reviewed": reviewed,
+                   "head": head, "image": container.image,
+                   "plan": [{"name": "round", "kind": "reproducing",
+                             "tests": ["test_value.py::test_reproduces"]}]}
+        (root / "request.json").write_text(json.dumps(request))
+        child = subprocess.run([sys.executable, str(root / "action.py")], capture_output=True,
+                               text=True, env=os.environ)
+        assert child.returncode == 0, child.stderr
+        report = json.loads(next(line.removeprefix("TL3_CHECKS ")
+                                 for line in child.stdout.splitlines() if line.startswith("TL3_CHECKS ")))
+        assert report["reviewed"] == reviewed
+        assert report["results"][0]["verdict"] == "pass", report
+        assert report["results"][0]["tests"][0]["base"] == "assertion"
+        print("action.py reviewed request passed", flush=True)
 
 
 def verify(container):
@@ -59,6 +86,7 @@ def verify(container):
         assert results[1].tests[0].base == "passed"
         assert results[2].tests[0].base == "error", "setup assertions cannot reproduce a finding"
         assert results[4].tests[0].base == "added-name"
+        verify_action_reviewed(repo, base, reviewed, fixed, container)
         # A reviewed commit need not be reachable from the final head after a rebase.
         git(repo, "checkout", "--quiet", "--detach", base)
         (repo / "unrelated.txt").write_text("another history\n")

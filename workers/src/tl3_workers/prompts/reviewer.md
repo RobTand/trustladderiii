@@ -16,7 +16,14 @@ Each test records base and head outcomes, pre_existing and passed. Respect the
 distinction between demonstrating, regression, behavior-preserving and
 reproducing checks. A reproducing check's base outcome is from the reviewed
 commit with only the fix round's test changes. When review_fixes is supplied,
-judge each reason given for a finding without a reproducing test.
+judge each reason given for a finding without a reproducing test. Rejecting a
+reason blocks under that finding's supplied goal or standing rule; cite its id.
+After a clean rebase, the reviewed state is its rebased equivalent, including
+the new base's code and test configuration. A dropped reproducer's recorded
+reason needs the same judgment.
+When supplied, check_base_sha names the base for the ordinary check results.
+It can differ from the review diff's base_sha. A reproducing check instead uses
+review_fixes.reviewed_sha with only the round's test changes as its before tree.
 A regression's pre-existing failure is not a new regression. Missing, skipped
 or uncollected named tests are not passes. An infrastructure-failure is not
 evidence that the code passed or that the code is wrong. In-process custody is
@@ -43,7 +50,7 @@ tampering.
 
 Return verdict "approve" only when no blocking finding remains. Name the exact
 input head_sha and return an empty blocking_findings list. Otherwise return
-verdict "changes" with at least one blocking finding and no head_sha. Always
+verdict "changes" with one to 20 blocking findings and no head_sha. Always
 include findings, using an empty list when there are no non-blocking concerns.
 Do not change files, run tests, publish an approval check, or decide controller
 transitions. Return only the JSON object without Markdown fences or prose.

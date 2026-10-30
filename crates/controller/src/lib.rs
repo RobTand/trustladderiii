@@ -1224,6 +1224,29 @@ impl Controller {
             },
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
+                if let Some(n) = world.nodes.get(node.0 as usize)
+                    && n.phase == tl3_kernel::Phase::Rebasing
+                    && let Some(mut fixes) = self
+                        .store
+                        .worker_document(&node.0.to_string(), "review_fixes")?
+                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                {
+                    fixes["head_sha"] = json!(sha);
+                    if let Some(reviewed) = &run.reviewed_sha {
+                        fixes["reviewed_sha"] = json!(reviewed);
+                    }
+                    if let Some(reason) = &run.reproducing_unavailable {
+                        for finding in fixes["findings"].as_array_mut().unwrap() {
+                            if finding.get("tests").is_some() {
+                                finding.as_object_mut().unwrap().remove("tests");
+                                finding["reason"] = json!(reason);
+                            }
+                        }
+                    }
+                    commit
+                        .rows
+                        .push(put("review_fixes", node.0.to_string(), fixes));
+                }
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
@@ -1393,7 +1416,14 @@ impl Controller {
                             };
                             reports.push(serde_json::to_value(findings::Finding {
                                 id: Some(format!("review-{generation}-{index}")),
-                                reviewed_sha: Some(criteria["head_sha"].as_str().ok_or(Error::Invalid("review finding needs its exact commit"))?.to_owned()),
+                                reviewed_sha: Some(
+                                    criteria["head_sha"]
+                                        .as_str()
+                                        .ok_or(Error::Invalid(
+                                            "review finding needs its exact commit",
+                                        ))?
+                                        .to_owned(),
+                                ),
                                 kind: findings::Kind::ReviewFinding,
                                 report,
                                 goal_ids,
@@ -1504,7 +1534,15 @@ impl Controller {
                                     check.kind != adapters::prismabuild::Kind::Reproducing
                                 });
                                 run.plan.extend(fixes.checks);
-                                run.reviewed_sha = reviewed.map(str::to_owned);
+                                run.reviewed_sha = run
+                                    .plan
+                                    .iter()
+                                    .any(|check| {
+                                        check.kind == adapters::prismabuild::Kind::Reproducing
+                                    })
+                                    .then_some(reviewed)
+                                    .flatten()
+                                    .map(str::to_owned);
                                 commit.rows.push(put(
                                     "check_plans",
                                     format!("{}:{sha}", node.0),
@@ -1717,40 +1755,10 @@ impl Controller {
                 outside_paths_total,
                 ci_checks,
             };
-            let detailed = commit.rows.iter().find_map(|row| match row {
-                RowChange::Put { table, value, .. } if table == "reviews" => {
-                    value["blocking_findings"].as_array()
-                }
-                _ => None,
-            });
-            let entries = findings
+            findings
                 .as_array_mut()
-                .ok_or(Error::Invalid("invalid maker findings"))?;
-            if let Some(detailed) = detailed {
-                let n = &world.nodes[node.0 as usize];
-                for (index, detail) in detailed.iter().enumerate() {
-                    let mut item = serde_json::to_value(&finding)?;
-                    item["id"] = json!(format!("review-{}-{index}", n.generation));
-                    item["reviewed_sha"] = json!(
-                        commit_sha(snapshot, n.head)
-                            .ok_or(Error::Invalid("review finding needs its exact commit"))?
-                    );
-                    item["report"] = json!(findings::clipped(
-                        &format!(
-                            "{}: {}",
-                            detail["problem"].as_str().unwrap(),
-                            detail["evidence"].as_str().unwrap()
-                        ),
-                        findings::MAX_REPORT_CHARS
-                    ));
-                    if detail["citation"]["kind"] == "goal" {
-                        item["goal_ids"] = json!([detail["citation"]["id"]]);
-                    }
-                    entries.push(item);
-                }
-            } else {
-                entries.push(serde_json::to_value(finding)?);
-            }
+                .ok_or(Error::Invalid("invalid maker findings"))?
+                .push(serde_json::to_value(finding)?);
             commit
                 .rows
                 .push(put("maker_findings", node.0.to_string(), findings));

@@ -36,6 +36,10 @@
       "type": "string",
       "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
     },
+    "check_base_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
     "head_sha": {
       "type": "string",
       "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"

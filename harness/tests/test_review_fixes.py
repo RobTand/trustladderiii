@@ -74,3 +74,22 @@ def test_import_of_added_name_demonstrates_the_round(tmp_path, statement, collec
     assert observations[0][tests[1]] == Outcome.PASSED, 'collection errors belong to their own file'
     from tl3_harness.model import judge
     assert judge(Check('import', kind, (tests[0],)), *observations).verdict == Verdict.PASS
+
+
+@pytest.mark.parametrize('code', [
+    'from product import absent\ndef test_import(): assert True\n',
+    'import absent_module\ndef test_import(): assert True\n',
+    'raise RuntimeError("collection failure")\ndef test_import(): assert True\n',
+    'import pytest\n@pytest.fixture\ndef setup():\n    from product import helper\ndef test_import(setup): assert True\n',
+])
+def test_unrelated_imports_and_setup_errors_do_not_demonstrate(tmp_path, code):
+    (tmp_path / 'product.py').write_text('')
+    (tmp_path / 'test_import.py').write_text(code)
+    (tmp_path / 'test_other.py').write_text('def test_other(): assert True\n')
+    tests = ('test_import.py::test_import', 'test_other.py::test_other')
+    child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tmp_path)],
+                           capture_output=True)
+    outcomes = parse([decode(line) for line in child.stdout.splitlines()], tests, set(), child.returncode,
+                     frozenset({('product.py', 'helper')}))
+    assert outcomes[tests[0]] == Outcome.ERROR
+    assert outcomes[tests[1]] == Outcome.PASSED
