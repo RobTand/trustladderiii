@@ -205,40 +205,28 @@ impl Controller {
     }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
+        let Some(repository) = self.intake_repository(&issue) else {
+            return Ok(false);
+        };
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
             format!("github:{}", issue.delivery),
             json!({"labelled_issue": issue}),
             &snapshot,
         );
-        if let Some(event) = self.prepare_intake(&snapshot, &issue, &mut commit)? {
+        if let Some(event) = self.prepare_intake(&snapshot, &issue, repository, &mut commit)? {
             self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
-        } else if issue.actor != self.bootstrap.rob
-            || issue.label != "tl3"
-            || !self.bootstrap.repos.iter().any(|r| {
-                r.owner.eq_ignore_ascii_case(&issue.owner)
-                    && r.name.eq_ignore_ascii_case(&issue.repo)
-                    && r.installation == issue.installation
-            })
-        {
-            return Ok(false);
         }
         self.store.commit(&commit)?;
         self.retry_held_effects();
         Ok(true)
     }
 
-    fn prepare_intake(
-        &mut self,
-        snapshot: &Snapshot,
-        issue: &LabelledIssue,
-        commit: &mut Commit,
-    ) -> Result<Option<Event>> {
+    fn intake_repository(&self, issue: &LabelledIssue) -> Option<Repository> {
         if issue.actor != self.bootstrap.rob || issue.label != "tl3" {
-            return Ok(None);
+            return None;
         }
-        let Some(repo) = self
-            .bootstrap
+        self.bootstrap
             .repos
             .iter()
             .find(|r| {
@@ -247,9 +235,15 @@ impl Controller {
                     && r.installation == issue.installation
             })
             .cloned()
-        else {
-            return Ok(None);
-        };
+    }
+
+    fn prepare_intake(
+        &mut self,
+        snapshot: &Snapshot,
+        issue: &LabelledIssue,
+        repo: Repository,
+        commit: &mut Commit,
+    ) -> Result<Option<Event>> {
         let world = snapshot::decode(snapshot)?;
         let index = snapshot
             .rows

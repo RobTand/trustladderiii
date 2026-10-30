@@ -117,6 +117,39 @@ impl Daemon {
         writeln!(stdin).unwrap();
         stdin.flush().unwrap();
     }
+    fn restart(&mut self) {
+        self.chilself.kill().unwrap();
+        self.chilself.wait().unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
+            .arg("--config")
+            .arg(self.root.path().join("config.toml"))
+            .arg("--simulate")
+            .arg(self.root.path().join("fakes"))
+            .args([
+                "--workers",
+                "--github-listen",
+                "127.0.0.1:0",
+                "--github-api",
+            ])
+            .arg(self.api.uri())
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = chilself.stderr.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let line = line.unwrap();
+                eprintln!("recovered steering daemon: {line}");
+                if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
+                    let _ = tx.send(address.parse().unwrap());
+                }
+            }
+        });
+        self.address = rx.recv_timeout(Duration::from_secs(90)).unwrap();
+        self.child = child;
+    }
     fn settled(&mut self) {
         self.wait(|s| {
             let snapshot = s.store.load().unwrap();
@@ -215,6 +248,8 @@ pub(super) fn commands(settings: &tl3_config::Store) {
     assert_eq!(questions.len(), 1);
     assert!(questions[0].id.ends_with("/10004"));
     d.send(10004, "Maybe do that");
+    d.restart();
+    assert_eq!(d.node(), before_unsure);
     d.send(10005, "Please stop");
     d.classified(10005);
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Stopped"}));
@@ -382,6 +417,7 @@ pub(super) fn correction(settings: &tl3_config::Store) {
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
     d.settled();
     let closed = d.node();
+    d.api.state.lock().unwrap().lose_issue_reply = true;
     d.send(13001, "The result is broken, revert it");
     d.classified(13001);
     d.wait(|s| s.api.state.lock().unwrap().linked.len() == 1);
@@ -455,37 +491,7 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     d.wait(|s| !s.node()["question"].is_null());
     d.send(15001, "Answer the old question");
     d.wait(|s| s.marker.with_extension("classifying").exists());
-    d.child.kill().unwrap();
-    d.child.wait().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
-        .arg("--config")
-        .arg(d.root.path().join("config.toml"))
-        .arg("--simulate")
-        .arg(d.root.path().join("fakes"))
-        .args([
-            "--workers",
-            "--github-listen",
-            "127.0.0.1:0",
-            "--github-api",
-        ])
-        .arg(d.api.uri())
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            let line = line.unwrap();
-            eprintln!("recovered steering daemon: {line}");
-            if let Some(address) = line.strip_prefix("GitHub webhooks listening on ") {
-                let _ = tx.send(address.parse().unwrap());
-            }
-        }
-    });
-    d.address = rx.recv_timeout(Duration::from_secs(90)).unwrap();
-    d.child = child;
+    d.restart();
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(15001);
     d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
@@ -509,7 +515,11 @@ pub(super) fn linked_reconciliation() {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut adapter = adapter(&api.uri(), root.path());
-    let mut correction = delivery(Notice::FileCorrection { revert: false });
+    let mut correction = delivery(Notice::FileReplacement);
+    correction.output = tl3_controller::executor::Output::Comment {
+        node: NodeId(0),
+        kind: tl3_controller::executor::CommentKind::FileCorrection,
+    };
     correction.steering = Some(tl3_controller::steering::Task::FileRequest {
         text: "Correct the greeting.".into(),
         comment: 16001,

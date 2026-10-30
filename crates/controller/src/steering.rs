@@ -295,35 +295,32 @@ impl Controller {
         if !current_answer {
             return Ok(None);
         }
+        if let Some(text) = reply["new_text"].as_str()
+            && !matches!(n.phase, tl3_kernel::Phase::Stopping(_))
         {
-            if let Some(text) = reply["new_text"].as_str()
-                && !n.phase.is_closed()
-                && !matches!(n.phase, tl3_kernel::Phase::Stopping(_))
-            {
-                commit.rows.push(put(
-                    "replacement",
-                    node.0.to_string(),
-                    json!(Task::FileRequest {
-                        text: text.into(),
-                        comment: comment.value["comment"]["id"].as_u64().unwrap(),
-                        correction: false,
-                        revert: false,
-                    }),
-                ));
-            }
-            if reply["answer"] == "try_again" {
-                let mut findings = self
-                    .store
-                    .worker_document(&node.0.to_string(), "findings")?
-                    .unwrap_or(json!([]));
-                findings
-                    .as_array_mut()
-                    .ok_or(Error::Invalid("invalid findings"))?
-                    .push(reply["guidance"].clone());
-                commit
-                    .rows
-                    .push(put("findings", node.0.to_string(), findings));
-            }
+            commit.rows.push(put(
+                "replacement",
+                node.0.to_string(),
+                json!(Task::FileRequest {
+                    text: text.into(),
+                    comment: comment.value["comment"]["id"].as_u64().unwrap(),
+                    correction: false,
+                    revert: false,
+                }),
+            ));
+        }
+        if reply["answer"] == "try_again" {
+            let mut findings = self
+                .store
+                .worker_document(&node.0.to_string(), "findings")?
+                .unwrap_or(json!([]));
+            findings
+                .as_array_mut()
+                .ok_or(Error::Invalid("invalid findings"))?
+                .push(reply["guidance"].clone());
+            commit
+                .rows
+                .push(put("findings", node.0.to_string(), findings));
         }
         Ok(Some(Event::Command {
             node,
@@ -392,7 +389,10 @@ impl Controller {
             actor: self.bootstrap.rob,
             label: "tl3".into(),
         };
-        let event = self.prepare_intake(snapshot, &labelled, commit)?;
+        let repository = self.intake_repository(&labelled).ok_or(Error::Invalid(
+            "linked request is not authorized for intake",
+        ))?;
+        let event = self.prepare_intake(snapshot, &labelled, repository.clone(), commit)?;
         let node = match event {
             Some(_) => NodeId(snapshot::decode(snapshot)?.nodes.len() as u64),
             None => {
