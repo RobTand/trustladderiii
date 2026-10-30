@@ -15,11 +15,11 @@ use std::{
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
     adapters::mergify::{Adapter, Translator},
-    executor::{Delivery, Executor, Reconciliation, Upstream},
+    executor::{Delivery, Executor, Output as Out, Reconciliation, Upstream},
     ingress::{self, CatchUp, Source, Webhooks},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub};
-use tl3_kernel::{Ack, EffectKind, NodeId, Out, Outcome, Phase};
+use tl3_kernel::{Ack, EffectKind, NodeId, Outcome, Phase};
 use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -921,11 +921,14 @@ fn delivery() -> Delivery {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         question: None,
         note: None,
         question_context: None,
         checks: None,
         job_generation: None,
+        steering: None,
+        request_text: None,
     }
 }
 fn label_removed_before_confirmation() {

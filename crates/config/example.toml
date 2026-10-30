@@ -3,6 +3,12 @@
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
 
+# Q17: set after deployment creates or reconciles the operations issue.
+# [operations]
+# owner = "RobTand"
+# repo = "trustladderiii"
+# issue = 123
+
 [store]
 host = "127.0.0.1"
 port = 5432
@@ -55,7 +61,11 @@ key_file = "/run/tl3/model-key"
 # An omitted effort becomes JSON null, as the workers protocol permits.
 ingest = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
 audit = [{ name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 32000 }]
-planner = [{ name = "default-model", family = "default", effort = "high", budget_tokens = 32000 }]
+# A plan that can't meet re-runs with the next model on this ladder.
+planner = [
+    { name = "default-model", family = "default", effort = "high", budget_tokens = 32000 },
+    { name = "alternate-model", family = "alternate", effort = "high", budget_tokens = 32000 },
+]
 # Q22: attempts 1 and 2 share a model; set attempt 2 to its maximum effort/budget.
 # The proxy decides its supported maximum. These sample values need calibration.
 # Attempt 3 uses the strongest available model from a different family.
@@ -86,6 +96,7 @@ container_image = "sha256:000000000000000000000000000000000000000000000000000000
 [hindsight]
 # Hindsight listens locally on dl380g10 at 8890; 8888 is celestia's tunnel.
 endpoint = "http://127.0.0.1:8890"
+bank = "tl3"
 
 [status]
 # Q24: read-only page. Ticket #19 sets the deployment LAN address.
@@ -119,6 +130,8 @@ no_progress_secs = 120
 [workers]
 python = "/srv/tl3/workers/.venv/bin/python"
 runs = "/srv/tl3/worker-runs"
+# The deployment service wrapper exports this as TIKTOKEN_CACHE_DIR.
+# tiktoken_cache_dir = "/srv/tl3/tiktoken"
 command = ["-m", "tl3_workers", "run"]
 
 [planning]

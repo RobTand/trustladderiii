@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, are listed with them. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -105,6 +105,8 @@ Agreed on 2026-10-29. Rob asked for self-review, adversarial review against pred
 - **Behavior-preserving:** for refactors, the tests pass on both versions, and review judges the rest.
 
 TL3 owns the test harness, and test configuration is protected, so the code under test can't fake its own results. A named test that is missing or skipped fails. The state table has the exact rule.
+
+**Review fixes start with a failing test.** Agreed by Rob on 2026-10-30 (Q42), when he asked for tests to drive both building TL3 and the work TL3 does. When review finds a behavior problem, nothing showed that the fix round's new test would have caught it. So a fix round names a reproducing test for each such finding, which must fail on the commit the reviewer saw and pass on the fix. A finding no test can show, such as wording or docs, needs a stated reason, which the next review judges. Failed checks and CI failures need no new test, because their failing test already shows the problem. The maker's prompt also tells it to write each plan's tests first and see them fail before it writes the code.
 
 **Failure types.** Agreed on 2026-10-29. Each kind of failure has its own path:
 
@@ -419,6 +421,7 @@ Proposed to complete the design, and agreed where a decision is cited:
   - It carries a plain-language summary, shows in the status view, and goes on the pinned "TL3 operations" issue (Q17).
   - Dependent work waits while the rest carries on, and a leaf waiting on an incident gives back its slot.
   - Rob is asked only when the incident needs something only he can do, such as a login, a credential, a payment, hardware, or a step that keeps failing after its first incident.
+- **Waiting on an outside job.** Agreed by Rob on 2026-10-30 (Q43). An agent waiting on a long PrismaBuild test run produces no new tool results, so the earlier rule would have stopped it as stalled. The agent now declares the job it is waiting on, and its run stays alive while that job's own record shows it has neither ended nor been lost. The wait stays open on the upstream's evidence, never on a clock, so a later wait such as a token grant fits the same rule.
 
 Settled in the grilling:
 
@@ -457,11 +460,13 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q16 Test configuration:** the files that decide which tests run or how results are reported: pytest's settings, `conftest.py`, tox and nox files, and test scripts CI calls. The tests themselves don't count.
 - **Q40 Checks:** every goal is checked as demonstrating, regression or behavior-preserving. TL3 runs the tests itself, and a missing or skipped test fails.
 - **Q41 Approval:** an approval covers one exact commit. Any new commit, including a clean catch-up onto main, is tested and reviewed again. The first 3 catch-ups per piece are free, and later ones cost credit.
+- **Q42 Review fixes:** a fix round for a review finding about behavior adds a reproducing test that fails on the reviewed commit and passes on the fix. A finding no test can show needs a stated reason. Decided after the grilling, on 2026-10-30.
 
 **Failures, credit and Rob's attention**
 
 - **Q6 Credit:** starting credit is the request's size in pieces plus a reserve of 3. The first 3 rechecks after rebases are free. The numbers are reviewed after the first 25 requests.
 - **Q7 Repeated failures:** every second failure of the same step raises an incident. A passing health check can clear the first, and only Rob can clear a later one.
+- **Q43 Declared waits:** an agent run stays alive while an outside job it has declared it is waiting on, such as a PrismaBuild test run, has by its own record neither ended nor been lost. Decided after the grilling, on 2026-10-30.
 - **Q8 Notes:** only when something changes a request's course, such as a stop, a pause, a merge TL3 didn't approve or a re-plan. Routine steps show only in the status view.
 - **Q17 Incidents:** they go to one pinned "TL3 operations" issue in TL3's repo until Discord exists. Questions about a request stay on its issue.
 - **Q22 Model ladder:** attempts 1 and 2 use the default maker model, attempt 2 at maximum effort and budget. Attempt 3 uses the strongest model from a different family. Reviewers default to a different family from the maker.

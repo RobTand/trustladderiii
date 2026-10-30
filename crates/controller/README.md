@@ -8,8 +8,9 @@ All commands use the same TOML configuration as `tl3-config`. Controller executi
 supports explicit simulation only. Status commands read the configured store
 and do not load GitHub or model credentials.
 
-Both commands use `Config::load`, which checks secret-file metadata, including
-the optional store password. Only the store reads its password at runtime.
+The daemon uses `Config::load`, which checks all secret-file metadata. Status
+uses `Config::load_status`, which checks only the optional store password.
+Only the store reads its password at runtime.
 `tl3 status` uses `Reader::open`. It never migrates or writes and
 reports an uninitialized database clearly.
 
@@ -98,6 +99,117 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
+`adapters::simulation_with_workers` replaces ingest, audit, planning and maker with Python
+worker processes and returns a `WorkerOutputSource`. Review remains on
+the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+before dispatch. Audit reads the stored ingest reply. An ingest revision reads
+the audit's objections. Missing materials block dispatch.
+
+Maker materials use a `maker` object in that same per-node record. It contains
+the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
+accumulated `feedback`. A fix round requires feedback. The controller records
+failed checks, review requests and can't-meet reports in `maker_findings` in the
+same transaction as the kernel reply. The supervisor adds these to supplied
+findings on every subsequent attempt. Ingress supplies the brief slice and
+detailed findings; the supervisor supplies authoritative `plan.files`,
+`attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
+endpoint and bank from the delivery and config. Other roles can also use named objects
+in the materials record; the flat ingest/audit format still works.
+
+The maker uses `worktrees_root/HEX_OWNER/HEX_REPO/issue-ISSUE-node-NODE`, matching
+#61's worktree adapter. Owner and repository are lowercase UTF-8 encoded as hex.
+It never uses an empty per-run directory as a checkout.
+The acceptance fixture uses the merged real worktrees adapter.
+Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
+advances attempts. Each attempt has a conversation outside the worktree under
+`workers.runs/sessions/NODE/plan-REPLANNED/attempt-N.json`. Round 1 resumes
+it. A fitting `needs_files` resumes at round 0 within the same attempt and plan.
+The resume decision checks the stored reply against the delivery attempt and
+re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
+A checkpoint records the starting commit for each
+Making visit, including rebase-needs-changes revisits in the same attempt and round.
+The controller records the generation of the last accepted maker reply. Until it
+accepts a reply, retries retain the checkpoint across new generations and count
+commits left by a crash or a failed session save. An accepted reply ends the visit.
+Each attempt stores one checkpoint with its generation and head; visits replace it
+so retries cannot accumulate checkpoint files.
+An accepted `maker_session` without a numeric generation is rejected before a
+worker starts, with `maker session has no accepted generation`. Slice one is
+unreleased; legacy sessions need explicit repair rather than guessing whether
+an old checkpoint belongs to the current visit. An absent session still starts
+normally and can recover unaccepted commits.
+Only clean, resumable completions save conversation history. Out-of-room runs
+preserve any previous conversation without saving the exhausted one.
+
+After durable work drains, the supervisor deletes a closed node's session
+directory only when no inbox entry, pending effect, retained watch or unretired worker can
+reconcile that node. It queries only remaining session directories after retiring
+runs, without loading historical world rows. Deletion errors are logged and retained
+for a later pass; they do not fail the controller's idle drain.
+Open requests keep their sessions. The directory itself survives a crash as
+the cleanup queue, and the next drain repeats deletion. No clock triggers cleanup.
+Worker code commits a completed change and computes a conservative fit bound
+for additional files. The controller interns returned heads and requested paths
+before delivering kernel replies. It stores the latest reply as `maker_replies`.
+
+Maker acceptance runs the actual Python entry point and maker graph with a
+scripted model, fake read-only Hindsight, and recorded self-check results.
+The combined acceptance also uses #61's real worktrees adapter for checkout,
+publication and cleanup. Focused worker cases keep their local Git fixtures.
+The checks use the merged real PrismaBuild adapter, its result source, and recorded
+PrismaBuild queue and ending records. No nested submission runs in acceptance.
+Scenarios cover success, failed checks through both rounds of all three attempts
+and one re-plan, an actual commit outside the footprint, requested files,
+context exhaustion, unmet goals, invalid output, recovery, and stop.
+Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
+`failed_tests` with `test` and `message`, `outside_paths`, and `ci_checks` with
+`name`, `summary` and optional `url`. The report describes the failure in plain
+language. `Observation::CiFailed` persists named CI evidence in the same
+transaction as its kernel fact. A bare non-infrastructure CI fact still records
+feedback, explicitly stating when the upstream supplied no check details.
+Infrastructure failures and stale replies do not add maker findings.
+
+Production integration still requires:
+
+1. The controller's production material assembler must write the `maker` object
+   with `Store::put_worker_materials` before dispatch. There is no production
+   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
+   and planner check plan to this store API. The supervisor supplies kernel fields
+   and deployment settings; it does not invent a brief or checks.
+2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
+   feedback with the failed check's name and link or summary remains pending.
+   Its current bare fact is supported but lacks details.
+
+The merged PrismaBuild checks observation supplies changed paths and up to 20
+failing test IDs with messages capped at 1,000 characters each. The trusted
+harness retains pytest assertion messages; older reports without messages still
+parse and receive an explicit fallback. The controller records paths outside the
+node's footprint and failed tests in `maker_findings`. Missing goal materials
+retain unbound findings with an empty goal list and a log entry. Invalid goal IDs
+return an error. CI feedback keeps up to 20 checks, with 1,000-character summaries,
+4,096-character links and a 16,000-character finding report.
+
+`tests/maker/records` retains the actual maker-to-harness trial's terminal record,
+CAS receipt and payload. Acceptance verifies the hash and compares its code, tests
+and harness configuration with a new maker change. It then runs the real checks
+adapter against recorded queue evidence. The separate trial checks the committed
+result independently through PrismaBuild's managed container.
+
+Generate all-host verification with
+`python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
+the manifest with `pbcampaign.py --detach`. The three pinned actions run maker,
+worker, supervisor, PrismaBuild adapter, GitHub ingress and worktrees scenarios.
+They also cover process exit during both opening and reading `/proc/<pid>/stat`.
+The open case extends main's ESRCH fix; permission errors still propagate.
+The daemon fixture makes and commits a real change through the shared ingress loop.
+A separate portable action runs the Python worker and harness suites and
+`tools/verify.sh`. These tests use fixtures and never submit nested jobs.
+Add `--trial-image <immutable-image>` to the manifest command to include a new
+real maker-to-harness trial in its own admitted action. The image must already
+exist on an eligible worker. `tools/maker_trial.py` requires admission and
+never submits work. The submitting session runs `pbcampaign.py` outside every
+admitted action.
+
 ## GitHub ingress in simulation
 
 `ingress::Source` runs on its own thread and sends `cli::Input` values to one
@@ -147,7 +259,7 @@ response marks a gap, which is retried at the next receiver event. Catch-up stor
 transaction, including PRs and check results. Comment URLs compare repository
 names without case and use the trailing issue number. Rob's comments on issues
 and PRs enter `github_comments` in both paths, deduplicated by repository,
-installation and comment id. Ticket #14 classifies them.
+installation and comment id. The steering controller classifies them.
 
 Headers have a two-second total read deadline. Body reads get a separate total
 budget of at least two seconds, scaled at 1 MiB/s by the declared length and
@@ -189,14 +301,18 @@ rows. Each translator loads at most one world snapshot per batch.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
-Three rejected drafts return a permanent acknowledgement, so recovery does not
-restart the writer loop. A worker transport error stays uncertain.
+Three rejected comment clarifications post a fixed, checked request to rephrase.
+Other rejected notices fail permanently and post nothing. Writer transport errors
+leave the delivery unconfirmed.
+The reply uses the original effect marker, so recovery does not restart the
+writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects use the same adapter's publishing implementation. Incident and replacement
-notices stay on the fake for their owning tickets. Incidents need the
-operations issue, and replacements need a new request, not another comment.
+PR effects use the same adapter's publishing implementation. Incident notices stay
+on the fake until the operations issue is wired in. Replacements start a new
+request on the same issue from Rob's text. Corrections create linked issues
+with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
 It rejects both `:line` and `:line:column` suffixes.
@@ -206,15 +322,14 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
-`adapters::simulation_with_workers` replaces ingest, audit, planning and review with
-Python worker processes and returns a `WorkerOutputSource`. Making remains on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
-before dispatch. Audit reads the stored ingest reply. An ingest revision reads
-the audit's objections. Missing materials block dispatch. Review also needs
-committed Git and check evidence, which the default maker and check fakes do not supply.
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Supply issue and
+repository text through `Store::put_worker_materials` before dispatch. Review also
+needs committed Git and check evidence.
 
 `tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
 source alongside stdin and optional webhooks. It uses configured Python for
-ingest, audit, planning and review, with making and the other upstreams simulated. Add
+ingest, audit, planning, maker and review, with other upstreams simulated. Add
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
 sources against a local GitHub mock. Without `--workers`, workers stay simulated.
 Worker replies enter the same controller channel as webhook notifications. A
@@ -641,6 +756,11 @@ For each new worker role, update these boundaries together:
 - Extend `lib.rs` `valid_role` and the document names in `translate`.
 - Add process scenarios for accepted replies, invalid output, recovery and stop.
 
+The classifier uses the supervisor's `classifier` mapping and the same schema validation,
+model configuration and output source. It has a separate comment job because
+it can run while request work continues or after the request closes. Its reply
+becomes `Observation::Classified`, rather than a reply to the request's current run.
+
 The forecaster supplies the size for `IngestDone`.
 Until these boundaries support a role, its starts and stops use the worker fake.
 
@@ -653,6 +773,72 @@ the three host actions, including controller and store process scenarios.
 After they pass, generate the portable full check with
 `python3 crates/controller/tools/worker_review_manifest.py workspace`.
 Submit each generated manifest with `pbcampaign.py --detach`.
+
+## Steering by comment
+
+`steering.rs` queues each stored comment from the configured actor once. Startup
+queues comments stored before steering was installed too. A durable `comment_jobs`
+row owns one classification per request at a time. The job stores the phase and
+open question shown to the classifier. A reply keeps that question's ID even if the question
+changes while the worker runs. Completed classifications leave the watch set and
+the pending queue. Stored comments retain the result while the request is open.
+After closure and delivery of any reply or correction, the controller deletes the
+comment row. Its retirement event keeps the comment ID for indexed deduplication.
+No timer scans comment history.
+
+Pause, resume, stop, change and named answers enter the kernel as its existing
+commands. The controller assigns their sequence when applying the comment.
+The classification, job retirement and command commit together. Remarks and
+stale answers emit no command. `Output::Comment` carries ingress work directly
+to adapters, without a kernel effect or notice.
+
+An unsure comment gets one short question through the writer's `clarification`
+message kind, checker and marker reconciliation. A failed classification retries
+twice with distinct attempt keys. After that, a checked question quotes a short
+excerpt and asks Rob to rephrase. Rejected writer drafts receive their violations
+for up to two reruns. Exhaustion posts a fixed, checked request to rephrase.
+`comment_questions` tracks the conversation by the original comment key. The next comment is classified with that conversation as
+context. Completed conversations leave the pending set. An explicit unclear
+answer to a kernel question becomes its existing `Answer::Unclear`; the kernel
+allows one clarification. Comment uncertainty never changes a kernel question.
+
+The existing `FileReplacement` notice starts a replacement on the same issue
+after closing as Replaced. The closure commit records Rob's new text in a
+`replacement_pending` row keyed by the old request. Intake or the next drive
+starts the new request from that row and deletes both replacement rows in the
+same commit. A late merge still corrects the old request and does not cancel
+the pending replacement. Startup needs no GitHub read. The issue stays open,
+and intake, status and comment routing use its latest request. A complaint on a
+closed request files a correction directly from the comment pipeline, keyed by comment ID. The closed node receives no event.
+Only corrections create a new issue. The GitHub adapter uses a stable marker, the
+`tl3` label and a link to Rob's authorizing comment. A correction records his request for a revert.
+Marker reconciliation recovers an issue created before an acknowledgement.
+Its issue query is bounded by the authorizing comment's timestamp and sorts by
+creation time. The same timestamp remains attached through retries and recovery.
+Both paths use the same authorized intake as a labelled request. The new ingest
+reads the replacement text or the correction issue's text and inherits the original repository snapshot
+through the durable request link. Links point to earlier requests, so chains
+terminate at the original materials. No SQL migration is needed. Store versions
+1 through 5 and `crates/kernel` are unchanged from main.
+
+The GitHub integration target drives `tl3d`, signed recorded webhook fixtures,
+the Python worker with a fake model, and a local REST server. It covers command
+deduplication, actor authorization, remarks, questions, stale answers, classifier
+reattachment, replacements, corrections and a queued PR merging while paused.
+In simulation, a `hold-merges` file in the fake records directory lets the
+Mergify fake retain a queued PR until the test supplies merge evidence.
+
+Generate ticket 14's three host checks from a clean commit:
+
+```bash
+python3 crates/controller/tools/steering_review_manifest.py hosts > /tmp/tl3-steering-hosts.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-steering-hosts.json
+```
+
+The `steering` selection runs the GitHub target, including steering races,
+on all three hosts. The `writer` selection runs the Python writer tests once.
+The `workspace` selection generates the portable full check. Inspect each
+terminal result, logs and CAS receipt. No kernel rule or proof changes.
 
 ## Planning evidence
 
@@ -780,3 +966,5 @@ merges. It covers merge and cleanup, an outside commit, a free catch-up recheck,
 an unapproved merge, and lost-response recovery for GitHub writes. No test submits
 nested fleet work. After the host runs pass, generate the `workspace` campaign
 and submit it for formatting, Clippy and full workspace verification.
+
+An outside commit between Mergify's head check and adding `tl3-queue` can leave a stale label; the new head has no approval check, so it cannot merge.

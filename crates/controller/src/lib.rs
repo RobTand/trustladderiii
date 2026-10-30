@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod findings;
+
 pub mod adapters;
 pub mod cli;
 pub mod clock;
@@ -9,8 +11,11 @@ pub mod ingress;
 mod snapshot;
 pub mod status;
 pub mod status_web;
+pub mod steering;
 
-use executor::{Completion, Delivery, Observation, Reconciliation, Registry};
+use executor::{
+    Completion, Delivery, Observation, Output as DeliveryOutput, Reconciliation, Registry,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -101,6 +106,8 @@ struct Request {
     #[serde(default)]
     title: String,
     issue_id: i64,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -149,6 +156,32 @@ impl Controller {
         } else {
             snapshot::decode(&snapshot)?;
         }
+        let snapshot = store.load()?;
+        let mut backfill = Commit::new(
+            format!("steering:backfill:{}", snapshot.revision.get()),
+            json!({"comment_backfill": true}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|r| {
+            r.table == "github_comments"
+                && r.value.get("classification").is_none()
+                && r.value["ignored"] != true
+        }) {
+            if !snapshot
+                .rows
+                .iter()
+                .any(|r| r.table == "unclassified_comments" && r.id == row.id)
+            {
+                backfill.rows.push(put(
+                    "unclassified_comments",
+                    row.id.clone(),
+                    row.value.clone(),
+                ));
+            }
+        }
+        if !backfill.rows.is_empty() {
+            store.commit(&backfill)?;
+        }
         Ok(Self {
             store,
             adapters,
@@ -194,11 +227,28 @@ impl Controller {
     }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
-        if issue.actor != self.bootstrap.rob || issue.label != "tl3" {
+        let Some(repository) = self.intake_repository(&issue) else {
             return Ok(false);
+        };
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("github:{}", issue.delivery),
+            json!({"labelled_issue": issue}),
+            &snapshot,
+        );
+        if let Some(event) = self.prepare_intake(&snapshot, &issue, repository, &mut commit)? {
+            self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
         }
-        let Some(repo) = self
-            .bootstrap
+        self.store.commit(&commit)?;
+        self.retry_held_effects();
+        Ok(true)
+    }
+
+    fn intake_repository(&self, issue: &LabelledIssue) -> Option<Repository> {
+        if issue.actor != self.bootstrap.rob || issue.label != "tl3" {
+            return None;
+        }
+        self.bootstrap
             .repos
             .iter()
             .find(|r| {
@@ -207,11 +257,16 @@ impl Controller {
                     && r.installation == issue.installation
             })
             .cloned()
-        else {
-            return Ok(false);
-        };
-        let snapshot = self.store.load()?;
-        let world = snapshot::decode(&snapshot)?;
+    }
+
+    fn prepare_intake(
+        &mut self,
+        snapshot: &Snapshot,
+        issue: &LabelledIssue,
+        repo: Repository,
+        commit: &mut Commit,
+    ) -> Result<Option<Event>> {
+        let world = snapshot::decode(snapshot)?;
         let index = snapshot
             .rows
             .iter()
@@ -224,22 +279,36 @@ impl Controller {
             .map_err(|_| Error::Invalid("invalid repository index"))?;
         let repo_id = self.store.intern_repo(&repo.owner, &repo.name)?;
         let issue_id = self.store.intern_issue(repo_id, issue.number)?.get();
-        // Distinct deliveries of the same label still name one request.
-        let existing = snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == "requests")
-            .map(|r| serde_json::from_value::<Request>(r.value.clone()))
-            .collect::<std::result::Result<Vec<_>, _>>()?
-            .iter()
-            .any(|r| r.issue_id == issue_id);
-        let mut commit = Commit::new(
-            format!("github:{}", issue.delivery),
-            json!({"labelled_issue": issue}),
-            &snapshot,
-        );
-        if !existing {
+        let existing = latest_request(snapshot, &repo, issue.number);
+        let pending = existing.and_then(|request| {
+            snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "replacement_pending" && row.id == request.id)
+        });
+        if existing.is_none() || pending.is_some() {
             let node = world.nodes.len().to_string();
+            let source = if let Some(pending) = pending {
+                let original = NodeId(
+                    pending
+                        .id
+                        .parse()
+                        .map_err(|_| Error::Invalid("invalid request node"))?,
+                );
+                let replacement = steering::replacement_issue(snapshot, original, &pending.value)?;
+                commit.rows.push(put("request_links", node.clone(), json!({
+                    "original": original, "authorized_by": self.bootstrap.rob, "issue": replacement
+                })));
+                for table in ["replacement_pending", "replacement"] {
+                    commit.rows.push(RowChange::Delete {
+                        table: table.into(),
+                        id: pending.id.clone(),
+                    });
+                }
+                replacement.body
+            } else {
+                None
+            };
             commit.rows.push(put(
                 "requests",
                 node,
@@ -247,21 +316,15 @@ impl Controller {
                     repo,
                     issue: issue.number,
                     title: issue.title.clone(),
-                    issue_id
+                    issue_id,
+                    source,
                 }),
             ));
-            self.apply(
-                &snapshot,
-                world,
-                Event::NewRequest {
-                    repo: tl3_kernel::RepoId(index),
-                },
-                &mut commit,
-            )?;
+            return Ok(Some(Event::NewRequest {
+                repo: tl3_kernel::RepoId(index),
+            }));
         }
-        self.store.commit(&commit)?;
-        self.retry_held_effects();
-        Ok(true)
+        Ok(None)
     }
 
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
@@ -288,10 +351,12 @@ impl Controller {
                 repository.installation,
                 comment.id
             );
-            if snapshot.rows.iter().any(|row| {
-                (row.table == "github_comments" && row.id == id)
-                    || (row.table == "inbox" && row.id == format!("external:{key}"))
-            }) {
+            if self.store.comment_retired(&id)?
+                || snapshot.rows.iter().any(|row| {
+                    (row.table == "github_comments" && row.id == id)
+                        || (row.table == "inbox" && row.id == format!("external:{key}"))
+                })
+            {
                 return Ok(());
             }
         }
@@ -339,7 +404,7 @@ impl Controller {
                     if delivery.node() == node
                         && matches!(
                             delivery.output,
-                            Out::Effect {
+                            DeliveryOutput::Effect {
                                 kind: tl3_kernel::EffectKind::Enqueue,
                                 ..
                             }
@@ -375,16 +440,22 @@ impl Controller {
                 return Ok(true);
             }
         }
+        if self.start_replacement(&snapshot)?
+            || self.retire_comment(&snapshot)?
+            || self.schedule_comment(&snapshot)?
+        {
+            return Ok(true);
+        }
         let mut progressed = false;
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
-                    Out::Effect { node, seq, .. } => world.nodes
+                    DeliveryOutput::Effect { node, seq, .. } => world.nodes
                         [node.index().ok_or(Error::Invalid("node index overflow"))?]
                     .effect_cancelling(seq),
-                    Out::Notice { .. } => false,
+                    DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                 };
             if cancelling {
                 match effect.state {
@@ -491,9 +562,18 @@ impl Controller {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
-                && match delivery.output {
-                    Out::Effect { kind, .. } => node.operation_pending(kind, delivery.generation),
-                    Out::Notice { .. } => false,
+                && if delivery.is_classifier() {
+                    snapshot
+                        .rows
+                        .iter()
+                        .any(|r| r.table == "comment_jobs" && r.id == delivery.key)
+                } else {
+                    match delivery.output {
+                        DeliveryOutput::Effect { kind, .. } => {
+                            node.operation_pending(kind, delivery.generation)
+                        }
+                        DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
+                    }
                 };
             let mut commit = Commit::new(
                 format!("look:{}:{}", row.id, snapshot.revision.get()),
@@ -510,11 +590,7 @@ impl Controller {
                     Ok(Reconciliation::Absent)
                         if executor::upstream(delivery.output) == executor::Upstream::Workers =>
                     {
-                        Completion::confirmed(vec![Observation::Kernel(Event::Reply {
-                            node: delivery.node(),
-                            generation: delivery.generation,
-                            reply: Reply::RunFailed,
-                        })])
+                        adapters::workers::failed(&delivery)
                     }
                     Ok(Reconciliation::Absent | Reconciliation::Pending) => continue,
                     Err(error) => {
@@ -609,7 +685,7 @@ impl Controller {
             from: effect.state,
             to: EffectState::Cancelled,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output {
+        if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -672,7 +748,7 @@ impl Controller {
             from,
             to: state,
         });
-        if let Out::Effect { node, seq, .. } = delivery.output {
+        if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
                 snapshot::decode(&snapshot)?,
@@ -686,7 +762,7 @@ impl Controller {
         }
         if completion.ack == Ack::Retryable
             && state == EffectState::Intended
-            && matches!(delivery.output, Out::Effect { .. })
+            && matches!(delivery.output, DeliveryOutput::Effect { .. })
         {
             // The kernel assigns a fresh sequence to its retry. Retire the old
             // delivery and its watch together, so absence of the cancelled key
@@ -734,6 +810,14 @@ impl Controller {
         commit.result = json!({"kernel_event": event});
         let dictionary = self.store.load()?.interned;
         for (index, output) in outputs.into_iter().enumerate() {
+            if let Out::Notice {
+                node,
+                notice: tl3_kernel::Notice::FileReplacement,
+            } = output
+            {
+                self.pending_replacement(snapshot, commit, node)?;
+                continue;
+            }
             let (node, key) = match output {
                 Out::Effect { node, seq, .. } => (node, format!("effect:{}:{seq}", node.0)),
                 Out::Notice { node, .. } => (
@@ -818,7 +902,7 @@ impl Controller {
             let delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
-                output,
+                output: output.into(),
                 generation: n.generation,
                 head_sha,
                 repository: request.repo,
@@ -827,11 +911,14 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                replanned: n.replanned,
                 checks,
                 job_generation: n.job,
                 question: n.question,
                 note: None,
                 question_context,
+                steering: None,
+                request_text: request.source,
             };
             if matches!(
                 output,
@@ -849,7 +936,7 @@ impl Controller {
             }
             commit.effects.push(NewEffect {
                 key,
-                kind: format!("{:?}", executor::upstream(output)),
+                kind: format!("{:?}", executor::upstream(output.into())),
                 payload: json!(delivery),
             });
         }
@@ -906,14 +993,13 @@ impl Controller {
             }
         }
         for row in &snapshot.rows {
-            if row.table == "review_reports"
-                || (row.table == "check_reports"
-                    && row
-                        .id
-                        .split(':')
-                        .next()
-                        .and_then(|id| id.parse::<u64>().ok())
-                        .is_some_and(|id| closed.contains(&NodeId(id))))
+            if row.table == "check_reports"
+                && row
+                    .id
+                    .split(':')
+                    .next()
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .is_some_and(|id| closed.contains(&NodeId(id)))
             {
                 commit.rows.push(RowChange::Delete {
                     table: row.table.clone(),
@@ -953,7 +1039,32 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        let ci_checks = match &observation {
+            Observation::CiFailed { checks, .. } => checks
+                .iter()
+                .take(20)
+                .map(|check| findings::CiFailure {
+                    name: findings::clipped(&check.name, 256),
+                    summary: findings::clipped(&check.summary, findings::MAX_MESSAGE_CHARS),
+                    url: check.url.as_ref().map(|url| findings::clipped(url, 4096)),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut failed_tests = Vec::new();
+        let mut outside_paths = Vec::new();
+        let mut outside_paths_total = 0;
         let event = match observation {
+            Observation::Classified { key, reply } => {
+                return self.classified(snapshot, world, &key, reply, commit);
+            }
+            Observation::LinkedRequest {
+                repository,
+                issue,
+                original,
+            } => {
+                return self.linked_request(snapshot, repository, issue, original, commit);
+            }
             Observation::Queue(fact) => {
                 let identity = fact.identity();
                 if snapshot
@@ -1036,16 +1147,18 @@ impl Controller {
                         repository.installation,
                         comment.id
                     );
-                    if !snapshot
-                        .rows
-                        .iter()
-                        .any(|row| row.table == "github_comments" && row.id == id)
+                    if !self.store.comment_retired(&id)?
+                        && !snapshot
+                            .rows
+                            .iter()
+                            .any(|row| row.table == "github_comments" && row.id == id)
                     {
-                        commit.rows.push(put(
-                            "github_comments",
-                            id,
-                            json!({"repository": repository, "issue": issue, "comment": comment}),
-                        ));
+                        let value =
+                            json!({"repository": repository, "issue": issue, "comment": comment});
+                        commit
+                            .rows
+                            .push(put("github_comments", id.clone(), value.clone()));
+                        commit.rows.push(put("unclassified_comments", id, value));
                     }
                 }
                 return Ok(None);
@@ -1056,6 +1169,10 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::CiFailed { node, infra, .. } => Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra },
+            },
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
                 commit
@@ -1068,6 +1185,7 @@ impl Controller {
                 generation,
                 sha,
                 changed_paths,
+                failed_tests: tests,
                 report,
                 pass,
                 results,
@@ -1105,8 +1223,22 @@ impl Controller {
                 let mut in_footprint = true;
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
-                    in_footprint &= footprint.contains(&tl3_kernel::FileId(id.get() as u64));
+                    if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
+                        outside_paths_total += 1;
+                        if outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
+                            outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
+                        }
+                        in_footprint = false;
+                    }
                 }
+                failed_tests = tests
+                    .into_iter()
+                    .take(findings::MAX_FAILED_TESTS)
+                    .map(|test| findings::FailedTest {
+                        test: findings::clipped(&test.test, 4096),
+                        message: findings::clipped(&test.message, findings::MAX_MESSAGE_CHARS),
+                    })
+                    .collect();
                 Event::Reply {
                     node,
                     generation,
@@ -1126,6 +1258,7 @@ impl Controller {
                 let n = world
                     .nodes
                     .get(node.0 as usize)
+                    .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
                 if n.run != Some(generation) || n.generation != generation {
                     return Ok(None);
@@ -1134,6 +1267,7 @@ impl Controller {
                     (n.phase, role.as_str()),
                     (tl3_kernel::Phase::Ingesting, "ingest")
                         | (tl3_kernel::Phase::Auditing, "audit")
+                        | (tl3_kernel::Phase::Making, "maker")
                         | (tl3_kernel::Phase::Planning { .. }, "planner")
                         | (tl3_kernel::Phase::Reviewing, "reviewer")
                 );
@@ -1192,6 +1326,7 @@ impl Controller {
                     "ingest" => "briefs",
                     "audit" => "audits",
                     "reviewer" => "reviews",
+                    "maker" => "maker_replies",
                     _ => "plans",
                 };
                 if role == "planner" {
@@ -1218,17 +1353,22 @@ impl Controller {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let Reply::PlanLeaf { fits, .. } = mapped {
+                    if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                        fits,
+                        ..
+                    }) = mapped
+                    {
                         let paths = reply["files"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .map(|p| p.as_str().unwrap().to_owned())
                             .collect::<Vec<_>>();
-                        mapped = Reply::PlanLeaf {
-                            footprint: self.footprint(snapshot, world, node, &paths)?,
-                            fits,
-                        };
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                                footprint: self.footprint(snapshot, world, node, &paths)?,
+                                fits,
+                            });
                     }
                 }
                 commit
@@ -1239,6 +1379,59 @@ impl Controller {
                         "goals",
                         node.0.to_string(),
                         reply.get("goals").cloned().unwrap_or(json!([])),
+                    ));
+                }
+                let mapped = match mapped {
+                    adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
+                    adapters::workers::protocol::MappedReply::Made(sha) => {
+                        let inputs = self
+                            .store
+                            .worker_materials(&node.0.to_string())?
+                            .ok_or(Error::Invalid("maker materials missing"))?;
+                        let goals = inputs.get("maker").unwrap_or(&inputs)["goals"]
+                            .as_array()
+                            .ok_or(Error::Invalid("maker goals missing"))?;
+                        let checks = reply["self_check"].as_array().unwrap();
+                        let expected: BTreeSet<_> =
+                            goals.iter().map(|g| g["id"].as_str()).collect();
+                        let checked: BTreeSet<_> =
+                            checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        if expected != checked || checks.len() != goals.len() {
+                            Reply::RunFailed
+                        } else {
+                            Reply::MakerDone {
+                                head: self.head(node, &sha)?,
+                            }
+                        }
+                    }
+                    adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        let request = request(snapshot, node)?;
+                        let repo = self
+                            .store
+                            .intern_repo(&request.repo.owner, &request.repo.name)?;
+                        let mut files = world
+                            .files(n.footprint)
+                            .ok_or(Error::Invalid("unknown footprint"))?
+                            .collect::<Vec<_>>();
+                        for path in paths {
+                            files.push(tl3_kernel::FileId(
+                                self.store.intern_path(repo, &path)?.get() as u64,
+                            ));
+                        }
+                        Reply::MakerNeedsFiles {
+                            files: world.intern_footprint(files),
+                            fits,
+                        }
+                    }
+                };
+                if role == "maker" && mapped != Reply::RunFailed {
+                    commit.rows.push(put(
+                        "maker_session",
+                        node.0.to_string(),
+                        json!({
+                            "attempt": n.attempt, "replanned": n.replanned, "generation": generation,
+                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
+                        }),
                     ));
                 }
                 Event::Reply {
@@ -1318,6 +1511,99 @@ impl Controller {
                 return Ok(None);
             }
         };
+        let finding = match event {
+            Event::Reply {
+                node,
+                generation,
+                reply,
+            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
+                (n.run == Some(generation) || n.job == Some(generation))
+                    && n.generation == generation
+            }) =>
+            {
+                let n = &world.nodes[node.0 as usize];
+                let report = match (n.phase, reply) {
+                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
+                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck,
+                            findings::check_report(pass, in_footprint, &failed_tests, &outside_paths, outside_paths_total))),
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                        findings::Kind::ReviewFinding,
+                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
+                    )),
+                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
+                        findings::Kind::ReviewFinding,
+                        commit.rows.iter().find_map(|row| match row {
+                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                            _ => None,
+                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
+                    )),
+                    _ => None,
+                };
+                report.map(|(kind, report)| (node, kind, report))
+            }
+            Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra: false },
+            } if world
+                .nodes
+                .get(node.0 as usize)
+                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
+            {
+                Some((
+                    node,
+                    findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((node, kind, report)) = finding {
+            let materials = self.store.worker_materials(&node.0.to_string())?;
+            let goals = materials
+                .as_ref()
+                .and_then(|materials| materials.get("maker").unwrap_or(materials).get("goals"));
+            let goal_ids = match goals {
+                Some(goals) => goals
+                    .as_array()
+                    .ok_or(Error::Invalid("maker goals must be an array"))?
+                    .iter()
+                    .map(|goal| {
+                        goal["id"]
+                            .as_str()
+                            .filter(|id| !id.trim().is_empty())
+                            .map(str::to_owned)
+                            .ok_or(Error::Invalid("maker goal needs a string id"))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                None => {
+                    eprintln!(
+                        "maker finding for node {} has no goal materials; retaining unbound evidence",
+                        node.0
+                    );
+                    Vec::new()
+                }
+            };
+            let mut findings = self
+                .store
+                .worker_document(&node.0.to_string(), "maker_findings")?
+                .unwrap_or(json!([]));
+            let finding = findings::Finding {
+                kind,
+                report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
+                goal_ids,
+                failed_tests,
+                outside_paths,
+                outside_paths_total,
+                ci_checks,
+            };
+            findings
+                .as_array_mut()
+                .ok_or(Error::Invalid("invalid maker findings"))?
+                .push(serde_json::to_value(finding)?);
+            commit
+                .rows
+                .push(put("maker_findings", node.0.to_string(), findings));
+        }
         Ok(Some(event))
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
@@ -1325,6 +1611,20 @@ impl Controller {
             self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
         ))
     }
+}
+
+fn latest_request<'a>(
+    snapshot: &'a Snapshot,
+    repo: &Repository,
+    issue: u64,
+) -> Option<&'a tl3_store::WorldRow> {
+    snapshot
+        .rows
+        .iter()
+        .filter(|r| {
+            r.table == "requests" && r.value["repo"] == json!(repo) && r.value["issue"] == issue
+        })
+        .max_by_key(|r| r.id.parse::<u64>().unwrap_or(0))
 }
 
 fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {
@@ -1358,7 +1658,7 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         .and_then(|r| r.value["number"].as_u64());
     if matches!(
         delivery.output,
-        Out::Notice {
+        DeliveryOutput::Notice {
             notice: tl3_kernel::Notice::MeasuresPosted,
             ..
         }

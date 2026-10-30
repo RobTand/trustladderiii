@@ -12,6 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tl3_controller::executor::Output as Out;
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository,
     adapters::{
@@ -25,7 +26,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
-use tl3_kernel::{EffectKind, NodeId, Out, Outcome, Phase, Role};
+use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
 use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -420,7 +421,7 @@ fn prepare_workers() -> PathBuf {
             .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
             .arg(&root)
             .status()
-            .unwrap()
+            .expect("worker tests require uv 0.10.10: set TL3_TEST_UV or install uv on PATH")
             .success()
     );
     root.join(".venv/bin/python")

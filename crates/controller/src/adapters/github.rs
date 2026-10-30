@@ -1,10 +1,11 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use std::path::Path;
-use tl3_kernel::{Ack, EffectKind, Out};
+use tl3_kernel::EffectKind;
 
 mod publishing;
 pub use publishing::APPROVAL_CHECK;
@@ -49,7 +50,7 @@ use tl3_github::{
     CloseReason, GitHub,
     message::{OptionDraft, Policy},
 };
-use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
+use tl3_kernel::{Ack, NoteKind, Notice, Outcome, QKind};
 
 /// The REST client owns markers, paging and deletion of duplicate app comments.
 pub struct Adapter {
@@ -106,8 +107,71 @@ impl Adapter {
                 notice: Notice::Incident { .. } | Notice::FileReplacement,
                 ..
             }
-            | Out::Effect { .. } => None,
+            | Out::Effect { .. }
+            | Out::Comment { .. } => None,
         }
+    }
+    fn linked(delivery: &Delivery, issue: tl3_github::Issue) -> Completion {
+        Completion::confirmed(vec![Observation::LinkedRequest {
+            repository: delivery.repository.clone(),
+            issue,
+            original: delivery.node(),
+        }])
+    }
+    fn file_request(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let Some(crate::steering::Task::FileRequest {
+            text,
+            comment,
+            correction,
+            revert,
+            since,
+            comment_issue,
+        }) = &delivery.steering
+        else {
+            unreachable!()
+        };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        if !correction {
+            if !matches!(
+                delivery.output,
+                Out::Notice {
+                    notice: Notice::FileReplacement,
+                    ..
+                }
+            ) {
+                return Err(Error::Invalid(
+                    "replacement requires FileReplacement notice",
+                ));
+            }
+            let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+            issue.body = Some(text.clone());
+            return Ok(Self::linked(delivery, issue));
+        }
+        let title = format!("Correction for #{}", delivery.issue);
+        let comment_path = if *comment_issue == delivery.issue {
+            "issues"
+        } else {
+            "pull"
+        };
+        let body = format!(
+            "{text}\n\nCorrects #{}, authorized by the owner's [comment](https://github.com/{repo}/{comment_path}/{}#issuecomment-{comment}).{}",
+            delivery.issue,
+            comment_issue,
+            if *revert {
+                "\n\nThe owner requested a revert as part of this correction."
+            } else {
+                ""
+            }
+        );
+        let issue = self.runtime.block_on(client.create_request_issue(
+            &repo,
+            &delivery.key,
+            since,
+            &title,
+            &body,
+        ))?;
+        Ok(Self::linked(delivery, issue))
     }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
         match delivery.output {
@@ -130,9 +194,21 @@ impl Executor for Adapter {
         if publishing::handles(delivery) {
             return self.publish(delivery);
         }
-        let Some(notice) = Self::request_notice(delivery) else {
+        if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
+            return self.file_request(delivery);
+        }
+        let notice = Self::request_notice(delivery);
+        if notice.is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify,
+                    ..
+                }
+            )
+        {
             return self.fake.execute(delivery);
-        };
+        }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         if self
@@ -163,6 +239,20 @@ impl Executor for Adapter {
             );
             let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
                 Ok(draft) => draft,
+                Err(Error::MessageRejected)
+                    if matches!(
+                        delivery.output,
+                        Out::Comment {
+                            kind: CommentKind::Clarify,
+                            ..
+                        }
+                    ) =>
+                {
+                    let fallback = "I couldn't act on your comment. Could you rephrase it?";
+                    tl3_github::message::check_prose(fallback, &policy)
+                        .map_err(|_| Error::MessageRejected)?;
+                    fallback.into()
+                }
                 Err(Error::MessageRejected) => {
                     return Ok(Completion {
                         progress: None,
@@ -194,7 +284,38 @@ impl Executor for Adapter {
                 .reconcile_publication(delivery)
                 .unwrap_or(Reconciliation::Pending));
         }
-        if Self::request_notice(delivery).is_none() {
+        if let Some(crate::steering::Task::FileRequest {
+            correction, since, ..
+        }) = &delivery.steering
+        {
+            if !correction {
+                return Ok(match self.file_request(delivery) {
+                    Ok(completion) => Reconciliation::Found(completion),
+                    Err(_) => Reconciliation::Pending,
+                });
+            }
+            let client = self.client(delivery)?;
+            let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+            return Ok(
+                match self
+                    .runtime
+                    .block_on(client.reconcile_issue(&repo, &delivery.key, since))
+                {
+                    Ok(Some(issue)) => Reconciliation::Found(Self::linked(delivery, issue)),
+                    Ok(None) => Reconciliation::Absent,
+                    Err(_) => Reconciliation::Pending,
+                },
+            );
+        }
+        if Self::request_notice(delivery).is_none()
+            && !matches!(
+                delivery.output,
+                Out::Comment {
+                    kind: CommentKind::Clarify,
+                    ..
+                }
+            )
+        {
             return self.fake.reconcile(delivery);
         }
         let client = self.client(delivery)?;
@@ -233,16 +354,24 @@ impl Executor for Adapter {
 
 fn writer_input(
     delivery: &Delivery,
-    notice: Notice,
+    notice: Option<Notice>,
     title: &str,
     request: &str,
 ) -> Result<WriteRequest> {
+    let request = delivery.request_text.as_deref().unwrap_or(request);
     let request = if request.trim().is_empty() {
         title
     } else {
         request
     };
-    let (kind, facts) = match notice {
+    if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Clarification,
+            facts: json!({"issue_title": title, "request": request, "question": question, "comment_excerpt": excerpt}),
+            violations: vec![],
+        });
+    }
+    let (kind, facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
         Notice::Ask { question } => {
             let binding = delivery
                 .question
@@ -334,10 +463,10 @@ fn writer_input(
                 .collect();
             (
                 MessageKind::Question,
-                json!({"issue_title": title, "request": request, "obstacle": obstacle,
+                json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
                 "options": options, "recommended_option": 0,
                 "recommendation_reason": "This option gives your request a clear next step.",
-                "how_to_answer": "Reply to this question on the issue with your chosen option and any requested details."}),
+                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")}),
             )
         }
         Notice::Summary(outcome) => (

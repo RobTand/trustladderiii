@@ -46,6 +46,9 @@ def finish(key, request):
         for test in result["tests"]:
             test["head"] = "assertion" if mode == "check_fail" else "no-report"
             test["passed"] = False
+            test["message"] = (root / "failure_message").read_text() if (root / "failure_message").exists() else "assert 'goodbye' == 'hello'" if mode == "check_fail" else "No test report."
+    if (root / "recorded_results.json").exists():
+        report["results"] = json.loads((root / "recorded_results.json").read_text())
     if mode == "wrong_head":
         report["head"] = "a" * 40
     if mode == "bad_report":

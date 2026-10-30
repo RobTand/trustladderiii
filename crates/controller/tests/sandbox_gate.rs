@@ -86,7 +86,8 @@ fn replay(name: &str, expected: bool) {
             seq: 1,
             kind: EffectKind::Enqueue,
             head: None,
-        },
+        }
+        .into(),
         generation: 1,
         head_sha: Some(head),
         repository: Repository {
@@ -99,11 +100,14 @@ fn replay(name: &str, expected: bool) {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         question: None,
         note: None,
         question_context: None,
         checks: None,
         job_generation: None,
+        steering: None,
+        request_text: None,
     };
     let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else {
         panic!("recorded merged PR must produce merge evidence");

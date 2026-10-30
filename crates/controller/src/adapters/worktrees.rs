@@ -1,4 +1,5 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Error, Repository, Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
@@ -12,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
 };
-use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
 pub struct Fake(Records);
@@ -219,13 +220,7 @@ impl Real {
     }
 
     pub fn checkout(&self, delivery: &Delivery) -> PathBuf {
-        let owner = hex(delivery.repository.owner.to_ascii_lowercase().as_bytes());
-        let repo = hex(delivery.repository.name.to_ascii_lowercase().as_bytes());
-        self.root.join(owner).join(repo).join(format!(
-            "issue-{}-node-{}",
-            delivery.issue,
-            delivery.node().0
-        ))
+        checkout_path(&self.root, delivery)
     }
 
     fn repository(&self, delivery: &Delivery) -> Result<&Served> {
@@ -234,6 +229,16 @@ impl Real {
             .find(|r| same_repo(&r.identity, &delivery.repository))
             .ok_or(Error::Invalid("unserved worktree repository"))
     }
+}
+
+pub(crate) fn checkout_path(root: &Path, delivery: &Delivery) -> PathBuf {
+    let owner = hex(delivery.repository.owner.to_ascii_lowercase().as_bytes());
+    let repo = hex(delivery.repository.name.to_ascii_lowercase().as_bytes());
+    root.join(owner).join(repo).join(format!(
+        "issue-{}-node-{}",
+        delivery.issue,
+        delivery.node().0
+    ))
 }
 
 impl Served {

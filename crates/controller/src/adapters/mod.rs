@@ -24,7 +24,7 @@ pub fn simulation(root: &Path) -> Result<Registry> {
 
 pub use record::{delivered_notes, delivery_counts, delivery_epochs};
 
-/// Real ingest, audit, planning and review processes; making and other upstreams are simulated.
+/// Real ingest, audit, planning, maker and review processes; other upstreams are simulated.
 pub fn simulation_with_workers(
     root: &Path,
     config: &tl3_config::Config,

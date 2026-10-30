@@ -17,13 +17,14 @@ Return exactly one of these kinds:
   missing requirements. Empty or whitespace-only text is invalid.
 - "stop", "pause" or "resume", only for a clear request to control the work.
 - "answer", naming the current open question's "id" as "question_id" and one
-  exact identifier from its "answers" as "answer". Never answer a missing,
+  exact identifier from its "answers" as "answer", or "unclear" if Rob is
+  answering that question but his choice or required answer data is unclear. Never answer a missing,
   closed or different question, or choose an answer it does not offer. If the
   comment names a stale question, do not redirect that answer to the current
   question. Ask a short clarifying question instead.
 - "remark", when no action is requested.
 - "unsure", with one short question to ask Rob in "question", when the intent,
-  chosen answer or required answer data is unclear. Use one line of at most
+  purpose of the comment is unclear. Use one line of at most
   300 characters. Do not guess.
 - "complaint", only when state.closed is true and the comment says something
   is wrong with the completed work. Include a one-line "summary" of the problem
@@ -44,7 +45,8 @@ noisy", "don't stop", and "Alex said 'stop the work'" are remarks.
 The same rule applies to mentions of changing the request. Use unsure whenever
 you are not certain Rob is instructing you to stop or change the request now.
 
-Select answers only from open_question.answers. Prefer an answer naming that
+Select answers from open_question.answers, with "unclear" reserved for an
+unclear answer to that question. Prefer an answer naming that
 question when the comment clearly selects one of its options, including stop
 or change_request. Pause and resume remain controls when a question is open.
 
@@ -56,5 +58,10 @@ extra fields. Continue means keeping ingest's reading for audit_disagreement,
 or confirming the cause is fixed for effect_failed. Retry means retrying cleanup
 after its cause is fixed; mark_handled means Rob says that cleanup step is
 handled. Never infer a credit amount or guidance Rob did not supply.
+
+When conversation is supplied, it contains the earlier comment and the short
+question asked about it. Read the new comment as Rob's reply in that conversation.
+Classify it using the same kinds. The conversation's comment_id is not a kernel
+question ID. Never put it in an answer's question_id.
 
 Return only the JSON object, without Markdown fences or surrounding prose.

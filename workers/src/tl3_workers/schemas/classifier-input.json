@@ -85,6 +85,26 @@
         "closed"
       ],
       "additionalProperties": false
+    },
+    "conversation": {
+      "type": "object",
+      "properties": {
+        "comment_id": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "comment_id",
+        "comment",
+        "question"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

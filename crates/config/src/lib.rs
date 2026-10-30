@@ -35,6 +35,8 @@ fn invalid(field: impl Into<String>, message: impl Into<String>) -> Error {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub operations: Option<Operations>,
+    #[serde(default)]
     pub store: Store,
     pub limits: Limits,
     pub github: GitHub,
@@ -48,6 +50,14 @@ pub struct Config {
     pub hindsight: Hindsight,
     pub status: Status,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Operations {
+    pub owner: String,
+    pub repo: String,
+    pub issue: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -89,6 +99,8 @@ impl Default for Planning {
 pub struct Workers {
     pub python: PathBuf,
     pub runs: PathBuf,
+    #[serde(default)]
+    pub tiktoken_cache_dir: Option<PathBuf>,
     /// Arguments passed to the configured worker Python.
     pub command: Vec<String>,
 }
@@ -98,6 +110,7 @@ impl Default for Workers {
         Self {
             python: PathBuf::from("/srv/tl3/workers/.venv/bin/python"),
             runs: PathBuf::from("/srv/tl3/worker-runs"),
+            tiktoken_cache_dir: None,
             command: vec!["-m".into(), "tl3_workers".into(), "run".into()],
         }
     }
@@ -211,6 +224,8 @@ pub struct Models {
     pub reviewer: Vec<Model>,
     pub rebaser: Vec<Model>,
     pub comment_classifier: Vec<Model>,
+    #[serde(default)]
+    pub writer: Vec<Model>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -260,6 +275,7 @@ pub struct PrismaBuild {
 #[serde(deny_unknown_fields)]
 pub struct Hindsight {
     pub endpoint: Url,
+    pub bank: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -306,6 +322,9 @@ impl Config {
                 config.models.maker[2].clone(),
             ];
         }
+        if config.models.writer.is_empty() {
+            config.models.writer = config.models.ingest.clone();
+        }
         config.validate()?;
         Ok(config)
     }
@@ -325,6 +344,16 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), Error> {
         self.store.validate()?;
+        if let Some(operations) = &self.operations {
+            github_name("operations.owner", &operations.owner, false)?;
+            github_name("operations.repo", &operations.repo, true)?;
+            if operations.issue == 0 {
+                return Err(invalid(
+                    "operations.issue",
+                    "must be a positive issue number",
+                ));
+            }
+        }
         if self.planning.overhead_tokens.is_empty()
             || self
                 .planning
@@ -430,6 +459,9 @@ impl Config {
         ] {
             absolute(field, path)?;
         }
+        if let Some(path) = &self.workers.tiktoken_cache_dir {
+            absolute("workers.tiktoken_cache_dir", path)?;
+        }
         if self.workers.command.is_empty() {
             return Err(invalid("workers.command", "must contain a Python command"));
         }
@@ -438,6 +470,9 @@ impl Config {
         }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;
+        if self.hindsight.bank.trim().is_empty() {
+            return Err(invalid("hindsight.bank", "must not be empty"));
+        }
         for (role, ladder) in [
             ("ingest", self.models.ingest.as_slice()),
             ("audit", &self.models.audit),
@@ -446,6 +481,7 @@ impl Config {
             ("reviewer", &self.models.reviewer),
             ("rebaser", &self.models.rebaser),
             ("comment_classifier", &self.models.comment_classifier),
+            ("writer", &self.models.writer),
         ] {
             if ladder.is_empty() {
                 return Err(invalid(
@@ -467,6 +503,12 @@ impl Config {
                     ));
                 }
             }
+        }
+        if self.models.planner.len() < 2 {
+            return Err(invalid(
+                "models.planner",
+                "add a second model: a plan that can't meet re-runs with the next model on the planner's ladder",
+            ));
         }
         let [first, second, third] = &self.models.maker;
         if first.name != second.name || first.family != second.family {
@@ -551,33 +593,53 @@ impl Config {
                 .as_ref()
                 .map(|path| ("store.password_file", path)),
         ) {
-            let metadata = fs::metadata(path).map_err(|source| Error::File {
-                field: field.into(),
-                path: path.clone(),
-                source,
-            })?;
-            if !metadata.is_file() {
-                return Err(invalid(field, "must point to a regular secret file"));
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = metadata.permissions().mode();
-                if mode & 0o077 != 0 || mode & 0o400 == 0 {
-                    return Err(invalid(
-                        field,
-                        "secret file must be owner-readable and owner-only; run chmod 600 on the file",
-                    ));
-                }
-            }
-            #[cfg(not(unix))]
-            return Err(invalid(
-                field,
-                "owner-only secret-file checks require Unix permissions",
-            ));
+            validate_secret_file(field, path)?;
         }
         Ok(())
     }
+
+    /// Status needs only its store credential. It can run before model setup.
+    pub fn load_status(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
+        let text = fs::read_to_string(path).map_err(|source| Error::File {
+            field: "config".into(),
+            path: path.into(),
+            source,
+        })?;
+        let config = Self::parse(&text)?;
+        if let Some(path) = &config.store.password_file {
+            validate_secret_file("store.password_file", path)?;
+        }
+        Ok(config)
+    }
+}
+
+fn validate_secret_file(field: &str, path: &Path) -> Result<(), Error> {
+    let metadata = fs::metadata(path).map_err(|source| Error::File {
+        field: field.into(),
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.is_file() {
+        return Err(invalid(field, "must point to a regular secret file"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        if mode & 0o077 != 0 || mode & 0o400 == 0 {
+            return Err(invalid(
+                field,
+                "secret file must be owner-readable and owner-only; run chmod 600 on the file",
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    return Err(invalid(
+        field,
+        "owner-only secret-file checks require Unix permissions",
+    ));
+    Ok(())
 }
 
 fn nonempty(field: &str, value: &str) -> Result<(), Error> {
