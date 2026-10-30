@@ -171,7 +171,11 @@ impl Controller {
                 id: node.last_cmd + 1,
                 command: Command::Answer {
                     question,
-                    answer: Answer::Continue,
+                    answer: if node.phase.is_stopping() {
+                        Answer::Retry
+                    } else {
+                        Answer::Continue
+                    },
                 },
             };
             self.apply(snapshot, world, event, commit)?;

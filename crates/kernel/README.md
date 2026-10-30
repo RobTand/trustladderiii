@@ -119,7 +119,7 @@ These are simplifications against the state table, all deliberate:
 
 - Each request is one root leaf, so its credit lives on its node.
 - Rob owns every pause, as in slice one.
-- Notices are controller outbox entries. A permanently failed question post enters the kernel as `NoticeFailed`, matching the current question ID. `Question.post_failed` records AwaitingRob(effect failed) while retaining the original question and continuation. Continue reissues that question with a new ID and no credit charge. The controller raises the incident and preserves the message marker across retries. A failed summary or note leaves a Closed node final and retries in the controller.
+- Notices are controller outbox entries. A permanently failed question post enters the kernel as `NoticeFailed`, matching the current question ID. `Question.post_failed` records AwaitingRob(effect failed) while retaining the original question and continuation. Continue reissues that question with a new ID and no credit charge. During Stopping, the node stays in Stopping and Retry reissues the cleanup question. The controller raises the incident and preserves the message marker across retries. A failed summary or note leaves a Closed node final and retries in the controller.
 - Looks run in the controller. What they find arrives as replies, acknowledgements and facts.
 - After a permanent effect failure, carrying on restarts the phase's effects from the top. Every effect converges or is deduplicated, so this ends where retrying only the failed effect would.
 - Production IDs are 64-bit newtypes. Proof assumptions bound heads below 8 and each repo to four file IDs.

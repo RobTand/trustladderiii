@@ -988,7 +988,11 @@ impl World {
             }
             if let Some(q) = n.question {
                 let answer = if q.post_failed {
-                    Answer::Continue
+                    if n.phase.is_stopping() {
+                        Answer::Retry
+                    } else {
+                        Answer::Continue
+                    }
                 } else {
                     match q.kind {
                         QKind::AuditDisagreement | QKind::EffectFailed => Answer::Continue,
@@ -1237,7 +1241,7 @@ impl World {
         // Questions to Rob.
         match n.question {
             Some(q) => {
-                if q.post_failed && n.phase != Phase::AwaitingRob {
+                if q.post_failed && n.phase != Phase::AwaitingRob && !n.phase.is_stopping() {
                     return Err(Broken::Question);
                 }
                 let price = match q.kind {
@@ -1606,7 +1610,7 @@ fn apply(w: &mut World, event: Event, out: &mut Outbox) {
         }
         Event::NoticeFailed { node, question } => {
             if let Some(i) = w.index(node)
-                && w.nodes[i].phase == Phase::AwaitingRob
+                && (w.nodes[i].phase == Phase::AwaitingRob || w.nodes[i].phase.is_stopping())
                 && let Some(q) = w.nodes[i].question.as_mut()
                 && q.id == question
             {
@@ -2300,22 +2304,28 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
         return; // an answer to a question that is no longer open
     }
     if q.post_failed {
-        match answer {
-            Answer::Continue | Answer::Retry => {
-                let next = w.next_question;
-                w.next_question += 1;
-                w.nodes[i].question = Some(Question {
-                    id: next,
-                    post_failed: false,
-                    ..q
-                });
-                notice(out, i, Notice::Ask { question: next });
-            }
-            Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
-            Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
-            _ => {}
+        if matches!(
+            (w.nodes[i].phase, answer),
+            (Phase::AwaitingRob, Answer::Continue) | (Phase::Stopping(_), Answer::Retry)
+        ) {
+            let next = w.next_question;
+            w.next_question += 1;
+            w.nodes[i].question = Some(Question {
+                id: next,
+                post_failed: false,
+                ..q
+            });
+            notice(out, i, Notice::Ask { question: next });
+            return;
         }
-        return;
+        if w.nodes[i].phase == Phase::AwaitingRob {
+            match answer {
+                Answer::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
+                Answer::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
+                _ => {}
+            }
+            return;
+        }
     }
     match w.nodes[i].phase {
         Phase::Stopping(_) => match answer {

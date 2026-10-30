@@ -188,10 +188,16 @@ impl Respond for Api {
                 ResponseTemplate::new(202)
             }
 
-            ("GET", "/repos/owner/sandbox/issues/12/comments") => {
+            ("GET", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path.ends_with("/comments") =>
+            {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
-            ("POST", "/repos/owner/sandbox/issues/12/comments") => {
+            ("POST", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path.ends_with("/comments") =>
+            {
                 if state.forbidden_question
                     && original_path.contains("/sandbox/")
                     && String::from_utf8_lossy(&request.body).contains("recommend option")
@@ -213,7 +219,7 @@ impl Respond for Api {
                 state.deletes += 1;
                 ResponseTemplate::new(204)
             }
-            ("PATCH", "/repos/owner/sandbox/issues/12") => {
+            ("PATCH", path) if path.starts_with("/repos/owner/sandbox/issues/") => {
                 state.closed = true;
                 let mut issue = fixture(false)["issue"].clone();
                 issue["state"] = json!("closed");
@@ -313,12 +319,6 @@ impl Respond for Api {
                 } else {
                     json!({"check_suites": []})
                 }),
-            ("GET", path)
-                if path.starts_with("/repos/owner/sandbox/issues/1")
-                    && path.ends_with("/comments") =>
-            {
-                ResponseTemplate::new(200).set_body_json(json!([]))
-            }
             ("GET", path) if path.starts_with("/repos/owner/sandbox/issues/1") => {
                 let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
                 ResponseTemplate::new(200)

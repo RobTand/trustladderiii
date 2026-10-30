@@ -208,7 +208,7 @@ fn check_apply(event: Event) {
     require_consistent(&after);
     check_nodes(&before, &after);
     if let Event::NoticeFailed { question, .. } = event
-        && before.nodes[0].phase == Phase::AwaitingRob
+        && (before.nodes[0].phase == Phase::AwaitingRob || before.nodes[0].phase.is_stopping())
         && let Some(q) = before.nodes[0].question
         && q.id == question
     {
@@ -219,17 +219,17 @@ fn check_apply(event: Event) {
     }
     if let Event::Command {
         id,
-        command:
-            Command::Answer {
-                question,
-                answer: Answer::Continue | Answer::Retry,
-            },
+        command: Command::Answer { question, answer },
         ..
     } = event
         && id > before.nodes[0].last_cmd
         && let Some(q) = before.nodes[0].question
         && q.id == question
         && q.post_failed
+        && matches!(
+            (before.nodes[0].phase, answer),
+            (Phase::AwaitingRob, Answer::Continue) | (Phase::Stopping(_), Answer::Retry)
+        )
     {
         let next = after.nodes[0].question.unwrap();
         assert!(!next.post_failed && next.id != q.id);
