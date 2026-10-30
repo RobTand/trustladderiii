@@ -47,6 +47,11 @@ pub struct Store {
     boundary_hook: Option<BoundaryHook>,
 }
 
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<Store>();
+};
+
 /// Write boundaries used by process crash simulations. Migration setup and
 /// read-only transactions are outside the controller save-point contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,7 +67,7 @@ pub enum SavePoint {
     InternAfterCommit,
 }
 
-type BoundaryHook = Box<dyn FnMut(SavePoint, &str, &serde_json::Value)>;
+type BoundaryHook = Box<dyn FnMut(SavePoint, &str, &serde_json::Value) + Send>;
 
 fn boundary(
     hook: &mut Option<BoundaryHook>,
@@ -100,7 +105,7 @@ impl Store {
     /// A hook must return normally or terminate the process; unwinding is not a crash.
     pub fn set_boundary_hook(
         &mut self,
-        hook: impl FnMut(SavePoint, &str, &serde_json::Value) + 'static,
+        hook: impl FnMut(SavePoint, &str, &serde_json::Value) + Send + 'static,
     ) {
         self.boundary_hook = Some(Box::new(hook));
     }
