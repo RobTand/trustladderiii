@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
@@ -36,6 +37,8 @@ def _check_reply(inputs, reply):
         checked = [check["goal_id"] for check in reply["self_check"]]
         if len(checked) != len(goals) or set(checked) != set(goals):
             raise ValueError("self-check must cover every goal exactly once")
+        if any(check["status"] != "met" for check in reply["self_check"]):
+            raise ValueError("done requires every goal to be met; use cant_meet with a report")
     elif reply["kind"] == "needs_files":
         for item in reply["files"]:
             if not _parts(item["path"]):
@@ -79,15 +82,37 @@ def _commit(request):
     return head
 
 
-def _out_of_room(message, context_size):
+def _message_characters(message):
+    content = message.content
+    count = len(content) if isinstance(content, str) else len(json.dumps(content, ensure_ascii=False))
+    if isinstance(message, AIMessage) and message.tool_calls:
+        count += len(json.dumps(message.tool_calls, ensure_ascii=False))
+    return count
+
+
+class _ContextCharacters(BaseCallbackHandler):
+    prompt = 0
+
+    def on_chat_model_start(self, serialized, messages, **kwargs):
+        # Count the actual prompt, including the schema, history and tool results.
+        self.prompt = sum(_message_characters(message) for message in messages[0])
+        tools = kwargs.get("invocation_params", {}).get("tools")
+        if tools:
+            self.prompt += len(json.dumps(tools, ensure_ascii=False))
+
+
+def _out_of_room(message, context_size, prompt_characters):
     usage = message.usage_metadata
-    if usage is None:
-        raise ValueError("maker requires model usage metadata")
-    counts = [usage.get("input_tokens"), usage.get("output_tokens")]
-    if any(type(count) is not int or count < 0 for count in counts):
-        raise ValueError("invalid model usage metadata")
+    tokens = 0
+    if usage is not None:
+        counts = [usage.get("input_tokens"), usage.get("output_tokens")]
+        if any(type(count) is not int or count < 0 for count in counts):
+            raise ValueError("invalid model usage metadata")
+        tokens = sum(counts)
+    if tokens == 0:
+        tokens = (prompt_characters + _message_characters(message) + 2) // 3
     # Each prompt resends the conversation. Summing turn totals double-counts it.
-    return sum(counts) * 100 >= context_size * 85
+    return tokens * 100 >= context_size * 85
 
 
 def run(model, request, worktree, emit):
@@ -101,13 +126,16 @@ def run(model, request, worktree, emit):
         model.model_kwargs = {**model.model_kwargs, "parallel_tool_calls": False}
     # The protocol requires a head, but the model must never supply one.
     proposal = deepcopy(schema("maker-reply"))
-    done = proposal["oneOf"][0]
+    done = next(variant for variant in proposal["oneOf"]
+                if variant["properties"]["kind"]["const"] == "done")
     done["required"].remove("head")
     del done["properties"]["head"]
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal)
+    characters = _ContextCharacters()
     last_message = None
     stream = agent.stream(
         {"messages": [HumanMessage(content=json.dumps(inputs, ensure_ascii=False))]},
+        config={"callbacks": [characters]},
         stream_mode="updates",
     )
     try:
@@ -118,7 +146,7 @@ def run(model, request, worktree, emit):
                 for message in result.get("messages", []):
                     if isinstance(message, AIMessage):
                         emit({"event": "progress", "unit": "model_turn"})
-                        if _out_of_room(message, inputs["context_size"]):
+                        if _out_of_room(message, inputs["context_size"], characters.prompt):
                             return {"kind": "out_of_room"}
                         last_message = message
                     elif isinstance(message, ToolMessage):

@@ -233,6 +233,12 @@ For example, to add `planner`:
    For an extra semantic check, define `check_reply(inputs, reply)` in that
    module and pass it as `check_reply=check_reply`. It runs after schema
    validation and raises `ValueError` to fail the run before emitting a reply.
+   If the role needs per-turn control or a step between checking and returning
+   its reply, supply the optional `Role.run` hook. It receives
+   `model, request, worktree, emit` and returns the reply. Keep protocol version
+   1's `model_turn` and `tool_result` progress events. The runtime validates the
+   returned reply and emits the version 1 reply event. Maker uses this hook to
+   check context usage and commit after checking its proposal.
 3. Add the role's tests in its own test module. Run them through PrismaBuild.
    `test_discovered_roles_have_prompts_and_schemas_without_orphans` checks every
    discovered role's packaged resources and rejects orphan schema files.
@@ -303,6 +309,12 @@ transport still connects to the configured proxy. Ticket #33 can extend the
 `TOOL_FACTORIES` table with one PrismaBuild test tool entry, without changing
 `build_tools` or file confinement.
 It must submit admitted work rather than expose `execute` or a local shell.
+
+Maker commits in worker code with hooks disabled and no inherited Git overrides
+or user or system Git configuration. An agent-written `.gitattributes` can name
+filter, diff or merge drivers, but cannot define their commands. Drivers defined
+in a served repo's own Git config, such as git-lfs filters, can run during the
+commit step. Served repos must not configure these drivers for TL3's worktrees.
 
 ## Verification
 

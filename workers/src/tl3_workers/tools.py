@@ -1,12 +1,13 @@
 """TL3 file tools. Every filesystem access starts at an open worktree handle."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import glob as globlib
 import json
 import os
 from pathlib import PurePosixPath
 import re
 import stat
+from threading import Lock
 
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
@@ -95,6 +96,7 @@ def _matching_lines(stream, pattern):
 class Worktree:
     def __init__(self, root):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self._mutation_lock = Lock()
 
     def __enter__(self):
         return self
@@ -314,18 +316,20 @@ def build_tools(worktree, descriptions):
         if not description.strip():
             raise ValueError("Each role must describe its tools")
         method = TOOL_FACTORIES[name](worktree)
+        lock = worktree._mutation_lock if name in WRITE_TOOLS | {"run_tests"} else nullcontext()
 
-        def guarded(*args, _method=method, **kwargs):
-            try:
-                return _method(*args, **kwargs)
-            except UnicodeError as exc:
-                raise ToolException("Expected valid UTF-8 text.") from exc
-            except ValueError as exc:
-                raise ToolException(str(exc)) from exc
-            except FileNotFoundError as exc:
-                raise ToolException("File or directory not found.") from exc
-            except OSError as exc:
-                raise ToolException("Worktree tool rejected the path or operation.") from exc
+        def guarded(*args, _method=method, _lock=lock, **kwargs):
+            with _lock:
+                try:
+                    return _method(*args, **kwargs)
+                except UnicodeError as exc:
+                    raise ToolException("Expected valid UTF-8 text.") from exc
+                except ValueError as exc:
+                    raise ToolException(str(exc)) from exc
+                except FileNotFoundError as exc:
+                    raise ToolException("File or directory not found.") from exc
+                except OSError as exc:
+                    raise ToolException("Worktree tool rejected the path or operation.") from exc
 
         tools.append(StructuredTool.from_function(
             func=guarded, name=name, description=description,
