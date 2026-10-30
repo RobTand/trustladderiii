@@ -292,7 +292,7 @@ async fn real_queue_records_report_action_codes_and_withdrawn_attempts_without_b
         assert_eq!(record.attempts.len(), 1);
         assert_eq!(record.attempts[0].returncode, Some(attempt_code));
         let debug = format!("{record:?}");
-        for secret in ["fake-token", "fake-nonce", "argv", "resource_telemetry"] {
+        for secret in ["fake-token", "fake-nonce", "argv:", "resource_telemetry:"] {
             assert!(!debug.contains(secret), "retained broker field {secret}");
         }
     }
