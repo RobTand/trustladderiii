@@ -432,11 +432,35 @@ impl Executor for Adapter {
     fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
         let snapshot = store.load()?;
         let world = crate::snapshot::decode(&snapshot)?;
+        let pending = snapshot
+            .pending_effects
+            .iter()
+            .filter(|effect| effect.kind == "PrismaBuild")
+            .map(|effect| serde_json::from_value::<Delivery>(effect.payload.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let watches = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "watches")
+            .map(|row| serde_json::from_value::<Delivery>(row.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut first_error = None;
         // Only retained adapter directories are candidates. Closed history costs no scan.
         for entry in fs::read_dir(&self.settings.records)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
+            };
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => {}
+                Ok(_) => continue,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
             }
             let Some(node) = entry
                 .file_name()
@@ -453,18 +477,6 @@ impl Executor for Adapter {
             {
                 continue;
             }
-            let pending = snapshot
-                .pending_effects
-                .iter()
-                .filter(|effect| effect.kind == "PrismaBuild")
-                .map(|effect| serde_json::from_value::<Delivery>(effect.payload.clone()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let watches = snapshot
-                .rows
-                .iter()
-                .filter(|row| row.table == "watches")
-                .map(|row| serde_json::from_value::<Delivery>(row.value.clone()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
             if pending.iter().any(|d| d.node() == node)
                 || watches.iter().any(|d| {
                     d.node() == node
@@ -474,9 +486,11 @@ impl Executor for Adapter {
             {
                 continue;
             }
-            self.retire_node(node)?;
+            if let Err(error) = self.retire_node(node) {
+                first_error.get_or_insert(error);
+            }
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {

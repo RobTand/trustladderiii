@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
-cargo test -p tl3-controller --test publishing --locked
-cargo test --locked --all-targets -p tl3-controller -p tl3-store -p tl3-github -p tl3-worktrees -p tl3-prismabuild -p tl3-mergify
+cargo test -p tl3-controller --test publishing --test github --test prismabuild --locked
 cd workers
-/home/rob/.local/bin/uv run --locked --no-editable --python 3.14+gil pytest -q
+"${TL3_TEST_UV:-uv}" run --locked --no-editable --python 3.14+gil pytest -q

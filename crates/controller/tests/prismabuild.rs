@@ -1563,32 +1563,65 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
     let mut controller = Controller::open(
         tl3_store::Store::open(settings).unwrap(),
         adapters::simulation(&root.path().join("fakes")).unwrap(),
-        Bootstrap { repos: vec![repository()], rob: 1, slots: 1, pool: 1 },
-    ).unwrap();
+        Bootstrap {
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+        },
+    )
+    .unwrap();
     for node in 0..3 {
-        controller.intake(LabelledIssue {
-            delivery: format!("retirement-{node}"), owner: "RobTand".into(),
-            repo: "tl3-sandbox".into(), installation: 1, number: 42 + node,
-            title: "Retirement fixture".into(), actor: 1, label: "tl3".into(),
-        }).unwrap();
+        controller
+            .intake(LabelledIssue {
+                delivery: format!("retirement-{node}"),
+                owner: "RobTand".into(),
+                repo: "tl3-sandbox".into(),
+                installation: 1,
+                number: 42 + node,
+                title: "Retirement fixture".into(),
+                actor: 1,
+                label: "tl3".into(),
+            })
+            .unwrap();
         while controller.drive_once().unwrap() {}
     }
-    assert!(controller.world().unwrap().nodes.iter().all(|n| n.phase.is_closed()));
+    assert!(
+        controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|n| n.phase.is_closed())
+    );
     let mut adapter = fixture(root.path(), "done");
     let records = root.path().join("records");
     for node in 0..3 {
         fs::create_dir_all(records.join(node.to_string())).unwrap();
     }
     // Corrupt the first candidate regardless of filesystem directory ordering.
-    let bad = fs::read_dir(&records).unwrap().map(|e| e.unwrap().path())
-        .find(|p| p.is_dir()).unwrap();
+    let bad = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.is_dir())
+        .unwrap();
     fs::write(bad.join("corrupt.job"), "not JSON").unwrap();
     let mut store = tl3_store::Store::open(settings).unwrap();
-    assert!(adapter.retire(&mut store).is_err(), "retirement must still report the corrupt job");
+    assert!(
+        adapter.retire(&mut store).is_err(),
+        "retirement must still report the corrupt job"
+    );
     assert!(bad.exists(), "unreadable evidence must remain for recovery");
-    let remaining: Vec<_> = fs::read_dir(&records).unwrap().map(|e| e.unwrap().path())
-        .filter(|p| p.is_dir()).collect();
-    assert_eq!(remaining, vec![bad], "one corrupt node must not block other retirements");
+    let remaining: Vec<_> = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![bad],
+        "one corrupt node must not block other retirements"
+    );
 }
 
 fn main() {
@@ -1605,7 +1638,10 @@ fn main() {
             std::thread::park();
         }
     }
-    if args.get(1).is_some_and(|arg| arg == "--retirement-regression") {
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--retirement-regression")
+    {
         let mut database = support::Database::start();
         retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
         database.stop();

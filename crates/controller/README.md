@@ -719,14 +719,19 @@ reads a private clone at the exact checked commit. Dirty maker files never enter
 that clone.
 
 The controller retains each check's tests, outcomes and `custody: in-process` in
-`check_reports`, keyed by node and head. A review needs the matching check plan,
+`check_reports`. Each node keeps only its latest head's report, and closure deletes
+it. A review needs the matching check plan,
 base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
 identifiers when ingest did not supply IDs. Optional `standing_rules` in worker
 materials supplement the controller's rules. The reserved `test-report-integrity`
 rule always replaces any supplied rule with the same ID. It protects test output
 and pytest internals while permitting ordinary program output. Review blockers
 must cite a supplied goal or rule. Approvals must name the exact reviewed head.
-The controller stores review reports and carries blocking findings into planning.
+The controller carries blocking findings into planning.
+
+Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
+covers resuming the round-0 session with the session store from #12. It is blocked
+by #12 and #13 and must land before the live tracer, #20.
 
 `github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
 client. The check is named `TL3 approval`. Its external ID contains the effect key
@@ -745,7 +750,8 @@ closing summary and closes the issue.
 After closure, PrismaBuild retirement requires every check effect and watch to
 be terminal. `retire_node` also reads each unfinished binding and refuses a
 Queued or Claimed upstream row. Corrupt bindings and failed reads retain records.
-Successful retirement removes the request's directory and notifies the source.
+Retirement continues with other closed nodes after a failure, then returns the
+first error. Successful retirement removes the request's directory and notifies the source.
 The configured submission tool must be `pbrun` itself or a wrapper that `exec`s it,
 so the controller's death signal reaches the publisher.
 
@@ -765,8 +771,8 @@ python3 crates/controller/tools/publishing_review_manifest.py hosts > /tmp/tl3-p
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-publishing.json
 ```
 
-This runs `tools/verify-publishing.sh` on dl380g10, sparky and sparklina, including
-the worker package's offline tests. The
+This runs the publishing, GitHub and PrismaBuild adapter scenarios once per host
+on dl380g10, sparky and sparklina, plus the worker package's offline tests. The
 `publishing` target combines local repositories, mock GitHub HTTP, recorded
 PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
 entry point with an offline model. Making uses the worker fake until ticket #12

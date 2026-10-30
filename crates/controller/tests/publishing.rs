@@ -416,7 +416,7 @@ fn prepare_workers() -> PathBuf {
         .canonicalize()
         .unwrap();
     assert!(
-        Command::new(env::var_os("TL3_TEST_UV").unwrap_or("/home/rob/.local/bin/uv".into()))
+        Command::new(env::var_os("TL3_TEST_UV").unwrap_or("uv".into()))
             .args(["sync", "--locked", "--python", "3.14+gil", "--project"])
             .arg(&root)
             .status()
@@ -576,14 +576,28 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert!(!server.api.state.lock().unwrap().labels);
         let d = f.delivery(EffectKind::Push, 100);
         let checkout = f.adapter().checkout(&d);
-        git(&checkout, &["commit", "--allow-empty", "-m", "outside before enqueue"]);
-        git(&checkout, &["push", f.remote.to_str().unwrap(),
-            &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str())]);
+        git(
+            &checkout,
+            &["commit", "--allow-empty", "-m", "outside before enqueue"],
+        );
+        git(
+            &checkout,
+            &[
+                "push",
+                f.remote.to_str().unwrap(),
+                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+            ],
+        );
         while c.drive_once().unwrap() {}
-        assert!(!server.api.state.lock().unwrap().labels,
-            "the stale approval must not enqueue the outside head");
-        assert_eq!(c.world().unwrap().nodes[0].rechecks, 1,
-            "enqueue must report the outside push so the new head gets checked");
+        assert!(
+            !server.api.state.lock().unwrap().labels,
+            "the stale approval must not enqueue the outside head"
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[0].rechecks,
+            1,
+            "enqueue must report the outside push so the new head gets checked"
+        );
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
@@ -640,7 +654,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .collect();
     assert_eq!(
         reviews.len(),
-        if matches!(mode, "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest") {
+        if matches!(
+            mode,
+            "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest"
+        ) {
             2
         } else {
             1
@@ -655,7 +672,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 .contains("Protect test reports")
         );
     }
-    if matches!(mode, "push" | "rebase" | "before-enqueue" | "reports-latest") {
+    if matches!(
+        mode,
+        "push" | "rebase" | "before-enqueue" | "reports-latest"
+    ) {
         assert_ne!(
             reviews[0]["inputs"]["head_sha"],
             reviews[1]["inputs"]["head_sha"]
@@ -665,11 +685,21 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     if mode == "reports-latest" {
         let snapshot = c.snapshot().unwrap();
-        let reports: Vec<_> = snapshot.rows.iter().filter(|r| r.table == "check_reports").collect();
-        assert_eq!(reports.len(), 1, "two heads must leave one check report per node");
+        let reports: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "check_reports")
+            .collect();
+        assert_eq!(
+            reports.len(),
+            1,
+            "two heads must leave one check report per node"
+        );
         assert_eq!(reports[0].value["results"], reviews[1]["inputs"]["checks"]);
-        assert!(!snapshot.rows.iter().any(|r| r.table == "review_reports"),
-            "unused review reports must not accumulate");
+        assert!(
+            !snapshot.rows.iter().any(|r| r.table == "review_reports"),
+            "unused review reports must not accumulate"
+        );
     }
     let mut state = server.api.state.lock().unwrap();
     if mode == "unapproved" {
@@ -688,8 +718,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Phase::Closed(Outcome::Merged),
     );
     if mode == "reports-closed" {
-        assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "check_reports"),
-            "a closed node must leave no check reports");
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "check_reports"),
+            "a closed node must leave no check reports"
+        );
     }
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
@@ -858,7 +894,16 @@ fn main() {
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
-    for mode in ["merged", "push", "rebase", "unapproved", "changes", "before-enqueue", "reports-latest", "reports-closed"] {
+    for mode in [
+        "merged",
+        "push",
+        "rebase",
+        "unapproved",
+        "changes",
+        "before-enqueue",
+        "reports-latest",
+        "reports-closed",
+    ] {
         lifecycle(
             &database.create(&format!("publishing_{mode}")),
             &python,

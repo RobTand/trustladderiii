@@ -14,7 +14,6 @@ env = {
     "RUST_TEST_THREADS": "2", "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
     "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
-    "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 rows = [{
     "cwd": str(root), "argv": ["bash", "crates/controller/tools/verify-publishing.sh"], "cpus": 2, "demand": {"mem_gb": 6},

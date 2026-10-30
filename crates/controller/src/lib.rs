@@ -704,13 +704,14 @@ impl Controller {
         }
         if completion.ack == Ack::Confirmed {
             record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
-            for (index, observation) in completion.observations.iter().enumerate() {
-                commit.rows.push(put(
-                    "inbox",
-                    format!("{key}:{index:08}"),
-                    json!(observation),
-                ));
-            }
+        }
+        // Upstream facts remain evidence even when the attempted write was refused.
+        for (index, observation) in completion.observations.iter().enumerate() {
+            commit.rows.push(put(
+                "inbox",
+                format!("{key}:{index:08}"),
+                json!(observation),
+            ));
         }
         self.store.commit(&commit)?;
         self.held_effects.remove(key);
@@ -904,6 +905,22 @@ impl Controller {
                 });
             }
         }
+        for row in &snapshot.rows {
+            if row.table == "review_reports"
+                || (row.table == "check_reports"
+                    && row
+                        .id
+                        .split(':')
+                        .next()
+                        .and_then(|id| id.parse::<u64>().ok())
+                        .is_some_and(|id| closed.contains(&NodeId(id))))
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: row.table.clone(),
+                    id: row.id.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -1068,6 +1085,17 @@ impl Controller {
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
                 if n.job == Some(generation) && n.generation == generation && exact_head {
+                    let prefix = format!("{}:", node.0);
+                    for row in snapshot.rows.iter().filter(|row| {
+                        row.table == "check_reports"
+                            && row.id.starts_with(&prefix)
+                            && row.id != format!("{}:{sha}", node.0)
+                    }) {
+                        commit.rows.push(RowChange::Delete {
+                            table: row.table.clone(),
+                            id: row.id.clone(),
+                        });
+                    }
                     commit.rows.push(put(
                         "check_reports",
                         format!("{}:{sha}", node.0),
@@ -1159,11 +1187,6 @@ impl Controller {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    commit.rows.push(put(
-                        "review_reports",
-                        format!("{}:{generation}", node.0),
-                        reply.clone(),
-                    ));
                 }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
