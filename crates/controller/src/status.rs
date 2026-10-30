@@ -236,9 +236,9 @@ pub fn render_html(status: &Status) -> String {
     if status.requests.is_empty() {
         output.push_str("<tr><td colspan=\"6\">No requests recorded.</td></tr>");
     }
-    write!(
+    writeln!(
         output,
-        "</tbody></table><p>{}</p></main></body></html>\n",
+        "</tbody></table><p>{}</p></main></body></html>",
         escape_html(&status.memory.summary())
     )
     .expect("write to string");

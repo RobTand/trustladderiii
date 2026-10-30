@@ -19,7 +19,8 @@ rows = [{**common, "tags": [host], "argv": ["cargo", "test", "-p", "tl3-controll
 rows.append({**common, "anywhere": True, "argv": ["bash", "crates/controller/tools/verify.sh"]})
 rows.append({**common, "anywhere": True, "argv": ["bash", "-c",
     "set -euo pipefail\n"
-    "/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil python -m pytest workers/tests harness/tests\n"
+    "/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil python -m pytest -c workers/pyproject.toml workers/tests\n"
+    "/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil python -m pytest -c harness/pyproject.toml harness/tests\n"
     "cargo build -p tl3-controller --example tl3-deploy --locked\n"
     'export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"\n'
     "python3 -m unittest discover -s deploy/dl380g10 -p test_deploy.py\n"]})
