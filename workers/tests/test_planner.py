@@ -36,10 +36,13 @@ CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unreso
 
 
 @pytest.fixture(scope="session", autouse=True)
-def cache_tokenizer():
+def cache_tokenizer(tmp_path_factory):
     # Provision public tokenizer data before the per-test socket denial. Worker
     # subprocesses then use this cache while all model and tool calls stay offline.
-    tiktoken.get_encoding("o200k_base")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path_factory.mktemp("tokenizer")))
+        tiktoken.get_encoding("o200k_base")
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -91,10 +94,75 @@ def run_reply(tmp_path, request, reply, calls=()):
     return start_worker(tmp_path, request, turns)
 
 
-def assert_rejected(result, phase="run"):
+def assert_rejected(result, phase="run", message=None):
     assert result.exit_code == 1
     assert not any(event["event"] == "reply" for event in result.events)
-    assert result.stderr.strip() == f"tl3_workers: {phase} failed"
+    expected = f"tl3_workers: {phase} failed"
+    if message:
+        expected = f"tl3_workers: planner: {message}\n{expected}"
+    assert result.stderr.strip() == expected
+
+
+@pytest.mark.parametrize("cache", ["unset", "empty", "corrupt"])
+def test_tokenizer_must_be_preloaded_without_network(tmp_path, planner_request, monkeypatch, cache):
+    if cache == "unset":
+        monkeypatch.delenv("TIKTOKEN_CACHE_DIR", raising=False)
+    else:
+        directory = tmp_path / "tokenizer"
+        directory.mkdir()
+        if cache == "corrupt":
+            (directory / "fb374d419588a4632f3f557e76b4b70aebbca790").write_bytes(b"bad cache")
+        monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(directory))
+    assert_rejected(
+        run_reply(tmp_path, planner_request, LEAF),
+        message="o200k_base tokenizer data must be preloaded in TIKTOKEN_CACHE_DIR",
+    )
+
+
+@pytest.mark.parametrize("content,message", [
+    (b"x" * (1_048_576 + 1), "declared file exceeds the 1048576-byte limit"),
+    (b"hello\x00world", "declared file must be UTF-8 text without binary control bytes"),
+    (b"\xff\xfe", "declared file must be UTF-8 text without binary control bytes"),
+])
+def test_invalid_file_has_clear_error(tmp_path, planner_request, content, message):
+    (tmp_path / "worktree/greeting.py").write_bytes(content)
+    assert_rejected(run_reply(tmp_path, planner_request, LEAF), message=message)
+
+
+def test_out_of_room_rejects_leaf(tmp_path, planner_request, monkeypatch):
+    from tl3_workers.roles.planner import check_reply
+
+    planner_request["inputs"]["must_split"] = True
+    monkeypatch.chdir(planner_request["worktree"])
+    with pytest.raises(ValueError, match="must split after running out of room"):
+        check_reply(planner_request["inputs"], copy.deepcopy(LEAF))
+
+
+@pytest.mark.parametrize("proposal", [LEAF, SPLIT])
+@pytest.mark.parametrize("path,pattern", [
+    (".github/workflows/test.yml", ".github/**"),
+    (".mergify.yml", ".mergify.yml"),
+    ("conftest.py", "**/conftest.py"),
+    ("tests/nested/conftest.py", "**/conftest.py"),
+    ("pytest.ini", "pytest.ini"),
+    ("tox.ini", "tox.ini"),
+    ("noxfile.py", "noxfile.py"),
+    ("setup.cfg", "setup.cfg"),
+    ("pyproject.toml", "pyproject.toml"),
+    ("src/private.py", "src/*.py"),
+])
+def test_protected_paths_are_rejected(tmp_path, planner_request, monkeypatch, proposal, path, pattern):
+    from tl3_workers.roles.planner import check_reply
+
+    planner_request["inputs"]["protected_paths"] = [pattern]
+    reply = copy.deepcopy(proposal)
+    if reply["kind"] == "leaf":
+        reply["files"] = [path]
+    else:
+        reply["pieces"][1]["files"] = [path]
+    monkeypatch.chdir(planner_request["worktree"])
+    with pytest.raises(ValueError, match="declared file matches a protected path"):
+        check_reply(planner_request["inputs"], reply)
 
 
 @pytest.mark.parametrize("proposal,files", [
