@@ -542,6 +542,16 @@ fn sent_but_absent(settings: &tl3_config::Store) {
     let mut controller = open(settings, &records);
     drain(&mut controller);
     assert_finished(&mut controller, &records, settings);
+    let events = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 1000)
+        .unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.receipt.result["kernel_event"]["Reply"]["reply"] == "RunFailed"),
+        "absence of an unacknowledged start must retry delivery without failing the run"
+    );
 }
 
 struct WriteDown {

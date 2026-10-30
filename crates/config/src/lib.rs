@@ -40,10 +40,31 @@ pub struct Config {
     pub github: GitHub,
     pub models: Models,
     pub worktrees_root: PathBuf,
+    #[serde(default)]
+    pub workers: Workers,
     pub prismabuild: PrismaBuild,
     pub hindsight: Hindsight,
     pub status: Status,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Workers {
+    pub python: PathBuf,
+    pub runs: PathBuf,
+    /// Arguments passed to the configured worker Python.
+    pub command: Vec<String>,
+}
+
+impl Default for Workers {
+    fn default() -> Self {
+        Self {
+            python: PathBuf::from("/srv/tl3/workers/.venv/bin/python"),
+            runs: PathBuf::from("/srv/tl3/worker-runs"),
+            command: vec!["-m".into(), "tl3_workers".into(), "run".into()],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -325,6 +346,18 @@ impl Config {
                     "duplicate served repository; GitHub names ignore case",
                 ));
             }
+        }
+        for (field, path) in [
+            ("workers.python", &self.workers.python),
+            ("workers.runs", &self.workers.runs),
+        ] {
+            absolute(field, path)?;
+        }
+        if self.workers.command.is_empty() {
+            return Err(invalid("workers.command", "must contain a Python command"));
+        }
+        for arg in &self.workers.command {
+            nonempty("workers.command", arg)?;
         }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;

@@ -112,6 +112,7 @@ impl Fixture {
             paths: vec![],
             attempt: 1,
             round: 1,
+            note: None,
         }
     }
     pub fn advance_main(&self, conflict: bool) -> String {

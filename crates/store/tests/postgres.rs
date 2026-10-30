@@ -502,10 +502,15 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
     let mut client = raw(settings);
     assert_eq!(
         client
-            .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
+            .query(
+                "SELECT version FROM tl3_schema_migrations ORDER BY version",
+                &[]
+            )
             .unwrap()
-            .get::<_, i64>(0),
-        2
+            .iter()
+            .map(|row| row.get::<_, i32>(0))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
@@ -733,7 +738,7 @@ fn read_only_reader(settings: &tl3_config::Store) {
             .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
             .unwrap()
             .get::<_, i64>(0),
-        2
+        3
     );
 }
 
@@ -756,7 +761,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             &[],
         )
         .unwrap();
-    for version in [0, 3] {
+    for version in [0, 4] {
         client
             .execute("DELETE FROM tl3_schema_migrations", &[])
             .unwrap();
@@ -768,7 +773,7 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
             .unwrap();
         assert_eq!(
             Reader::open(settings).err().unwrap().to_string(),
-            format!("schema version {version}, expected 2")
+            format!("schema version {version}, expected 3")
         );
     }
     client
@@ -785,17 +790,17 @@ fn reader_schema_versions(settings: &tl3_config::Store) {
     let mut reader = Reader::open(settings).unwrap();
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 2",
+            "UPDATE tl3_schema_migrations SET version = 4 WHERE version = 3",
             &[],
         )
         .unwrap();
     assert_eq!(
         reader.load().unwrap_err().to_string(),
-        "schema version 3, expected 2"
+        "schema version 4, expected 3"
     );
     client
         .execute(
-            "UPDATE tl3_schema_migrations SET version = 2 WHERE version = 3",
+            "UPDATE tl3_schema_migrations SET version = 3 WHERE version = 4",
             &[],
         )
         .unwrap();

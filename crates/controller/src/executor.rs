@@ -17,6 +17,8 @@ pub struct Delivery {
     pub paths: Vec<String>,
     pub attempt: u8,
     pub round: u8,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 impl Delivery {
@@ -30,6 +32,12 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    WorkerReply {
+        node: NodeId,
+        generation: u64,
+        role: String,
+        reply: serde_json::Value,
+    },
     Kernel(Event),
     Plan {
         node: NodeId,

@@ -115,3 +115,8 @@ no_progress_secs = 900
 [allowances.hindsight]
 silence_secs = 60
 no_progress_secs = 120
+
+[workers]
+python = "/srv/tl3/workers/.venv/bin/python"
+runs = "/srv/tl3/worker-runs"
+command = ["-m", "tl3_workers", "run"]
