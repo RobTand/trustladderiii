@@ -110,7 +110,8 @@ impl Daemon {
     fn requests(&self) -> Vec<Value> {
         fs::read_to_string(self.marker.with_extension("requests"))
             .unwrap()
-            .lines()
+            .split_inclusive('\n')
+            .filter(|line| line.ends_with('\n'))
             .map(|line| {
                 let record: Value = serde_json::from_str(line).unwrap();
                 record["request"].clone()
@@ -377,7 +378,11 @@ pub(super) fn replacement(settings: &tl3_config::Store) {
             .count()
             == 2
     });
-    d.wait(|s| !s.store.worker_progress(Some("1")).unwrap().is_empty());
+    d.wait(|s| {
+        s.requests()
+            .iter()
+            .any(|r| r["role"] == "ingest" && r["inputs"]["issue"]["number"] == 1000)
+    });
     let requests = d.requests();
     assert!(requests.iter().any(|r| {
         r["role"] == "ingest"
@@ -423,7 +428,11 @@ pub(super) fn correction(settings: &tl3_config::Store) {
             .iter()
             .any(|r| r.table == "request_links" && r.value["authorized_by"] == 42)
     });
-    d.wait(|s| !s.store.worker_progress(Some("1")).unwrap().is_empty());
+    d.wait(|s| {
+        s.requests()
+            .iter()
+            .any(|r| r["role"] == "ingest" && r["inputs"]["issue"]["number"] == 1000)
+    });
     let state = d.api.state.lock().unwrap();
     assert!(
         state.linked[0]["body"]
