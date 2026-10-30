@@ -36,9 +36,9 @@ def create_model(request):
         raise RuntimeError('fixture-secret-value ' + request['key_file'])
     if mode == 'noisy':
         import os, subprocess
-        os.write(1, b'stray fd write\n')
+        os.write(1, b'stray fd write\\n')
         print('stray print')
-        sys.__stdout__.write('stray dunder write\n')
+        sys.__stdout__.write('stray dunder write\\n')
         sys.__stdout__.flush()
         subprocess.run([sys.executable, '-c', "print('stray child')"], check=True)
     return model
