@@ -45,6 +45,12 @@ pub struct WorkerOutputSource {
     watches: BTreeMap<i32, PathBuf>,
 }
 
+impl crate::ingress::Source for WorkerOutputSource {
+    fn run(self, sender: Sender<Input>) -> Result<()> {
+        WorkerOutputSource::run(self, sender)
+    }
+}
+
 fn io<T>(result: rustix::io::Result<T>) -> Result<T> {
     result.map_err(|error| std::io::Error::from(error).into())
 }

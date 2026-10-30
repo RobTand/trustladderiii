@@ -39,21 +39,25 @@ impl Records {
             Err(e) => Err(e.into()),
         }
     }
-    pub fn deliver(&self, delivery: &Delivery, completion: Completion) -> Result<Completion> {
+    pub fn fence(&self, incoming: i64) -> Result<()> {
         let fence = self.0.join("epoch.fence");
         let epoch = match fs::read(&fence) {
             Ok(bytes) => serde_json::from_slice::<i64>(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
             Err(e) => return Err(e.into()),
         };
-        if delivery.epoch < epoch {
+        if incoming < epoch {
             return Err(crate::Error::Adapter(Box::new(std::io::Error::other(
                 "upstream refused an older controller epoch",
             ))));
         }
-        if delivery.epoch > epoch || !fence.exists() {
-            self.write(&fence, &serde_json::to_vec(&delivery.epoch)?)?;
+        if incoming > epoch || !fence.exists() {
+            self.write(&fence, &serde_json::to_vec(&incoming)?)?;
         }
+        Ok(())
+    }
+    pub fn deliver(&self, delivery: &Delivery, completion: Completion) -> Result<Completion> {
+        self.fence(delivery.epoch)?;
         let path = self.path(&delivery.key);
         let mut record = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Record>(&bytes)?,
