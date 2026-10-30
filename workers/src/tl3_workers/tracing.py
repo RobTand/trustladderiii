@@ -27,6 +27,9 @@ class Capture:
         self.spans = []
         self.dropped = False
         capture = self
+        logger = logging.getLogger('mlflow')
+        logger.handlers = [logging.NullHandler()]
+        logger.propagate = False
 
         class Exporter(SpanExporter):
             def export(self, spans):

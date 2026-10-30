@@ -14,10 +14,18 @@ from test_workers import BRIEF, request_doc  # noqa: F401
 
 @pytest.fixture
 def receiver():
-    packets = []
+    class Packets(list):
+        block = False
+        started = threading.Event()
+        release = threading.Event()
+
+    packets = Packets()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if packets.block:
+                packets.started.set()
+                packets.release.wait(15)
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b'{"experiment":{"experiment_id":"12"}}')
@@ -35,6 +43,7 @@ def receiver():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f'http://127.0.0.1:{server.server_port}', packets
+    packets.release.set()
     server.shutdown()
     server.server_close()
     thread.join()
@@ -58,7 +67,7 @@ def exporters(monkeypatch):
         child.wait(timeout=15)
 
 
-def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='fixture-secret-value'):
+def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='fixture-secret-value', wait=True):
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
     request_doc['trace'] = {'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7',
                             'attempt': 2, 'round': 1}
@@ -73,8 +82,9 @@ def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='fixture-secret
     events = []
     runtime.run(request_doc, events.append)
     assert events[-1]['reply'] == reply
-    for child in exporters:
-        child.wait(timeout=15)
+    if wait:
+        for child in exporters:
+            child.wait(timeout=15)
     return events
 
 
@@ -117,3 +127,27 @@ def test_no_secret_in_trace(request_doc, monkeypatch, exporters, receiver):
     assert request_doc['key_file'].encode() not in packets[-1][2]
     assert b'Authorization' not in packets[-1][2]
     assert all(not span.events and not span.status.message for span in spans)
+
+
+def test_slow_mlflow_does_not_hold_the_worker(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    packets.block = True
+    events = run_fake(request_doc, monkeypatch, exporters, uri, wait=False)
+    assert events[-1]['event'] == 'reply'
+    assert packets.started.wait(15), 'export child did not connect'
+    assert exporters[-1].poll() is None, 'export child must still be waiting'
+    packets.release.set()
+    exporters[-1].wait(timeout=15)
+
+
+def test_tracing_initialization_failure_does_not_fail_run(request_doc, monkeypatch, exporters, capfd):
+    from tl3_workers import tracing
+
+    def unavailable(_):
+        raise RuntimeError('fixture-secret-value')
+
+    monkeypatch.setattr(tracing, 'Capture', unavailable)
+    run_fake(request_doc, monkeypatch, exporters, 'http://127.0.0.1:1')
+    stderr = capfd.readouterr().err
+    assert 'tl3_workers: MLflow export failed' in stderr
+    assert 'fixture-secret-value' not in stderr
