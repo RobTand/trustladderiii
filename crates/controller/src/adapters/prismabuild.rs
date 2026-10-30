@@ -136,6 +136,23 @@ fn jobs(root: &Path, completed: bool) -> Result<Vec<(PathBuf, Job)>> {
     Ok(found)
 }
 
+fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
+    for (path, job) in jobs(root, false)?.into_iter().chain(jobs(root, true)?) {
+        if job.delivery.node() == delivery.node() && job.delivery.generation < delivery.generation {
+            // A later delivered check proves the prior effect and watch have settled.
+            // Delete the binding first so a crash cannot expose a job without its done marker.
+            fs::remove_file(&path)?;
+            File::open(root)?.sync_all()?;
+            match fs::remove_file(path.with_extension("done")) {
+                Ok(()) => File::open(root)?.sync_all()?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Adapter {
     pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
         if !settings.records.is_absolute()
@@ -209,7 +226,6 @@ impl Adapter {
     }
 
     fn submit(&self, delivery: &Delivery) -> Result<Job> {
-        self.retire_superseded(delivery)?;
         if let Some(job) = self.job(&delivery.key)? {
             self.remove_input(&delivery.key)?;
             return Ok(job);
@@ -288,22 +304,6 @@ impl Adapter {
                     && Some(job.delivery.generation) == delivery.job_generation
             })
             .collect())
-    }
-
-    fn retire_superseded(&self, delivery: &Delivery) -> Result<()> {
-        for (path, job) in jobs(&self.settings.records, true)? {
-            if job.delivery.node() == delivery.node()
-                && job.delivery.generation < delivery.generation
-            {
-                // A later kernel submission proves the prior effect and watch have settled.
-                // Delete the binding first so a crash cannot leave a job without its done marker.
-                fs::remove_file(&path)?;
-                File::open(&self.settings.records)?.sync_all()?;
-                fs::remove_file(path.with_extension("done"))?;
-                File::open(&self.settings.records)?.sync_all()?;
-            }
-        }
-        Ok(())
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {

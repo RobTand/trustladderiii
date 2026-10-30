@@ -184,12 +184,13 @@ that idle sources make no bell requests or repeated ending reads. The channel
 holds at most 64 keys; lag rebuilds the active set from durable records. Finished
 jobs leave memory and get `.done` markers, which restarts skip. Withdrawal
 skips jobs with `.done` before parsing. A later `SubmitChecks` for the same node
-in a newer generation retires completed `.job` and `.done` pairs. The kernel
+in a newer generation retires older `.job` and `.done` records only after
+the newer ending has been delivered. The kernel
 permits one in-flight effect per node, so the later submission proves the prior
-effect has settled and its watch no longer reconciles. Undelivered jobs and
-other nodes remain intact. Retirement fsyncs deletion of `.job` before deleting
+effect has settled and its watch no longer reconciles. Current jobs and other nodes remain intact. Superseded seals with no ending
+also retire, including never-published cancellations. Retirement fsyncs deletion of `.job` before deleting
 `.done`; startup removes orphan markers after an interrupted retirement.
-The last completed pair stays until that node submits again. Teardown #13
+The last pair stays until that node delivers a newer ending. Teardown #13
 should retire the final per-node records after all of that node's effects and
 watches have settled. Neither age nor a timer permits deletion.
 

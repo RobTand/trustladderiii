@@ -846,10 +846,11 @@ fn completed_records_retire_only_when_superseded() {
         delivery.key = format!("effect:0:{generation}");
         delivery.generation = generation;
         adapter.execute(&delivery).unwrap();
-        if let Some(previous) = previous {
-            for ext in ["job", "done"] {
-                assert!(!record_path(root.path(), &previous.key, ext).exists());
-            }
+        if let Some(previous) = &previous {
+            assert!(
+                record_path(root.path(), &previous.key, "job").exists(),
+                "retain recovery records until the newer ending is delivered"
+            );
         }
         assert!(matches!(
             adapter.reconcile(&delivery).unwrap(),
@@ -858,6 +859,11 @@ fn completed_records_retire_only_when_superseded() {
         let running = adapter.source().spawn(sender.clone());
         assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
         drop(running);
+        if let Some(previous) = previous {
+            for ext in ["job", "done"] {
+                assert!(!record_path(root.path(), &previous.key, ext).exists());
+            }
+        }
         assert!(record_path(root.path(), &delivery.key, "job").exists());
         assert!(record_path(root.path(), &delivery.key, "done").exists());
         previous = Some(delivery.clone());
@@ -904,6 +910,20 @@ fn completed_records_retire_only_when_superseded() {
         record_path(root.path(), &first.key, "job").exists(),
         "retain another node's completion"
     );
+    fs::remove_file(record_path(root.path(), &first.key, "done")).unwrap();
+    let first_key = adapter.action_key(&first.key).unwrap().unwrap();
+    fs::remove_file(root.path().join(format!("queue/ready/{first_key}.json"))).unwrap();
+    let key = adapter.action_key(&later.key).unwrap().unwrap();
+    finish(root.path(), key.as_str(), "done");
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
+    drop(running);
+    assert!(
+        !record_path(root.path(), &first.key, "job").exists(),
+        "newer delivered checks also retire a never-published cancelled seal"
+    );
+    assert!(record_path(root.path(), &other.key, "job").exists());
 }
 
 fn abandoned_inputs_are_removed() {

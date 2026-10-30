@@ -1,4 +1,4 @@
-use super::{Job, Settings, encoded, jobs, read_job, results, write};
+use super::{Job, Settings, encoded, jobs, read_job, results, retire_superseded, write};
 use crate::{Result, cli::Input};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -149,7 +149,9 @@ impl Source {
         };
         let mut count = 0;
         for (key, record) in changes.records {
-            let job = &self.active.as_ref().unwrap()[&key];
+            let Some(job) = self.active.as_ref().unwrap().get(&key) else {
+                continue; // A newer completion in this batch retired the job.
+            };
             match record {
                 Ok(Some(record))
                     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) =>
@@ -180,8 +182,15 @@ impl Source {
                     }
                     // Retain the completion for controller watches if it crashes before consuming Input.
                     write(&self.done(job), &completion)?;
+                    retire_superseded(&self.settings.records, &job.delivery)?;
+                    let node = job.delivery.node();
+                    let generation = job.delivery.generation;
                     self.active.as_mut().unwrap().remove(&key);
-                    self.tool_errors.remove(&key);
+                    self.active.as_mut().unwrap().retain(|_, job| {
+                        job.delivery.node() != node || job.delivery.generation >= generation
+                    });
+                    self.tool_errors
+                        .retain(|key| self.active.as_ref().unwrap().contains_key(key));
                     count += 1;
                 }
                 Err(error) => eprintln!("PrismaBuild record {key}: {error}"),

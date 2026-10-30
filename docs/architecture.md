@@ -249,10 +249,11 @@ evidence. After delivery it fsyncs a `.done` marker containing the completion,
 then removes the job from memory. Restarts and recovery scans skip those records
 before parsing them. The channel and active set do not retain historical jobs;
 a completed `.job` and `.done` pair remains for idempotence and recovery until
-a later `SubmitChecks` for that node in a newer generation. The kernel allows
+a later `SubmitChecks` for that node in a newer generation delivers its ending. The kernel allows
 one in-flight effect per node. That later submission proves the old effect is
-settled and its watch cannot reconcile again. Only completed, superseded pairs
-are retired. Undelivered jobs and other nodes remain. Retirement deletes and
+settled and its watch cannot reconcile again. Superseded records then retire,
+including cancelled seals that never published or delivered an ending. Current
+jobs and other nodes remain. Retirement deletes and
 fsyncs `.job` first, then `.done`, so a crash cannot expose a delivered job
 without its marker. Startup removes orphan markers from interrupted retirement.
 Withdrawal skips `.done` jobs before parsing. Teardown #13 should also retire
