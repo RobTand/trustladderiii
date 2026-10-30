@@ -20,6 +20,7 @@ use tl3_store::{Commit, EffectState, EffectTransition, Epoch, Reader, RowChange,
 
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "RobTand".into(),
             name: "tl3-sandbox".into(),

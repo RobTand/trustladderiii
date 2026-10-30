@@ -68,7 +68,24 @@ impl Sources {
         drop(self.exit_sender);
         drain(controller)?;
         while controller.drive_once()? {}
-        for input in self.receiver {
+        controller.look_now()?;
+        while controller.drive_once()? {}
+        loop {
+            let input = match controller.next_look_in()? {
+                Some(wait) => match self.receiver.recv_timeout(wait) {
+                    Ok(input) => input,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        controller.look_due()?;
+                        while controller.drive_once()? {}
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                },
+                None => match self.receiver.recv() {
+                    Ok(input) => input,
+                    Err(_) => break,
+                },
+            };
             for exit in self.exits.try_iter() {
                 exit?;
             }
@@ -303,7 +320,7 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             comment,
             ..
         }) => {
-            let Some(repo) = bootstrap.repos.iter().find(|repo| {
+            let Some(repo) = bootstrap.github_repositories().into_iter().find(|repo| {
                 repo.owner
                     .eq_ignore_ascii_case(&context.repository.owner.login)
                     && repo.name.eq_ignore_ascii_case(&context.repository.name)
@@ -311,7 +328,7 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
             }) else {
                 return vec![];
             };
-            comment_input(repo, issue.number, comment, bootstrap.rob)
+            comment_input(&repo, issue.number, comment, bootstrap.rob)
                 .into_iter()
                 .collect()
         }
@@ -365,7 +382,7 @@ impl CatchUp {
         let mut deliveries = Vec::new();
         let mut notifications = Vec::new();
         let mut cursor = None;
-        for repo in &bootstrap.repos {
+        for repo in &bootstrap.github_repositories() {
             let client = self
                 .clients
                 .get(&repo.installation)

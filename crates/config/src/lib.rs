@@ -178,9 +178,20 @@ fn default_agent_pool() -> u8 {
 pub struct GitHub {
     #[serde(default)]
     pub webhook_listen: Option<SocketAddr>,
+    #[serde(default)]
+    pub operations: Option<OperationsIssue>,
     pub app_credentials_file: PathBuf,
     pub rob: Identity,
     pub repos: Vec<Repository>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OperationsIssue {
+    pub owner: String,
+    pub name: String,
+    pub installation_id: u64,
+    pub number: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -269,13 +280,14 @@ pub struct Status {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Allowances {
     pub agent_worker: Allowance,
     pub prismabuild: Allowance,
     pub github_mergify: Allowance,
     pub model_calls: Allowance,
     pub hindsight: Allowance,
+    pub worktrees: Allowance,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -283,6 +295,37 @@ pub struct Allowances {
 pub struct Allowance {
     pub silence_secs: u32,
     pub no_progress_secs: u32,
+}
+
+impl Default for Allowances {
+    fn default() -> Self {
+        Self {
+            agent_worker: Allowance {
+                silence_secs: 120,
+                no_progress_secs: 900,
+            },
+            prismabuild: Allowance {
+                silence_secs: 300,
+                no_progress_secs: 900,
+            },
+            github_mergify: Allowance {
+                silence_secs: 300,
+                no_progress_secs: 1800,
+            },
+            model_calls: Allowance {
+                silence_secs: 120,
+                no_progress_secs: 900,
+            },
+            hindsight: Allowance {
+                silence_secs: 60,
+                no_progress_secs: 120,
+            },
+            worktrees: Allowance {
+                silence_secs: 120,
+                no_progress_secs: 900,
+            },
+        }
+    }
 }
 
 impl Config {
@@ -508,6 +551,7 @@ impl Config {
             ("github_mergify", &self.allowances.github_mergify),
             ("model_calls", &self.allowances.model_calls),
             ("hindsight", &self.allowances.hindsight),
+            ("worktrees", &self.allowances.worktrees),
         ] {
             for (kind, seconds) in [
                 ("silence_secs", allowance.silence_secs),

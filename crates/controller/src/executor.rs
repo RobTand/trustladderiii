@@ -95,6 +95,20 @@ impl Completion {
     }
 }
 
+pub enum Look {
+    Found(Completion),
+    Absent,
+    Pending,
+    /// An authoritative live record. Progress is an upstream-owned checkpoint.
+    Alive {
+        progress: String,
+    },
+    Healthy,
+    Quota {
+        reset_ms: u64,
+    },
+}
+
 pub enum Reconciliation {
     Found(Completion),
     /// Authoritative absence, with any earlier executor attempt known to have ended.
@@ -109,9 +123,24 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
+    /// Success proves that the exact stalled attempt has ended.
+    fn stop_stalled(&mut self, _delivery: &Delivery) -> Result<Completion> {
+        Err(crate::Error::Invalid("adapter cannot stop a stalled run"))
+    }
+    /// Recover missed authenticated webhooks, returning a durable delivery watermark.
+    fn recover_deliveries(&mut self, _after: u64) -> Result<Option<u64>> {
+        Ok(None)
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Upstream {
     GitHub,
     Mergify,
@@ -140,6 +169,13 @@ pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 impl Registry {
     pub fn register(&mut self, upstream: Upstream, executor: impl Executor + 'static) {
         self.0.insert(upstream, Box::new(executor));
+    }
+
+    pub(crate) fn get(&mut self, upstream: Upstream) -> Result<&mut (dyn Executor + '_)> {
+        match self.0.get_mut(&upstream) {
+            Some(adapter) => Ok(adapter.as_mut()),
+            None => Err(crate::Error::Invalid("missing upstream adapter")),
+        }
     }
 
     pub(crate) fn adapter(&mut self, delivery: &Delivery) -> Result<&mut (dyn Executor + '_)> {

@@ -6,6 +6,7 @@ pub mod clock;
 pub mod executor;
 mod http;
 pub mod ingress;
+pub mod looks;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -37,11 +38,16 @@ pub enum Error {
     Invalid(&'static str),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
+    #[error("upstream quota exhausted")]
+    Quota { retry_after: std::time::Duration },
 }
 
 impl From<tl3_github::Error> for Error {
     fn from(error: tl3_github::Error) -> Self {
-        Self::Adapter(Box::new(error))
+        match error {
+            tl3_github::Error::RateLimited { retry_after } => Self::Quota { retry_after },
+            error => Self::Adapter(Box::new(error)),
+        }
     }
 }
 
@@ -55,10 +61,25 @@ pub struct Repository {
 pub struct Bootstrap {
     pub repos: Vec<Repository>,
     pub rob: u64,
+    pub operations: Option<tl3_config::OperationsIssue>,
     pub slots: u8,
     pub pool: u8,
 }
 impl Bootstrap {
+    pub fn github_repositories(&self) -> Vec<Repository> {
+        let mut repos = self.repos.clone();
+        if let Some(o) = &self.operations {
+            let repo = Repository {
+                owner: o.owner.clone(),
+                name: o.name.clone(),
+                installation: o.installation_id,
+            };
+            if !repos.contains(&repo) {
+                repos.push(repo);
+            }
+        }
+        repos
+    }
     pub fn from_config(config: &tl3_config::Config) -> Result<Self> {
         Ok(Self {
             repos: config
@@ -72,6 +93,7 @@ impl Bootstrap {
                 })
                 .collect(),
             rob: config.github.rob.id,
+            operations: config.github.operations.clone(),
             slots: config
                 .limits
                 .w
@@ -118,6 +140,7 @@ pub struct Controller {
     github_translators: Vec<ingress::Translation>,
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeSet<String>,
+    allowances: tl3_config::Allowances,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -156,6 +179,7 @@ impl Controller {
             github_translators: Vec::new(),
             clock: Box::new(clock),
             held_effects: BTreeSet::new(),
+            allowances: tl3_config::Allowances::default(),
         })
     }
 
@@ -284,6 +308,7 @@ impl Controller {
                 (row.table == "github_comments" && row.id == id)
                     || (row.table == "inbox" && row.id == format!("external:{key}"))
             }) {
+                self.retry_held_effects();
                 return Ok(());
             }
         }
@@ -364,6 +389,9 @@ impl Controller {
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
+                            if let Error::Quota { retry_after } = &error {
+                                self.defer_quota(&effect.key, *retry_after)?;
+                            }
                             self.held_effects.insert(effect.key.clone());
                             progressed = true;
                             continue;
@@ -375,6 +403,9 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
+                    if looks::quota_waiting(&snapshot, &effect.key, self.now_ms())? {
+                        continue;
+                    }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                     hook(Boundary::AfterReconcile, &effect.key);
@@ -478,7 +509,8 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
-        Ok(progressed)
+        let snapshot = self.store.load()?;
+        Ok(self.prune_allowances(&snapshot)? || progressed)
     }
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
@@ -629,6 +661,24 @@ impl Controller {
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         commit.result = json!({"kernel_event": event});
+        for (index, node) in world.nodes.iter().enumerate() {
+            if previous
+                .nodes
+                .get(index)
+                .is_some_and(|old| old.waiting_incident)
+                && !node.waiting_incident
+            {
+                for row in snapshot.rows.iter().filter(|r| {
+                    r.table == "incidents"
+                        && r.value["node"] == json!(NodeId(index as u64))
+                        && r.value["open"] == true
+                }) {
+                    let mut value = row.value.clone();
+                    value["open"] = json!(false);
+                    commit.rows.push(put("incidents", row.id.clone(), value));
+                }
+            }
+        }
         let dictionary = self.store.load()?.interned;
         for (index, output) in outputs.into_iter().enumerate() {
             let (node, key) = match output {
@@ -711,7 +761,7 @@ impl Controller {
             } else {
                 None
             };
-            let delivery = Delivery {
+            let mut delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
                 output,
@@ -727,6 +777,42 @@ impl Controller {
                 note: None,
                 question_context,
             };
+            if let Out::Notice {
+                notice: tl3_kernel::Notice::Incident { needs_rob },
+                ..
+            } = output
+            {
+                let id = format!("{}.{}", snapshot.revision.get() + 1, index);
+                let source = self.attach_incident(snapshot, node, &id, commit)?;
+                let summary = if needs_rob {
+                    "Work needs Rob to clear a recurring problem."
+                } else {
+                    "Work is waiting for a service to recover."
+                };
+                commit.rows.push(put(
+                    "incidents",
+                    id.clone(),
+                    json!(looks::Incident {
+                        id: id.clone(),
+                        node,
+                        open: true,
+                        needs_rob,
+                        summary: summary.into(),
+                        signature: format!("{source:?}:infrastructure"),
+                    }),
+                ));
+                delivery.note = Some(format!(
+                    "{summary} Reply with \"clear incident {id}\" on this issue after fixing the cause."
+                ));
+                if let Some(operations) = &self.bootstrap.operations {
+                    delivery.repository = Repository {
+                        owner: operations.owner.clone(),
+                        name: operations.name.clone(),
+                        installation: operations.installation_id,
+                    };
+                    delivery.issue = operations.number;
+                }
+            }
             if matches!(
                 output,
                 Out::Effect {
@@ -741,6 +827,7 @@ impl Controller {
                     .rows
                     .push(put("watches", key.clone(), json!(delivery)));
             }
+            commit.rows.push(self.allowance_row(delivery.clone()));
             commit.effects.push(NewEffect {
                 key,
                 kind: format!("{:?}", executor::upstream(output)),
@@ -802,7 +889,13 @@ impl Controller {
                 comment,
             } => {
                 if comment.user.id == self.bootstrap.rob
-                    && self.bootstrap.repos.contains(&repository)
+                    && (self.bootstrap.repos.contains(&repository)
+                        || self.bootstrap.operations.as_ref().is_some_and(|o| {
+                            o.owner.eq_ignore_ascii_case(&repository.owner)
+                                && o.name.eq_ignore_ascii_case(&repository.name)
+                                && o.installation_id == repository.installation
+                                && o.number == issue
+                        }))
                 {
                     let id = format!(
                         "{}/{}/{}/{}",
@@ -816,6 +909,27 @@ impl Controller {
                         .iter()
                         .any(|row| row.table == "github_comments" && row.id == id)
                     {
+                        if let Some(operations) = &self.bootstrap.operations
+                            && operations.owner.eq_ignore_ascii_case(&repository.owner)
+                            && operations.name.eq_ignore_ascii_case(&repository.name)
+                            && operations.installation_id == repository.installation
+                            && operations.number == issue
+                            && let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+                            && let Some(row) = snapshot.rows.iter().find(|r| {
+                                r.table == "incidents" && r.id == id && r.value["open"] == true
+                            })
+                        {
+                            let incident: looks::Incident =
+                                serde_json::from_value(row.value.clone())?;
+                            commit.rows.push(put(
+                                "inbox",
+                                format!("incident-clear:{}:{}", comment.id, id),
+                                json!(Observation::Kernel(Event::Fact {
+                                    node: incident.node,
+                                    fact: Fact::IncidentCleared { by_rob: true }
+                                })),
+                            ));
+                        }
                         commit.rows.push(put(
                             "github_comments",
                             id,

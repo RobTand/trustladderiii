@@ -1,7 +1,7 @@
 use super::record::Records;
 use crate::{
     Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use std::path::Path;
 use tl3_kernel::{Ack, EffectKind, Out};
@@ -98,11 +98,12 @@ impl Adapter {
                     notice @ (Notice::Ask { .. }
                     | Notice::MeasuresPosted
                     | Notice::Summary(_)
-                    | Notice::Note(_)),
+                    | Notice::Note(_)
+                    | Notice::Incident { .. }),
                 ..
             } => Some(notice),
             Out::Notice {
-                notice: Notice::Incident { .. } | Notice::FileReplacement,
+                notice: Notice::FileReplacement,
                 ..
             }
             | Out::Effect { .. } => None,
@@ -181,6 +182,69 @@ impl Executor for Adapter {
         }
         Ok(Completion::confirmed(vec![]))
     }
+    fn recover_deliveries(&mut self, after: u64) -> Result<Option<u64>> {
+        let Some(client) = self.clients.values().next().cloned() else {
+            return Ok(None);
+        };
+        let mut cursor = None;
+        let mut newest = after;
+        let mut cursors = std::collections::BTreeSet::new();
+        loop {
+            let page = self
+                .runtime
+                .block_on(client.hook_deliveries(cursor.as_deref()))?;
+            let mut reached = false;
+            for delivery in page.deliveries {
+                newest = newest.max(delivery.id);
+                if delivery.id <= after {
+                    reached = true;
+                    continue;
+                }
+                if !(200..300).contains(&delivery.status_code) {
+                    self.runtime.block_on(client.redeliver_hook(delivery.id))?;
+                }
+            }
+            if reached {
+                break;
+            }
+            match page.next_cursor {
+                Some(next) if cursors.insert(next.clone()) => cursor = Some(next),
+                Some(_) => return Err(Error::Invalid("GitHub delivery cursor did not advance")),
+                None => break,
+            }
+        }
+        Ok(Some(newest))
+    }
+
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => return Ok(Look::Found(c)),
+            Reconciliation::Absent => return Ok(Look::Absent),
+            Reconciliation::Pending => {}
+        }
+        let Some(number) = delivery.pull_request else {
+            return Ok(Look::Pending);
+        };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let pull = self.runtime.block_on(client.pull_request(&repo, number))?;
+        let checks = self
+            .runtime
+            .block_on(client.check_runs(&repo, &pull.head.sha))?;
+        Ok(Look::Alive {
+            progress: serde_json::to_string(&(
+                pull.head.sha,
+                pull.state,
+                pull.merged_at,
+                checks
+                    .iter()
+                    .filter(|c| c.status == "completed")
+                    .map(|c| (c.id, &c.conclusion))
+                    .collect::<Vec<_>>(),
+            ))?,
+        })
+    }
+
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
         self.fake.0.fence(self.epoch)?;
@@ -330,6 +394,11 @@ fn writer_input(
                 "how_to_answer": "Reply to this question on the issue with your chosen option and any requested details."}),
             )
         }
+        Notice::Incident { .. } => (
+            MessageKind::Note,
+            json!({"issue_title":title, "request": request,
+                "change": delivery.note.as_deref().unwrap_or("Work needs help before it can continue.")}),
+        ),
         Notice::Summary(outcome) => (
             MessageKind::Summary,
             json!({"issue_title": title, "request": request,
@@ -352,7 +421,7 @@ fn writer_input(
                 Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",
-                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement | Notice::Incident { .. } => unreachable!(),
+                Notice::Ask { .. } | Notice::Summary(_) | Notice::FileReplacement => unreachable!(),
             }}),
         ),
     };

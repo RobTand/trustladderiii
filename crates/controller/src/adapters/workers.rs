@@ -11,7 +11,7 @@ pub use source::WorkerOutputSource;
 
 use crate::{
     Error, Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
@@ -270,6 +270,49 @@ impl Executor for Supervisor {
         let name = root.file_name().unwrap().to_string_lossy();
         write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
         Ok(Completion::confirmed(vec![]))
+    }
+
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        if !matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
+        {
+            return Ok(match self.reconcile(delivery)? {
+                Reconciliation::Found(c) => Look::Found(c),
+                Reconciliation::Absent => Look::Absent,
+                Reconciliation::Pending => Look::Pending,
+            });
+        }
+        match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => Ok(Look::Found(c)),
+            Reconciliation::Absent => Ok(Look::Healthy),
+            Reconciliation::Pending => {
+                let row = Store::open(&self.store)?
+                    .worker_progress(Some(&delivery.node().0.to_string()))?
+                    .into_iter()
+                    .find(|r| r.key == delivery.key);
+                Ok(match row {
+                    Some(row) => Look::Alive {
+                        progress: format!(
+                            "{}:{}:{}",
+                            row.attempt, row.started_ms, row.output_offset
+                        ),
+                    },
+                    None => Look::Pending,
+                })
+            }
+        }
+    }
+
+    fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
+        if let Reconciliation::Found(c) = self.reconcile(delivery)? {
+            return Ok(c);
+        }
+        self.stop_run(&delivery.key, delivery.epoch)?;
+        self.active.remove(delivery);
+        Ok(match inspect(&self.root(&delivery.key), delivery)? {
+            Reconciliation::Found(c) => c,
+            Reconciliation::Absent => failed(delivery),
+            Reconciliation::Pending => return Err(Error::Invalid("stalled worker has not ended")),
+        })
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {

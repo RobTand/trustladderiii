@@ -43,6 +43,7 @@ static PEM: LazyLock<String> = LazyLock::new(|| {
 });
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "owner".into(),
             name: "sandbox".into(),

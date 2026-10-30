@@ -146,7 +146,7 @@ pub fn daemon() -> Result<()> {
         let mut clients = BTreeMap::new();
         let mut catch_up_clients = BTreeMap::new();
         let mut secret = Vec::new();
-        for repo in &bootstrap.repos {
+        for repo in &bootstrap.github_repositories() {
             if clients.contains_key(&repo.installation) {
                 continue;
             }
@@ -187,6 +187,7 @@ pub fn daemon() -> Result<()> {
         sources.register(webhooks);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    controller.set_allowances(config.allowances.clone());
     crate::ingress::drain(&mut controller)?;
     while controller.drive_once()? {}
     if drain {
