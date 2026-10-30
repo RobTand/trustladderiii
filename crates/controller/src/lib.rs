@@ -463,7 +463,12 @@ impl Controller {
         }
         if completion.ack == Ack::Retryable && matches!(delivery.output, Out::Effect { .. }) {
             // The kernel assigns a fresh sequence to its retry. Retire the old
-            // delivery so only that new decision can start another attempt.
+            // delivery and its watch together, so absence of the cancelled key
+            // cannot fail the replacement operation in the same generation.
+            commit.rows.push(RowChange::Delete {
+                table: "watches".into(),
+                id: key.into(),
+            });
             commit.transitions.push(EffectTransition {
                 key: key.into(),
                 from: EffectState::Intended,

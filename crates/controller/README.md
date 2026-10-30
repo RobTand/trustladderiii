@@ -59,8 +59,8 @@ Each effect key owns a directory of immutable attempts. stdout and stderr are
 files. A Python supervisor records its identity before launching the worker,
 waits for it, fsyncs output and publishes its exit status. The worker wrapper
 records its identity before exec. Atomic claims also let recovery cancel a
-launcher that has not started. No file locks are used. PID, process start time
-and boot ID identify each process. Stop uses pidfds and waits for termination.
+launcher that has not started. No file locks are used. Machine ID, PID, process start time
+and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
 Keep these runs on the controller's host, including after a restart.
 
 Only a valid role reply followed by exit zero is accepted. A recorded failed

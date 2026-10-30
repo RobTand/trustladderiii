@@ -124,3 +124,20 @@ its second transaction after writing the event, rows and effects. The parent
 checks the uncommitted data is invisible, kills the writer with SIGKILL,
 reopens the store and compares the complete snapshot with the first commit.
 It then reuses the killed event key successfully.
+
+## Worker data
+
+Migration 2 adds supplied worker materials and a liveness side table.
+`put_worker_materials` supplies the original issue and repository text for a
+request node. `worker_materials` reads it without taking controller ownership.
+
+`record_worker_progress` accepts a run key, node, epoch, attempt, byte offset and
+progress unit. Only a newer attempt or output offset updates the database time.
+Replaying stdout leaves the last progress time unchanged. Old epochs cannot
+update the table. `worker_progress(None)` reads all runs, newest first.
+`worker_progress(Some(node))` filters by request node. No row exists before the
+first progress event. These writes never change the kernel world revision.
+
+The controller stores accepted ingest replies, goals and audits as world rows
+in the same transaction as their kernel event. `worker_document(node, name)`
+reads `briefs`, `goals` or `audits` for status and later worker inputs.
