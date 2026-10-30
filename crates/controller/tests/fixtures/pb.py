@@ -1,6 +1,8 @@
 """Recorded queue fixture. Never imports PB or launches a real submission."""
 import hashlib
 import json
+import os
+import time
 from pathlib import Path
 import sys
 
@@ -38,6 +40,12 @@ def finish(key, request):
             "custody": "in-process", "verdict": "pass", "tests": [
                 {"test": test, "base": "assertion" if check["kind"] == "demonstrating" else "passed",
                  "head": "passed", "pre_existing": False, "passed": True} for test in check["tests"]]})
+    if mode in ("check_fail", "infrastructure"):
+        result = report["results"][0]
+        result["verdict"] = "fail" if mode == "check_fail" else "infrastructure-failure"
+        for test in result["tests"]:
+            test["head"] = "assertion" if mode == "check_fail" else "no-report"
+            test["passed"] = False
     if mode == "wrong_head":
         report["head"] = "a" * 40
     if mode == "bad_report":
@@ -67,6 +75,12 @@ elif "--publish-sealed" in args or "--finish" in args:
         finish(key, request)
     if "--finish" in args:
         finish(key, request)
+    if (root / "hold_publish_response").exists():
+        parent = os.getppid()
+        (root / "at_publication").write_text(key)
+        while os.getppid() == parent:
+            time.sleep(0.01)
+        raise SystemExit(0)
     print(json.dumps({"schema": "prismabuild.submission.v1", "action_key": key,
                       "transport": "pool", "status": "attached", "published_unix": 100}))
     if (root / "lost_response").exists():
@@ -81,7 +95,10 @@ elif "--endings" in args:
     key = args[-1]
     path = root / f"{key}.ending"
     if path.exists():
-        print(path.read_text())
+        ending = json.loads(path.read_text())
+        if (root / "cleanup_pending").exists():
+            ending["complete"] = False
+        print(json.dumps(ending))
     else:
         print(json.dumps({"schema": "prismabuild.endings.v1", "complete": False,
                           "endings": [{"action_key": key, "status": "waiting", "succeeded": False,

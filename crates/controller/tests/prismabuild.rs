@@ -3,9 +3,8 @@ mod support;
 use std::{
     collections::BTreeSet,
     fs,
-    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc,
     time::Duration,
 };
@@ -183,6 +182,8 @@ fn recorded_endings() {
         ("failed", (true, false)),
         ("withdrawn", (true, false)),
         ("no_report", (false, false)),
+        ("check_fail", (true, false)),
+        ("infrastructure", (false, false)),
         ("bad_report", (false, false)),
         ("wrong_head", (false, false)),
     ] {
@@ -218,7 +219,13 @@ fn pending_and_withdrawal() {
         kind: EffectKind::WithdrawJob,
         head: None,
     };
-    assert!(adapter.execute(&withdraw).unwrap().observations.is_empty());
+    fs::write(root.path().join("queue/cleanup_pending"), "true").unwrap();
+    assert!(adapter.execute(&withdraw).is_err());
+    assert!(matches!(
+        adapter.reconcile(&withdraw).unwrap(),
+        Reconciliation::Pending
+    ));
+    fs::remove_file(root.path().join("queue/cleanup_pending")).unwrap();
     assert!(matches!(
         adapter.reconcile(&withdraw).unwrap(),
         Reconciliation::Found(_)
@@ -269,17 +276,25 @@ fn crash_reuses_seal() {
         serde_json::to_vec(&delivery).unwrap(),
     )
     .unwrap();
+    fs::create_dir_all(root.path().join("queue")).unwrap();
+    fs::write(root.path().join("queue/hold_publish_response"), "hold").unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .arg("--kill-child")
         .arg(root.path())
-        .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    assert_eq!(line.trim(), "published");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !root.path().join("queue/at_publication").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fixture never reached publication"
+        );
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "adapter child exited before publication"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
     let mut adapter = fixture(root.path(), "pending");
@@ -308,6 +323,53 @@ fn crash_reuses_seal() {
         1
     );
 }
+fn source_retries_one_bad_key_without_hiding_another() {
+    let root = tempfile::tempdir().unwrap();
+    let first = run(root.path(), false);
+    let mut second = first.clone();
+    second.key = "effect:0:7".into();
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&first).unwrap();
+    adapter.execute(&second).unwrap();
+    let first_key = adapter.action_key(&first.key).unwrap().unwrap();
+    let second_key = adapter.action_key(&second.key).unwrap().unwrap();
+    let record = root.path().join(format!("queue/done/{first_key}.json"));
+    let valid = fs::read(&record).unwrap();
+    fs::write(&record, "malformed").unwrap();
+    let mut source = adapter.source();
+    let (sender, receiver) = mpsc::channel();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(20)))
+            .unwrap(),
+        1
+    );
+    assert!(
+        matches!(receiver.recv().unwrap(), tl3_controller::cli::Input::Observation {
+        observation: Observation::Checks { action_key, .. }, ..
+    } if action_key == second_key.as_str())
+    );
+    fs::write(&record, valid).unwrap();
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&sender, Duration::from_millis(20)))
+            .unwrap(),
+        1
+    );
+    assert!(
+        matches!(receiver.recv().unwrap(), tl3_controller::cli::Input::Observation {
+        observation: Observation::Checks { action_key, .. }, ..
+    } if action_key == first_key.as_str())
+    );
+    let log = root.path().join(format!("queue/{first_key}.stdout"));
+    fs::write(log, "changed after PB verified it").unwrap();
+    assert!(adapter.reconcile(&first).is_err());
+}
+
 struct Workers {
     fake: adapters::workers::Fake,
     head: String,
@@ -459,6 +521,10 @@ fn main() {
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
         ("SIGKILL_reuses_seal", crash_reuses_seal),
+        (
+            "per_key_source_recovery",
+            source_retries_one_bad_key_without_hiding_another,
+        ),
     ] {
         test();
         println!("test {name} ... ok");
@@ -469,5 +535,5 @@ fn main() {
     through_controller(&database.create("pb_footprint"), true);
     println!("test outside_footprint_fails_round ... ok");
     database.stop();
-    println!("6 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("7 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
