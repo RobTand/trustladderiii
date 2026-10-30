@@ -595,6 +595,12 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     )
     .await;
     get(&server,"/repos/owner/sandbox/commits/abc1234/check-suites",json!({"check_suites":[{"id":23,"head_sha":"abc1234","status":"completed","conclusion":"success"}]})).await;
+    get(
+        &server,
+        "/repos/owner/sandbox/pulls",
+        json!([fixture("pull_request")]),
+    )
+    .await;
     let changes = github
         .catch_up(
             &[ServedRepo {
@@ -609,6 +615,7 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     let changes = &changes.repositories[0];
     assert_eq!(changes.labels[0].1.actor.id, 42);
     assert_eq!(changes.comments.len(), 1);
+    assert_eq!(changes.pull_requests[0].number, 13);
     assert_eq!(changes.check_runs[0].id, 22);
     assert_eq!(changes.check_suites[0].id, 23);
 }

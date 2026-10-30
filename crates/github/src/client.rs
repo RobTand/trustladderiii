@@ -246,7 +246,8 @@ impl GitHub {
                     && (remaining_zero || headers.contains_key("retry-after") || secondary));
             if remaining_zero || rate_limited {
                 let delay = rate_delay(&headers, attempt);
-                throttle.blocked_until = Instant::now() + delay;
+                throttle.blocked_until =
+                    Instant::now().checked_add(delay).ok_or(Error::Response)?;
                 if rate_limited {
                     if retry_safe
                         && attempt < self.0.options.max_retries
@@ -374,11 +375,11 @@ impl GitHub {
         effect_key: &str,
         body: &str,
     ) -> Result<Comment, Error> {
+        let body = marked_body(effect_key, body)?;
         let _guard = self.0.comments.lock().await;
         if let Some(comment) = self.reconcile_comments(repo, number, effect_key).await? {
             return Ok(comment);
         }
-        let body = marked_body(effect_key, body)?;
         self.request(
             Method::POST,
             format!("{}/issues/{number}/comments", repo_path(repo)?),
@@ -615,8 +616,23 @@ impl GitHub {
                 .list(format!("{path}/issues/comments"), query, None)
                 .await?;
             let mut labels = Vec::new();
-            let mut pull_requests = Vec::new();
+            let pulls: Vec<PullRequest> = self
+                .list(
+                    format!("{path}/pulls"),
+                    vec![
+                        ("state".into(), "all".into()),
+                        ("sort".into(), "updated".into()),
+                        ("direction".into(), "desc".into()),
+                    ],
+                    None,
+                )
+                .await?;
+            let pull_requests: Vec<_> = pulls
+                .into_iter()
+                .filter(|pull| pull.updated_at >= since)
+                .collect();
             let mut heads: BTreeSet<_> = repo.tracked_heads.iter().cloned().collect();
+            heads.extend(pull_requests.iter().map(|pull| pull.head.sha.clone()));
             for issue in &issues {
                 let events: Vec<Value> = self
                     .list(
@@ -636,11 +652,6 @@ impl GitHub {
                             labels.push((issue.number, event));
                         }
                     }
-                }
-                if issue.pull_request.is_some() {
-                    let pull = self.pull_request(&repo.full_name, issue.number).await?;
-                    heads.insert(pull.head.sha.clone());
-                    pull_requests.push(pull);
                 }
             }
             let mut check_runs = Vec::new();
@@ -707,7 +718,7 @@ fn rate_delay(headers: &HeaderMap, attempt: u32) -> Duration {
         .get("x-ratelimit-reset")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.parse::<i64>().ok())
-        .map(|s| (s - Utc::now().timestamp()).max(1) as u64);
+        .map(|s| s.saturating_sub(Utc::now().timestamp()).max(1) as u64);
     Duration::from_secs(
         retry
             .into_iter()

@@ -55,7 +55,7 @@ impl CheckedMessage {
 
 static VOCABULARY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-    r"(?i)\b(?:tl3|trustladder(?:iii)?|lea(?:f|ves)|lineages?|re[ -]?plans?|measur(?:e|es|ement|ements|ing)|nodes?|generations?|effects?|outbox|settle|ingesting|auditing|unplanned|awaitingrob|stopping|ready|making|checking|reviewing|publishing|queued|rebasing|kernel|footprints?|epochs?)\b"
+    r"(?i)\b(?:tl3|trustladder(?:iii)?|lea(?:f|ves)|lineages?|re[ -]?plans?|measur(?:e|es|ement|ements|ing)|nodes?|generations?|effects?|outbox|settle|ingesting|auditing|unplanned|awaitingrob|kernel|footprints?|epochs?)\b"
 ).unwrap()
 });
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {

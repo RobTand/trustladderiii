@@ -92,8 +92,7 @@ its event is durable.
 
 `catch_up(served_repos, since)` returns current snapshots and a new cursor captured
 before the pass starts. It includes open and closed issues updated since the cursor,
-repository comments, label changes with their original actors, and current PRs
-referenced by changed issues. It rereads checks on every supplied `tracked_heads`
+repository comments, label changes with their original actors, and PRs updated since the cursor. PR listing is independent of issue timestamps. It rereads checks on every supplied `tracked_heads`
 entry and every changed PR head, since a check can finish without updating an issue.
 
 Apply the snapshots idempotently and persist the new cursor only after every result
