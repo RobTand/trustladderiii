@@ -127,13 +127,22 @@ impl Executor for Workers {
         self.real.retire(store)
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        if (self.review && matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(Role::Review), .. })) || matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.execute(delivery)
         } else {
             let mut result = self.fake.execute(delivery)?;
@@ -142,13 +151,22 @@ impl Executor for Workers {
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if (self.review && matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(Role::Review), .. })) || matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                ..
-            }
-        ) {
+        if (self.review
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Review),
+                    ..
+                }
+            ))
+            || matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
+                    ..
+                }
+            )
+        {
             self.real.reconcile(delivery)
         } else {
             let mut result = self.fake.reconcile(delivery)?;
@@ -173,7 +191,11 @@ fn registry(
         Workers {
             real,
             fake: adapters::workers::Fake::new(root),
-            review: config.workers.command.get(1).is_some_and(|mode| mode == "review-fix"),
+            review: config
+                .workers
+                .command
+                .get(1)
+                .is_some_and(|mode| mode == "review-fix"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(

@@ -83,6 +83,8 @@ impl Flow {
     fn until(&mut self, done: impl Fn(Phase) -> bool) {
         loop {
             let world = self.controller.world().unwrap();
+            assert!(!world.nodes.first().is_some_and(|node| node.waiting_incident),
+                "the fixture must reach its target without an infrastructure incident");
             if let Some(node) = world.nodes.first()
                 && done(node.phase)
             {
@@ -349,14 +351,22 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let mut commit = tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
     commit.rows.push(tl3_store::RowChange::Put {
-        table: "goals".into(), id: "0".into(),
+        table: "goals".into(),
+        id: "0".into(),
         value: json!([{"id":"greeting", "description":"Return hello.", "verification":"test"}]),
     });
     store.commit(&commit).unwrap();
     let reviewed = flow.record()["head"].as_str().unwrap().to_owned();
     flow.until(|phase| phase == Phase::Making);
-    let feedback = store.worker_document("0", "maker_findings").unwrap().unwrap();
-    assert_eq!(feedback.as_array().unwrap().len(), 2, "each blocking finding needs its own mapping");
+    let feedback = store
+        .worker_document("0", "maker_findings")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        feedback.as_array().unwrap().len(),
+        2,
+        "each blocking finding needs its own mapping"
+    );
     for finding in feedback.as_array().unwrap() {
         assert!(finding["id"].is_string(), "review findings need stable ids");
         assert_eq!(finding["reviewed_sha"], reviewed);
@@ -364,23 +374,43 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store) {
     flow.until(|phase| phase == Phase::Checking);
     let fixed = flow.record()["head"].as_str().unwrap().to_owned();
     let snapshot = flow.controller.snapshot().unwrap();
-    let run = snapshot.rows.iter().find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}")).unwrap();
+    let run = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}"))
+        .unwrap();
     assert_eq!(run.value["reviewed_sha"], reviewed);
     let checks = run.value["plan"].as_array().unwrap();
     assert_eq!(checks.len(), 2, "the original plan and reproducer both run");
     assert_eq!(checks[1]["kind"], "reproducing");
     assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
     flow.until(|phase| phase.is_closed());
-    let reviews = fs::read_dir(flow.config.workers.runs.join("reviewer-requests")).unwrap()
-        .map(|entry| serde_json::from_slice::<Value>(&fs::read(entry.unwrap().path()).unwrap()).unwrap())
+    let reviews = fs::read_dir(flow.config.workers.runs.join("reviewer-requests"))
+        .unwrap()
+        .map(|entry| {
+            serde_json::from_slice::<Value>(&fs::read(entry.unwrap().path()).unwrap()).unwrap()
+        })
         .collect::<Vec<_>>();
-    let next = reviews.iter().find(|request| request["inputs"]["head_sha"] == fixed).unwrap();
+    let next = reviews
+        .iter()
+        .find(|request| request["inputs"]["head_sha"] == fixed)
+        .unwrap();
     assert_eq!(next["inputs"]["review_fixes"]["reviewed_sha"], reviewed);
-    let fixes = next["inputs"]["review_fixes"]["findings"].as_array().unwrap();
+    let fixes = next["inputs"]["review_fixes"]["findings"]
+        .as_array()
+        .unwrap();
     assert_eq!(fixes[0]["tests"], json!(["test_greeting.py::test_empty"]));
     assert_eq!(fixes[1]["reason"], "This is a documentation correction.");
-    assert!(fixes[1]["report"].as_str().unwrap().contains("Explain the greeting"));
-    assert_eq!(flow.controller.world().unwrap().nodes[0].phase, Phase::Closed(tl3_kernel::Outcome::Merged));
+    assert!(
+        fixes[1]["report"]
+            .as_str()
+            .unwrap()
+            .contains("Explain the greeting")
+    );
+    assert_eq!(
+        flow.controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(tl3_kernel::Outcome::Merged)
+    );
 }
 
 struct HeldQueue;

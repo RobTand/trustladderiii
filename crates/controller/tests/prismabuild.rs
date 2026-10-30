@@ -230,17 +230,28 @@ fn reproducing_check_plan_and_verdict() {
     value["reviewed_sha"] = serde_json::json!(reviewed);
     value["plan"][0]["kind"] = serde_json::json!("reproducing");
     let parsed = serde_json::from_value::<CheckRun>(value);
-    assert!(parsed.is_ok(), "the check plan must carry reproducing checks");
+    assert!(
+        parsed.is_ok(),
+        "the check plan must carry reproducing checks"
+    );
     delivery.checks = Some(parsed.unwrap());
     for (mode, expected) in [("done", true), ("check_fail", false)] {
         let trial = tempfile::tempdir().unwrap();
         let mut adapter = fixture(trial.path(), mode);
         adapter.execute(&delivery).unwrap();
         let requests = fs::read_dir(trial.path().join("queue")).unwrap();
-        let path = requests.map(|entry| entry.unwrap().path())
-            .find(|path| path.extension().is_some_and(|extension| extension == "request")).unwrap();
+        let path = requests
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "request")
+            })
+            .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(request["reviewed"], reviewed, "freeze the exact reviewed commit");
+        assert_eq!(
+            request["reviewed"], reviewed,
+            "freeze the exact reviewed commit"
+        );
         let (report, pass, _) = observed(completion(&mut adapter, &delivery));
         assert!(report);
         assert_eq!(pass, expected, "a failed reproducer is a failed round");
@@ -1694,7 +1705,10 @@ fn main() {
         return;
     }
     for (name, test) in [
-        ("reproducing_check_plan_and_verdict", reproducing_check_plan_and_verdict as fn()),
+        (
+            "reproducing_check_plan_and_verdict",
+            reproducing_check_plan_and_verdict as fn(),
+        ),
         ("recorded_endings", recorded_endings as fn()),
         (
             "retirement_refuses_active_or_unreadable_jobs",
