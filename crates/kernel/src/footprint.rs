@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 use crate::{FileId, World};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 enum Repr {
     Inline(u64),
     Interned(usize),
