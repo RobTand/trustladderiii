@@ -82,12 +82,16 @@ def _starting_head(request, session):
     root = _git(request, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(root).resolve() != Path(request["worktree"]).resolve():
         raise ValueError("maker requires the worktree root")
-    checkpoint = session.with_suffix(f".visit-{request['operation']['generation']}.head") if session else None
+    checkpoint = session.with_suffix(".head") if session else None
+    generation = request['operation']['generation']
     if checkpoint and checkpoint.exists():
-        return read_json(checkpoint.read_text())
+        saved = read_json(checkpoint.read_text())
+        if saved['generation'] == generation:
+            return saved['head']
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
     if checkpoint:
-        _save(checkpoint, head)
+        # Replace the previous visit so retries cannot grow an open attempt's files.
+        _save(checkpoint, {"generation": generation, "head": head})
     return head
 
 

@@ -128,6 +128,8 @@ re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
 A checkpoint keyed by the operation generation records the starting commit for each
 Making visit, including rebase-needs-changes revisits in the same attempt and round.
 A retry counts commits since that checkpoint, including a commit left by a crash.
+Each attempt stores one checkpoint with its generation and head; visits replace it
+so retries cannot accumulate checkpoint files.
 Only clean, resumable completions save conversation history. Out-of-room runs
 preserve any previous conversation without saving the exhausted one.
 

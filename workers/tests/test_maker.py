@@ -743,6 +743,11 @@ def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
         with pytest.raises(ValueError, match='done requires code changes'):
             runtime.run(maker_request, lambda event: None)
         assert git(root, 'rev-parse', 'HEAD') == before
+    checkpoint = Path(maker_request['session_file']).with_suffix('.head')
+    assert json.loads(checkpoint.read_text()) == {
+        'generation': maker_request['operation']['generation'], 'head': before,
+    }
+    assert list(tmp_path.glob('*.head')) == [checkpoint], 'visits replace one bounded checkpoint'
 
 
 @pytest.mark.parametrize('existing', [False, True])
