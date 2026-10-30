@@ -4,13 +4,16 @@ Rust edition 2024 workspace adapter for the controller's Git operations on Unix.
 The crate uses the Git CLI. It does not depend on the controller or GitHub client.
 
 ```rust,no_run
-use tl3_worktrees::{BranchName, Worktrees};
+use tl3_worktrees::{BranchName, Remote, Worktrees};
 
 let repo = Worktrees::open("/srv/tl3/repos/sandbox", "/srv/tl3/worktrees")?;
 let name = BranchName::new("tl3/issue-29")?;
-let branch = repo.create_branch(&name)?;
+let remote = Remote::local("/srv/tl3/remotes/sandbox.git")?;
+let base = repo.fetch_main(&remote, None)?;
+repo.create_branch_at(&name, &base)?;
 let path = repo.create_worktree(&name, "/srv/tl3/worktrees/issue-29")?;
-let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
+let (head, base) = repo.branch_state(&name)?.expect("prepared branch");
+let files = repo.changed_files(&base, &head)?;
 # Ok::<(), tl3_worktrees::Error>(())
 ```
 
@@ -18,22 +21,24 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 
 | Method | Result |
 |---|---|
-| `create_branch` | Branch name and durable current base commit |
+| `fetch_main`, `create_branch_at` | Fetch main and create the branch at an explicit base commit |
 | `create_worktree`, `remove_worktree` | Reconcile a checkout at an explicit path |
-| `head`, `remote_head` | Local or remote commit, with absent remote branches returning `None` |
-| `push` | Publish the local head, allowing only fast forwards |
-| `push_rebased` | Publish with an explicit expected remote head and a force-with-lease check |
-| `delete_remote_branch`, `delete_local_branch` | Remove the leaf's branch and local base ref |
-| `rebase_onto_main` | New base and head, or conflicting files and the unchanged old head |
+| `remote_head` | Remote commit, with absent remote branches returning `None` |
+| `publish` | Publish an immutable head with a lease against the recorded remote head |
+| `delete_remote_branch_at`, `delete_local_branch` | Lease remote deletion; remove the local branch and base |
+| `rebase_onto` | Rebase onto an exact target; return base and head or conflicts |
+| `branch_state` | Current `(head, base)` from the branch and recorded base refs |
+| `finish_prepare` | Repair Git-locked initialization only at the durable base |
+| `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-The controller refreshes local `refs/heads/main` before branch creation or rebase.
-This adapter does not fetch,
-choose effect identities, persist controller state, retry network failures, or mark
-a new head approved. Every new head still needs checks and review.
+`fetch_main` fetches into `refs/tl3/upstream-main`. `create_branch_at` and `rebase_onto` use the exact
+recorded commit without changing a checked-out main.
+The controller chooses effect identities. This client does not persist controller
+state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
 
 `BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
 `CommitId` accepts full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
@@ -59,10 +64,58 @@ whose directory disappeared is removed from Git's registry and recreated. A stal
 directory disappeared. Recovery creates a temporary registration under
 `<common-git-dir>/tl3-worktree-staging/<branch>`, initializes its index, and replaces
 the orphan's gitlink before repairing the registration. It preserves working files.
+`finish_prepare` repairs files only while Git's administrative lock
+`<common-git-dir>/worktrees/<id>/locked` contains exactly `initializing\n`.
+Git creates this lock during `worktree add` and removes it on success.
+Only Git's own initialization lock is trusted. Operators must never run
+`git worktree lock --reason initializing` by hand. A manual lock with that reason
+on an uncommitted checkout at the base lets Prepare reset tracked edits.
+Untracked files can then make the cleanliness check fail with `DirtyWorktree`,
+leaving the lock in place. TL3 never creates this lock itself.
+Any effect key may repair that checkout if the branch head still equals
+`refs/tl3/bases/<branch>`, even if fetched main has moved. Repair clears a stale
+index lock, runs `reset --hard <branch>`, verifies cleanliness, then unlocks.
+The owning controller and its Git children must have ended before recovery.
+Without the initializing lock, Prepare only verifies registration and branch.
+Maker commits, edits and untracked files survive, including when an older
+unfinished intent reconciles after a newer Prepare. The next maker run sees
+leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
+### Clear a half-registered add
+
+A kill after Git writes the admin `gitdir` but before it writes `HEAD` needs
+operator recovery. Prepare returns `WorktreeOccupied`, and Remove can return
+Git exit 128. Without `HEAD`, the adapter cannot prove which branch owns the
+registration. It preserves the checkout and registration for inspection.
+
+1. Stop the owning controller and all its Git children. Keep other Git writers stopped.
+2. Read the checkout's `.git` file to locate its admin directory. Verify that it
+   is a direct child of this repository's `<common-git-dir>/worktrees` directory.
+3. Verify that the admin `gitdir` points back to this checkout's `.git`, `HEAD`
+   is absent, and `locked` contains exactly `initializing\n`.
+4. Verify that the checkout contains only `.git`, including hidden entries,
+   and that the request branch head equals `refs/tl3/bases/<branch>`.
+5. Remove only that admin directory, then the checkout's `.git` file and empty
+   checkout directory. Preserve the branch, base ref, and `tl3-controller` journal.
+6. Restart the controller and retry Prepare or Remove. Prepare recreates the checkout.
+
+If any check fails, preserve the files and investigate rather than deleting them.
+
+### Remove a checkout
+
 Removal refuses tracked edits and untracked files. Ignored build files are allowed.
+The controller records a clean preflight in its Remove intent. Git's
+`initializing\n` lock and a branch head equal to the durable base also prove
+that no maker ran, including when a killed checkout left tracked files.
+Removal checks this evidence directly without scanning earlier effect records.
+Other dirty checkouts remain errors. Only the durable preflight authorizes
+`resume_removal`, which also accepts deletion-only interrupted removals.
+Git removes an initializing checkout with two `--force` flags, keeping its lock
+as evidence until removal ends so a crash can retry safely.
+If deletion removed `.git` first, recovery restores that link from a registration
+whose path and branch both match before checking the remaining files.
 It recovers a missing registration before removing a checkout. Repeating removal or branch
 deletion after success has no effect.
 
@@ -74,21 +127,25 @@ or Git failures during abort return `Recovery` so the controller retains the
 resource and reports the problem. There is no automatic conflict resolution.
 A per-checkout marker recovers detached rebases interrupted before or after the atomic branch and base update.
 
-Pushes use immutable commit ids and explicit refs. Ordinary pushes refuse divergent
-remote history. `push_rebased` requires the previously published head from the
-controller's record. Its lease prevents a concurrent collaborator push from being
+Pushes use immutable commit ids and explicit refs. `publish` requires the
+previously published head from the controller's record. Its lease prevents a concurrent collaborator push from being
 overwritten. A retry that finds the intended head already published succeeds.
-Remote deletion reads and leases the ref, and an absent ref already counts as done.
+Remote deletion leases the recorded ref, and an absent ref already counts as done.
 
 ## Credentials
 
 `Remote::https` accepts only `github.com` HTTPS URLs without userinfo, query
 strings, or fragments.
-`Remote::local` accepts a local repository for tests. Neither type has a debug
+`Remote::local` converts a local repository into a `file://` URL for tests.
+Network methods take `Option<&InstallationToken>`. Pass `None` for local remotes;
+the client also withholds an accidentally supplied token from file transport.
+`publish` leases an exact commit against the controller's recorded remote head.
+`delete_remote_branch_at` leases deletion against a recorded head. Neither type has a debug
 implementation. Neither does `InstallationToken`.
 
 Authenticated Git processes receive the Basic authorization header through
 `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, and `GIT_CONFIG_VALUE_n` environment variables.
+The authorization header is scoped to `https://github.com/`.
 The token and its encoding never enter argv, remote URLs, or repository config.
 The adapter clears inherited environment variables, including Git tracing and
 config injection. It disables interactive credentials, configured credential
