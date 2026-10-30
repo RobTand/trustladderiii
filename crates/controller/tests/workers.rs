@@ -888,17 +888,25 @@ fn event_source(settings: &tl3_config::Store) {
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
     let reader = thread::spawn(move || {
-        let mut line = String::new();
-        BufReader::new(stdout).read_line(&mut line).unwrap();
-        tx.send(line).unwrap();
+        let mut events = Vec::new();
+        for line in BufReader::new(stdout).lines() {
+            let event: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            let progress = event["observation"].get("Progress").is_some();
+            events.push(event);
+            if !progress {
+                tx.send(events).unwrap();
+                break;
+            }
+        }
     });
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&delivery()).unwrap();
-    let line = rx.recv_timeout(Duration::from_secs(90));
+    let events = rx.recv_timeout(Duration::from_secs(90));
     child.kill().unwrap();
     child.wait().unwrap();
     reader.join().unwrap();
-    let event: Value = serde_json::from_str(&line.unwrap()).unwrap();
+    let events = events.unwrap();
+    let event = events.last().unwrap();
     assert_eq!(event["observation"]["WorkerReply"]["role"], "ingest");
 }
 
