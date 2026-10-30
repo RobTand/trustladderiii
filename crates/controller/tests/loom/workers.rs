@@ -1,6 +1,6 @@
 use super::*;
 use crate::loom_tests::{bootstrap, delivery, model};
-use crate::sync::{Arc, Mutex, mpsc, thread};
+use crate::sync::{Arc, Mutex, mpsc};
 use std::io::Write;
 
 fn append(path: &std::path::Path, bytes: &[u8]) {
@@ -68,7 +68,7 @@ fn loom_worker_output_progress_wait_and_restart() {
         let writer_lock = lock.clone();
         let stdout = attempt.join("stdout.jsonl");
         let output = stdout.clone();
-        let producer = thread::spawn(move || {
+        let producer = crate::loom_tests::spawn(move || {
             {
                 let _guard = writer_lock.lock().unwrap();
                 append(&output, b"{\"event\":\"progress\",");
@@ -81,7 +81,7 @@ fn loom_worker_output_progress_wait_and_restart() {
         let mut source = WorkerOutputSource::new(runs.clone(), settings.clone(), active.clone());
         let (sender, receiver) = mpsc::channel();
         let reading = settings.clone();
-        let consumer = thread::spawn(move || {
+        let consumer = crate::loom_tests::spawn(move || {
             let mut store = Store::open(&reading).unwrap();
             let mut inputs = vec![];
             for _ in 0..3 {

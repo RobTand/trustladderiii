@@ -1,7 +1,7 @@
 use super::*;
 use crate::executor::Executor;
 use crate::loom_tests::delivery;
-use crate::sync::{mpsc, thread};
+use crate::sync::mpsc;
 #[path = "../fixtures/waits/mod.rs"]
 mod waits;
 
@@ -18,17 +18,14 @@ fn model_bell(outage: bool) {
             .set_body_json(serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]})))
         .mount(&server));
     let url = server.uri();
-    let mut builder = loom::model::Builder::new();
-    builder.preemption_bound = Some(1);
-    builder.max_branches = 10_000;
-    builder.check(move || {
+    crate::loom_tests::bounded(move || {
         let root = tempfile::tempdir().unwrap();
         let mut adapter = waits::adapter_with_bell(root.path(), &url);
         let mut source = adapter.source();
         source.rebuild().unwrap();
         let path = root.path().to_owned();
         let d = delivery();
-        let producer = thread::spawn(move || {
+        let producer = crate::loom_tests::spawn(move || {
             let wait = tl3_store::ExternalWait {
                 upstream: "prismabuild".into(),
                 key: waits::key(),

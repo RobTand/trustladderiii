@@ -51,13 +51,28 @@ pub(crate) fn delivery() -> Delivery {
         request_text: None,
     }
 }
-pub(crate) fn model(check: impl Fn(&tl3_config::Store) + Send + Sync + 'static) {
-    let mut database = support::Database::start();
-    let settings = database.create("loom_model");
+pub(crate) fn spawn<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> loom::thread::JoinHandle<T> {
+    loom::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+}
+pub(crate) fn bounded(check: impl Fn() + Send + Sync + 'static) {
+    let check = std::sync::Arc::new(check);
     let mut builder = loom::model::Builder::new();
     builder.preemption_bound = Some(1);
     builder.max_branches = 10_000;
     builder.check(move || {
+        let check = check.clone();
+        spawn(move || check()).join().unwrap();
+    });
+}
+pub(crate) fn model(check: impl Fn(&tl3_config::Store) + Send + Sync + 'static) {
+    let mut database = support::Database::start();
+    let settings = database.create("loom_model");
+    bounded(move || {
         let mut db = postgres::Config::new()
             .host(&settings.host)
             .port(settings.port)
