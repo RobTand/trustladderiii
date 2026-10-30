@@ -191,10 +191,11 @@ for Python 3.12. Workers keep Python 3.14 and install the tracing package only.
 
 Port 5000 was occupied. `ss -ltn` showed port 5033 free before installation.
 The UI and write API bind to `192.168.1.107:5033`, reachable from the LAN at
-`http://192.168.1.107:5033`. This HTTP endpoint has no authentication. Anyone
-who can reach it can read or change traces. It has no public tunnel. The unit
-restricts allowed Host and browser origin values to this address and local
-health clients. Those restrictions are not authentication.
+`http://192.168.1.107:5033`. Rob asked for a UI he can open from the LAN
+(#101). This HTTP endpoint has no authentication. Any host on the LAN can read,
+write or delete traces and experiments through its API. It has no public
+tunnel. The unit restricts allowed Host and browser origin values to this
+address and local health clients. Those restrictions are not authentication.
 
 The backend is database `tl3_mlflow` in TL3's user-level Postgres. Connections
 use `~/.local/share/tl3/postgres/socket`, port 5543. TCP stays disabled on
@@ -219,6 +220,14 @@ If Postgres is stopped, starting `tl3-mlflow.service` also starts it through
 `Requires` and `After`. On a fresh machine, run the existing `deploy.py install`
 first to install Postgres and its unit. Do not run `deploy.py start` for this
 observability installation, because that command also starts the controller.
+
+**Retention.** Nothing prunes traces yet. Every agent run adds one trace of
+up to 4,096 spans to `tl3_mlflow` and keeps it, so the database grows with the
+number of runs. Spans keep only types, ids, times and token counts, not
+prompts or replies. To reclaim space, delete old traces in the UI or through
+MLflow's API, then run `mlflow gc` with the same backend store to remove the
+deleted rows and their artifacts. A retention window is an open decision in
+the slice-one PRD (#1).
 
 `install-mlflow` preserves an existing `~/.config/tl3/mlflow.toml`. Its default
 contents are nonsecret:

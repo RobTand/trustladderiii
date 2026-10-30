@@ -386,4 +386,6 @@ never waits for that child. Export failures and initialization failures log a
 fixed diagnostic to stderr, without exception details, and preserve the role's
 result. Traces can be lost during an outage or if the supervisor kills a run.
 There is no retry backlog. Runs exceeding 4,096 spans drop their trace and log
-that same diagnostic. Deep Agents remains the engine.
+that same diagnostic. Deep Agents remains the engine. Stored traces aren't
+pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
+space.
