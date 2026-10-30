@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -59,7 +59,12 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    let Some(stat) = read_stat(Path::new(&format!("/proc/{}/stat", identity.pid)))? else {
+    let mut file = match File::open(format!("/proc/{}/stat", identity.pid)) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.into()),
+    };
+    let Some(stat) = read_stat(&mut file)? else {
         return Ok(false);
     };
     let fields: Vec<_> = stat
@@ -137,14 +142,12 @@ fn temporary(path: &Path) -> PathBuf {
     ))
 }
 
-fn read_stat(path: &Path) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(stat) => Ok(Some(stat)),
-        // Procfs can lose the task after open and return ESRCH on the first read.
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound
-                || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
-        {
+fn read_stat(file: &mut File) -> Result<Option<String>> {
+    let mut stat = String::new();
+    match file.read_to_string(&mut stat) {
+        Ok(_) => Ok(Some(stat)),
+        // An open proc stat file returns ESRCH if the process exits before read.
+        Err(error) if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) => {
             Ok(None)
         }
         Err(error) => Err(error.into()),
@@ -153,26 +156,19 @@ fn read_stat(path: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_stat;
-    use std::{
-        fs::File,
-        os::fd::AsRawFd,
-        path::Path,
-        process::{Command, Stdio},
-    };
+    use super::*;
+    use std::process::{Command, Stdio};
 
     #[test]
-    fn vanished_process_stat_is_absent() {
-        let mut child = Command::new("cat")
+    fn process_exit_between_stat_open_and_read_is_absence() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read line"])
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
             .spawn()
             .unwrap();
-        let stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
+        let mut stat = File::open(format!("/proc/{}/stat", child.id())).unwrap();
         drop(child.stdin.take());
-        assert!(child.wait().unwrap().success());
-        // Keep the proc inode open across reaping to force the ESRCH read path.
-        let own_descriptor = format!("/proc/self/fd/{}", stat.as_raw_fd());
-        assert_eq!(read_stat(Path::new(&own_descriptor)).unwrap(), None);
+        child.wait().unwrap();
+        assert_eq!(read_stat(&mut stat).unwrap(), None);
     }
 }
