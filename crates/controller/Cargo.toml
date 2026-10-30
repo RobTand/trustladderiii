@@ -10,13 +10,14 @@ serde_json = "1"
 jsonschema = { version = "0.46", default-features = false }
 rustix = { version = "1", features = ["process", "event", "fs"] }
 thiserror = "2"
+sha2 = "0.10"
+tl3-prismabuild = { path = "../prismabuild" }
+tokio = { version = "1", features = ["rt", "time", "net", "process", "sync", "macros"] }
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 tl3-github = { path = "../github" }
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.10"
-tokio = { version = "1", features = ["rt", "time", "net"] }
 
 tl3-worktrees = { path = "../worktrees" }
 
@@ -36,6 +37,12 @@ hex = "0.4"
 name = "simulation"
 path = "tests/simulation.rs"
 harness = false
+
+[[test]]
+name = "prismabuild"
+path = "tests/prismabuild.rs"
+harness = false
+
 
 [[test]]
 name = "worktrees"

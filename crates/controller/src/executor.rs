@@ -18,6 +18,10 @@ pub struct Delivery {
     pub attempt: u8,
     pub round: u8,
     #[serde(default)]
+    pub checks: Option<crate::adapters::prismabuild::CheckRun>,
+    #[serde(default)]
+    pub job_generation: Option<u64>,
+    #[serde(default)]
     pub question: Option<tl3_kernel::Question>,
     #[serde(default)]
     pub note: Option<String>,
@@ -56,6 +60,21 @@ pub enum Observation {
         reply: serde_json::Value,
     },
     Kernel(Event),
+    CheckPlan {
+        node: NodeId,
+        sha: String,
+        run: crate::adapters::prismabuild::CheckRun,
+    },
+    Checks {
+        node: NodeId,
+        generation: u64,
+        action_key: String,
+        base_sha: String,
+        sha: String,
+        changed_paths: Vec<String>,
+        report: bool,
+        pass: bool,
+    },
     Plan {
         node: NodeId,
         generation: u64,
