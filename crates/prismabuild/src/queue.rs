@@ -461,8 +461,8 @@ mod tests {
         )
         .unwrap();
         assert!(
-            client.read(&key).await.is_err(),
-            "in-flight handoff read as absent"
+            client.read(&key).await.is_ok_and(|record| record.is_some()),
+            "in-flight handoff must be present moving evidence, not an error"
         );
     }
 
@@ -491,5 +491,52 @@ mod tests {
             !matches!(record, Ok(None)),
             "retiring retry marker read as absent"
         );
+    }
+    #[tokio::test]
+    async fn lookup_keeps_finish_present_when_marker_retires_after_terminals() {
+        let (root, client, key) = fixture();
+        let marker = root
+            .path()
+            .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
+        std::fs::rename(root.path().join(format!("claimed/{key}.json")), &marker).unwrap();
+        let record = client
+            .read_with(&key, |state| {
+                if state == "withdrawn" {
+                    std::fs::write(
+                        root.path().join(format!("done/{key}.json")),
+                        serde_json::to_vec(&serde_json::json!({
+                            "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
+                            "status": "executed", "detail": {"returncode": 0}
+                        }))
+                        .unwrap(),
+                    )
+                    .unwrap();
+                    std::fs::remove_file(&marker).unwrap();
+                }
+            })
+            .await;
+        assert!(
+            record.is_ok_and(|record| record.is_some()),
+            "finished record read as absent or error"
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_keeps_ready_captures_present_during_transition() {
+        for kind in ["withdraw-ready", "orphan", "dead-input", "origin-released"] {
+            let (root, client, key) = fixture();
+            std::fs::create_dir(root.path().join("ready-transitions")).unwrap();
+            std::fs::rename(
+                root.path().join(format!("claimed/{key}.json")),
+                root.path()
+                    .join(format!("ready-transitions/{key}.100000000.abc.{kind}.json")),
+            )
+            .unwrap();
+            let record = client.read(&key).await;
+            assert!(
+                record.is_ok_and(|record| record.is_some()),
+                "ready capture {kind} read as absent or error"
+            );
+        }
     }
 }
