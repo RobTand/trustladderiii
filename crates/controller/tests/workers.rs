@@ -47,6 +47,7 @@ fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::
     config.models.key_file = root.join("fixture-key");
     fs::write(&config.models.key_file, "fixture-only").unwrap();
     config.models.base_url = "http://model.invalid/v1".parse().unwrap();
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     config
 }
 

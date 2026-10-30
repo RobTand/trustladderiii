@@ -11,6 +11,8 @@ jsonschema = { version = "0.46", default-features = false }
 rustix = { version = "1", features = ["process", "event", "fs"] }
 thiserror = "2"
 sha2 = "0.10"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tl3-prismabuild = { path = "../prismabuild" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net", "process", "sync", "macros"] }
 tl3-kernel = { path = "../kernel", features = ["serde"] }
@@ -23,7 +25,6 @@ chrono = { version = "0.4", features = ["serde"] }
 tl3-worktrees = { path = "../worktrees" }
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 loom = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rand = "0.8"

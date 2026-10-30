@@ -84,6 +84,7 @@ pub struct Supervisor {
     worktrees: PathBuf,
     tests: tl3_config::PrismaBuild,
     hindsight: tl3_config::Hindsight,
+    memory: crate::memory::Feed,
 }
 
 impl Supervisor {
@@ -114,6 +115,7 @@ impl Supervisor {
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),
             hindsight: config.hindsight.clone(),
+            memory: crate::memory::Feed::start(config.store.clone(), config.hindsight.clone()),
         })
     }
 
@@ -349,6 +351,18 @@ impl Supervisor {
     fn retire_run(&self, key: &str, store: &mut Store) -> Result<()> {
         let root = self.root(key);
         stop_attempt(&root)?;
+        if let Ok(entries) = fs::read_dir(&root) {
+            for entry in entries {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("attempt-"))
+                {
+                    crate::memory::queue_attempt(store, key, &entry.path())?;
+                }
+            }
+        }
         match fs::remove_dir_all(&root) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -435,7 +449,7 @@ impl Executor for Supervisor {
             }
             Reconciliation::Absent => {}
         }
-        let request = self.request(delivery, role, &mut store, &snapshot)?;
+        let mut request = self.request(delivery, role, &mut store, &snapshot)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         store.claim_worker(
             &delivery.key,
@@ -453,6 +467,11 @@ impl Executor for Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
+        request["memory"] = json!({
+            "summary_file": attempt.join("memory.json"),
+            "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+            "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
+        });
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
         let mut script = File::create(attempt.join("supervisor.py"))?;
@@ -503,6 +522,7 @@ impl Executor for Supervisor {
                 eprintln!("worker retirement retained {key}: {error}");
             }
         }
+        self.memory.wake();
         self.retire_sessions(store)
     }
 

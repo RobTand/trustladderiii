@@ -87,6 +87,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (3, include_str!("../migrations/0003_workers.sql")),
     (4, include_str!("../migrations/0004_ingress.sql")),
     (5, include_str!("../migrations/0005_worker_retirement.sql")),
+    (6, include_str!("../migrations/0006_hindsight.sql")),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +117,29 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
 // Ingress receipt, catch-up, consumer registration and cursor/retirement writes
 // are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
+    /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
+    pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
+        self.client.execute("INSERT INTO tl3_memory_outbox (operation_id, item) VALUES ($1, $2) ON CONFLICT (operation_id) DO NOTHING", &[&operation_id, item])?;
+        Ok(())
+    }
+
+    /// A cursor bounds each read without retaining the history of sent records.
+    pub fn pending_memories(
+        &mut self,
+        after: i64,
+    ) -> Result<Vec<(i64, String, serde_json::Value)>> {
+        Ok(self.client.query("SELECT sequence, operation_id, item FROM tl3_memory_outbox WHERE sequence > $1 ORDER BY sequence LIMIT 64", &[&after])?
+            .into_iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+    }
+
+    pub fn forget_memory(&mut self, operation_id: &str) -> Result<()> {
+        self.client.execute(
+            "DELETE FROM tl3_memory_outbox WHERE operation_id = $1",
+            &[&operation_id],
+        )?;
+        Ok(())
+    }
+
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
     pub fn reconnect(&mut self) -> Result<()> {
         let mut store = Self::open(&self.settings)?;

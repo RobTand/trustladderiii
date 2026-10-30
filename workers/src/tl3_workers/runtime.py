@@ -20,6 +20,7 @@ from langchain_openai import ChatOpenAI
 from tl3_workers.contracts import read_json, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
+from tl3_workers.memory import Summary, current
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -100,6 +101,21 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
 
 
 def run(request, emit: Callable[[dict], None]):
+    summary = Summary(request)
+    token = current.set(summary)
+    summary.save()
+    reply, error = None, None
+    try:
+        reply = _run(request, emit)
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        summary.finish(reply, error)
+        current.reset(token)
+
+
+def _run(request, emit):
     role = ROLES[request["role"]]
     model = create_model(request)
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
@@ -112,6 +128,7 @@ def run(request, emit: Callable[[dict], None]):
     if role.check_reply is not None:
         role.check_reply(request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
+    return reply
 
 
 def _run_agent(agent, request, emit):

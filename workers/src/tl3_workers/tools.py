@@ -13,6 +13,7 @@ from langchain_core.tools import StructuredTool, ToolException, create_schema_fr
 
 from tl3_workers.pb_tests import make_test_tool
 from tl3_workers.recall import make_recall_tool
+from tl3_workers.memory import current
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
@@ -318,12 +319,19 @@ def build_tools(worktree, descriptions):
         if not description.strip():
             raise ValueError("Each role must describe its tools")
         method = TOOL_FACTORIES[name](worktree)
+        summary = current.get()
         lock = worktree._mutation_lock if name in WRITE_TOOLS | {"run_tests"} else nullcontext()
 
-        def guarded(*args, _method=method, _lock=lock, **kwargs):
+        def guarded(*args, _method=method, _lock=lock, _name=name, _summary=summary, **kwargs):
             with _lock:
                 try:
-                    return _method(*args, **kwargs)
+                    result = _method(*args, **kwargs)
+                    if _summary is not None:
+                        try:
+                            _summary.tool(_name, kwargs, result)
+                        except Exception:
+                            pass
+                    return result
                 except UnicodeError as exc:
                     raise ToolException("Expected valid UTF-8 text.") from exc
                 except ValueError as exc:

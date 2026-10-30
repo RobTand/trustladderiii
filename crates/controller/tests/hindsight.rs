@@ -2,10 +2,20 @@
 mod support;
 
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tl3_controller::memory;
 use tl3_store::Store;
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate, matchers::{method, path}};
+use wiremock::{
+    Mock, MockServer, Request, Respond, ResponseTemplate,
+    matchers::{method, path},
+};
 
 #[derive(Clone, Default)]
 struct Retain {
@@ -48,17 +58,36 @@ impl Fixture {
     fn new() -> Self {
         let mut database = support::Database::start();
         let settings = database.create("memory");
-        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
         let server = runtime.block_on(MockServer::start());
         let retain = Retain::default();
-        runtime.block_on(Mock::given(method("POST"))
-            .and(path("/v1/default/banks/tl3/memories"))
-            .respond_with(retain.clone()).mount(&server));
-        Self { database, settings, _runtime: runtime, server, retain, scratch: tempfile::tempdir().unwrap() }
+        runtime.block_on(
+            Mock::given(method("POST"))
+                .and(path("/v1/default/banks/tl3/memories"))
+                .respond_with(retain.clone())
+                .mount(&server),
+        );
+        Self {
+            database,
+            settings,
+            _runtime: runtime,
+            server,
+            retain,
+            scratch: tempfile::tempdir().unwrap(),
+        }
     }
-    fn store(&self) -> Store { Store::open(&self.settings).unwrap() }
+    fn store(&self) -> Store {
+        Store::open(&self.settings).unwrap()
+    }
     fn hindsight(&self) -> tl3_config::Hindsight {
-        tl3_config::Hindsight { endpoint: self.server.uri().parse().unwrap(), bank: "tl3".into() }
+        tl3_config::Hindsight {
+            endpoint: self.server.uri().parse().unwrap(),
+            bank: "tl3".into(),
+        }
     }
     fn attempt(&self, role: &str, input: Value, reply: Value) -> std::path::PathBuf {
         let attempt = self.scratch.path().join(role).join("attempt-00000000");
@@ -78,21 +107,34 @@ impl Fixture {
         fs::write(attempt.join("exit.json"), r#"{"code":0}"#).unwrap();
         attempt
     }
-    fn flush(&self) -> usize { memory::flush(&mut self.store(), &self.hindsight()).unwrap() }
+    fn flush(&self) -> usize {
+        memory::flush(&mut self.store(), &self.hindsight()).unwrap()
+    }
 }
 impl Drop for Fixture {
-    fn drop(&mut self) { self.database.stop(); }
+    fn drop(&mut self) {
+        self.database.stop();
+    }
 }
 
 #[test]
 fn one_record_per_role_with_inputs_activity_reply_and_outcome() {
     let f = Fixture::new();
-    let roles: Vec<String> = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../workers/src/tl3_workers/roles"))
-        .unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter_map(|name| name.strip_suffix(".py").map(str::to_owned))
-        .filter(|name| name != "base" && !name.starts_with('_')).collect();
+    let roles: Vec<String> = fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../workers/src/tl3_workers/roles"
+    ))
+    .unwrap()
+    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+    .filter_map(|name| name.strip_suffix(".py").map(str::to_owned))
+    .filter(|name| name != "base" && !name.starts_with('_'))
+    .collect();
     for role in &roles {
-        let attempt = f.attempt(role, json!({"goals": ["Fix greeting"]}), json!({"summary": "Fixed greeting"}));
+        let attempt = f.attempt(
+            role,
+            json!({"goals": ["Fix greeting"]}),
+            json!({"summary": "Fixed greeting"}),
+        );
         memory::queue_attempt(&mut f.store(), &format!("run:{role}"), &attempt).unwrap();
     }
     assert_eq!(f.flush(), roles.len());
@@ -108,11 +150,21 @@ fn one_record_per_role_with_inputs_activity_reply_and_outcome() {
         assert_eq!(record["request"], "3");
         assert_eq!(record["inputs"]["goals"][0], "Fix greeting");
         assert_eq!(record["activity"]["files_read"][0], "greeting.py");
-        assert_eq!(record["activity"]["tests"][0]["action_key"], "pb-fixture-action");
+        assert_eq!(
+            record["activity"]["tests"][0]["action_key"],
+            "pb-fixture-action"
+        );
         assert_eq!(record["reply"]["summary"], "Fixed greeting");
         assert_eq!(record["outcome"], "succeeded");
-        for tag in ["repo:RobTand/tl3-sandbox", "request:3"] { assert!(item["tags"].as_array().unwrap().contains(&json!(tag))); }
-        assert!(item["tags"].as_array().unwrap().contains(&json!(format!("role:{}", record["role"].as_str().unwrap()))));
+        for tag in ["repo:RobTand/tl3-sandbox", "request:3"] {
+            assert!(item["tags"].as_array().unwrap().contains(&json!(tag)));
+        }
+        assert!(
+            item["tags"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(format!("role:{}", record["role"].as_str().unwrap())))
+        );
     }
 }
 
@@ -135,7 +187,11 @@ fn outage_then_lost_ack_and_retry_retain_exactly_once() {
 #[test]
 fn crash_between_run_and_retain_preserves_record_and_identity() {
     let mut f = Fixture::new();
-    let attempt = f.attempt("maker", json!({"goals": ["Fix greeting"]}), json!({"kind": "done"}));
+    let attempt = f.attempt(
+        "maker",
+        json!({"goals": ["Fix greeting"]}),
+        json!({"kind": "done"}),
+    );
     // The worker's durable result survives before the controller queues memory.
     memory::queue_attempt(&mut f.store(), "run:maker", &attempt).unwrap();
     f.database.restart();
@@ -159,7 +215,16 @@ fn no_credentials_or_tool_contents_are_sent() {
     memory::queue_attempt(&mut f.store(), "run:ingest", &attempt).unwrap();
     assert_eq!(f.flush(), 1);
     let sent = serde_json::to_string(&*f.retain.documents.lock().unwrap()).unwrap();
-    for secret in ["fixture-password", "fixture-api-key", "fixture-bearer", "fixture-url-password", "fixture-token", "fixture-private-key", "/never/read/credentials", "model.invalid"] {
+    for secret in [
+        "fixture-password",
+        "fixture-api-key",
+        "fixture-bearer",
+        "fixture-url-password",
+        "fixture-token",
+        "fixture-private-key",
+        "/never/read/credentials",
+        "model.invalid",
+    ] {
         assert!(!sent.contains(secret), "leaked {secret}");
     }
     assert!(sent.contains("Fix greeting"));
@@ -168,7 +233,11 @@ fn no_credentials_or_tool_contents_are_sent() {
 #[test]
 fn failed_run_without_summary_is_retained_and_size_is_bounded() {
     let f = Fixture::new();
-    let attempt = f.attempt("reviewer", json!({"goals": ["é".repeat(200_000)]}), json!({"summary": "x".repeat(200_000)}));
+    let attempt = f.attempt(
+        "reviewer",
+        json!({"goals": ["é".repeat(200_000)]}),
+        json!({"summary": "x".repeat(200_000)}),
+    );
     fs::remove_file(attempt.join("memory.json")).unwrap();
     fs::write(attempt.join("exit.json"), r#"{"code":1}"#).unwrap();
     memory::queue_attempt(&mut f.store(), "run:reviewer", &attempt).unwrap();
