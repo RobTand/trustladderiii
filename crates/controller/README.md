@@ -50,7 +50,8 @@ The tracer does not predefine issue text, branch text, or PR text fields.
 of columns. They show the issue title and number, phase, wait, credit, last
 progress and open incidents. Older requests without a title show "title not
 recorded". Both progress and incidents show "none recorded" until their store
-data exists. Tickets #9 and #15 fill `status::load_request_details`. It takes all
+data exists. `status::load_request_details` reads active worker progress or the
+retired run summary. Ticket #15 adds incident details. It takes all
 node IDs at once and returns a map from node ID to `RequestDetails`, using batch
 queries on the existing read-only transaction. Missing entries use the empty
 details. Return public summaries there, never
@@ -129,7 +130,9 @@ A retry counts commits since that checkpoint, including a commit left by a crash
 Only clean completions save conversation history.
 
 After durable work drains, the supervisor deletes a closed node's session
-directory only when no pending effect or retained watch can reconcile that node.
+directory only when no pending effect, retained watch or unretired worker can
+reconcile that node. It queries only remaining session directories after retiring
+runs, without loading historical world rows.
 Open requests keep their sessions. The directory itself survives a crash as
 the cleanup queue, and the next drain repeats deletion. No clock triggers cleanup.
 Worker code commits a completed change and computes a conservative fit bound
@@ -332,23 +335,49 @@ arguments, normally `-m tl3_workers run`.
 
 The source watches only active runs with inotify for output and exit records,
 and pidfds for process exits. A durable per-key notification registers a new
-attempt. Completed runs leave the watched set. Startup reads the store watches
-and run directories once to rebuild it. Stop indexes active runs by node.
+attempt through the `.ready/` inbox. Completed runs leave the watched set.
+Startup reads only the store's worker watches and their run attempts. It never
+opens historical run directories or replies. Bad historical records are logged and skipped during startup. Malformed live
+notifications and I/O errors fail the source loudly so the daemon restarts.
+Only vanished-file races are skipped in live refreshes.
+Stop indexes active runs by node. Attempt events matter only for `claim.json`,
+`process.json`, `stdout.jsonl`, and `exit.json`. An inotify queue overflow causes
+one rescan of watches and the notification inbox, then event-driven ingress resumes.
+Startup consumes stale inbox markers and removes legacy `.ready-*` markers for
+watched keys. Retirement removes them for finished keys. Neither scans history.
+
+After the controller drains work, `Executor::retire` reclaims runs whose effects
+are terminal in the store and have no watch. A Confirmed start remains watched
+until its operation ends, so an acknowledgement alone never permits deletion.
+Cleanup fences delayed launches and proves both processes dead, removes the run
+directory and ready marker, syncs the parent directories, then deletes the
+`tl3_worker_progress` row. That row is the cleanup queue. A crash at any step
+leaves it available for the next controller drain, including after restart.
+Missing files are harmless. Failed cleanup logs the key and retains its row.
+Corrupt or foreign process identities are marked as blocked, logged once, and
+skipped by later drains and restarts until operator repair.
+Retirement uses no clock. Claims are stored before creating run directories,
+so a crash before launch also leaves a cleanup row.
+Deleting a progress row folds its last progress into one summary per open request.
+Closing a request removes its summary. Status uses it when no active run exists.
 
 Only a valid role reply followed by exit zero is accepted. A recorded failed
 exit reports `RunFailed`. A lost supervisor record is absent only after both
 identities are proven dead and delayed launches are fenced. The controller
 reports absence of an acknowledged worker as `RunFailed`; an uncertain start
 can retry the same key. The source emits only `Found` evidence, never `Absent`
-or a cancelled claim. The controller watch owns confirmed absence.
+or a cancelled claim. The controller watch owns confirmed absence. Ticket #15's
+looks must wake the controller when no other input arrives; a source pidfd wake
+alone does not send an ingress observation for absence.
 If a supervisor dies while its worker lives, recovery waits for that worker.
 A valid reply without a recorded exit is discarded, and the run is redone.
 This is the safe path because nobody proved a successful process exit.
 No clock or liveness threshold makes this decision.
 
 `Store::worker_progress` reads the last progress for every run, optionally
-filtered by request node. `Store::worker_document` reads briefs, goals, audit
-replies, plans and findings. Replaying output does not refresh progress time. These reads do not
+filtered by request node, until retirement. `Store::worker_document` reads briefs,
+goals, audit replies, plans, and findings. Replaying output does not refresh
+progress time. These reads do not
 claim controller ownership. `tl3_worker_progress` records `run_key`, `node_id`,
 `epoch`, `attempt`, `started_ms`, `output_offset`, `unit`, and nullable
 `last_progress_ms`. A start row exists before the first progress event.

@@ -343,19 +343,12 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         fs::write(&leftover, "old conversation").unwrap();
         let mut store = Store::open(settings).unwrap();
         let snapshot = store.load().unwrap();
-        let delivery: Value = serde_json::from_slice(
-            &fs::read_dir(&config.workers.runs)
-                .unwrap()
-                .filter_map(|entry| fs::read(entry.unwrap().path().join("delivery.json")).ok())
-                .next()
-                .unwrap(),
-        )
-        .unwrap();
+        let delivery = super::delivery();
         let mut commit = tl3_store::Commit::new("retain-session-watch", json!({}), &snapshot);
         commit.rows.push(tl3_store::RowChange::Put {
             table: "watches".into(),
-            id: delivery["key"].as_str().unwrap().into(),
-            value: delivery,
+            id: delivery.key.clone(),
+            value: json!(delivery),
         });
         store.commit(&commit).unwrap();
         let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
@@ -364,6 +357,13 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             leftover.exists(),
             "a retained watch can still reconcile a closed node"
         );
+        let mut commit =
+            tl3_store::Commit::new("drain-session-watch", json!({}), &store.load().unwrap());
+        commit.rows.push(tl3_store::RowChange::Delete {
+            table: "watches".into(),
+            id: delivery.key,
+        });
+        store.commit(&commit).unwrap();
         drop(controller);
         let (registry, _) = registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
         controller = Controller::open(

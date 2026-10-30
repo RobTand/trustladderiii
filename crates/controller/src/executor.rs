@@ -116,7 +116,7 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
-    /// Reclaim evidence only after the controller has drained durable work.
+    /// Reclaim upstream evidence after the controller has drained durable work.
     fn retire(&mut self, _store: &mut tl3_store::Store) -> Result<()> {
         Ok(())
     }
