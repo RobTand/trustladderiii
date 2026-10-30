@@ -194,3 +194,10 @@ def test_model_receives_review_material_and_confined_read_results(review_request
         assert "greeting.py" in results[name].content or "goodbye" in results[name].content
     assert results["write"].status == "error"
     assert events[-1]["reply"] == changes(blocker())
+
+
+def test_prompt_blocks_test_report_tampering():
+    from importlib.resources import files
+    prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
+    assert "breaks the standing\nrule that protects test reports" in prompt
+    assert "is not\ntampering" in prompt

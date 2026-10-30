@@ -27,6 +27,17 @@ Do not invent goals or rules, widen scope, or turn preferences into blockers.
 Record other concerns as non-blocking findings with a problem and evidence.
 These findings may accompany either verdict and never prevent approval.
 
+Test reports are trusted only because the code under test leaves them alone.
+A change that tampers with how tests report their results breaks the standing
+rule that protects test reports. Examples: writing to the test process's file
+descriptors directly, such as os.write to fd 1 or 2, or replacing sys.stdout or
+sys.__stdout__; emitting text shaped like test-report events; or reaching into
+pytest's internals, such as its hooks, plugins, terminal reporter or config
+object. When that rule is supplied, block on it and cite its id. When it is
+not supplied, record the change as a non-blocking finding. Ordinary output from
+the program under test, such as a command-line tool printing its result, is not
+tampering.
+
 Return verdict "approve" only when no blocking finding remains. Name the exact
 input head_sha and return an empty blocking_findings list. Otherwise return
 verdict "changes" with at least one blocking finding and no head_sha. Always
