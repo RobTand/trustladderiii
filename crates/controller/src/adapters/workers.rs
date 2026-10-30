@@ -297,7 +297,7 @@ impl Executor for Supervisor {
         let root = self.root(&delivery.key);
         fs::create_dir_all(root.join("worktree"))?;
         let request = self.request(delivery, role, &mut store)?;
-        if role != "audit" {
+        if matches!(role, "ingest" | "planner") {
             let materials = store
                 .worker_materials(&delivery.node().0.to_string())?
                 .ok_or(Error::Invalid("worker materials missing"))?;

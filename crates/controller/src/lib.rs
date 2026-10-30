@@ -747,6 +747,7 @@ impl Controller {
                 let n = world
                     .nodes
                     .get(node.0 as usize)
+                    .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
                 if n.run != Some(generation) || n.generation != generation {
                     return Ok(None);

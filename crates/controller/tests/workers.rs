@@ -252,7 +252,7 @@ fn main() {
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     maker::run(&mut database);
     database.stop();
-    println!("22 required worker supervisor and maker scenarios passed; no skips");
+    println!("30 required worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
