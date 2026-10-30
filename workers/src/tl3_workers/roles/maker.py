@@ -140,7 +140,7 @@ def run(model, request, worktree, emit):
     last_message = None
     history = []
     session = Path(request["session_file"]) if "session_file" in request else None
-    if session and request.get("resume_session") and session.exists():
+    if session and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
     stream = agent.stream(
@@ -172,6 +172,11 @@ def run(model, request, worktree, emit):
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, session)
+            directory = os.open(session.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final maker reply")
     reply = read_json(last_message.text)

@@ -633,3 +633,16 @@ def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
     result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}], 'fits': True})])
     assert result.exit_code == 1
     assert all(event['event'] != 'reply' for event in result.events)
+
+
+def test_missing_fix_session_fails_without_starting_fresh(tmp_path, maker_request):
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['session_file'] = str(tmp_path / 'missing-session.json')
+    maker_request['resume_session'] = True
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 1
+    assert all(event['event'] != 'reply' for event in result.events)
+    assert git(root, 'rev-parse', 'HEAD') == before
