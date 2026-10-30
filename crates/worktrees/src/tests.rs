@@ -20,7 +20,9 @@ impl Fixture {
         let temp = TempDir::new().unwrap();
         let repo = temp.path().join("repo");
         let bare = temp.path().join("remote.git");
-        let worktree = temp.path().join("leaf\nwith spaces");
+        let root = temp.path().join("worktrees");
+        fs::create_dir(&root).unwrap();
+        let worktree = root.join("leaf\nwith spaces");
         fs::create_dir(&repo).unwrap();
         git(&repo, ["init", "--initial-branch=main"]);
         git(&repo, ["config", "user.name", "Test"]);
@@ -30,7 +32,7 @@ impl Fixture {
             &repo,
             [OsStr::new("init"), OsStr::new("--bare"), bare.as_os_str()],
         );
-        let manager = Worktrees::open(&repo).unwrap();
+        let manager = Worktrees::open(&repo, &root).unwrap();
         Self {
             remote: Remote::local(&bare).unwrap(),
             manager,
@@ -70,7 +72,7 @@ impl Drop for Fixture {
             return;
         }
         let encoded = STANDARD.encode(format!("x-access-token:{TOKEN}"));
-        let invocations = self.manager.invocations.borrow();
+        let invocations = self.manager.invocations.lock().unwrap();
         assert!(!invocations.is_empty());
         // Every Git process launched by the adapter passes this one execution boundary.
         for invocation in invocations.iter() {
@@ -165,7 +167,7 @@ fn branch_base_is_durable_across_retries_and_main_advances() {
     let f = Fixture::new();
     let branch = f.manager.create_branch(&f.name).unwrap();
     write_commit(&f.repo, "main.txt", "main advance\n", "advance main");
-    let reopened = Worktrees::open(&f.repo).unwrap();
+    let reopened = Worktrees::open(&f.repo, &f.manager.root).unwrap();
     assert_eq!(reopened.create_branch(&f.name).unwrap(), branch);
     assert_eq!(f.manager.head(&f.name).unwrap(), branch.base);
     assert_ne!(f.manager.resolve("refs/heads/main").unwrap(), branch.base);
@@ -350,7 +352,7 @@ fn unrelated_directories_and_checkouts_are_preserved() {
     );
     assert!(matches!(
         f.manager.create_worktree(&f.name, &f.repo),
-        Err(Error::WorktreeOccupied)
+        Err(Error::WorktreePath)
     ));
 }
 
@@ -389,13 +391,16 @@ fn clean_rebase_and_leased_push_are_repeatable() {
     let old = f.manager.push(&f.name, &f.remote, &f.token).unwrap();
     write_commit(&f.repo, "main.txt", "main\n", "main work");
     let result = f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap();
-    let RebaseResult::Clean { head } = result else {
+    let RebaseResult::Clean { base, head } = result else {
         panic!("expected clean rebase")
     };
     assert_ne!(head, old);
     assert_eq!(
         f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
-        RebaseResult::Clean { head: head.clone() }
+        RebaseResult::Clean {
+            base: base.clone(),
+            head: head.clone()
+        }
     );
     for _ in 0..2 {
         assert_eq!(
@@ -541,7 +546,8 @@ fn git_errors_omit_raw_output_even_if_it_contains_a_token() {
     assert!(
         f.manager
             .invocations
-            .borrow()
+            .lock()
+            .unwrap()
             .iter()
             .any(|invocation| invocation
                 .stderr
@@ -581,6 +587,8 @@ fn invalid_inputs_are_rejected_without_echoing_credentials() {
         format!("https://x-access-token:{TOKEN}@github.com/a/b.git"),
         format!("https://github.com/a/b?token={TOKEN}"),
         "http://github.com/a/b".into(),
+        "https://example.com/a/b.git".into(),
+        "https://github.com.example.com/a/b.git".into(),
         "ext::bad".into(),
     ] {
         let error = Remote::https(&value).err().unwrap();
@@ -600,4 +608,237 @@ fn invalid_inputs_are_rejected_without_echoing_credentials() {
         f.manager.delete_remote_branch(&main, &f.remote, &f.token),
         Err(Error::MainBranch)
     ));
+}
+
+#[test]
+fn rebased_base_excludes_main_changes_from_the_footprint() {
+    let f = Fixture::new();
+    let original = f.checkout();
+    write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
+    write_commit(&f.repo, "main.txt", "main\n", "main work");
+    write_commit(&f.repo, "other.txt", "other\n", "more main work");
+    let main = f.manager.resolve("refs/heads/main").unwrap();
+    let RebaseResult::Clean { base, head } =
+        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap()
+    else {
+        panic!("expected clean rebase")
+    };
+    assert_ne!(base, original.base);
+    assert_eq!(base, main);
+    assert_eq!(f.manager.create_branch(&f.name).unwrap().base, base);
+    assert_eq!(
+        f.manager.changed_files(&base, &head).unwrap(),
+        vec![PathBuf::from("leaf.txt")]
+    );
+    assert_eq!(f.manager.head(&f.name).unwrap(), head);
+    f.assert_clean();
+}
+
+#[test]
+fn ignored_build_files_allow_rebase_and_removal() {
+    let f = Fixture::new();
+    write_commit(&f.repo, ".gitignore", "target/\n", "ignore build files");
+    f.checkout();
+    write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
+    fs::create_dir(f.worktree.join("target")).unwrap();
+    fs::write(f.worktree.join("target/output"), "build output").unwrap();
+    write_commit(&f.repo, "main.txt", "main\n", "main work");
+    assert!(matches!(
+        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+        RebaseResult::Clean { .. }
+    ));
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("target/output")).unwrap(),
+        "build output"
+    );
+    f.manager.remove_worktree(&f.name, &f.worktree).unwrap();
+    f.manager.remove_worktree(&f.name, &f.worktree).unwrap();
+    assert!(!f.worktree.exists());
+}
+
+#[test]
+fn destinations_outside_the_root_are_rejected_before_creating_directories() {
+    let f = Fixture::new();
+    // Exercise a direct path, traversal, and a symlink to an existing outside root.
+    let outside = f.repo.parent().unwrap().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let escape = f.manager.root.join("escape");
+    std::os::unix::fs::symlink(&outside, &escape).unwrap();
+    let paths = [
+        outside.join("missing/leaf"),
+        f.manager.root.join("../outside/missing/leaf"),
+        escape.join("missing/leaf"),
+        f.manager.root.clone(),
+    ];
+    for path in paths {
+        assert!(matches!(
+            f.manager.create_worktree(&f.name, &path),
+            Err(Error::WorktreePath)
+        ));
+        assert!(matches!(
+            f.manager.remove_worktree(&f.name, &path),
+            Err(Error::WorktreePath)
+        ));
+        assert!(!outside.join("missing").exists());
+        assert!(
+            f.manager
+                .resolve_optional(&f.name.reference())
+                .unwrap()
+                .is_none()
+        );
+    }
+    f.checkout();
+    let admin = gitlink(&fs::read(f.worktree.join(".git")).unwrap()).unwrap();
+    // Even a registered checkout moved outside the root must not be removed.
+    let moved = outside.join("registered");
+    git(
+        &f.repo,
+        [
+            OsStr::new("worktree"),
+            OsStr::new("move"),
+            f.worktree.as_os_str(),
+            moved.as_os_str(),
+        ],
+    );
+    assert!(admin.exists());
+    assert!(matches!(
+        f.manager.remove_worktree(&f.name, &moved),
+        Err(Error::WorktreePath)
+    ));
+    assert!(moved.join("shared.txt").exists());
+}
+
+#[test]
+fn symlinked_root_and_nested_destinations_are_supported() {
+    let f = Fixture::new();
+    let alias = f.repo.parent().unwrap().join("root-alias");
+    std::os::unix::fs::symlink(&f.manager.root, &alias).unwrap();
+    let manager = Worktrees::open(&f.repo, &alias).unwrap();
+    let path = alias.join("new/nested/leaf");
+    let actual = manager.create_worktree(&f.name, &path).unwrap();
+    assert_eq!(actual, f.manager.root.join("new/nested/leaf"));
+    manager.remove_worktree(&f.name, &path).unwrap();
+    assert!(!actual.exists());
+}
+
+#[test]
+fn concurrent_creates_and_removal_share_one_repository_mutex() {
+    use std::sync::Barrier;
+    let f = Fixture::new();
+    // A second handle through a linked checkout must use the same common-dir key.
+    f.checkout();
+    let other = Worktrees::open(&f.worktree, &f.manager.root).unwrap();
+    assert!(Arc::ptr_eq(&f.manager.mutex, &other.mutex));
+    f.manager.remove_worktree(&f.name, &f.worktree).unwrap();
+    // Reopen through the main checkout because the linked one was just removed.
+    let other = Worktrees::open(&f.repo, &f.manager.root).unwrap();
+    let barrier = Barrier::new(2);
+    std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            barrier.wait();
+            f.manager.create_worktree(&f.name, &f.worktree)
+        });
+        let two = scope.spawn(|| {
+            barrier.wait();
+            other.create_worktree(&f.name, &f.worktree)
+        });
+        assert_eq!(one.join().unwrap().unwrap(), f.worktree);
+        assert_eq!(two.join().unwrap().unwrap(), f.worktree);
+    });
+    f.assert_clean();
+    let other_name = BranchName::new("tl3/other").unwrap();
+    let other_path = f.manager.root.join("other");
+    std::thread::scope(|scope| {
+        let create = scope.spawn(|| {
+            barrier.wait();
+            other.create_worktree(&other_name, &other_path)
+        });
+        let remove = scope.spawn(|| {
+            barrier.wait();
+            f.manager.remove_worktree(&f.name, &f.worktree)
+        });
+        assert_eq!(create.join().unwrap().unwrap(), other_path);
+        remove.join().unwrap().unwrap();
+    });
+    assert!(!f.worktree.exists());
+    assert!(other_path.join(".git").is_file());
+    assert_eq!(
+        f.manager.head(&other_name).unwrap(),
+        other.head(&other_name).unwrap()
+    );
+}
+
+#[test]
+fn detached_rebase_recovery_converges_before_and_after_ref_publication() {
+    for phase in 0..5 {
+        let f = Fixture::new();
+        let original = f.checkout();
+        write_commit(&f.worktree, "leaf.txt", "leaf\n", "leaf work");
+        let old = f.manager.head(&f.name).unwrap();
+        write_commit(&f.repo, "main.txt", "main\n", "main work");
+        let main = f.manager.resolve("refs/heads/main").unwrap();
+        let marker = f.manager.rebase_marker(&f.worktree).unwrap();
+        fs::write(&marker, f.name.reference()).unwrap();
+        if phase >= 1 {
+            git(&f.worktree, ["checkout", "--detach", old.as_str()]);
+        }
+        if phase >= 2 {
+            git(&f.worktree, ["rebase", main.as_str()]);
+        }
+        if phase >= 3 {
+            let new = commit_line(&git(&f.worktree, ["rev-parse", "HEAD"])).unwrap();
+            f.manager
+                .update_refs(&format!(
+                    "update {} {} {}\nupdate {} {} {}\n",
+                    f.name.reference(),
+                    new.as_str(),
+                    old.as_str(),
+                    f.name.base_ref(),
+                    main.as_str(),
+                    original.base.as_str()
+                ))
+                .unwrap();
+        }
+        if phase >= 4 {
+            git(&f.worktree, ["symbolic-ref", "HEAD", &f.name.reference()]);
+        }
+        let RebaseResult::Clean { base, head } =
+            f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap()
+        else {
+            panic!("expected clean rebase")
+        };
+        assert_eq!(base, main);
+        assert_eq!(
+            f.manager.changed_files(&base, &head).unwrap(),
+            vec![PathBuf::from("leaf.txt")]
+        );
+        assert!(!marker.exists());
+        f.assert_clean();
+    }
+}
+
+#[test]
+fn interrupted_detached_rebase_aborts_and_preserves_the_base() {
+    let f = Fixture::new();
+    let original = f.checkout();
+    write_commit(&f.worktree, "shared.txt", "leaf version\n", "leaf work");
+    let old = f.manager.head(&f.name).unwrap();
+    write_commit(&f.repo, "shared.txt", "main version\n", "main work");
+    let marker = f.manager.rebase_marker(&f.worktree).unwrap();
+    fs::write(&marker, f.name.reference()).unwrap();
+    git(&f.worktree, ["checkout", "--detach", old.as_str()]);
+    assert!(!raw_git(&f.worktree, ["rebase", "main"]).status.success());
+    assert_eq!(
+        f.manager.rebase_onto_main(&f.name, &f.worktree).unwrap(),
+        RebaseResult::Conflicted {
+            head: old,
+            files: vec![PathBuf::from("shared.txt")]
+        }
+    );
+    assert_eq!(
+        f.manager.create_branch(&f.name).unwrap().base,
+        original.base
+    );
+    assert!(!marker.exists());
+    f.assert_clean();
 }

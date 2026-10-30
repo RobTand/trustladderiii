@@ -6,7 +6,7 @@ The crate uses the Git CLI. It does not depend on the controller or GitHub clien
 ```rust,no_run
 use tl3_worktrees::{BranchName, Worktrees};
 
-let repo = Worktrees::open("/srv/tl3/repos/sandbox")?;
+let repo = Worktrees::open("/srv/tl3/repos/sandbox", "/srv/tl3/worktrees")?;
 let name = BranchName::new("tl3/issue-29")?;
 let branch = repo.create_branch(&name)?;
 let path = repo.create_worktree(&name, "/srv/tl3/worktrees/issue-29")?;
@@ -18,17 +18,19 @@ let files = repo.changed_files(&branch.base, &repo.head(&name)?)?;
 
 | Method | Result |
 |---|---|
-| `create_branch` | Branch name and durable original base commit |
+| `create_branch` | Branch name and durable current base commit |
 | `create_worktree`, `remove_worktree` | Reconcile a checkout at an explicit path |
 | `head`, `remote_head` | Local or remote commit, with absent remote branches returning `None` |
 | `push` | Publish the local head, allowing only fast forwards |
 | `push_rebased` | Publish with an explicit expected remote head and a force-with-lease check |
 | `delete_remote_branch`, `delete_local_branch` | Remove the leaf's branch and local base ref |
-| `rebase_onto_main` | New head, or conflicting files and the unchanged old head |
+| `rebase_onto_main` | New base and head, or conflicting files and the unchanged old head |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
-The controller serializes operations on each repository and worktree. It refreshes
-local `refs/heads/main` before branch creation or rebase. This adapter does not fetch,
+All handles sharing a common Git directory serialize operations with an in-process
+mutex. One controller process must own each repository; other processes must not
+mutate it. No OS file locks are used because of the deployment kernel bug.
+The controller refreshes local `refs/heads/main` before branch creation or rebase. This adapter does not fetch,
 choose effect identities, persist controller state, retry network failures, or mark
 a new head approved. Every new head still needs checks and review.
 
@@ -40,9 +42,15 @@ disables rename detection so both the old and new path count toward the footprin
 ## Recovery
 
 New branch and `refs/tl3/bases/<branch>` refs are created in one Git ref transaction.
-The base survives main advancing and later rebases. An existing branch without a
-base records its merge base with main. A surviving base without a branch recreates
+The base stays fixed when main advances. A clean rebase updates the branch and
+base together in a ref transaction that checks both old values. The new base is
+the exact main commit used by the rebase. An existing branch without a base
+records its merge base with main. A surviving base without a branch recreates
 the branch at that base. Local branch deletion removes both refs atomically.
+
+The configured worktrees root must exist when the handle opens. Creation and
+removal resolve symlinks and reject destinations outside that root, including the
+root itself, before creating directories or changing Git state.
 
 Worktree creation accepts a pre-existing empty directory. A registered checkout
 whose directory disappeared is removed from Git's registry and recreated. A stale
@@ -53,16 +61,17 @@ the orphan's gitlink before repairing the registration. It preserves working fil
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
-Removal refuses tracked edits, untracked files, and ignored files. It recovers a
+Removal refuses tracked edits and untracked files. Ignored build files are allowed. It recovers a
 missing registration before removing a checkout. Repeating removal or branch
 deletion after success has no effect.
 
-Rebase requires a clean checkout, including no ignored files. A dirty checkout is
+Rebase requires a clean checkout. Ignored build files are allowed. A dirty checkout is
 rejected without changing its files. An interrupted rebase for the requested branch
 is aborted before retrying. A conflicting rebase captures the unmerged paths,
 aborts, and verifies a clean checkout at the old head before returning. Filesystem
 or Git failures during abort return `Recovery` so the controller retains the
-resource and reports the problem. There is no automatic conflict resolution.
+resource and reports the problem. There is no automatic conflict resolution. A per-checkout marker recovers detached
+rebases interrupted before or after the atomic branch and base update.
 
 Pushes use immutable commit ids and explicit refs. Ordinary pushes refuse divergent
 remote history. `push_rebased` requires the previously published head from the
@@ -72,7 +81,8 @@ Remote deletion reads and leases the ref, and an absent ref already counts as do
 
 ## Credentials
 
-`Remote::https` accepts HTTPS URLs without userinfo, query strings, or fragments.
+`Remote::https` accepts only `github.com` HTTPS URLs without userinfo, query
+strings, or fragments.
 `Remote::local` accepts a local repository for tests. Neither type has a debug
 implementation. Neither does `InstallationToken`.
 
