@@ -502,3 +502,77 @@ fn entity_and_url_references_inside_code_are_inert() {
         assert!(check_prose(&text, &Policy::default()).is_ok(), "{text}");
     }
 }
+
+macro_rules! underscore_mention {
+    ($name:ident, $text:expr, $mention:expr) => {
+        #[test]
+        fn $name() {
+            assert!(
+                check_prose($text, &Policy::default())
+                    .expect_err("underscore emphasis must not hide a live mention")
+                    .contains(&Violation::Mention($mention.into())),
+                "{}",
+                $text
+            );
+        }
+    };
+}
+underscore_mention!(emphasized_user_mention, "_@octocat_", "@octocat");
+underscore_mention!(strong_user_mention, "__@octocat__", "@octocat");
+underscore_mention!(nested_user_mention, "*_@octocat_*", "@octocat");
+underscore_mention!(sentence_user_mention, "Thanks _@octocat_!", "@octocat");
+underscore_mention!(blockquote_user_mention, "> _@octocat_", "@octocat");
+underscore_mention!(
+    table_user_mention,
+    "| Name |\n| --- |\n| _@octocat_ |",
+    "@octocat"
+);
+underscore_mention!(html_user_mention, "<b>_@octocat_</b>", "@octocat");
+underscore_mention!(emphasized_team_mention, "_@org/team_", "@org/team_");
+
+macro_rules! gh_reference {
+    ($name:ident, $text:expr) => {
+        #[test]
+        fn $name() {
+            let policy = Policy {
+                own_issue: Some(12),
+                own_pull_request: Some(34),
+                ..Policy::default()
+            };
+            assert!(
+                check_prose($text, &policy)
+                    .expect_err("the foreign issue reference must be rejected")
+                    .iter()
+                    .any(|violation| matches!(violation, Violation::ForeignReference(_))),
+                "{}",
+                $text
+            );
+        }
+    };
+}
+gh_reference!(lowercase_gh_reference, "gh-1");
+gh_reference!(titlecase_gh_reference, "Gh-1");
+gh_reference!(mixedcase_gh_reference, "gH-1");
+gh_reference!(zero_padded_gh_reference, "gh-01");
+gh_reference!(escaped_gh_reference, r"gh\-1");
+gh_reference!(emphasized_gh_reference, "_GH-1_");
+gh_reference!(nested_gh_reference, "*_GH-1_*");
+gh_reference!(strong_gh_reference, "__gh-1__");
+
+#[test]
+fn unterminated_numeric_entities_get_only_entity_violations() {
+    for entity in ["&#64", "&#35", "&#x40", "&#X23"] {
+        assert_eq!(
+            check_prose(entity, &Policy::default()).unwrap_err(),
+            vec![Violation::HtmlEntity(entity.into())],
+            "{entity}"
+        );
+    }
+}
+
+#[test]
+fn ampersands_without_real_entity_names_are_plain_prose() {
+    for text in ["R&D;", "Q&A;", "AT&T;", "&notAnEntity;"] {
+        assert!(check_prose(text, &Policy::default()).is_ok(), "{text}");
+    }
+}

@@ -67,6 +67,9 @@ fn writer(text: &str, rerun: bool) -> DraftWriter {
 
 macro_rules! rejection {
     ($name:ident, $token:expr) => {
+        rejection!($name, $token, $token);
+    };
+    ($name:ident, $token:expr, $feedback:expr) => {
         #[test]
         fn $name() {
             for kind in [
@@ -89,7 +92,7 @@ macro_rules! rejection {
                     writer.calls[1]
                         .violations
                         .iter()
-                        .any(|v| v.contains("Remove") && v.contains($token)),
+                        .any(|v| v.contains("Remove") && v.contains($feedback)),
                     "{kind:?}: {:?}",
                     writer.calls[1].violations
                 );
@@ -113,7 +116,18 @@ fn own_issue_and_pull_request_are_allowed_in_every_message_kind() {
         MessageKind::Note,
         MessageKind::Summary,
     ] {
-        for text in ["See #12", "See #34"] {
+        for text in [
+            "See #12",
+            "See #34",
+            "gh-12",
+            "Gh-34",
+            "gH-12",
+            "gh-012",
+            r"gh\-34",
+            "_GH-12_",
+            "*_GH-34_*",
+            "__gh-12__",
+        ] {
             let mut writer = writer(text, false);
             assert!(
                 checked_draft(&mut writer, "message", input(kind), &policy()).is_ok(),
@@ -357,3 +371,59 @@ rejection!(
     rejects_pull_urls_in_every_message_kind,
     "https://github.com/octocat/hello-world/pull/5"
 );
+
+rejection!(rejects_lowercase_gh_in_every_message_kind, "gh-1");
+rejection!(rejects_titlecase_gh_in_every_message_kind, "Gh-1");
+rejection!(rejects_mixedcase_gh_in_every_message_kind, "gH-1");
+rejection!(rejects_zero_padded_gh_in_every_message_kind, "gh-01");
+rejection!(rejects_escaped_gh_in_every_message_kind, r"gh\-1");
+rejection!(
+    rejects_emphasized_gh_in_every_message_kind,
+    "_GH-1_",
+    "GH-1"
+);
+rejection!(rejects_nested_gh_in_every_message_kind, "*_GH-1_*", "GH-1");
+rejection!(rejects_strong_gh_in_every_message_kind, "__gh-1__", "gh-1");
+rejection!(
+    rejects_emphasized_user_in_every_message_kind,
+    "_@octocat_",
+    "@octocat"
+);
+rejection!(
+    rejects_strong_user_in_every_message_kind,
+    "__@octocat__",
+    "@octocat"
+);
+rejection!(
+    rejects_emphasized_team_in_every_message_kind,
+    "_@org/team_",
+    "@org/team"
+);
+
+entity_feedback!(unterminated_mention_entity_gets_entity_feedback, "&#64");
+entity_feedback!(unterminated_number_entity_gets_entity_feedback, "&#35");
+
+macro_rules! ordinary_ampersand {
+    ($name:ident, $text:expr) => {
+        #[test]
+        fn $name() {
+            for kind in [
+                MessageKind::Question,
+                MessageKind::Clarification,
+                MessageKind::Note,
+                MessageKind::Summary,
+            ] {
+                let mut writer = writer($text, false);
+                assert!(
+                    checked_draft(&mut writer, "ampersand", input(kind), &policy()).is_ok(),
+                    "{kind:?}: {}",
+                    $text
+                );
+                assert_eq!(writer.calls.len(), 1);
+            }
+        }
+    };
+}
+ordinary_ampersand!(research_ampersand_is_plain_prose, "R&D;");
+ordinary_ampersand!(questions_ampersand_is_plain_prose, "Q&A;");
+ordinary_ampersand!(company_ampersand_is_plain_prose, "AT&T;");
