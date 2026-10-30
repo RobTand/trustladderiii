@@ -65,24 +65,35 @@ def test_raw_response_cap(monkeypatch):
 def test_total_deadline_covers_a_trickling_response(monkeypatch):
     closed = []
     reads = []
+    deadlines = []
+    timeout = asyncio.timeout
+
+    def controlled_deadline(seconds):
+        assert seconds == 30
+        deadline = timeout(None)
+        deadlines.append(deadline)
+        return deadline
 
     class Trickle(httpx.AsyncByteStream):
         async def __aiter__(self):
             yield b'{"results":['
-            # Every read completes, but the response never ends.
-            while True:
+            for _ in range(3):
                 await asyncio.sleep(0)
                 reads.append(True)
-                yield b' '
+                yield b' ' * 4096
+            # Expire the one response deadline after several completed reads.
+            deadlines[0].reschedule(asyncio.get_running_loop().time() - 1)
+            await asyncio.Event().wait()
+            raise AssertionError('response deadline did not cancel the read')
 
         async def aclose(self):
             closed.append(True)
 
-    monkeypatch.setattr(recall, 'DEADLINE_SECONDS', 0.01)
+    monkeypatch.setattr(asyncio, 'timeout', controlled_deadline)
     client(monkeypatch, lambda request: httpx.Response(200, stream=Trickle()))
     result = recall.recall('http://127.0.0.1:8890', 'tl3', 'greeting')
     assert result['results'] == [] and 'error' in result
-    assert reads and closed
+    assert len(deadlines) == 1 and len(reads) == 3 and closed
 
 
 @pytest.mark.parametrize('response', [
