@@ -24,7 +24,7 @@ impl Records {
     pub fn new(root: &Path) -> Self {
         Self(root.to_owned())
     }
-    fn path(&self, key: &str) -> PathBuf {
+    pub(super) fn path(&self, key: &str) -> PathBuf {
         let encoded: String = key.bytes().map(|b| format!("{b:02x}")).collect();
         self.0.join(format!("{encoded}.json"))
     }
@@ -73,7 +73,7 @@ impl Records {
         Ok(record.completion)
     }
 
-    fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+    pub(super) fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
         let temporary = path.with_extension("tmp");
         let mut file = File::create(&temporary)?;
         file.write_all(bytes)?;

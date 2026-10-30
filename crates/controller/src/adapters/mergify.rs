@@ -44,7 +44,7 @@ use crate::{Bootstrap, Error, Repository, cli::Input};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tl3_github::{Actor, CheckRun, GitHub, PullRequest, RepoChanges, webhook::Event};
+use tl3_github::{Actor, CheckRun, GitHub, RepoChanges, webhook::Event};
 use tl3_kernel::{NodeId, World};
 use tl3_mergify::{Mergify, QUEUE_LABEL, QueueState, is_merge_queue_pr};
 use tl3_store::{InternKind, Snapshot};
@@ -89,6 +89,11 @@ impl QueueFact {
             observation: Observation::Queue(self),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Attempt {
+    before: Option<CheckRun>,
 }
 
 pub struct Adapter {
@@ -137,11 +142,33 @@ impl Adapter {
             .collect();
         Ok((state, facts))
     }
+    fn baseline(&self, delivery: &Delivery) -> Result<Option<Attempt>> {
+        match std::fs::read(self.records.path(&delivery.key).with_extension("intent")) {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
     fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
         let (state, observations) = self.read(delivery)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
-        if previously_confirmed || attempted(state.state) {
+        let baseline = self.baseline(delivery)?;
+        let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
+        let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
+        let terminal = matches!(
+            state.state,
+            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
+        );
+        if previously_confirmed
+            || state.state == QueueState::Merged
+            || (current_head
+                && (active
+                    || (terminal
+                        && baseline
+                            .as_ref()
+                            .is_some_and(|before| before.before != state.check))))
+        {
             return Ok(Reconciliation::Found(Completion::confirmed(observations)));
         }
         let github = &self.clients[&delivery.repository.installation];
@@ -149,6 +176,13 @@ impl Adapter {
         let issue = self
             .runtime
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        if current_head && terminal {
+            // An unchanged terminal check belongs to the previous enqueue, not this key.
+            return Ok(Reconciliation::Absent);
+        }
+        if baseline.is_none() {
+            return Ok(Reconciliation::Absent);
+        }
         if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
             Ok(Reconciliation::Pending)
         } else {
@@ -159,21 +193,49 @@ impl Adapter {
 impl Executor for Adapter {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        if let Reconciliation::Found(completion) = self.completion(delivery)? {
-            return self.records.deliver(delivery, completion);
+        match self.completion(delivery)? {
+            Reconciliation::Found(completion) => {
+                if !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_)) {
+                    self.records
+                        .deliver(delivery, Completion::confirmed(vec![]))?;
+                }
+                return Ok(completion);
+            }
+            Reconciliation::Pending => {
+                return Err(Error::Invalid("Mergify acceptance is still unknown"));
+            }
+            Reconciliation::Absent => {}
+        }
+        let (state, _) = self.read(delivery)?;
+        if self.baseline(delivery)?.is_none() {
+            self.records.write(
+                &self.records.path(&delivery.key).with_extension("intent"),
+                &serde_json::to_vec(&Attempt {
+                    before: state.check.clone(),
+                })?,
+            )?;
         }
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
+        if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+            || matches!(
+                state.state,
+                QueueState::FailedCi | QueueState::Conflict | QueueState::Dequeued
+            )
+        {
             self.fence(delivery)?;
             self.runtime
                 .block_on(Mergify::new(github).queue(&repo, number, head))
                 .map_err(adapter_error)?;
         }
         match self.completion(delivery)? {
-            Reconciliation::Found(completion) => self.records.deliver(delivery, completion),
+            Reconciliation::Found(completion) => {
+                self.records
+                    .deliver(delivery, Completion::confirmed(vec![]))?;
+                Ok(completion)
+            }
             _ => Err(Error::Invalid(
                 "queue label written; Mergify acceptance is still unknown",
             )),
@@ -206,17 +268,6 @@ fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
             .as_deref()
             .ok_or(Error::Invalid("enqueue needs an approved head"))?,
     ))
-}
-fn attempted(state: QueueState) -> bool {
-    matches!(
-        state,
-        QueueState::Queued
-            | QueueState::ChecksRunning
-            | QueueState::Merged
-            | QueueState::Dequeued
-            | QueueState::FailedCi
-            | QueueState::Conflict
-    )
 }
 fn adapter_error(error: tl3_mergify::Error) -> Error {
     Error::Adapter(Box::new(error))

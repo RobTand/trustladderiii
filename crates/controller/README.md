@@ -114,3 +114,36 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
+
+The real Mergify adapter replaces its registry entry with one call:
+
+```rust,ignore
+registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, records)?);
+```
+
+Keep `records` in a persistent directory. It holds the accepted epoch, queue
+check baselines and receipts by effect key. A label write alone leaves enqueue
+uncertain. Mergify must report queue membership or the attempt's terminal result.
+The kernel has no dequeue effect, so this adapter adds none. GitHub PR effects
+remain on the fake until ticket #13.
+
+Enable queue facts on the existing ingress source with
+`CatchUp::new(clients)?.with_mergify()?`. `Webhooks` uses that translator when it
+has catch-up configured. A receiver without catch-up can use
+`with_mergify(mergify::Translator::new(clients)?)`. Both sources resolve tracked
+PRs, ignore Mergify draft PRs, and read authoritative queue state through the
+client. The receiver commits the resulting inputs before returning 202. Read
+failures return 503 so GitHub can retry. Merge-group notifications request a
+read. Their lifecycle does not prove that an original PR merged.
+
+The controller stores each consumed queue fact's identity with its kernel step
+in `queue_facts` JSON rows. Webhook delivery IDs, catch-up and enqueue watches
+share those identities. This uses the existing store schema. A merge always
+reports the PR's actual head. Its `checks_passed` value requires successful
+checks on the merge commit. Missing evidence reports false.
+
+Submit `bash crates/controller/tools/verify-mergify.sh` through PrismaBuild once
+with each of `--tag dl380g10`, `--tag sparky` and `--tag sparklina`. The integration
+scenarios use the real HTTP receiver, a local REST server and embedded Postgres.
+See [the fixture notes](tests/fixtures/mergify/README.md) for recorded and synthetic
+inputs.

@@ -198,3 +198,20 @@ read-only status and configuration permissions. The review campaign generator
 in `crates/controller/tools/review_manifest.py` adds kernel tests and three
 representative Kani proofs. Generate it from a clean detached worktree at the
 final commit. CI runs independently on Mergify runners.
+
+### Mergify queue facts
+
+The Mergify replacement registers as one executor. Enqueue converges by label,
+but confirmation requires the queue's own record. A persistent baseline prevents
+an earlier terminal queue check from confirming a fresh effect key. Receipts
+prevent a confirmed key from adding the label again after a person removes it.
+An epoch fence covers mutations; reconciliation can still read old effects.
+
+GitHub's receiver and gap catch-up can use the Mergify translator in
+`controller/src/adapters/mergify.rs`. It reads queue evidence and emits ordinary
+`Input::Observation` values. Check runs, check suites and merge groups trigger
+queue reads. Person actions retain their upstream timestamps as identities.
+Merge identities use the actual PR head, and failure identities use the Mergify
+check ID. The controller resolves repository and PR bindings and commits a
+`queue_facts` row with each kernel fact. The row suppresses later observations
+of that fact, including after restart. There is no store migration.

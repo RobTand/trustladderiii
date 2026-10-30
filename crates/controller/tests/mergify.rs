@@ -330,6 +330,18 @@ fn merged(settings: &tl3_config::Store, unapproved: bool, webhook_first: bool) {
         ));
     }
     assert_eq!(api.state.lock().unwrap().posts, 1);
+    let applied = Store::open(settings)
+        .unwrap()
+        .events_after(tl3_store::Revision::ZERO, 2000)
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            event.receipt.result["kernel_event"]["Fact"]["fact"]
+                .get("PrMerged")
+                .is_some()
+        })
+        .count();
+    assert_eq!(applied, 1, "merge must step the kernel once");
     drop(controller);
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
@@ -357,7 +369,13 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
     body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
-    deliver(settings, &api, "check_run", &body);
+    if infra {
+        body["check_suite"] =
+            json!({"id":700,"head_sha":head,"status":"completed","conclusion":"timed_out"});
+        deliver(settings, &api, "check_suite", &body);
+    } else {
+        deliver(settings, &api, "check_run", &body);
+    }
     // Catch-up and the enqueue watch see the same upstream check before either is consumed.
     let inputs = CatchUp::new(api.clients())
         .unwrap()
@@ -564,6 +582,18 @@ fn executor_recovery() {
         adapter.reconcile(&delivery).unwrap(),
         Reconciliation::Found(_)
     ));
+    delivery.epoch = 2;
+    delivery.key = "retry-enqueue-2".into();
+    api.state.lock().unwrap().checks = fixture("failed", "checks");
+    api.state.lock().unwrap().label = true;
+    let posts = api.state.lock().unwrap().posts;
+    assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        posts + 1,
+        "new key must enqueue after the old failure"
+    );
+    delivery.epoch = 1;
     drop(adapter);
     let mut old = api.adapter(root.path(), 1);
     assert!(old.execute(&delivery).is_err());
