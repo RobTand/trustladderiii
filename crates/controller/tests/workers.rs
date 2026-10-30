@@ -172,6 +172,60 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
     )
 }
 
+fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    if wrapped {
+        let inputs = store.worker_materials("0").unwrap().unwrap();
+        store
+            .put_worker_materials(
+                "0",
+                &json!({"ingest": inputs, "audit": inputs, "repo": inputs["repo"]}),
+            )
+            .unwrap();
+    }
+    let mut commit = Commit::new("linked-materials", json!({}), &store.load().unwrap());
+    commit.rows.push(RowChange::Put {
+        table: "request_links".into(),
+        id: "1".into(),
+        value: json!({"original": 0, "issue": {
+            "number": 1000, "title": "Correct the greeting", "body": "Repair the delivered result.",
+            "state": "open", "updated_at": "2026-10-30T00:00:00Z", "pull_request": null
+        }}),
+    });
+    store.commit(&commit).unwrap();
+    let mut delivery = delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(1),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    delivery.issue = 1000;
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["inputs"]["issue"]["number"], 1000,
+        "linked issues must replace the selected role's original issue"
+    );
+    assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
+    assert_eq!(
+        request["inputs"]["issue"]["body"],
+        "Repair the delivered result."
+    );
+    assert_eq!(
+        request["inputs"]["repo"]["file_list"],
+        json!(["greeting.py"])
+    );
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--maker-rebase") {
@@ -252,6 +306,16 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--linked-materials") {
+        for wrapped in [false, true] {
+            linked_materials(
+                &database.create(&format!("linked_materials_{wrapped}")),
+                wrapped,
+            );
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-failure") {
         maker::scenario(&database.create("maker_failure"), &args[2], false);
         println!("test maker_failure_{} ... ok", args[2]);
@@ -278,6 +342,13 @@ fn main() {
         maker::run(&mut database);
         database.stop();
         return;
+    }
+    for wrapped in [false, true] {
+        linked_materials(
+            &database.create(&format!("linked_materials_{wrapped}")),
+            wrapped,
+        );
+        println!("test linked_issue_role_materials_wrapped_{wrapped} ... ok");
     }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
