@@ -1,19 +1,11 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use rand::rngs::OsRng;
-use rsa::{
-    RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, LineEnding},
-};
 use serde_json::{Value, json};
 use std::{
-    sync::{
-        LazyLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use tl3_github::{AppConfig, CheckRun, ClientOptions, Comment, GitHub, PullRequest};
-use tl3_mergify::{Error, Mergify, QueueState, observe};
+use tl3_github::{AppConfig, CheckRun, ClientOptions, GitHub, PullRequest};
+use tl3_mergify::{Error, Mergify, QUEUE_LABEL, QueueState, is_merge_queue_pr, observe};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_json, header, method, path, query_param},
@@ -27,16 +19,15 @@ fn fixture(name: &str, part: &str) -> Value {
     serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap()
 }
 
-fn recorded(name: &str) -> (PullRequest, Vec<CheckRun>, Vec<Comment>) {
+fn recorded(name: &str) -> (PullRequest, Vec<CheckRun>) {
     (
         serde_json::from_value(fixture(name, "pull")).unwrap(),
         serde_json::from_value(fixture(name, "checks")).unwrap(),
-        serde_json::from_value(fixture(name, "comments")).unwrap(),
     )
 }
 
 #[test]
-fn recorded_checks_and_comments_recognize_queue_facts() {
+fn recorded_checks_recognize_queue_facts() {
     for (name, expected) in [
         ("merged", QueueState::Merged),
         ("waiting", QueueState::Waiting),
@@ -44,37 +35,60 @@ fn recorded_checks_and_comments_recognize_queue_facts() {
         ("failed", QueueState::FailedCi),
         ("conflict", QueueState::Conflict),
     ] {
-        let (pr, checks, comments) = recorded(name);
-        let result = observe(pr, &checks, &comments);
+        let (pr, checks) = recorded(name);
+        let approved = pr.head.sha.clone();
+        let result = observe(pr, &checks, &approved);
         assert_eq!(result.state, expected, "{name}");
-        if name != "waiting" {
-            assert!(result.events.iter().any(|e| e.state == expected), "{name}");
-        }
-        if name == "failed" {
-            assert!(
-                result
-                    .events
-                    .iter()
-                    .any(|e| e.state == QueueState::Dequeued)
-            );
-        }
+        assert!(!result.unapproved_merge, "{name}");
     }
 }
 
 #[test]
 fn documented_queue_title_distinguishes_waiting_from_running() {
-    let (pr, mut checks, _) = recorded("running");
+    let (pr, mut checks) = recorded("running");
+    let approved = pr.head.sha.clone();
     let check = checks
         .iter_mut()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
         .unwrap();
     check.output.as_mut().unwrap().title = "In merge queue".into();
-    assert_eq!(observe(pr, &checks, &[]).state, QueueState::Queued);
+    assert_eq!(observe(pr, &checks, &approved).state, QueueState::Queued);
+}
+
+#[test]
+fn temporary_queue_prs_require_both_the_branch_prefix_and_mergify_author() {
+    let (original, _) = recorded("running");
+    for (branch, author, expected) in [
+        ("mergify/merge-queue/main/pr-1", "mergify[bot]", true),
+        ("mergify/merge-queue/main/pr-1", "someone", false),
+        ("feature", "mergify[bot]", false),
+        ("mergify/bp/main/pr-1", "mergify[bot]", false),
+        ("mergify/merge-queue-spoof/main", "mergify[bot]", false),
+    ] {
+        let mut pr = original.clone();
+        pr.head.branch = branch.into();
+        pr.user.login = author.into();
+        assert_eq!(is_merge_queue_pr(&pr), expected, "{branch}, {author}");
+    }
+}
+
+#[test]
+fn merged_head_without_tl3_approval_is_flagged_even_without_checks() {
+    let (pr, checks) = recorded("merged");
+    let approved = "different-approved-head";
+    for checks in [&checks[..], &[]] {
+        let result = observe(pr.clone(), checks, approved);
+        assert_eq!(result.state, QueueState::Merged);
+        assert!(result.unapproved_merge);
+        assert_eq!(result.pull_request.head.sha, pr.head.sha);
+    }
+    let (pr, checks) = recorded("running");
+    assert!(!observe(pr, &checks, approved).unapproved_merge);
 }
 
 #[test]
 fn ignores_unrelated_spoofed_and_old_head_checks() {
-    let (pr, checks, comments) = recorded("running");
+    let (pr, checks) = recorded("running");
     let original = checks
         .iter()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
@@ -90,16 +104,16 @@ fn ignores_unrelated_spoofed_and_old_head_checks() {
             _ => unreachable!(),
         }
         assert_eq!(
-            observe(pr.clone(), &[check], &comments).state,
+            observe(pr.clone(), &[check], &pr.head.sha).state,
             QueueState::Unknown
         );
     }
 }
 
 #[test]
-fn latest_check_wins_and_historical_comments_never_override_it() {
-    let (pr, mut checks, _) = recorded("waiting");
-    let (_, _, comments) = recorded("failed");
+fn latest_check_wins() {
+    let (pr, mut checks) = recorded("waiting");
+    let approved = pr.head.sha.clone();
     let mut older = checks
         .iter()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
@@ -110,32 +124,23 @@ fn latest_check_wins_and_historical_comments_never_override_it() {
     older.output.as_mut().unwrap().summary = None;
     checks.push(older);
     checks.reverse();
-    let result = observe(pr, &checks, &comments);
-    assert_eq!(result.state, QueueState::Waiting);
-    assert!(
-        result
-            .events
-            .iter()
-            .any(|e| e.state == QueueState::FailedCi)
-    );
+    assert_eq!(observe(pr, &checks, &approved).state, QueueState::Waiting);
 }
 
 #[test]
 fn only_github_confirms_merge_even_when_queue_check_claims_success() {
-    let (mut pr, checks, comments) = recorded("merged");
+    let (mut pr, checks) = recorded("merged");
+    let approved = pr.head.sha.clone();
     pr.merged_at = None;
     pr.state = "open".into();
-    assert_eq!(
-        observe(pr.clone(), &checks, &comments).state,
-        QueueState::Unknown
-    );
-    pr.merged_at = Some(chrono::Utc::now());
-    assert_eq!(observe(pr, &[], &[]).state, QueueState::Merged);
+    let result = observe(pr, &checks, &approved);
+    assert_eq!(result.state, QueueState::Unknown);
+    assert!(!result.unapproved_merge);
 }
 
 #[test]
 fn invalid_or_future_metadata_stays_unknown() {
-    let (pr, checks, _) = recorded("running");
+    let (pr, checks) = recorded("running");
     let mut check = checks
         .into_iter()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
@@ -150,22 +155,25 @@ fn invalid_or_future_metadata_stays_unknown() {
             STANDARD.encode(payload)
         ));
         assert_eq!(
-            observe(pr.clone(), &[check.clone()], &[]).state,
+            observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
             QueueState::Unknown
         );
     }
     check.output.as_mut().unwrap().summary = Some("<span itemprop=\"mergify.v1.!\"></span>".into());
     assert_eq!(
-        observe(pr.clone(), &[check.clone()], &[]).state,
+        observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
         QueueState::Unknown
     );
     check.output = None;
-    assert_eq!(observe(pr, &[check], &[]).state, QueueState::Unknown);
+    assert_eq!(
+        observe(pr.clone(), &[check], &pr.head.sha).state,
+        QueueState::Unknown
+    );
 }
 
 #[test]
 fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failure() {
-    let (pr, checks, _) = recorded("running");
+    let (pr, checks) = recorded("running");
     let mut check = checks
         .into_iter()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
@@ -193,40 +201,12 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
             "<span itemprop=\"mergify.v1.{}\"></span>",
             STANDARD.encode(payload.to_string())
         ));
-        assert_eq!(observe(pr.clone(), &[check.clone()], &[]).state, expected);
+        assert_eq!(
+            observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
+            expected
+        );
     }
 }
-
-#[test]
-fn comment_identity_and_payload_are_required() {
-    let (pr, _, mut comments) = recorded("conflict");
-    assert_eq!(observe(pr.clone(), &[], &comments).events.len(), 1);
-    for change in [0, 1, 2] {
-        let mut comment = comments[0].clone();
-        match change {
-            0 => comment.user.id = 1,
-            1 => comment.user.login = "someone".into(),
-            2 => comment.body = "In merge queue. Checks failed. Merged!".into(),
-            _ => unreachable!(),
-        }
-        assert!(observe(pr.clone(), &[], &[comment]).events.is_empty());
-    }
-    comments[0].body = comments[0]
-        .body
-        .replace("\"version\": 1", "\"version\": 99");
-    assert_eq!(
-        observe(pr, &[], &comments).events[0].state,
-        QueueState::Unknown
-    );
-}
-
-static PEM: LazyLock<String> = LazyLock::new(|| {
-    RsaPrivateKey::new(&mut OsRng, 2048)
-        .unwrap()
-        .to_pkcs8_pem(LineEnding::LF)
-        .unwrap()
-        .to_string()
-});
 
 async fn client(server: &MockServer) -> Mergify {
     Mock::given(method("POST"))
@@ -242,7 +222,7 @@ async fn client(server: &MockServer) -> Mergify {
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: PEM.clone(),
+            pem: include_str!("fixtures/throwaway-key.pem").into(),
             webhook_secret: "fake".into(),
         },
         3,
@@ -279,15 +259,13 @@ async fn reads_recorded_state_through_github_rest() {
         let client = client(&server).await;
         let pr = fixture(name, "pull");
         let number = pr["number"].as_u64().unwrap();
+        let approved = if name == "merged" {
+            "different-approved-head"
+        } else {
+            pr["head"]["sha"].as_str().unwrap()
+        };
         let prefix = "/repos/test/repo";
         get(&server, &format!("{prefix}/pulls/{number}"), pr.clone(), 2).await;
-        get(
-            &server,
-            &format!("{prefix}/issues/{number}/comments"),
-            fixture(name, "comments"),
-            1,
-        )
-        .await;
         Mock::given(method("GET"))
             .and(path(format!(
                 "{prefix}/commits/{}/check-runs",
@@ -302,89 +280,61 @@ async fn reads_recorded_state_through_github_rest() {
             .expect(1)
             .mount(&server)
             .await;
-        assert_eq!(
-            client.read("test/repo", number).await.unwrap().state,
-            expected
-        );
+        let result = client.read("test/repo", number, approved).await.unwrap();
+        assert_eq!(result.state, expected);
+        assert_eq!(result.unapproved_merge, name == "merged");
     }
 }
 
 #[tokio::test]
-async fn commands_post_once_and_reconcile_receipts_by_operation() {
+async fn queue_and_dequeue_converge_when_label_is_already_present_or_absent() {
     let server = MockServer::start().await;
     let client = client(&server).await;
     let pr = fixture("waiting", "pull");
     get(&server, "/repos/test/repo/pulls/2425", pr.clone(), 2).await;
-    let mut receipts = vec![];
-    for command in ["queue", "dequeue"] {
-        let key = format!("mergify:{command}:operation-1");
-        let body = format!("{}\n\n@mergifyio {command}", GitHub::marker(&key));
-        let mut receipt = fixture("merged", "comments")[0].clone();
-        receipt["user"] = json!({"id":1,"login":"factory[bot]"});
-        receipt["body"] = json!(body);
-        receipt["id"] = json!(if command == "queue" { 1 } else { 2 });
-        Mock::given(method("POST"))
-            .and(path("/repos/test/repo/issues/2425/comments"))
-            .and(body_json(json!({"body":body})))
-            .respond_with(ResponseTemplate::new(201).set_body_json(receipt.clone()))
-            .expect(1)
-            .mount(&server)
-            .await;
-        receipts.push(receipt);
-    }
+    Mock::given(method("POST"))
+        .and(path("/repos/test/repo/issues/2425/labels"))
+        .and(header("authorization", "Bearer fake-token"))
+        .and(body_json(json!({"labels": [QUEUE_LABEL]})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"name": "unrelated"}, {"name": QUEUE_LABEL}
+        ])))
+        .expect(2)
+        .mount(&server)
+        .await;
     let calls = AtomicUsize::new(0);
-    let served = receipts.clone();
-    Mock::given(method("GET"))
-        .and(path("/repos/test/repo/issues/2425/comments"))
+    Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/repos/test/repo/issues/2425/labels/{QUEUE_LABEL}"
+        )))
+        .and(header("authorization", "Bearer fake-token"))
         .respond_with(move |_: &wiremock::Request| {
-            let count = calls.fetch_add(1, Ordering::SeqCst);
-            let body = match count {
-                0 => json!([]),
-                1 | 2 => json!([served[0]]),
-                _ => json!(served),
-            };
-            ResponseTemplate::new(200).set_body_json(body)
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(200).set_body_json(json!([{"name": "unrelated"}]))
+            } else {
+                ResponseTemplate::new(404)
+            }
         })
-        .expect(4)
+        .expect(2)
         .mount(&server)
         .await;
     let head = pr["head"]["sha"].as_str().unwrap();
-    assert_eq!(
-        client
-            .queue("test/repo", 2425, head, "operation-1")
+    client.queue("test/repo", 2425, head).await.unwrap();
+    client.queue("test/repo", 2425, head).await.unwrap();
+    client.dequeue("test/repo", 2425).await.unwrap();
+    client.dequeue("test/repo", 2425).await.unwrap();
+    assert!(
+        server
+            .received_requests()
             .await
             .unwrap()
-            .id,
-        1
-    );
-    assert_eq!(
-        client
-            .queue("test/repo", 2425, head, "operation-1")
-            .await
-            .unwrap()
-            .id,
-        1
-    );
-    assert_eq!(
-        client
-            .dequeue("test/repo", 2425, "operation-1")
-            .await
-            .unwrap()
-            .id,
-        2
-    );
-    assert_eq!(
-        client
-            .dequeue("test/repo", 2425, "operation-1")
-            .await
-            .unwrap()
-            .id,
-        2
+            .iter()
+            .all(|r| { !r.url.path().contains("comments") && r.method.as_str() != "PUT" })
     );
 }
 
 #[tokio::test]
-async fn refuses_unapproved_or_closed_heads_before_posting() {
+async fn refuses_unapproved_or_closed_heads_before_adding_the_label() {
     for closed in [false, true] {
         let server = MockServer::start().await;
         let client = client(&server).await;
@@ -396,11 +346,12 @@ async fn refuses_unapproved_or_closed_heads_before_posting() {
             "old-head"
         };
         get(&server, "/repos/test/repo/pulls/2425", pr.clone(), 1).await;
-        let result = client.queue("test/repo", 2425, approved, "effect").await;
+        let result = client.queue("test/repo", 2425, approved).await;
         assert!(matches!(
             (closed, result),
             (false, Err(Error::HeadChanged)) | (true, Err(Error::PullRequestClosed))
         ));
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
     }
 }
 
@@ -424,13 +375,6 @@ async fn a_push_during_read_requires_a_new_observation() {
         .expect(2)
         .mount(&server)
         .await;
-    get(
-        &server,
-        "/repos/test/repo/issues/2425/comments",
-        json!([]),
-        1,
-    )
-    .await;
     let head = fixture("waiting", "pull")["head"]["sha"]
         .as_str()
         .unwrap()
@@ -443,7 +387,7 @@ async fn a_push_during_read_requires_a_new_observation() {
     )
     .await;
     assert!(matches!(
-        client.read("test/repo", 2425).await,
+        client.read("test/repo", 2425, &head).await,
         Err(Error::ChangedDuringRead)
     ));
 }
@@ -459,14 +403,26 @@ async fn propagates_github_failures_without_inventing_facts() {
         .mount(&server)
         .await;
     assert!(matches!(
-        client.read("test/repo", 7).await,
+        client.read("test/repo", 7, "approved").await,
+        Err(Error::GitHub(tl3_github::Error::Http { status: 403 }))
+    ));
+    Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/repos/test/repo/issues/7/labels/{QUEUE_LABEL}"
+        )))
+        .respond_with(ResponseTemplate::new(403))
+        .expect(1)
+        .mount(&server)
+        .await;
+    assert!(matches!(
+        client.dequeue("test/repo", 7).await,
         Err(Error::GitHub(tl3_github::Error::Http { status: 403 }))
     ));
 }
 
 #[test]
-fn future_encoding_and_unrecognized_titles_stay_unknown() {
-    let (pr, checks, _) = recorded("running");
+fn future_encoding_and_unrecorded_titles_stay_unknown() {
+    let (pr, checks) = recorded("running");
     let mut check = checks
         .into_iter()
         .find(|c| c.name == tl3_mergify::QUEUE_CHECK)
@@ -474,45 +430,23 @@ fn future_encoding_and_unrecognized_titles_stay_unknown() {
     check.output.as_mut().unwrap().summary =
         Some("<span itemprop=\"mergify.v2.payload\"></span>".into());
     assert_eq!(
-        observe(pr.clone(), &[check.clone()], &[]).state,
+        observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
         QueueState::Unknown
     );
     check.output.as_mut().unwrap().summary = None;
-    check.output.as_mut().unwrap().title = "A future queue state".into();
-    assert_eq!(observe(pr, &[check], &[]).state, QueueState::Unknown);
-}
-
-#[test]
-fn legacy_comment_reason_and_manual_dequeue_keep_their_meanings() {
-    let (pr, _, mut comments) = recorded("conflict");
-    let body = comments[0].body.clone();
-    let start = body.find("-*- Mergify Payload -*-\n").unwrap() + "-*- Mergify Payload -*-\n".len();
-    let end = body.find("\n-*- Mergify Payload End -*-").unwrap();
-    let mut payload: Value = serde_json::from_str(&body[start..end]).unwrap();
-    payload.as_object_mut().unwrap().remove("dequeue_reason");
-    comments[0].body = format!(
-        "{}{}{}\n## Reason\n\nThe pull request conflicts with the base branch\n",
-        &body[..start],
-        payload,
-        &body[end..]
-    );
-    assert_eq!(
-        observe(pr.clone(), &[], &comments).events[0].state,
-        QueueState::Conflict
-    );
-    comments[0].body = comments[0].body.replace(
-        "The pull request conflicts with the base branch",
-        "The merge conditions cannot be satisfied due to failing checks",
-    );
-    assert_eq!(
-        observe(pr, &[], &comments).events[0].state,
-        QueueState::FailedCi
-    );
-    let (pr, checks, comments) = recorded("failed");
-    let event = observe(pr, &checks, &comments)
-        .events
-        .into_iter()
-        .find(|e| e.comment.id == 6497929334)
-        .unwrap();
-    assert_eq!(event.state, QueueState::Dequeued);
+    for title in [
+        "Dequeued — checks timeout",
+        "Dequeued — conflict with another pull request",
+        "Dequeued — a future reason",
+        "Waiting for queue conditions",
+        "Waiting for queue conditions to match",
+        "A future queue state",
+    ] {
+        check.output.as_mut().unwrap().title = title.into();
+        assert_eq!(
+            observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
+            QueueState::Unknown,
+            "{title}"
+        );
+    }
 }

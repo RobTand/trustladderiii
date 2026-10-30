@@ -55,6 +55,7 @@ pub struct Comment {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PullRequest {
     pub number: u64,
+    pub user: Actor,
     pub state: String,
     pub merged_at: Option<DateTime<Utc>>,
     pub head: PullHead,

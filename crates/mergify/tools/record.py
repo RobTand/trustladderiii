@@ -46,7 +46,8 @@ def main():
                 for c in comments if c["user"]["login"] == "mergify[bot]"]
     for comment in comments:
         comment["user"] = fields(comment["user"], "id login")
-    pull = fields(pull, "number state merged_at head base updated_at")
+    pull = fields(pull, "number user state merged_at head base updated_at")
+    pull["user"] = fields(pull["user"], "id login")
     for name in ["head", "base"]:
         pull[name] = fields(pull[name], "ref sha repo")
         repo = pull[name]["repo"]

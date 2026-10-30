@@ -12,7 +12,5 @@ tl3-github = { path = "../github" }
 
 [dev-dependencies]
 chrono = "0.4"
-rand = "0.8"
-rsa = { version = "0.9", features = ["pem"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"

@@ -2,11 +2,11 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
-use tl3_github::{CheckRun, Comment, GitHub, PullRequest};
+use tl3_github::{CheckRun, GitHub, PullRequest};
 
 pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
 pub const MERGIFY_APP_ID: u64 = 10562;
-pub const MERGIFY_BOT_ID: u64 = 37929162;
+pub const QUEUE_LABEL: &str = "tl3-queue";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueState {
@@ -20,27 +20,18 @@ pub enum QueueState {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QueueEvent {
-    pub comment: Comment,
-    pub state: QueueState,
-}
-
 #[derive(Clone, Debug)]
 pub struct Observation {
     pub pull_request: PullRequest,
     pub state: QueueState,
     pub check: Option<CheckRun>,
-    /// Historical reports, not proof of the current head's queue membership.
-    pub events: Vec<QueueEvent>,
+    pub unapproved_merge: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     GitHub(#[from] tl3_github::Error),
-    #[error("effect key must not be blank")]
-    EmptyEffectKey,
     #[error("pull request head differs from the approved head")]
     HeadChanged,
     #[error("pull request is closed or merged")]
@@ -59,17 +50,8 @@ impl Mergify {
         Self { github }
     }
 
-    /// A receipt means GitHub stored the command. Read state to confirm queue entry.
-    pub async fn queue(
-        &self,
-        repo: &str,
-        number: u64,
-        approved_head: &str,
-        effect_key: &str,
-    ) -> Result<Comment, Error> {
-        if effect_key.trim().is_empty() {
-            return Err(Error::EmptyEffectKey);
-        }
+    /// Add the queue label after TL3 posts its approval check.
+    pub async fn queue(&self, repo: &str, number: u64, approved_head: &str) -> Result<(), Error> {
         let pull = self.github.pull_request(repo, number).await?;
         if pull.head.sha != approved_head {
             return Err(Error::HeadChanged);
@@ -77,56 +59,38 @@ impl Mergify {
         if pull.state != "open" || pull.merged_at.is_some() {
             return Err(Error::PullRequestClosed);
         }
-        Ok(self
-            .github
-            .post_comment(
-                repo,
-                number,
-                &format!("mergify:queue:{effect_key}"),
-                "@mergifyio queue",
-            )
-            .await?)
+        self.github.add_label(repo, number, QUEUE_LABEL).await?;
+        Ok(())
     }
 
-    /// Cancels pending queue commands as well as existing queue membership.
-    pub async fn dequeue(
+    pub async fn dequeue(&self, repo: &str, number: u64) -> Result<(), Error> {
+        Ok(self.github.remove_label(repo, number, QUEUE_LABEL).await?)
+    }
+
+    pub async fn read(
         &self,
         repo: &str,
         number: u64,
-        effect_key: &str,
-    ) -> Result<Comment, Error> {
-        if effect_key.trim().is_empty() {
-            return Err(Error::EmptyEffectKey);
-        }
-        Ok(self
-            .github
-            .post_comment(
-                repo,
-                number,
-                &format!("mergify:dequeue:{effect_key}"),
-                "@mergifyio dequeue",
-            )
-            .await?)
-    }
-
-    pub async fn read(&self, repo: &str, number: u64) -> Result<Observation, Error> {
+        approved_head: &str,
+    ) -> Result<Observation, Error> {
         let before = self.github.pull_request(repo, number).await?;
         let checks = self.github.check_runs(repo, &before.head.sha).await?;
-        let comments = self.github.comments(repo, number).await?;
         let after = self.github.pull_request(repo, number).await?;
         if before != after {
             return Err(Error::ChangedDuringRead);
         }
-        Ok(observe(after, &checks, &comments))
+        Ok(observe(after, &checks, approved_head))
     }
 }
 
+/// TL3 must ignore events from Mergify's temporary merge-queue PRs.
+pub fn is_merge_queue_pr(pull_request: &PullRequest) -> bool {
+    pull_request.head.branch.starts_with("mergify/merge-queue/")
+        && pull_request.user.login == "mergify[bot]"
+}
+
 /// Only a check on this head from Mergify's GitHub App describes current state.
-pub fn observe(
-    pull_request: PullRequest,
-    checks: &[CheckRun],
-    comments: &[Comment],
-) -> Observation {
+pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &str) -> Observation {
     let check = checks
         .iter()
         .filter(|check| {
@@ -153,36 +117,13 @@ pub fn observe(
             reported
         }
     };
-    let mut events: Vec<_> = comments
-        .iter()
-        .filter(|c| c.user.id == MERGIFY_BOT_ID && c.user.login == "mergify[bot]")
-        .filter_map(|comment| {
-            let payload = comment.body.split_once("-*- Mergify Payload -*-\n")?.1;
-            let payload = payload.split_once("\n-*- Mergify Payload End -*-")?.0;
-            let mut state = payload_state(payload)?;
-            if state == QueueState::Dequeued {
-                // Older reports have no reason object. Read only their Reason section.
-                let reason = comment.body.split_once("\n## Reason\n\n").map(|(_, s)| s);
-                state = match reason.and_then(|s| s.lines().next()) {
-                    Some("The pull request conflicts with the base branch") => QueueState::Conflict,
-                    Some("The merge conditions cannot be satisfied due to failing checks") => {
-                        QueueState::FailedCi
-                    }
-                    _ => state,
-                };
-            }
-            Some(QueueEvent {
-                comment: comment.clone(),
-                state,
-            })
-        })
-        .collect();
-    events.sort_by_key(|event| (event.comment.updated_at, event.comment.id));
+    let unapproved_merge =
+        pull_request.merged_at.is_some() && pull_request.head.sha != approved_head;
     Observation {
         pull_request,
         state,
         check,
-        events,
+        unapproved_merge,
     }
 }
 
@@ -212,13 +153,9 @@ fn check_state(check: &CheckRun) -> QueueState {
         "In merge queue" => QueueState::Queued,
         "Running merge queue checks" => QueueState::ChecksRunning,
         "Merged via merge queue" => QueueState::Merged,
-        "Dequeued — checks failed" | "Dequeued — checks timeout" => QueueState::FailedCi,
-        "Dequeued — conflict with base branch"
-        | "Dequeued — conflict with another pull request" => QueueState::Conflict,
-        title if title.starts_with("Dequeued — ") => QueueState::Dequeued,
-        "Merge queue is ready"
-        | "Waiting for queue conditions"
-        | "Waiting for queue conditions to match" => QueueState::Waiting,
+        "Dequeued — checks failed" => QueueState::FailedCi,
+        "Dequeued — conflict with base branch" => QueueState::Conflict,
+        "Merge queue is ready" => QueueState::Waiting,
         _ => QueueState::Unknown,
     }
 }
@@ -237,7 +174,7 @@ struct DequeueReason {
     code: String,
 }
 
-// Mergify embeds versioned JSON in comments and base64 JSON in check summaries.
+// Mergify embeds versioned base64 JSON in check summaries.
 // These encodings are observed output, not a documented stable API.
 fn payload_state(json: &str) -> Option<QueueState> {
     let payload: Payload = serde_json::from_str(json).ok()?;
