@@ -903,8 +903,9 @@ Summary-write errors do not change the worker reply or exit.
 Worker retirement queues one bounded item per physical attempt in
 `tl3_memory_outbox`, before removing the attempt's evidence. Missing summaries
 fall back to the request, structured reply and supervisor exit. Interrupted
-attempts are recorded as failures. Queue failures retain the existing cleanup
-row and files for another retirement pass; they do not change request state.
+attempts are recorded as failures. Collection strips NUL bytes and checks the
+item's size using Postgres's JSONB text representation. A record that cannot be
+queued is logged and dropped so memory cannot block worker retirement.
 
 A separate thread drains the outbox into `[hindsight].bank`, which defaults to
 `tl3`. The bank must be separate from the coordinator's bank. The thread wakes
@@ -923,11 +924,21 @@ Hindsight's operation contract; it does not wait for extraction on the request
 thread.
 
 Authenticated servers use optional `[hindsight].api_key_file`. It contains the
-raw API key in an owner-only file. Only the background sender validates and
-reads that file, then puts the key in a Bearer authorization header. A missing,
-insecure or unreadable file leaves the outbox pending. It does not block daemon
-startup or request progress. The path and key are never passed to workers or
-included in the retained item. Status readers do not need the file.
+raw API key in an owner-only file. The sender loads it at runtime and sends a
+Bearer authorization header. A missing, insecure or unreadable file leaves the
+outbox pending. It does not block daemon startup or request progress. Worker
+requests carry only the file path in `hindsight_key_file`, outside model inputs;
+recall reads it at runtime and sends the same header. The deployed service loads
+`hindsight-key` through systemd's credentials directory. Neither the path nor key
+is included in retained items. Status readers do not need the file.
+
+A 401 or 403 stops the current pass and records one operations incident:
+"Hindsight rejected TL3's key". Other 4xx responses park the row with its status.
+Transport failures and 5xx responses leave rows pending for later wakes. The
+active retry set holds at most 10,000 rows; new records beyond that limit park
+the oldest pending rows. Parked payloads remain available for operations review
+and need archive retention management. The status page shows pending and parked
+counts and any key-rejection incident.
 
 Records have `repo:`, `request:` and `role:` tags. The controller selects summary
 fields, omits infrastructure and repository file contents, removes credential
@@ -935,8 +946,8 @@ fields, and redacts bearer tokens, common provider keys, private keys,
 credential assignments and passwords in URLs before enqueueing. Each item is
 at most 32 KiB. Oversized sections carry a truncation marker. Pending reads use
 64-row pages, and acknowledged items are deleted without a local receipt
-history. An outage retains one bounded row per unsent run. Preserving all runs
-while requests continue necessarily requires space for that outstanding work.
+history. Public action IDs are preserved in structured test activity, while
+generic input fields ending in `_key`, `_token` or `_secret` are removed.
 Full transcripts remain the tracing system's responsibility.
 
 `cargo test -p tl3-controller --test hindsight --locked` uses only a fake server.
