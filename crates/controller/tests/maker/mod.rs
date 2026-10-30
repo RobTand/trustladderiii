@@ -244,6 +244,15 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             break;
         }
         if !controller.drive_once().unwrap() {
+            assert!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .pending_effects
+                    .iter()
+                    .all(|effect| effect.state != tl3_store::EffectState::Intended),
+                "a fixture delivery failed before its worker started"
+            );
             let Input::Observation { key, observation } = rx.recv().unwrap() else {
                 panic!("worker observation required")
             };

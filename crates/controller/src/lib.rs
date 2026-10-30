@@ -854,7 +854,7 @@ impl Controller {
             reply,
         } = event
             && let Some(n) = world.nodes.get(node.0 as usize)
-            && n.run == Some(generation)
+            && (n.run == Some(generation) || n.job == Some(generation))
             && n.generation == generation
         {
             let finding = match (n.phase, reply) {
