@@ -64,10 +64,10 @@ impl Supervisor {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("audit needs an ingest reply"))?;
-        } else if let Some(audit) = store.worker_document(&node, "audits")? {
-            if audit["verdict"] == "disagree" {
-                inputs["audit_objections"] = audit["objections"].clone();
-            }
+        } else if let Some(audit) = store.worker_document(&node, "audits")?
+            && audit["verdict"] == "disagree"
+        {
+            inputs["audit_objections"] = audit["objections"].clone();
         }
         protocol::validate_inputs(role, &inputs)?;
         let ladder = if role == "ingest" {
@@ -85,7 +85,10 @@ impl Supervisor {
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.
-    pub fn stop_run(&self, key: &str) -> Result<()> {
+    pub fn stop_run(&self, key: &str, epoch: i64) -> Result<()> {
+        if Store::open(&self.store)?.load()?.epoch.get() != epoch {
+            return Err(Error::Invalid("worker stop epoch is fenced"));
+        }
         let root = self.root(key);
         if let Some((_, attempt)) = latest(&root)? {
             cancel(&attempt.join("claim.json"))?;
@@ -102,7 +105,7 @@ impl Supervisor {
             if let Some(value) = read(&path.join("delivery.json"))? {
                 let run: Delivery = serde_json::from_value(value)?;
                 if run.node() == delivery.node() {
-                    self.stop_run(&run.key)?;
+                    self.stop_run(&run.key, delivery.epoch)?;
                 }
             }
         }
@@ -216,10 +219,9 @@ pub(super) fn latest(root: &Path) -> Result<Option<(i64, PathBuf)>> {
             .to_str()
             .and_then(|s| s.strip_prefix("attempt-"))
             .and_then(|s| s.parse::<i64>().ok())
+            && latest.as_ref().is_none_or(|(n, _)| number > *n)
         {
-            if latest.as_ref().is_none_or(|(n, _)| number > *n) {
-                latest = Some((number, entry.path()));
-            }
+            latest = Some((number, entry.path()));
         }
     }
     Ok(latest)
@@ -254,8 +256,13 @@ pub(super) fn inspect(root: &Path, delivery: &Delivery) -> Result<Reconciliation
     if exit["code"] != 0 {
         return Ok(Reconciliation::Found(failed(delivery)));
     }
-    let bytes = fs::read(attempt.join("stdout.jsonl"))?;
-    let observation = source::parse_reply(&bytes, delivery);
+    let observation = match fs::read(attempt.join("stdout.jsonl")) {
+        Ok(bytes) => source::parse_reply(&bytes, delivery),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::Invalid("worker output is missing"))
+        }
+        Err(e) => return Err(e.into()),
+    };
     Ok(Reconciliation::Found(match observation {
         Ok(observation) => Completion::confirmed(vec![observation]),
         Err(_) => failed(delivery),

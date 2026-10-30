@@ -23,7 +23,7 @@ pub struct WorkerOutputSource {
     root: PathBuf,
     settings: tl3_config::Store,
     offsets: BTreeMap<PathBuf, u64>,
-    sent: BTreeSet<String>,
+    sent: BTreeSet<(String, i64)>,
 }
 
 impl WorkerOutputSource {
@@ -69,24 +69,26 @@ impl WorkerOutputSource {
                         break;
                     }
                     *offset += n as u64;
-                    if let Ok(value) = serde_json::from_slice::<Value>(&line) {
-                        if progress(&value) {
-                            store.record_worker_progress(&WorkerProgress {
-                                key: delivery.key.clone(),
-                                node: delivery.node().0.to_string(),
-                                epoch: delivery.epoch,
-                                attempt: number,
-                                output_offset: (*offset)
-                                    .try_into()
-                                    .map_err(|_| Error::Invalid("worker output offset overflow"))?,
-                                unit: value["unit"].as_str().unwrap().into(),
-                                last_progress_ms: 0,
-                            })?;
-                        }
+                    if let Ok(value) = serde_json::from_slice::<Value>(&line)
+                        && progress(&value)
+                    {
+                        store.record_worker_progress(&WorkerProgress {
+                            key: delivery.key.clone(),
+                            node: delivery.node().0.to_string(),
+                            epoch: delivery.epoch,
+                            attempt: number,
+                            output_offset: (*offset)
+                                .try_into()
+                                .map_err(|_| Error::Invalid("worker output offset overflow"))?,
+                            unit: value["unit"].as_str().unwrap().into(),
+                            last_progress_ms: 0,
+                        })?;
                     }
                 }
             }
-            if self.sent.contains(&delivery.key) || read(&attempt.join("claim.json"))?.is_none() {
+            if self.sent.contains(&(delivery.key.clone(), number))
+                || read(&attempt.join("claim.json"))?.is_none()
+            {
                 continue;
             }
             let completion = match inspect(&root, &delivery)? {
@@ -97,7 +99,7 @@ impl WorkerOutputSource {
             for (index, observation) in completion.observations.into_iter().enumerate() {
                 if sender
                     .send(Input::Observation {
-                        key: format!("{}:worker:{index}", delivery.key),
+                        key: format!("{}:worker:{number}:{index}", delivery.key),
                         observation,
                     })
                     .is_err()
@@ -105,7 +107,7 @@ impl WorkerOutputSource {
                     return Ok(false);
                 }
             }
-            self.sent.insert(delivery.key);
+            self.sent.insert((delivery.key, number));
         }
         Ok(true)
     }

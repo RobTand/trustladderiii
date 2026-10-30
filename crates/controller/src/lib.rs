@@ -625,7 +625,21 @@ impl Controller {
                 if n.run != Some(generation) || n.generation != generation {
                     return Ok(None);
                 }
-                let mapped = adapters::workers::protocol::map_reply(&role, &reply)?;
+                let valid_role = matches!(
+                    (n.phase, role.as_str()),
+                    (tl3_kernel::Phase::Ingesting, "ingest")
+                        | (tl3_kernel::Phase::Auditing, "audit")
+                );
+                let mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
+                    Ok(reply) if valid_role => reply,
+                    _ => {
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                };
                 let document = if role == "ingest" { "briefs" } else { "audits" };
                 commit
                     .rows
