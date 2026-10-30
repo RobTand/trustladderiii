@@ -4,8 +4,8 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. Controller execution
-supports explicit simulation only. Status commands read the configured store
+All commands use the same TOML configuration as `tl3-config`. The daemon runs
+production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
 The daemon uses `Config::load`, which checks all secret-file metadata. Status
@@ -17,10 +17,11 @@ reports an uninitialized database clearly.
 ```text
 tl3 status --config /absolute/path/to/config.toml
 tl3 status-serve --config /absolute/path/to/config.toml
+tl3d --config /absolute/path/to/config.toml
 tl3d --config /absolute/path/to/config.toml --simulate /absolute/path/to/fake-records
 ```
 
-The daemon reads one JSON `cli::Input` per line on stdin. For example:
+In simulation, the daemon reads one JSON `cli::Input` per line on stdin. For example:
 
 ```json
 {"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"title":"Fix the sandbox build","actor":24923402,"label":"tl3"}}
@@ -173,16 +174,12 @@ maker run, with up to 20 blockers per review. Each problem and evidence is
 capped at 1,000 characters, with a 16,000-character total per review. Accumulated maker reports enter the planner's
 `findings` only when the request re-plans.
 
-Production integration still requires:
-
-1. The controller's production material assembler must write the `maker` object
-   with `Store::put_worker_materials` before dispatch. There is no production
-   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
-   and planner check plan to this store API. The supervisor supplies kernel fields
-   and deployment settings; it does not invent a brief or checks.
-2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
-   feedback with the failed check's name and link or summary remains pending.
-   Its current bare fact is supported but lacks details.
+Production registration supplies committed repository materials. Before maker
+dispatch, the supervisor translates the accepted brief and planner checks into
+the stored `maker` object, with stable goal IDs. It also stores the initial
+check plan. The supervisor adds kernel fields and deployment settings.
+Mergify's current queue CI fact supplies no check text. Maker feedback records
+that details are unavailable when it receives a bare fact.
 
 The merged PrismaBuild checks observation supplies changed paths and up to 20
 failing test IDs with messages capped at 1,000 characters each. The trusted
@@ -229,9 +226,9 @@ To exercise the receiver against a local GitHub mock server, supply
 address. With `--github-api` and no explicit listen address, the receiver defaults
 to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
 on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
-The API must be loopback HTTP in this simulation release. Ordinary stdin
-simulation still needs no App credentials. Live startup and tunnel deployment
-remain tickets #20 and #19.
+The mock API must be loopback HTTP. Ordinary stdin simulation needs no App
+credentials. Without `--simulate`, the daemon uses the configured App and real
+adapters. Follow [GO-LIVE.md](../../deploy/dl380g10/GO-LIVE.md) for deployment.
 
 POST deliveries to `/github/events`, matching the App manifest, with GitHub's
 delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
@@ -313,10 +310,9 @@ writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects use the same adapter's publishing implementation. Incident notices stay
-on the fake until the operations issue is wired in. Replacements start a new
-request on the same issue from Rob's text. Corrections create linked issues
-with the `tl3` label.
+PR effects use the same adapter's publishing implementation. Incident notices use
+the operations issue. Replacements start a new request on the same issue from
+Rob's text. Corrections create linked issues with the `tl3` label.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
 It rejects both `:line` and `:line:column` suffixes.
@@ -348,9 +344,10 @@ records its identity before exec. Atomic claims also let recovery cancel a
 launcher that has not started. No file locks are used. Machine ID, PID, process start time
 and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
 Keep these runs on the controller's host, including after a restart.
-For #19, workers and their supervisors must live outside the controller's kill
-scope. Use systemd `KillMode=process` for the controller or put workers in their
-own scope. Otherwise stopping the controller kills the workers too.
+The deployed unit uses `KillMode=control-group`: a service restart stops workers,
+supervisors and other local children. Recovery reconciles durable records before
+retrying. A process-only controller crash can still reattach to a live supervisor.
+See [the startup procedure](../../deploy/dl380g10/GO-LIVE.md) for restart checks.
 
 Sync the worker environment once at deployment with
 `uv sync --locked --project /srv/tl3/workers --python 3.14+gil`.
@@ -494,14 +491,10 @@ Mergify's `retire_delivery` resolves an adapter only for delivery files requirin
 cleanup. Worker retirement keeps its separate store-based `retire` hook; errors
 from that hook are also logged without stopping the driver.
 
-The following handoff describes the state before PR #80.
-
-Ticket #15 owns allowances and scheduled looks. On an unchanged authoritative
-read after the progress allowance, it can report: "GitHub merged at X, Mergify
-check Y still in_progress", using `merged_at`, `queue_check.id` and
-`queue_check.status`. The read itself sets no timer and emits no stall incident.
-The kernel currently has no Mergify-stall fact. Ticket #15 must supply that path;
-this adapter does not change kernel rules.
+Allowance looks compare the durable watch token. If it remains unchanged past
+Mergify's no-progress allowance, the controller sends `Fact::UpstreamStalled`.
+The kernel raises an incident in Queued. Its text includes GitHub's merge time
+and Mergify's queue-check title and status from that watch.
 
 Create a clean detached worktree at the final commit, then submit its host checks:
 
@@ -524,8 +517,8 @@ the daemon supervisor, which must stop the ingress loop and exit on failure.
 The source sends existing `cli::Input` values.
 It also implements `ingress::Source`, so the shared ingress supervisor registers
 it with `sources.register(adapter.source())` and propagates its errors.
-The production registry remains with #20. The default simulation registry still
-uses the fake.
+Production registers this adapter and its bell source from config.
+The default simulation registry still uses the fake.
 
 Before `SubmitChecks`, a maker/worktree caller supplies
 `Observation::CheckPlan { node, sha, run: CheckRun { repository, base_sha, plan } }`.
@@ -901,6 +894,111 @@ Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
 
+## Allowance looks and incidents
+
+`looks` stores active allowances and incidents in `tl3_world`. It uses the
+world-row schema. Store migration 6 adds the worker declaration of an outside wait.
+`Controller::now` supplies every allowance time. Simulation can advance a fake
+clock and call `look_due` without sleeping. `look_now` reads pending operations
+after restart or a webhook gap.
+
+The ingress receiver arms one timer for the next outstanding allowance. Expiry
+reads the adapter's own record through `Executor::look`. The first live record
+establishes a progress baseline. New checkpoints renew the allowance. An unchanged
+record after the no-progress allowance establishes a stall. A read that cannot
+reach its upstream is an infrastructure outage. Its allowance re-arms. These
+reads use the same earliest-allowance timer, with no new polling source.
+Finished deliveries leave the active set.
+
+Worker looks read the supervisor and `tl3_worker_progress`. A stop intent is
+stored before `stop_stalled` proves the exact process ended. A reply that raced
+the stop is still used. Otherwise the kernel receives `RunFailed` and decides the
+retry and incident. PrismaBuild alone decides whether its progress contract failed
+or a worker was lost. A queue stall enters as `Fact::UpstreamStalled`; the kernel
+raises its incident. The incident reads the merge time and queue-check title
+and status from the watch's `WatchProgress`. Worker declarations of outside waits
+are described in the [worker protocol](../../workers/README.md). A live declared
+wait has no timer and stores no heartbeat or sample token. Its action key joins
+the PrismaBuild source's bell awaited set. Endings request a look for that
+effect. Bell resets reread the record and request a look only if it has ended or
+errored. The subscription is durable until progress or retirement removes it.
+The action's snapshot parent must be an ancestor of HEAD in the declaring run's
+worktree. A wait whose action has unrelated lineage gives no liveness. Sibling
+runs from the same base cannot be distinguished by this check. Git runs with
+`GIT_NO_LAZY_FETCH=1`. Missing records give no liveness.
+
+When a failed write's allowance expires, authoritative absence counts that
+delivery as retryable through the kernel. A transport error never proves absence.
+A new Found result, checkpoint or authenticated delivery releases holds only for
+its own upstream. Progress, quota and stall observations release none. Duplicate
+GitHub deliveries release GitHub holds. Repeated unchanged looks release none.
+
+Read failures cannot acknowledge an unknown write. The controller persists their
+failure count on its allowance and leaves that delivery pending under its original
+key. Every second failed read raises an outage incident holding that delivery.
+The first incident probes at each allowance until recovery or Rob's clearance;
+later incidents require Rob. This preserves the failure escalation rule without
+claiming that a transport error ended an operation. Incident-post failures retain
+their delivery and allowance without recursively creating incident posts.
+Stop and quota-resume errors are also logged, counted and re-armed. A persisted
+stop intent keeps the exact attempt identity across restart.
+
+Set `[github.operations]` to the existing pinned operations issue in TL3's own
+repo. The app needs an installation there as well as on served repos. That
+repository participates in authenticated comment intake and catch-up, but cannot
+start a request unless it is also explicitly served. Incident messages use the
+existing writer, checker, hidden markers and duplicate deletion. A real GitHub
+adapter requires this section at startup, before reading credentials or opening
+webhooks. Its constructor also rejects a missing target. Incident writer inputs
+carry the original request title and link, plus the upstream and failure class
+translated into plain language. They never use the operations issue as the request.
+
+The deliberately narrow operations command is `clear incident <number>`, using
+the number printed in that incident's message. Only Rob's authenticated comment
+on that issue can clear it. A stale number cannot clear a later incident. This
+command has its own translator before the request-comment arm and stores its
+deduplication keys in `operations_comments`. Operations-issue comments never
+enter `github_comments` or #14's classifier. Comments on other issues in an
+operations-only repository are filtered during webhook and catch-up translation.
+The PR that merges second must preserve that separation when combining #14. A passing adapter probe clears a first incident; the
+kernel refuses probe clearance for a later one. `status::load_request_details`
+loads all open incident summaries with one batched query.
+The worker probe starts the configured Python and imports its worker package.
+The GitHub probe reads the target issue. A failed operation's old ending does
+not itself prove recovery. The default `Executor::probe` returns false.
+PrismaBuild, Mergify and Worktrees first incidents cannot clear by probe until
+those adapters implement it. This is the handoff for #67 and #69.
+Rob can also close a permanent-failure incident
+record; its separate retry-or-handle question remains to be answered.
+
+When a GitHub allowance is due, or on `look_now`, a look also pages the App's delivery log with App JWT authentication.
+Failed deliveries above the durable watermark request redelivery. A pending
+delivery holds that watermark back. The watermark advances only after all
+redelivery requests succeed, so a crash can repeat a request but cannot skip it.
+The receiver's existing delivery keys deduplicate the recovered webhook.
+On first start without a watermark, the controller records the current time before
+reading GitHub. It skips retained deliveries older than that durable start time,
+even if the first log read fails. New failures during that outage remain eligible.
+An empty first page durably records ID zero. Later looks recover newer IDs from
+the startup window. Existing ID watermarks retain their previous recovery window.
+
+Quota is a wait for a provider-announced reset, never an infrastructure failure.
+`Error::Quota` defers an uncertain write until the reset. A worker that receives
+HTTP 429 with `Retry-After` or `X-RateLimit-Reset` emits a terminal quota record and
+exits successfully. The supervisor proves that ending, and the controller resumes
+under the same operation key and generation at the announced reset. Malformed
+or absent reset information remains an ordinary failure. No provider text enters
+the protocol. Other adapters can return `Look::Quota` or `Observation::Quota` and
+implement `resume_after_quota` for acknowledged operations. A zero reset remains
+due immediately, so a zero `retry_after` cannot strand a quota wait.
+The supervisor tracks the attempt as well as the key, so retirement of the quota
+ending cannot remove a resumed process from its active set.
+
+From a clean detached worktree at the final commit, generate the host runs,
+workspace checks, worker protocol tests, kernel tests and stall proof with `python3 crates/controller/tools/looks_manifest.py`. Submit the
+manifest with the published `pbcampaign.py`. Process and timing tests run once
+on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
+receipt before reporting a pass.
 
 ## Review and publishing
 
@@ -921,8 +1019,8 @@ must cite a supplied goal or rule. Approvals must name the exact reviewed head.
 The controller carries blocking findings into planning.
 
 Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
-covers resuming the round-0 session with the session store from #12. It is blocked
-by #12 and #13 and must land before the live tracer, #20.
+covers resuming the round-0 session with the session store from #12. That follow-up
+is outside the first live tracer run, as recorded in #20.
 
 `github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
 client. The check is named `TL3 approval`. Its external ID contains the effect key

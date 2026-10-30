@@ -120,7 +120,7 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
             }
         }
         8..=9 => {
-            let fact = match rng.below(7) {
+            let fact = match rng.below(8) {
                 0 => Fact::PrMerged {
                     head: if rng.below(2) == 0 {
                         n.head.unwrap_or(head)
@@ -136,6 +136,7 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                     infra: rng.below(2) == 0,
                 },
                 5 => Fact::Conflict,
+                6 => Fact::UpstreamStalled,
                 _ => Fact::IncidentCleared {
                     by_rob: rng.below(2) == 0,
                 },

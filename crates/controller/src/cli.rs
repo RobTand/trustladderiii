@@ -9,6 +9,9 @@ use tl3_store::{Reader, Store};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
     Wake,
+    Look {
+        key: String,
+    },
     LabelledIssue(LabelledIssue),
     Observation {
         key: String,
@@ -107,8 +110,24 @@ pub fn daemon() -> Result<()> {
         github_api,
         ..
     } = arguments(true)?;
-    let simulation =
-        simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;
+    let Some(simulation) = simulation else {
+        if workers || github_listen.is_some() || github_api.is_some() || drain {
+            return Err(Error::Invalid(
+                "simulation options require --simulate DIRECTORY",
+            ));
+        }
+        return production(config);
+    };
+    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
+        github_api
+            .as_ref()
+            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
+    });
+    if listen.is_some() && config.github.operations.is_none() {
+        return Err(Error::Invalid(
+            "real GitHub adapter requires [github.operations]",
+        ));
+    }
     let bootstrap = Bootstrap::from_config(&config)?;
     let mut sources = crate::ingress::Sources::default();
     let mut adapters = if workers {
@@ -118,11 +137,6 @@ pub fn daemon() -> Result<()> {
     } else {
         adapters::simulation(&simulation)?
     };
-    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
-        github_api
-            .as_ref()
-            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
-    });
     if let Some(listen) = listen {
         if !listen.ip().is_loopback() {
             return Err(Error::Invalid("webhook listen address must be loopback"));
@@ -150,7 +164,7 @@ pub fn daemon() -> Result<()> {
         let mut clients = BTreeMap::new();
         let mut catch_up_clients = BTreeMap::new();
         let mut secret = Vec::new();
-        for repo in &bootstrap.repos {
+        for repo in &bootstrap.github_repositories() {
             if clients.contains_key(&repo.installation) {
                 continue;
             }
@@ -178,6 +192,7 @@ pub fn daemon() -> Result<()> {
                 epoch,
                 tl3_github::message::Policy::default(),
                 &simulation,
+                config.github.operations.clone(),
             )?,
         );
         let webhooks = crate::ingress::Webhooks::bind(
@@ -191,11 +206,35 @@ pub fn daemon() -> Result<()> {
         sources.register(webhooks);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    controller.set_allowances(config.allowances.clone());
     crate::ingress::drain(&mut controller)?;
     while controller.drive_once()? {}
     if drain {
         return Ok(());
     }
     sources.register(crate::ingress::Stdin);
+    sources.run(&mut controller)
+}
+
+fn production(config: tl3_config::Config) -> Result<()> {
+    let registration = crate::production::register(&config)?;
+    let mut controller = Controller::open(
+        Store::open(&config.store)?,
+        registration.adapters,
+        Bootstrap::from_config(&config)?,
+    )?;
+    controller.set_allowances(config.allowances.clone());
+    controller.register_github_translator("mergify", registration.mergify);
+    eprintln!(
+        "GitHub webhooks listening on {}",
+        registration.webhooks.address()
+    );
+    eprintln!(
+        "production adapters registered: GitHub, worktrees, PrismaBuild, Mergify, workers; looks and incidents enabled"
+    );
+    let mut sources = crate::ingress::Sources::default();
+    sources.register(registration.webhooks);
+    sources.register(registration.workers);
+    sources.register(registration.bell);
     sources.run(&mut controller)
 }

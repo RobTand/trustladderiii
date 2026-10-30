@@ -46,6 +46,7 @@ static PEM: LazyLock<String> = LazyLock::new(|| {
 });
 fn bootstrap() -> Bootstrap {
     Bootstrap {
+        operations: None,
         repos: vec![Repository {
             owner: "owner".into(),
             name: "sandbox".into(),
@@ -77,11 +78,14 @@ fn labelled() -> LabelledIssue {
     }
 }
 fn client(uri: &str) -> GitHub {
+    client_with_pem(uri, PEM.clone())
+}
+fn client_with_pem(uri: &str, pem: String) -> GitHub {
     GitHub::new(
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: PEM.clone(),
+            pem,
             webhook_secret: "test-secret".into(),
         },
         3,
@@ -108,6 +112,8 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    redeliveries: Vec<u64>,
+    new_delivery: bool,
     linked: Vec<Value>,
     lose_issue_reply: bool,
 }
@@ -116,7 +122,17 @@ struct Api(Arc<Mutex<ApiState>>);
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
-        let path = request.url.path();
+        let original_path = request.url.path();
+        let mapped_path = original_path
+            .replace(
+                "/repos/owner/tl3/issues/17",
+                "/repos/owner/sandbox/issues/12",
+            )
+            .replace(
+                "/repos/owner/tl3/issues/comments/",
+                "/repos/owner/sandbox/issues/comments/",
+            );
+        let path = mapped_path.as_str();
         let method = request.method.as_str();
         if path == "/app/installations/3/access_tokens" {
             return ResponseTemplate::new(201).set_body_json(
@@ -127,6 +143,49 @@ impl Respond for Api {
             return ResponseTemplate::new(503);
         }
         match (method, path) {
+            ("GET", "/app/hook/deliveries") => {
+                let jwt = request
+                    .headers
+                    .get("authorization")
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
+                assert_eq!(
+                    jwt.split('.').count(),
+                    3,
+                    "delivery log requires an app JWT"
+                );
+                if request.url.query_pairs().any(|(key, _)| key == "cursor") {
+                    ResponseTemplate::new(200).set_body_json(
+                        json!([{"id":18,"status_code":503,"delivered_at":"2026-10-30T00:00:00Z"}]),
+                    )
+                } else {
+                    let mut deliveries = vec![
+                        json!({"id":20,"status_code":500,"delivered_at":"2026-10-30T00:00:02Z"}),
+                        json!({"id":19,"status_code":200,"delivered_at":"2026-10-30T00:00:01Z"}),
+                    ];
+                    if state.new_delivery {
+                        deliveries.insert(0, json!({"id":22,"status_code":500,"delivered_at":(Utc::now() + chrono::Duration::seconds(1)).to_rfc3339()}));
+                    }
+                    ResponseTemplate::new(200)
+                        .insert_header(
+                            "link",
+                            format!(
+                                "<{}app/hook/deliveries?cursor=older>; rel=\"next\"",
+                                request.url.join("/").unwrap()
+                            ),
+                        )
+                        .set_body_json(deliveries)
+                }
+            }
+            ("POST", path)
+                if path.starts_with("/app/hook/deliveries/") && path.ends_with("/attempts") =>
+            {
+                let id = path.split('/').nth(4).unwrap().parse().unwrap();
+                state.redeliveries.push(id);
+                ResponseTemplate::new(202)
+            }
+
             ("GET", "/repos/owner/sandbox/issues/12/comments") => {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
@@ -162,6 +221,13 @@ impl Respond for Api {
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
             }
+            (
+                "GET",
+                "/repos/owner/tl3/issues"
+                | "/repos/owner/tl3/issues/comments"
+                | "/repos/owner/tl3/issues/events"
+                | "/repos/owner/tl3/pulls",
+            ) => ResponseTemplate::new(200).set_body_json(json!([])),
             ("POST", "/repos/owner/sandbox/issues") => {
                 let payload: Value = serde_json::from_slice(&request.body).unwrap();
                 let mut issue = fixture(false)["issue"].clone();
@@ -322,8 +388,11 @@ impl Server {
     }
 }
 fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
+    adapter_with_client(client(uri), root)
+}
+fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter {
     adapters::github::Adapter::new(
-        BTreeMap::from([(3, client(uri))]),
+        BTreeMap::from([(3, client)]),
         FakeWriter,
         0,
         Policy {
@@ -331,6 +400,12 @@ fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
             ..Policy::default()
         },
         root,
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap()
 }
@@ -388,7 +463,26 @@ fn main() {
         crash_child(&args);
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--merge-pending-child")
+    {
+        steering::merge_pending_child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
+        match scenario {
+            "quote" => steering::dropped_change_quote(),
+            "second" => steering::second_replacement(&database.create("second_replacement")),
+            "merge" => steering::merge_pending(&database.create("merge_pending"), "none"),
+            _ => panic!("unknown followup scenario"),
+        }
+        database.stop();
+        return;
+    }
+    operations_and_delivery_log(&database.create("operations"));
+    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
@@ -431,8 +525,26 @@ fn main() {
         );
     }
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    steering::dropped_change_quote();
+    steering::second_replacement(&database.create("second_replacement"));
+    for point in [
+        "none",
+        "EventWritten",
+        "RowsWritten",
+        "EffectsWritten",
+        "TransitionsWritten",
+        "CreditWritten",
+        "BeforeCommit",
+        "AfterCommit",
+        "BeforeDispatch",
+        "AfterDispatch",
+        "BeforeReconcile",
+        "AfterReconcile",
+    ] {
+        steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+    }
     database.stop();
-    println!("28 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -724,6 +836,12 @@ fn message_reconciliation() {
         1,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     current.execute(&newer).unwrap();
@@ -738,6 +856,12 @@ fn message_reconciliation() {
         0,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     assert!(restarted.execute(&note).is_err());
@@ -775,11 +899,7 @@ fn message_reconciliation() {
     let mut incident = delivery(Notice::Incident { needs_rob: false });
     incident.epoch = 1;
     incident.key = "notice:0:4".into();
-    adapter.execute(&incident).unwrap();
-    assert!(matches!(
-        adapter.reconcile(&incident).unwrap(),
-        Reconciliation::Found(_)
-    ));
+    assert!(adapter.execute(&incident).is_err());
     assert_eq!(api.state.lock().unwrap().posts, before);
 }
 struct ScriptWriter {
@@ -861,6 +981,12 @@ fn writer_checks() {
         0,
         Policy::default(),
         root.path(),
+        Some(tl3_config::OperationsIssue {
+            owner: "owner".into(),
+            name: "tl3".into(),
+            installation_id: 3,
+            number: 17,
+        }),
     )
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
@@ -1430,23 +1556,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
-    let credentials = root.path().join("app.json");
-    let model_key = root.path().join("model-key");
-    fs::write(
-        &credentials,
-        serde_json::to_vec(&json!({
-            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::write(&model_key, "fixture-only").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    for path in [&credentials, &model_key] {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let marker = root.path().join("entered");
-    let runs = root.path().join("runs");
+    let (config_path, marker, runs) = worker_daemon_config(settings, root.path(), "audit-blocked");
     let worktrees = root.path().join("worktrees");
     let checkout = worktrees
         .join(hex::encode("owner"))
@@ -1478,53 +1588,7 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
-    git(&["init", "--quiet", "--template="]);
-    fs::write(
-        checkout.join("greeting.py"),
-        "def greet(): return 'goodbye'\n",
-    )
-    .unwrap();
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "Base"]);
     let base = git(&["rev-parse", "HEAD"]);
-    let config = include_str!("../../config/example.toml")
-        .replace("port = 5432", &format!("port = {}", settings.port))
-        .replace(
-            "database = \"tl3\"",
-            &format!("database = {:?}", settings.database),
-        )
-        .replace("user = \"tl3\"", "user = \"postgres\"")
-        .replace(
-            "connect_timeout_secs = 10",
-            &format!(
-                "password_file = {:?}\nconnect_timeout_secs = 10",
-                settings.password_file.as_ref().unwrap()
-            ),
-        )
-        .replace(
-            "/home/rob/.config/tl3/github-app.json",
-            credentials.to_str().unwrap(),
-        )
-        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
-        .replace("owner = \"RobTand\"", "owner = \"owner\"")
-        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
-        .replace("installation_id = 1", "installation_id = 3")
-        .replace("id = 24923402", "id = 42")
-        .replace(
-            "/srv/tl3/workers/.venv/bin/python",
-            package.join(".venv/bin/python").to_str().unwrap(),
-        )
-        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
-        .replace("/srv/tl3/worktrees", worktrees.to_str().unwrap())
-        .replace(
-            "command = [\"-m\", \"tl3_workers\", \"run\"]",
-            &format!(
-                "command = [{:?}, \"audit-blocked\", {marker:?}]",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
-            ),
-        );
-    let config_path = root.path().join("config.toml");
-    fs::write(&config_path, config).unwrap();
     let mut store = Store::open(settings).unwrap();
     let inputs = json!({
         "issue": {"number": 12, "title": "Add a blue button", "body": "Return hello.", "author": "owner", "comments": []},
@@ -1719,6 +1783,108 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     );
 }
 
+fn operations_and_delivery_log(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let operations = tl3_config::OperationsIssue {
+        owner: "owner".into(),
+        name: "tl3".into(),
+        installation_id: 3,
+        number: 17,
+    };
+    let mut boot = bootstrap();
+    boot.operations = Some(operations.clone());
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::GitHub, adapter(&api.uri(), root.path()));
+    let mut controller = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    api.state.lock().unwrap().fail_reads = true;
+    controller.look_now().unwrap();
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_looks" && r.id == "github_started")
+    );
+    api.state.lock().unwrap().fail_reads = false;
+    assert!(
+        api.state.lock().unwrap().redeliveries.is_empty(),
+        "first start skips retained failures"
+    );
+    api.state.lock().unwrap().new_delivery = true;
+    controller.look_now().unwrap();
+    assert_eq!(api.state.lock().unwrap().redeliveries, vec![22]);
+    controller.look_now().unwrap();
+    assert_eq!(
+        api.state.lock().unwrap().redeliveries,
+        vec![22],
+        "one recovery per failed delivery"
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_looks" && r.value == 22)
+    );
+    let mut delivery = delivery(Notice::Incident { needs_rob: true });
+    delivery.key = "incident-fixture".into();
+    delivery.repository.name = "tl3".into();
+    delivery.issue = 17;
+    delivery.question_context = Some(
+        json!({"issue_title":"Fix a greeting", "request":"Fix a greeting (https://github.com/owner/sandbox/issues/12)", "signature":"GitHub:permission"}),
+    );
+    delivery.note = Some(
+        "For Fix a greeting, GitHub refused access. Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
+            .into(),
+    );
+    delivery.note = Some(format!(
+        "{} Request: https://github.com/owner/sandbox/issues/12",
+        delivery.note.unwrap()
+    ));
+    assert!(
+        adapters::github::Adapter::new(
+            BTreeMap::from([(3, client(&api.uri()))]),
+            FakeWriter,
+            0,
+            Policy::default(),
+            root.path(),
+            None
+        )
+        .is_err()
+    );
+    let mut adapter = adapter(&api.uri(), root.path());
+    assert_eq!(adapter.recover_deliveries(17, 0).unwrap(), Some(22));
+    assert_eq!(api.state.lock().unwrap().redeliveries, vec![22, 22, 20, 18]);
+    assert!(adapter.probe(&delivery).unwrap());
+    adapter.execute(&delivery).unwrap();
+    adapter.execute(&delivery).unwrap();
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    let requests = api.requests();
+    let post = requests
+        .iter()
+        .find(|r| {
+            r.method.as_str() == "POST" && r.url.path() == "/repos/owner/tl3/issues/17/comments"
+        })
+        .unwrap();
+    let body: Value = serde_json::from_slice(&post.body).unwrap();
+    let text = body["body"].as_str().unwrap();
+    for expected in [
+        "Fix a greeting",
+        "https://github.com/owner/sandbox/issues/12",
+        "GitHub",
+        "refused access",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+}
+
 fn steering_maker_worktree(root: &Path) {
     let checkout = root.join("worktrees/6f776e6572/73616e64626f78/issue-12-node-0");
     fs::create_dir_all(&checkout).unwrap();
@@ -1823,6 +1989,9 @@ fn worker_daemon_config(
             ),
         );
     let config_path = root.join("config.toml");
+    let config = format!(
+        "{config}\n[github.operations]\nowner = \"owner\"\nname = \"tl3\"\ninstallation_id = 3\nnumber = 17\n"
+    );
     fs::write(&config_path, config).unwrap();
     (config_path, marker, runs)
 }

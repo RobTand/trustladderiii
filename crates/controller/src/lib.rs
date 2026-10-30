@@ -8,6 +8,8 @@ pub mod clock;
 pub mod executor;
 mod http;
 pub mod ingress;
+pub mod looks;
+pub mod production;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -18,7 +20,8 @@ use executor::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
     Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
@@ -42,11 +45,16 @@ pub enum Error {
     Invalid(&'static str),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
+    #[error("upstream quota exhausted")]
+    Quota { retry_after: std::time::Duration },
 }
 
 impl From<tl3_github::Error> for Error {
     fn from(error: tl3_github::Error) -> Self {
-        Self::Adapter(Box::new(error))
+        match error {
+            tl3_github::Error::RateLimited { retry_after } => Self::Quota { retry_after },
+            error => Self::Adapter(Box::new(error)),
+        }
     }
 }
 
@@ -60,10 +68,25 @@ pub struct Repository {
 pub struct Bootstrap {
     pub repos: Vec<Repository>,
     pub rob: u64,
+    pub operations: Option<tl3_config::OperationsIssue>,
     pub slots: u8,
     pub pool: u8,
 }
 impl Bootstrap {
+    pub fn github_repositories(&self) -> Vec<Repository> {
+        let mut repos = self.repos.clone();
+        if let Some(o) = &self.operations {
+            let repo = Repository {
+                owner: o.owner.clone(),
+                name: o.name.clone(),
+                installation: o.installation_id,
+            };
+            if !repos.contains(&repo) {
+                repos.push(repo);
+            }
+        }
+        repos
+    }
     pub fn from_config(config: &tl3_config::Config) -> Result<Self> {
         Ok(Self {
             repos: config
@@ -77,6 +100,7 @@ impl Bootstrap {
                 })
                 .collect(),
             rob: config.github.rob.id,
+            operations: config.github.operations.clone(),
             slots: config
                 .limits
                 .w
@@ -122,9 +146,10 @@ pub struct Controller {
     store: Store,
     adapters: Registry,
     bootstrap: Bootstrap,
-    clock: Box<dyn clock::Clock>,
     github_translators: Vec<ingress::Translation>,
-    held_effects: BTreeSet<String>,
+    clock: Box<dyn clock::Clock>,
+    held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
+    allowances: tl3_config::Allowances,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -186,14 +211,11 @@ impl Controller {
             store,
             adapters,
             bootstrap,
-            clock: Box::new(clock),
             github_translators: Vec::new(),
-            held_effects: BTreeSet::new(),
+            clock: Box::new(clock),
+            held_effects: BTreeMap::new(),
+            allowances: tl3_config::Allowances::default(),
         })
-    }
-
-    pub fn now(&self) -> std::time::SystemTime {
-        self.clock.now()
     }
 
     pub fn register_github_translator(
@@ -213,6 +235,10 @@ impl Controller {
             name: name.into(),
             translator: Box::new(translator),
         });
+    }
+
+    pub fn now(&self) -> std::time::SystemTime {
+        self.clock.now()
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
@@ -240,7 +266,7 @@ impl Controller {
             self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
         }
         self.store.commit(&commit)?;
-        self.retry_held_effects();
+        self.retry_held_effects(executor::Upstream::GitHub);
         Ok(true)
     }
 
@@ -330,6 +356,7 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
+        let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
             if snapshot.rows.iter().any(|row| (row.table == "queue_facts" && row.id == identity)
@@ -357,6 +384,7 @@ impl Controller {
                         || (row.table == "inbox" && row.id == format!("external:{key}"))
                 })
             {
+                self.retry_held_effects(executor::Upstream::GitHub);
                 return Ok(());
             }
         }
@@ -365,14 +393,30 @@ impl Controller {
             .rows
             .push(put("inbox", format!("external:{key}"), json!(&observation)));
         self.store.commit(&commit)?;
-        self.retry_held_effects();
+        if let Some(source) = news {
+            self.retry_held_effects(source);
+        }
         Ok(())
     }
 
-    /// Allow one new attempt after input or an authoritative look (ticket #15).
-    /// Holds are in memory, so reopening the controller also allows a retry.
-    pub fn retry_held_effects(&mut self) {
-        self.held_effects.clear();
+    /// Only news from an effect's own upstream releases its holds.
+    pub fn retry_held_effects(&mut self, source: executor::Upstream) {
+        self.held_effects.remove(&source);
+    }
+
+    fn is_held(&self, delivery: &Delivery) -> bool {
+        self.held_effects
+            .get(&executor::upstream(delivery.output))
+            .is_some_and(|effects| effects.contains_key(&delivery.key))
+    }
+
+    fn remove_hold(&mut self, delivery: &Delivery) {
+        if let Some(effects) = self
+            .held_effects
+            .get_mut(&executor::upstream(delivery.output))
+        {
+            effects.remove(&delivery.key);
+        }
     }
 
     pub fn drive_once(&mut self) -> Result<bool> {
@@ -470,6 +514,9 @@ impl Controller {
                     _ => {}
                 }
             }
+            if looks::outage_waiting(&snapshot, &delivery.key) && !cancelling {
+                continue;
+            }
             match effect.state {
                 EffectState::Intended => {
                     self.transition(effect, EffectState::Sent)?;
@@ -486,7 +533,13 @@ impl Controller {
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
-                            self.held_effects.insert(effect.key.clone());
+                            if let Error::Quota { retry_after } = &error {
+                                self.defer_quota(&effect.key, *retry_after)?;
+                            }
+                            self.held_effects
+                                .entry(executor::upstream(delivery.output))
+                                .or_default()
+                                .insert(effect.key.clone(), looks::failure_class(&error).into());
                             progressed = true;
                             continue;
                         }
@@ -497,6 +550,9 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
+                    if looks::quota_waiting(&snapshot, &effect.key, self.now_ms())? {
+                        continue;
+                    }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
                     hook(Boundary::AfterReconcile, &effect.key);
@@ -509,6 +565,9 @@ impl Controller {
                     };
                     match result {
                         Reconciliation::Found(completion) => {
+                            if completion.releases_holds() {
+                                self.retry_held_effects(executor::upstream(delivery.output));
+                            }
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -517,7 +576,7 @@ impl Controller {
                                 self.cancel_absent(effect, &delivery)?;
                                 return Ok(true);
                             }
-                            if !self.held_effects.contains(&effect.key) {
+                            if !self.is_held(&delivery) {
                                 self.transition(effect, EffectState::Intended)?;
                                 progressed = true;
                             }
@@ -558,7 +617,9 @@ impl Controller {
                 .store
                 .effect(&delivery.key)?
                 .ok_or(Error::Invalid("missing watched effect"))?;
-            if effect.state.is_pending() {
+            if effect.state.is_pending()
+                || looks::quota_waiting(&snapshot, &delivery.key, self.now_ms())?
+            {
                 continue;
             }
             let active = effect.state == EffectState::Confirmed
@@ -580,6 +641,9 @@ impl Controller {
                 json!({"look": row.id}),
                 &snapshot,
             );
+            if active && looks::outage_waiting(&snapshot, &delivery.key) {
+                continue;
+            }
             if active {
                 delivery = hydrate(&effect, &snapshot)?;
                 hook(Boundary::BeforeReconcile, &delivery.key);
@@ -605,36 +669,45 @@ impl Controller {
                     continue;
                 }
                 if completion.observations.is_empty() {
-                    let progress_changed = record_progress(
+                    let changed = self.record_progress(
                         &snapshot,
                         &mut commit,
                         &row.id,
                         completion.progress.as_ref(),
                     )?;
-                    if progress_changed {
-                        // Recording a look must not schedule another look by itself.
+                    if !commit.rows.is_empty() {
                         self.store.commit(&commit)?;
                     }
+                    if changed == Some(true) {
+                        self.retry_held_effects(executor::upstream(delivery.output));
+                    }
                     continue;
+                }
+                if completion.releases_holds() {
+                    self.retry_held_effects(executor::upstream(delivery.output));
                 }
                 for (index, observation) in completion.observations.iter().enumerate() {
                     commit.rows.push(put(
                         "inbox",
-                        format!("{}:{index:08}", delivery.key),
+                        format!("{}:{index:08}:{}", delivery.key, evidence_key(observation)?),
                         json!(observation),
                     ));
                 }
             }
-            commit.rows.push(RowChange::Delete {
-                table: "watches".into(),
-                id: row.id.clone(),
-            });
-            queue_retirement(&mut commit, &delivery);
+            let quota = commit.rows.iter().any(|row| matches!(row, RowChange::Put { table, value, .. } if table == "inbox" && value.get("Quota").is_some()));
+            if !quota {
+                commit.rows.push(RowChange::Delete {
+                    table: "watches".into(),
+                    id: row.id.clone(),
+                });
+                queue_retirement(&mut commit, &delivery);
+            }
             self.store.commit(&commit)?;
             return Ok(true);
         }
         self.adapters.retire(&mut self.store);
-        Ok(progressed)
+        let snapshot = self.store.load()?;
+        Ok(self.prune_allowances(&snapshot)? || progressed)
     }
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
@@ -659,6 +732,7 @@ impl Controller {
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
         let snapshot = self.store.load()?;
+        let delivery = hydrate(effect, &snapshot)?;
         let mut commit = Commit::new(
             format!("delivery:{}:{}", effect.key, snapshot.revision.get()),
             json!({"effect": effect.key, "from": effect.state, "to": to}),
@@ -669,6 +743,14 @@ impl Controller {
             from: effect.state,
             to,
         });
+        if to == EffectState::Uncertain
+            && let Some(class) = self
+                .held_effects
+                .get(&executor::upstream(delivery.output))
+                .and_then(|effects| effects.get(&effect.key))
+        {
+            self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
+        }
         self.store.commit(&commit)?;
         Ok(())
     }
@@ -698,7 +780,7 @@ impl Controller {
             )?;
         }
         self.store.commit(&commit)?;
-        self.held_effects.remove(&effect.key);
+        self.remove_hold(delivery);
         Ok(())
     }
 
@@ -779,7 +861,7 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
-            record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
+            self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
@@ -790,7 +872,7 @@ impl Controller {
             ));
         }
         self.store.commit(&commit)?;
-        self.held_effects.remove(key);
+        self.remove_hold(&delivery);
         Ok(())
     }
 
@@ -855,7 +937,27 @@ impl Controller {
         commit
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
+        self.close_replacement(snapshot, &previous, &world, commit)?;
         commit.result = json!({"kernel_event": event});
+        for (index, node) in world.nodes.iter().enumerate() {
+            if previous
+                .nodes
+                .get(index)
+                .is_some_and(|old| old.waiting_incident)
+                && !node.waiting_incident
+            {
+                for row in snapshot.rows.iter().filter(|r| {
+                    r.table == "incidents"
+                        && r.value["node"] == json!(NodeId(index as u64))
+                        && r.value["open"] == true
+                        && r.value["blocking"] == true
+                }) {
+                    let mut value = row.value.clone();
+                    value["open"] = json!(false);
+                    commit.rows.push(put("incidents", row.id.clone(), value));
+                }
+            }
+        }
         let dictionary = self.store.load()?.interned;
         for (index, output) in outputs.into_iter().enumerate() {
             if let Out::Notice {
@@ -912,7 +1014,25 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let checks = check_run(snapshot, node, head_sha.as_deref())?;
+            let mut checks = check_run(snapshot, node, head_sha.as_deref())?;
+            if checks.is_none()
+                && matches!(
+                    output,
+                    Out::Effect {
+                        kind: tl3_kernel::EffectKind::SubmitChecks,
+                        ..
+                    }
+                )
+                && let Some(sha) = &head_sha
+                && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+                && let Some(run) = materials.get("check_run")
+            {
+                let run: adapters::prismabuild::CheckRun = serde_json::from_value(run.clone())?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(&run)));
+                checks = Some(run);
+            }
             let question_context = if let Out::Notice {
                 notice: tl3_kernel::Notice::Ask { question },
                 ..
@@ -947,7 +1067,7 @@ impl Controller {
             } else {
                 None
             };
-            let delivery = Delivery {
+            let mut delivery = Delivery {
                 key: key.clone(),
                 epoch: snapshot.epoch.get(),
                 output: output.into(),
@@ -968,6 +1088,52 @@ impl Controller {
                 steering: None,
                 request_text: request.source,
             };
+            if let Out::Notice {
+                notice: tl3_kernel::Notice::Incident { needs_rob },
+                ..
+            } = output
+            {
+                let id = format!("{}.{}", snapshot.revision.get() + 1, index);
+                let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let signature = format!("{source:?}:{class}");
+                let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
+                if class == "queue_unfinished"
+                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)
+                {
+                    summary.push(' ');
+                    summary.push_str(&detail);
+                }
+                commit.rows.push(put(
+                    "incidents",
+                    id.clone(),
+                    json!(looks::Incident {
+                        id: id.clone(),
+                        node,
+                        open: true,
+                        needs_rob,
+                        blocking: n.waiting_incident,
+                        summary: summary.clone(),
+                        signature: signature.clone(),
+                        effect: None,
+                    }),
+                ));
+                delivery.note = Some(format!(
+                    "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+                    delivery.repository.owner, delivery.repository.name, delivery.issue
+                ));
+                delivery.question_context = Some(json!({"issue_title":request.title,
+                    "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
+                        delivery.repository.owner, delivery.repository.name, delivery.issue),
+                    "signature":signature}));
+                if let Some(operations) = &self.bootstrap.operations {
+                    delivery.repository = Repository {
+                        owner: operations.owner.clone(),
+                        name: operations.name.clone(),
+                        installation: operations.installation_id,
+                    };
+                    delivery.issue = operations.number;
+                }
+            }
             if matches!(
                 output,
                 Out::Effect {
@@ -982,6 +1148,7 @@ impl Controller {
                     .rows
                     .push(put("watches", key.clone(), json!(delivery)));
             }
+            commit.rows.push(self.allowance_row(delivery.clone()));
             commit.effects.push(NewEffect {
                 key,
                 kind: format!("{:?}", executor::upstream(output.into())),
@@ -1080,6 +1247,72 @@ impl Controller {
         Ok(world.intern_footprint(files))
     }
 
+    fn operations_comment(
+        &self,
+        snapshot: &Snapshot,
+        repository: &Repository,
+        issue: u64,
+        comment: &tl3_github::Comment,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        let operations = self.bootstrap.operations.as_ref().is_some_and(|o| {
+            o.owner.eq_ignore_ascii_case(&repository.owner)
+                && o.name.eq_ignore_ascii_case(&repository.name)
+                && o.installation_id == repository.installation
+                && o.number == issue
+        });
+        if !operations {
+            return Ok(false);
+        }
+        if comment.user.id != self.bootstrap.rob {
+            return Ok(true);
+        }
+        let key = format!(
+            "{}/{}/{}/{}",
+            repository.owner.to_ascii_lowercase(),
+            repository.name.to_ascii_lowercase(),
+            repository.installation,
+            comment.id
+        );
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "operations_comments" && r.id == key)
+        {
+            return Ok(true);
+        }
+        if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
+        {
+            let mut incident: looks::Incident = serde_json::from_value(row.value.clone())?;
+            if incident.blocking {
+                commit.rows.push(put(
+                    "inbox",
+                    format!("incident-clear:{}:{id}", comment.id),
+                    json!(Observation::Kernel(Event::Fact {
+                        node: incident.node,
+                        fact: Fact::IncidentCleared { by_rob: true }
+                    })),
+                ));
+            } else {
+                incident.open = false;
+                self.resume_incident_look(snapshot, &incident, commit)?;
+                commit
+                    .rows
+                    .push(put("incidents", id.into(), json!(incident)));
+            }
+        }
+        commit.rows.push(put(
+            "operations_comments",
+            key,
+            json!({"repository":repository, "issue":issue, "comment":comment}),
+        ));
+        Ok(true)
+    }
+
     fn translate(
         &mut self,
         snapshot: &Snapshot,
@@ -1087,6 +1320,16 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        if let Observation::GitHubComment {
+            repository,
+            issue,
+            comment,
+        } = &observation
+            && self.operations_comment(snapshot, repository, *issue, comment, commit)?
+        {
+            return Ok(None);
+        }
+
         let ci_checks = match &observation {
             Observation::CiFailed { checks, .. } => checks
                 .iter()
@@ -1104,6 +1347,14 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
+            Observation::Progress { key, checkpoint } => {
+                self.progress_allowance(snapshot, &key, checkpoint, commit)?;
+                return Ok(None);
+            }
+            Observation::Quota { key, reset_ms } => {
+                self.quota_allowance(snapshot, &key, reset_ms, commit)?;
+                return Ok(None);
+            }
             Observation::Classified { key, reply } => {
                 return self.classified(snapshot, world, &key, reply, commit);
             }
@@ -1838,6 +2089,71 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
     Ok(delivery)
 }
 
+fn evidence_key(observation: &Observation) -> Result<String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(observation)?)
+    ))
+}
+
+fn observation_upstream(
+    snapshot: &Snapshot,
+    observation: &Observation,
+) -> Result<Option<executor::Upstream>> {
+    use executor::Upstream;
+    Ok(match observation {
+        Observation::Progress { .. }
+        | Observation::Quota { .. }
+        | Observation::Kernel(Event::Fact {
+            fact: Fact::UpstreamStalled,
+            ..
+        }) => None,
+        Observation::GitHubComment { .. }
+        | Observation::LinkedRequest { .. }
+        | Observation::PullRequest { .. } => Some(Upstream::GitHub),
+        Observation::Classified { .. }
+        | Observation::WorkerReply { .. }
+        | Observation::Plan { .. }
+        | Observation::Made { .. }
+        | Observation::Reviewed { .. } => Some(Upstream::Workers),
+        Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
+        Observation::Rebased { .. } => Some(Upstream::Worktrees),
+        Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
+            Some(Upstream::Mergify)
+        }
+        Observation::Kernel(Event::Reply {
+            node, generation, ..
+        }) => snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "allowances")
+            .map(|r| serde_json::from_value::<looks::AllowanceState>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|s| {
+                s.delivery.node() == *node
+                    && s.delivery.generation == *generation
+                    && match s.delivery.output {
+                        DeliveryOutput::Effect { kind, .. } => snapshot::decode(snapshot)
+                            .is_ok_and(|world| {
+                                world
+                                    .nodes
+                                    .get(node.0 as usize)
+                                    .is_some_and(|n| n.operation_pending(kind, *generation))
+                            }),
+                        DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
+                    }
+            })
+            .map(|s| executor::upstream(s.delivery.output)),
+        Observation::Kernel(Event::Fact {
+            fact: Fact::IncidentCleared { .. },
+            ..
+        }) => None,
+        Observation::Kernel(Event::Fact { .. }) => Some(Upstream::GitHub),
+        Observation::Kernel(_) => None,
+    })
+}
+
 fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
     if executor::upstream(delivery.output) == executor::Upstream::Mergify {
         commit.rows.push(put(
@@ -1846,38 +2162,6 @@ fn queue_retirement(commit: &mut Commit, delivery: &Delivery) {
             json!(delivery),
         ));
     }
-}
-
-fn record_progress(
-    snapshot: &Snapshot,
-    commit: &mut Commit,
-    key: &str,
-    token: Option<&executor::ProgressToken>,
-) -> Result<bool> {
-    let Some(token) = token else { return Ok(false) };
-    let Some(row) = snapshot
-        .rows
-        .iter()
-        .find(|row| row.table == "watches" && row.id == key)
-    else {
-        return Ok(false);
-    };
-    let previous: Option<executor::WatchProgress> = row
-        .value
-        .get("progress")
-        .map(|value| serde_json::from_value(value.clone()))
-        .transpose()?;
-    let progress = executor::WatchProgress {
-        previous: previous.as_ref().map(|progress| progress.current.clone()),
-        current: token.clone(),
-    };
-    if previous.as_ref() == Some(&progress) {
-        return Ok(false);
-    }
-    let mut value = row.value.clone();
-    value["progress"] = json!(progress);
-    commit.rows.push(put("watches", key.into(), value));
-    Ok(true)
 }
 
 fn check_run(

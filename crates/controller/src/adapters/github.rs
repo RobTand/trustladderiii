@@ -2,7 +2,7 @@ use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
     Result,
-    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use std::path::Path;
 use tl3_kernel::EffectKind;
@@ -59,7 +59,8 @@ pub struct Adapter {
     epoch: i64,
     policy: Policy,
     runtime: &'static tokio::runtime::Runtime,
-    fake: Fake,
+    records: Records,
+    operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
     pub fn new(
@@ -68,7 +69,13 @@ impl Adapter {
         epoch: i64,
         policy: Policy,
         simulation: &Path,
+        operations: Option<tl3_config::OperationsIssue>,
     ) -> Result<Self> {
+        if operations.is_none() {
+            return Err(Error::Invalid(
+                "real GitHub adapter requires [github.operations]",
+            ));
+        }
         std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
@@ -76,14 +83,15 @@ impl Adapter {
             epoch,
             policy,
             runtime: crate::executor::runtime()?,
-            fake: Fake::new(simulation),
+            records: Records::new(simulation),
+            operations,
         })
     }
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
         }
-        self.fake.0.fence(delivery.epoch)?;
+        self.records.fence(delivery.epoch)?;
         self.epoch = delivery.epoch;
         Ok(())
     }
@@ -100,11 +108,12 @@ impl Adapter {
                     notice @ (Notice::Ask { .. }
                     | Notice::MeasuresPosted
                     | Notice::Summary(_)
-                    | Notice::Note(_)),
+                    | Notice::Note(_)
+                    | Notice::Incident { .. }),
                 ..
             } => Some(notice),
             Out::Notice {
-                notice: Notice::Incident { .. } | Notice::FileReplacement,
+                notice: Notice::FileReplacement,
                 ..
             }
             | Out::Effect { .. }
@@ -122,7 +131,7 @@ impl Adapter {
         let Some(crate::steering::Task::FileRequest {
             text,
             comment,
-            correction,
+            correction: true,
             revert,
             since,
             comment_issue,
@@ -132,22 +141,6 @@ impl Adapter {
         };
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
-        if !correction {
-            if !matches!(
-                delivery.output,
-                Out::Notice {
-                    notice: Notice::FileReplacement,
-                    ..
-                }
-            ) {
-                return Err(Error::Invalid(
-                    "replacement requires FileReplacement notice",
-                ));
-            }
-            let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-            issue.body = Some(text.clone());
-            return Ok(Self::linked(delivery, issue));
-        }
         let title = format!("Correction for #{}", delivery.issue);
         let comment_path = if *comment_issue == delivery.issue {
             "issues"
@@ -189,6 +182,13 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        Ok(true)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
         if publishing::handles(delivery) {
@@ -202,12 +202,26 @@ impl Executor for Adapter {
             && !matches!(
                 delivery.output,
                 Out::Comment {
-                    kind: CommentKind::Clarify,
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
                     ..
                 }
             )
         {
-            return self.fake.execute(delivery);
+            return self
+                .records
+                .deliver(delivery, Completion::confirmed(vec![]));
+        }
+        if matches!(notice, Some(Notice::Incident { .. }))
+            && !self.operations.as_ref().is_some_and(|o| {
+                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
+                    && o.installation_id == delivery.repository.installation
+                    && o.number == delivery.issue
+            })
+        {
+            return Err(Error::Invalid(
+                "incident delivery needs the configured operations issue",
+            ));
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -216,13 +230,30 @@ impl Executor for Adapter {
             .block_on(client.reconcile_comments(&repo, delivery.issue, &delivery.key))?
             .is_none()
         {
-            let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-            let input = writer_input(
-                delivery,
-                notice,
-                &issue.title,
-                issue.body.as_deref().unwrap_or(""),
-            )?;
+            let input = if matches!(notice, Some(Notice::Incident { .. })) {
+                let context = delivery
+                    .question_context
+                    .as_ref()
+                    .ok_or(Error::Invalid("incident needs its request context"))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    context["issue_title"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request title missing"))?,
+                    context["request"]
+                        .as_str()
+                        .ok_or(Error::Invalid("incident request link missing"))?,
+                )?
+            } else {
+                let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                writer_input(
+                    delivery,
+                    notice,
+                    &issue.title,
+                    issue.body.as_deref().unwrap_or(""),
+                )?
+            };
             let mut policy = self.policy.clone();
             policy
                 .internal_terms
@@ -276,24 +307,98 @@ impl Executor for Adapter {
         }
         Ok(Completion::confirmed(vec![]))
     }
+    fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
+        let Some(client) = self.clients.values().next().cloned() else {
+            return Ok(None);
+        };
+        let mut cursor = None;
+        let mut newest = after;
+        let mut oldest = u64::MAX;
+        let mut pending = None;
+        loop {
+            let page = self
+                .runtime
+                .block_on(client.hook_deliveries(cursor.as_deref()))?;
+            let mut reached = false;
+            let previous_oldest = oldest;
+            for delivery in page.deliveries {
+                newest = newest.max(delivery.id);
+                oldest = oldest.min(delivery.id);
+                if delivery.id <= after
+                    || delivery.delivered_at.timestamp_millis() < since_ms as i64
+                {
+                    reached = true;
+                    continue;
+                }
+                let Some(status) = delivery.status_code else {
+                    pending = Some(pending.map_or(delivery.id, |old: u64| old.min(delivery.id)));
+                    continue;
+                };
+                if !(200..300).contains(&status) {
+                    self.runtime.block_on(client.redeliver_hook(delivery.id))?;
+                }
+            }
+            if reached {
+                break;
+            }
+            match page.next_cursor {
+                Some(next) if oldest < previous_oldest && cursor.as_ref() != Some(&next) => {
+                    cursor = Some(next)
+                }
+                Some(_) => return Err(Error::Invalid("GitHub delivery cursor did not advance")),
+                None => break,
+            }
+        }
+        Ok(Some(
+            pending
+                .map_or(newest, |id| newest.min(id.saturating_sub(1)))
+                .max(after),
+        ))
+    }
+
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => return Ok(Look::Found(c)),
+            Reconciliation::Absent => return Ok(Look::Absent),
+            Reconciliation::Pending => {}
+        }
+        let Some(number) = delivery.pull_request else {
+            return Ok(Look::Pending);
+        };
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let pull = self.runtime.block_on(client.pull_request(&repo, number))?;
+        let checks = self
+            .runtime
+            .block_on(client.check_runs(&repo, &pull.head.sha))?;
+        Ok(Look::Alive {
+            progress: serde_json::to_string(&(
+                pull.head.sha,
+                pull.state,
+                pull.merged_at,
+                checks
+                    .iter()
+                    .filter(|c| c.status == "completed")
+                    .map(|c| (c.id, &c.conclusion))
+                    .collect::<Vec<_>>(),
+            ))?,
+        })
+    }
+
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
-        self.fake.0.fence(self.epoch)?;
+        self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
             return Ok(self
                 .reconcile_publication(delivery)
                 .unwrap_or(Reconciliation::Pending));
         }
         if let Some(crate::steering::Task::FileRequest {
-            correction, since, ..
+            correction: true,
+            since,
+            ..
         }) = &delivery.steering
         {
-            if !correction {
-                return Ok(match self.file_request(delivery) {
-                    Ok(completion) => Reconciliation::Found(completion),
-                    Err(_) => Reconciliation::Pending,
-                });
-            }
             let client = self.client(delivery)?;
             let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
             return Ok(
@@ -311,12 +416,12 @@ impl Executor for Adapter {
             && !matches!(
                 delivery.output,
                 Out::Comment {
-                    kind: CommentKind::Clarify,
+                    kind: CommentKind::Clarify | CommentKind::ReplacementDropped,
                     ..
                 }
             )
         {
-            return self.fake.reconcile(delivery);
+            return self.records.reconcile(delivery);
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -364,6 +469,19 @@ fn writer_input(
     } else {
         request
     };
+    if let Some(crate::steering::Task::ReplacementDropped { text, outcome }) = &delivery.steering {
+        let change = if *outcome == Outcome::Merged {
+            "The old version merged before your change could start. Please file your change again."
+        } else {
+            "Work on the old version ended before your change could start. Please file your change again."
+        };
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": change, "change_quote": text}),
+            violations: vec![],
+        });
+    }
     if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
         return Ok(WriteRequest {
             kind: MessageKind::Clarification,
@@ -469,6 +587,11 @@ fn writer_input(
                 "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")}),
             )
         }
+        Notice::Incident { .. } => (
+            MessageKind::Note,
+            json!({"issue_title":title, "request": request,
+                "change": delivery.note.as_deref().unwrap_or("Work needs help before it can continue.")}),
+        ),
         Notice::Summary(outcome) => (
             MessageKind::Summary,
             json!({"issue_title": title, "request": request,

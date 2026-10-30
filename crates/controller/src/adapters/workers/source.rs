@@ -109,7 +109,9 @@ impl WorkerOutputSource {
     }
 
     fn retire(&mut self, run: Run) -> Result<()> {
-        self.active.remove(&run.delivery);
+        if let Some((number, _)) = &run.attempt {
+            self.active.remove(&run.delivery, *number);
+        }
         for wd in run.watches {
             self.watches.remove(&wd);
             match inotify::remove_watch(self.inotify.as_ref().unwrap(), wd) {
@@ -336,6 +338,12 @@ impl WorkerOutputSource {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
+        let prior = store
+            .worker_progress(Some(&delivery.node().0.to_string()))?
+            .into_iter()
+            .find(|row| row.key == delivery.key && row.attempt == *number);
+        let recorded = prior.as_ref().map_or(0, |row| row.output_offset as u64);
+        let mut previous_wait = prior.and_then(|row| row.external_wait);
         if let Some(file) = stdout {
             let mut reader = BufReader::new(file);
             reader.seek(SeekFrom::Start(run.offset))?;
@@ -348,7 +356,10 @@ impl WorkerOutputSource {
                 run.offset += n as u64;
                 if let Ok(value) = super::json::parse(&line)
                     && progress(&value)
+                    && run.offset > recorded
                 {
+                    let wait = external_wait(&value);
+                    let changed = previous_wait != wait;
                     store.record_worker_progress(
                         &delivery.key,
                         *number,
@@ -356,7 +367,29 @@ impl WorkerOutputSource {
                             .try_into()
                             .map_err(|_| Error::Invalid("worker output offset overflow"))?,
                         value["unit"].as_str().unwrap(),
+                        wait.as_ref(),
                     )?;
+                    previous_wait = wait.clone();
+                    // Reattachments declare liveness, not new agent work.
+                    if wait.is_some() {
+                        if changed {
+                            sender
+                                .send(Input::Look {
+                                    key: delivery.key.clone(),
+                                })
+                                .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                        }
+                        continue;
+                    }
+                    sender
+                        .send(Input::Observation {
+                            key: format!("{}:progress:{number}:{}", delivery.key, run.offset),
+                            observation: Observation::Progress {
+                                key: delivery.key.clone(),
+                                checkpoint: format!("{number}:{}", run.offset),
+                            },
+                        })
+                        .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
                 }
             }
         }
@@ -374,7 +407,7 @@ impl WorkerOutputSource {
             }
             Reconciliation::Absent => Ok(false),
             Reconciliation::Pending => {
-                self.active.add(delivery);
+                self.active.add(delivery, *number);
                 Ok(true)
             }
         }
@@ -382,9 +415,24 @@ impl WorkerOutputSource {
 }
 
 fn progress(value: &Value) -> bool {
-    value.as_object().is_some_and(|o| o.len() == 2)
-        && value["event"] == "progress"
-        && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result"))
+    value["event"] == "progress"
+        && ((value.as_object().is_some_and(|o| o.len() == 2)
+            && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result")))
+            || (value.as_object().is_some_and(|o| o.len() == 3)
+                && value["unit"] == "external_wait"
+                && external_wait(value).is_some()))
+}
+
+fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
+    let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
+    let owner_valid = wait.upstream == "prismabuild";
+    let key_valid =
+        !wait.key.is_empty() && wait.key.len() <= 256 && !wait.key.chars().any(char::is_control);
+    (owner_valid
+        && key_valid
+        && (wait.upstream != "prismabuild"
+            || wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok()))
+    .then_some(wait)
 }
 
 pub(super) fn parse_reply(
@@ -405,6 +453,23 @@ pub(super) fn parse_reply(
         }
         if progress(&value) {
             continue;
+        }
+        if value.as_object().is_some_and(|o| o.len() == 3)
+            && value["event"] == "quota"
+            && value["role"] == role
+        {
+            let reset_ms = value["reset_ms"]
+                .as_u64()
+                .filter(|v| *v > 0)
+                .ok_or(Error::Invalid("invalid quota reset"))?;
+            // A quota ending is terminal and must be the final protocol event.
+            if bytes.split_inclusive(|b| *b == b'\n').next_back() != Some(line) {
+                return Err(Error::Invalid("event after quota ending"));
+            }
+            return Ok(Observation::Quota {
+                key: delivery.key.clone(),
+                reset_ms,
+            });
         }
         if !value.as_object().is_some_and(|o| o.len() == 3)
             || value["event"] != "reply"
@@ -460,6 +525,31 @@ fn ready_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_wait_protocol_accepts_only_readable_owners() {
+        let event = serde_json::json!({"event":"progress", "unit":"external_wait",
+            "wait":{"upstream":"prismabuild", "key":"a".repeat(64)}});
+        assert!(progress(&event));
+        let mut token = event.clone();
+        token["wait"] = serde_json::json!({"upstream":"token_grant", "key":"request:7"});
+        assert!(!progress(&token));
+        for change in [
+            serde_json::json!({"upstream":"prismabuild", "key":"invalid"}),
+            serde_json::json!({"upstream":"token_grant", "key":""}),
+            serde_json::json!({"upstream":"token_grant", "key":"valid", "extra":1}),
+        ] {
+            let mut invalid = event.clone();
+            invalid["wait"] = change;
+            assert!(!progress(&invalid));
+        }
+        let mut invalid = event.clone();
+        invalid["unexpected"] = serde_json::json!(true);
+        assert!(!progress(&invalid));
+        let mut checkpoint = event;
+        checkpoint["checkpoint"] = serde_json::json!("7 tests");
+        assert!(!progress(&checkpoint));
+    }
 
     #[test]
     fn only_evidence_files_dirty_an_attempt() {

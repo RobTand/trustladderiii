@@ -556,6 +556,7 @@ def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
     observed = []
     settings = []
+    checkouts = []
     inputs = maker_request["inputs"]
     inputs.update({"attempt": 2, "round": 1, "feedback": [
         {"kind": "failed_check", "report": "test_hello failed.", "goal_ids": ["greeting"]},
@@ -565,6 +566,7 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
 
     def factory(worktree):
         settings.append(asdict(worktree.test_settings))
+        checkouts.append(getattr(worktree, "test_checkout", None))
 
         def run_tests(tests: list[str] | None = None) -> dict:
             assert tests == ["test_greeting.py::test_hello"]
@@ -590,6 +592,8 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
     events = []
     runtime.run(maker_request, events.append)
     assert settings == [inputs["tests"]]
+    # The PrismaBuild look ties a declared wait to this checkout's history.
+    assert checkouts == [Path(maker_request["worktree"])]
     assert json.loads(observed[0][1].text) == inputs
     system = observed[0][0].text
     assert system.startswith(files("tl3_workers").joinpath("prompts/maker.md").read_text())

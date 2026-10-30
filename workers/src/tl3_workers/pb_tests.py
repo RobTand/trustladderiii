@@ -75,13 +75,25 @@ def _stage(worktree, root):
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+    env = {"PATH": os.defpath, "LANG": "C.UTF-8",
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_AUTHOR_NAME": "TL3", "GIT_AUTHOR_EMAIL": "tl3@example.invalid",
            "GIT_COMMITTER_NAME": "TL3", "GIT_COMMITTER_EMAIL": "tl3@example.invalid"}
-    for args in (("init", "--quiet", "--template="), ("add", "--force", "--all"),
-                 ("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
-                  "commit", "--quiet", "-m", "Freeze test input")):
-        subprocess.run(["git", *args], cwd=root, env=env, check=True,
+    commands = [("init", "--quiet", "--template=")]
+    maker_checkout = getattr(worktree, "test_checkout", None)
+    if maker_checkout is not None:
+        # PB's snapshot parent proves this action belongs to the maker's checkout.
+        # Keep the private harness input dirty so PB seals it above that parent.
+        commands.extend([
+            ("fetch", "--no-tags", "--no-recurse-submodules", "--", str(maker_checkout), "HEAD"),
+            ("update-ref", "HEAD", "FETCH_HEAD"),
+        ])
+    commands.append(("add", "--force", "--all"))
+    if maker_checkout is None:
+        commands.append(("commit", "--quiet", "-m", "Freeze test input"))
+    for args in commands:
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
+                       cwd=root, env=env, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -123,9 +135,10 @@ def _summary(ending, key):
     return result
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
+    emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
 
     def run_tests(tests: list[str] | None = None) -> dict:
         """Run relative pytest paths/node IDs, or the whole suite when omitted."""
@@ -146,7 +159,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
                            "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
                 code, submitted = _json_command(command)
-                if code or submitted.get("schema") != "prismabuild.submission.v1":
+                if code or submitted.get("schema") not in (
+                        "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):
                     raise ValueError("PrismaBuild refused submission")
                 key = submitted["action_key"]
                 if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
@@ -155,6 +169,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
                 # pbwait's observation allowance is not an execution deadline.
                 # Reattach to the same action whenever that allowance expires.
                 while True:
+                    emit({"event": "progress", "unit": "external_wait",
+                          "wait": {"upstream": "prismabuild", "key": key}})
                     code, waited = _json_command([
                         sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
                         "--endings", "--until", "cleaned", key,
