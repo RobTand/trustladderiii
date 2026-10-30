@@ -1041,6 +1041,11 @@ fn fake_stop(settings: &tl3_config::Store) {
     supervisor.execute(&run).unwrap();
     wait(|| root.path().join("entered").exists());
     let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let process: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    let pid = rustix::process::Pid::from_raw(process["pid"].as_i64().unwrap().try_into().unwrap())
+        .unwrap();
+    let fd = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
@@ -1057,9 +1062,21 @@ fn fake_stop(settings: &tl3_config::Store) {
         head: None,
     };
     supervisor.execute(&run).unwrap();
-    let process: Value =
-        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
-    assert_eq!(process["cancelled"], true);
+    let mut descriptors = [rustix::event::PollFd::new(
+        &fd,
+        rustix::event::PollFlags::IN,
+    )];
+    assert_eq!(
+        rustix::event::poll(
+            &mut descriptors,
+            Some(&rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 0
+            })
+        )
+        .unwrap(),
+        1
+    );
     assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),
