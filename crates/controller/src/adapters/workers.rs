@@ -1,3 +1,6 @@
+pub mod writer;
+pub use writer::{FakeWriter, Writer};
+
 mod fake;
 mod json;
 mod process;
@@ -13,7 +16,7 @@ use crate::{
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{self, File},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -21,7 +24,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tl3_kernel::{EffectKind, Event, Out, Reply};
-use tl3_store::Store;
+use tl3_store::{Snapshot, Store};
 
 #[derive(Clone, Default)]
 pub(super) struct ActiveRuns(Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>);
@@ -107,19 +110,26 @@ impl Supervisor {
         )
     }
 
-    fn fence(&self, delivery: &Delivery) -> Result<Store> {
+    fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
         let mut store = Store::open(&self.store)?;
-        if store.load()?.epoch.get() != delivery.epoch {
+        let snapshot = store.load()?;
+        if snapshot.epoch.get() != delivery.epoch {
             return Err(Error::Invalid("worker epoch is fenced"));
         }
-        Ok(store)
+        Ok((store, snapshot))
     }
 
     fn root(&self, key: &str) -> PathBuf {
         run_root(&self.settings.runs, key)
     }
 
-    fn request(&self, delivery: &Delivery, role: &str, store: &mut Store) -> Result<Value> {
+    fn request(
+        &self,
+        delivery: &Delivery,
+        role: &str,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Value> {
         let node = delivery.node().0.to_string();
         let mut inputs = store
             .worker_materials(&node)?
@@ -127,7 +137,7 @@ impl Supervisor {
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "planner" {
-            let world = crate::snapshot::decode(&store.load()?)?;
+            let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];
             rung = usize::from(n.plan_retries);
             let ingest = store
@@ -226,7 +236,7 @@ impl Supervisor {
 
 impl Executor for Supervisor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        let mut store = self.fence(delivery)?;
+        let (mut store, snapshot) = self.fence(delivery)?;
         let role = match delivery.output {
             Out::Effect {
                 kind: EffectKind::StartRun(role),
@@ -261,7 +271,7 @@ impl Executor for Supervisor {
             }
             Reconciliation::Absent => {}
         }
-        let request = self.request(delivery, role, &mut store)?;
+        let request = self.request(delivery, role, &mut store, &snapshot)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         store.claim_worker(
             &delivery.key,
@@ -408,7 +418,9 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
         return Ok(Reconciliation::Found(failed(delivery)));
     }
     let observation = match fs::read(attempt.join("stdout.jsonl")) {
-        Ok(bytes) => source::parse_reply(&bytes, delivery),
+        Ok(bytes) => read(&attempt.join("request.json"))?
+            .ok_or(Error::Invalid("worker request is missing"))
+            .and_then(|request| source::parse_reply(&bytes, delivery, &request["inputs"])),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(Error::Invalid("worker output is missing"))
         }
@@ -449,7 +461,12 @@ fn materialize(root: &Path, repo: &Value) -> Result<()> {
     let files = repo["file_list"]
         .as_array()
         .ok_or(Error::Invalid("repository file list missing"))?;
-    let materials = repo["materials"].as_array();
+    let materials: HashMap<_, _> = repo["materials"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| Some((m["path"].as_str()?, m["content"].as_str()?)))
+        .collect();
     for path in files {
         let path = path
             .as_str()
@@ -464,15 +481,16 @@ fn materialize(root: &Path, repo: &Value) -> Result<()> {
                 "repository path must be canonical and confined",
             ));
         }
-        let content = materials
-            .and_then(|items| items.iter().find(|m| m["path"] == path))
-            .and_then(|m| m["content"].as_str())
-            .ok_or(Error::Invalid(
-                "repository snapshot needs content for every listed file",
-            ))?;
+        // Missing text can represent a binary file. Keep it distinct from a new
+        // file so declaring it fails measurement instead of silently counting zero.
+        let content = materials.get(path).copied().unwrap_or("\0");
         let target = root.join(path);
         fs::create_dir_all(target.parent().unwrap())?;
         fs::write(target, content)?;
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "workers/materialize_tests.rs"]
+mod materialize_tests;

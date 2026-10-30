@@ -716,6 +716,32 @@ fn status_listen_requires_a_specific_unicast_address_and_fixed_port() {
 }
 
 #[test]
+fn webhooks_require_a_loopback_address_and_fixed_port() {
+    for address in [
+        "0.0.0.0:8081",
+        "[::]:8081",
+        "192.168.1.2:8081",
+        "127.0.0.1:0",
+    ] {
+        assert!(
+            Config::parse(&changed(
+                &["github", "webhook_listen"],
+                Value::String(address.into())
+            ))
+            .is_err(),
+            "{address}"
+        );
+    }
+    for address in ["127.0.0.1:8081", "[::1]:8081"] {
+        Config::parse(&changed(
+            &["github", "webhook_listen"],
+            Value::String(address.into()),
+        ))
+        .unwrap();
+    }
+}
+
+#[test]
 fn planning_cannot_remove_protection_or_overhead_evidence() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(
@@ -731,4 +757,30 @@ fn planning_cannot_remove_protection_or_overhead_evidence() {
     config.planning = tl3_config::Planning::default();
     config.planning.overhead_tokens.clear();
     assert!(config.validate().is_err());
+}
+
+#[test]
+fn planning_overhead_must_leave_room_under_the_fit_limit() {
+    for (overhead, valid) in [
+        (99_999, true),
+        (100_000, false),
+        (100_001, false),
+        (u32::MAX, false),
+    ] {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.planning.overhead_tokens = [("prompt".into(), overhead)].into();
+        let result = config.validate();
+        assert_eq!(result.is_ok(), valid, "{overhead}");
+        if !valid {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("planning.overhead_tokens")
+            );
+        }
+    }
+    let mut config = Config::parse(EXAMPLE).unwrap();
+    config.planning.overhead_tokens = [("prompt".into(), u32::MAX), ("making".into(), 1)].into();
+    assert!(config.validate().is_err(), "sum must not overflow");
 }

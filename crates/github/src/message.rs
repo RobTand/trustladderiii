@@ -1,8 +1,9 @@
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::LazyLock};
 use unicode_normalization::UnicodeNormalization;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OptionDraft {
     pub action: String,
     pub outcome: String,
@@ -24,7 +25,7 @@ pub struct Draft {
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
     pub internal_terms: Vec<String>,
-    /// Repo-relative files and directories in the served repo and TL3's repo.
+    /// Repo-relative files and directories from the request delivery.
     pub known_paths: BTreeSet<String>,
 }
 
@@ -142,7 +143,30 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         draft.recommendation_reason.as_str(),
         draft.how_to_answer.as_str(),
     ]);
-    let normalized = normalize(&written.join("\n"));
+    errors.extend(content_errors(&written.join("\n"), policy));
+    if errors.is_empty() {
+        Ok(CheckedMessage(rendered))
+    } else {
+        Err(errors)
+    }
+}
+
+/// Notes and summaries use the same content rules without question-only fields.
+pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Violation>> {
+    let mut errors = content_errors(text, policy);
+    if is_blank(text) {
+        errors.push(Violation::MissingObstacle);
+    }
+    if errors.is_empty() {
+        Ok(CheckedMessage(text.into()))
+    } else {
+        Err(errors)
+    }
+}
+
+fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
+    let normalized = normalize(text);
+    let mut errors = Vec::new();
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }
@@ -158,18 +182,30 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
             .any(|s| {
                 normalized
                     .to_lowercase()
-                    .contains(&s.nfkc().collect::<String>().to_lowercase())
+                    .contains(&normalize(s).to_lowercase())
             })
     {
         errors.push(Violation::InternalNameOrId);
     }
     if normalized.split_whitespace().any(|token| {
         let punctuation = [
-            '"', '\'', '`', '(', ')', '[', ']', '{', '}', ',', ';', ':', '!', '?',
+            '"', '\'', '`', '(', ')', '[', ']', '{', '}', ',', ';', ':', '!', '?', '*', '_', '<',
+            '>', '“', '”', '‘', '’',
         ];
         let token = token
             .trim_start_matches(punctuation)
             .trim_end_matches(|c| c == '.' || punctuation.contains(&c));
+        let mut token = token;
+        for _ in 0..2 {
+            if let Some((path, suffix)) = token.rsplit_once(':')
+                && !suffix.is_empty()
+                && suffix.bytes().all(|b| b.is_ascii_digit())
+            {
+                token = path;
+            } else {
+                break;
+            }
+        }
         is_path(token, &policy.known_paths)
     }) {
         errors.push(Violation::FilePath);
@@ -177,15 +213,18 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if LOG.is_match(&normalized) {
         errors.push(Violation::Log);
     }
-    if errors.is_empty() {
-        Ok(CheckedMessage(rendered))
-    } else {
-        Err(errors)
-    }
+    errors
 }
 
 fn is_path(token: &str, known_paths: &BTreeSet<String>) -> bool {
-    if known_paths.contains(token) {
+    let token = token.trim_end_matches('/');
+    if token.contains('/')
+        && known_paths.iter().any(|path| {
+            let path = normalize(path);
+            let path = path.trim_end_matches('/');
+            path.contains('/') && path == token
+        })
+    {
         return true;
     }
     if ["/", "~/", "./", "../"].iter().any(|prefix| {

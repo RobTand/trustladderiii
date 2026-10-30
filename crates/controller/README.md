@@ -28,7 +28,8 @@ The daemon reads one JSON `cli::Input` per line on stdin. For example:
 The example repository, installation and actor must match the configuration.
 Fake receipts live outside the controller process. Keep their directory when
 restarting against the same database. `--drain` recovers persisted work and exits
-without reading stdin. EOF ends an interactive simulation.
+without reading stdin. EOF ends a stdin-only simulation. Worker and webhook
+sources keep the daemon running after stdin closes.
 
 Register a replacement executor with one `Registry::register` call. The five
 modules under `src/adapters` each contain a fake. The controller owns interning
@@ -92,16 +93,128 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
+## GitHub ingress in simulation
+
+`ingress::Source` runs on its own thread and sends `cli::Input` values to one
+controller thread. Register a source with `Sources::register`. The stdin reader
+uses that same interface. `Sources::run` drains persisted deliveries before
+applying inputs and drives the controller until no work remains. Every source
+exit is logged. An error or panic wakes and stops the controller loop immediately,
+so `tl3d` exits and systemd can restart it while other sources are still alive.
+
+To exercise the receiver against a local GitHub mock server, supply
+`--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:8082/` alongside
+`--simulate`. `github.webhook_listen` in the TOML file also sets the listen
+address. With `--github-api` and no explicit listen address, the receiver defaults
+to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
+on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
+The API must be loopback HTTP in this simulation release. Ordinary stdin
+simulation still needs no App credentials. Live startup and tunnel deployment
+remain tickets #20 and #19.
+
+POST deliveries to `/github/events`, matching the App manifest, with GitHub's
+delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
+The status page and receiver share `src/http.rs`. Four handlers cap open
+connections at eight, including queued sockets. Headers have an 8 KiB limit and
+webhook bodies have a 25 MiB limit. Oversized bodies return 413, transfer
+encoding returns 400, and webhook POST
+requires `Content-Length`. Socket reads finish before reaching the receiver
+thread, so a stalled client cannot hold delivery persistence or catch-up.
+Accept errors are logged and skipped. Response writes have a total deadline too.
+
+The library verifies the HMAC before parsing. The receiver stores
+the event name, delivery id and unchanged raw bytes in `tl3_ingress` before returning
+202. Replay parses them into the current `GitHubDelivery::Webhook` type, including
+unknown event names. Rows that no longer parse log their delivery id and advance
+every consumer past the row, so an older payload cannot crash-loop startup.
+PR updates, check runs, check suites and merge groups remain available for their
+owning adapters. Persistence errors log their `Display`,
+reopen the ingress connection and retry once. Only a failed retry returns 503.
+Delivery ids remain unique while retained. After retirement, repeated deliveries
+still use the same durable intake and observation keys. A crash between applying
+an input and advancing its consumer cursor replays the same intake or observation key.
+
+`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
+receiver's blocking channel. There is no polling timer. A failed persistence or
+response marks a gap, which is retried at the next receiver event. Catch-up stores
+`GitHubDelivery::CatchUp` with the full `RepoChanges` and its cursor in one
+transaction, including PRs and check results. Comment URLs compare repository
+names without case and use the trailing issue number. Rob's comments on issues
+and PRs enter `github_comments` in both paths, deduplicated by repository,
+installation and comment id. Ticket #14 classifies them.
+
+Headers have a two-second total read deadline. Body reads get a separate total
+budget of at least two seconds, scaled at 1 MiB/s by the declared length and
+capped at 25 seconds for GitHub's 25 MiB limit. The listener is loopback-only
+behind `cloudflared`. Failed reads never trigger catch-up because their bytes
+are unauthenticated. Ticket #15 will read GitHub's failed-delivery records on a look.
+
+One ingress connection inserts webhooks and catch-up rows in commit order.
+Sequence cursors depend on this single-writer invariant: a concurrent inserter
+could allocate a lower sequence and commit it after consumers had passed it.
+The controller's separate connection advances cursors and retires rows.
+
+### Register a delivery translator
+
+PR #69 registers its Mergify translator, and #13 registers its PR translator,
+on the controller before `Sources::run` or `ingress::drain`:
+
+```rust
+controller.register_github_translator("mergify", mergify_translator);
+```
+
+Implement `ingress::GitHubTranslator::translate(&mut self, &GitHubDelivery,
+&tl3_store::Snapshot) -> Result<Vec<cli::Input>>`. Translate both `Webhook` and
+`CatchUp` variants into observations. Validate the served repository and
+installation before producing evidence, and use stable observation keys across
+webhook and catch-up overlap. Translators never call the kernel.
+
+`ingress::drain` reads the stored deliveries in arrival order, calls the
+translator on the controller thread, applies its inputs and then persists its
+`github-translator:<name>` sequence in `tl3_ingress_consumers`. Each translator has
+an independent cursor. A new name starts at intake's current durable position,
+skipping consumed history even if another translator still retains it. Pending
+deliveries and catch-up supply recent state. Reusing the name after restart resumes it.
+An error leaves that delivery's cursor unchanged. Inputs must be idempotent
+because a crash after applying them can replay the delivery. Intake and cursor advances delete rows in the same transaction once intake and
+every registered translator have passed them. No clock drives retirement. The
+registered set is reconciled before each drain, so removed translators stop retaining
+rows. Each translator loads at most one world snapshot per batch.
+
+`adapters::github::Adapter` uses the REST client for kernel notices. It invokes
+`workers::writer::Writer`, checks every draft and allows two correction attempts.
+Three rejected drafts return a permanent acknowledgement, so recovery does not
+restart the writer loop. A worker transport error stays uncertain.
+`FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
+role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
+options. Closing summaries close the issue, except when the request is replaced.
+PR effects still use this module's fake until ticket #13. Incident and replacement
+notices also stay on the fake for their owning tickets. Incidents need the
+operations issue, and replacements need a new request, not another comment.
+The checker uses the request's own `Delivery.paths` and any further paths
+supplied in the adapter policy. No build script inventories TL3's checkout.
+It rejects both `:line` and `:line:column` suffixes.
+
+The `github` integration target uses the recorded webhook fixtures, the actual
+HTTP receiver, a local REST server and embedded Postgres. It covers delivery
+persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
+rejections, epoch fencing and SIGKILL after posting before acknowledgement.
+
 `adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
 processes and returns a `WorkerOutputSource`. Making and review remain on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
-Run `WorkerOutputSource::run(sender)` on its own ingress thread. It emits
-`cli::Input::Observation` and writes progress to a separate store table. Until
-#10 supplies the shared daemon loop, simulations can call `poll_once` and feed
-its channel to `Controller::observe`. The stdin-only daemon keeps its existing
-fake registry until that loop can register this source.
+`tl3d --config FILE --simulate DIRECTORY --workers` registers the worker output
+source alongside stdin and optional webhooks. It uses configured Python for
+ingest, audit and planning, with the remaining roles and upstreams simulated. Add
+`--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:PORT` to run both
+sources against a local GitHub mock. Without `--workers`, workers stay simulated.
+Worker replies enter the same controller channel as webhook notifications. A
+worker source error stops the daemon even while webhooks or stdin remain alive.
+The source writes progress to a separate store table. Simulations can still call
+`poll_once` and feed its channel to `Controller::observe`.
 
 Each effect key owns a directory of immutable attempts. stdout and stderr are
 files. A Python supervisor records its identity before launching the worker,
@@ -184,9 +297,22 @@ The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
 
+For PR #64's receiver and status review evidence, create a clean detached worktree
+at the final commit. From that worktree, submit the three host checks:
+
+```bash
+python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
+```
+
+The manifest pins the controller, GitHub and Postgres test targets to `dl380g10`, `sparky`
+and `sparklina`. Controller targets include the status page and process tests.
+After they pass, submit the full workspace `tools/verify.sh` command shown above
+once with `--anywhere`. Record every action key and result in the PR body.
+
 ## Add a worker role
 
-For #11, #12 and #13, update each boundary together:
+For each new worker role, update these boundaries together:
 
 - Add the kernel role mapping in `adapters/workers/protocol.rs` `role`.
 - Map and validate the reply in `map_reply`, using the package's role schema.
@@ -223,17 +349,22 @@ files. The controller initializes size with `ceil(tokens / fit_tokens)`. The ker
 adds the credit reserve. An unrepresentable size fails explicitly rather than
 wrapping or silently clamping the request's credit.
 
-Supply a complete text snapshot in `repo.materials` for each existing path in
-`repo.file_list`, through `Store::put_worker_materials`. Ingest and planner runs
+Supply the text snapshot in `repo.materials` for each UTF-8 text path in
+`repo.file_list`, through `Store::put_worker_materials`. Listed paths without text
+receive a binary marker in the worktree. They do not block dispatch, but declaring
+one for measurement fails instead of treating it as an empty new file. Ingest and planner runs
 materialize that snapshot into their own worktree. Paths must be canonical and
 relative. New declared files have no base content. Deployment must preload the
 pinned o200k_base data in `TIKTOKEN_CACHE_DIR`. Files above 1 MiB fail measurement.
 
 `[planning.overhead_tokens]` contains named initial estimates. It is the seam for
-later MLflow calibration. No MLflow calls run in this flow. Protected paths can
+later MLflow calibration. Their sum must be below `limits.fit_tokens`.
+No MLflow calls run in this flow. Protected paths can
 be extended in config, but the slice-one defaults cannot be removed.
 
-Accepted plans live in `plans`; `plan_reports` retains each generation's evidence.
+`plans` holds the latest schema-valid planner reply, accepted or rejected;
+`plan_reports` retains each generation's evidence. Malformed output fails the run
+and does not replace either document.
 `findings` includes rejected-plan reasons and reports for the next planner run.
 Callers that record failed checks or review findings append them to that same
 text-list document before requesting a re-plan.
@@ -247,3 +378,13 @@ question. This adapter does not draft messages.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
+Generate all three host actions with
+`python3 crates/controller/tools/worker_review_manifest.py planning` and submit
+the manifest through `pbcampaign.py --detach`.
+
+The planner process scenarios cover malformed output, a controller killed while a
+planner is running, and stopping a live planner. Malformed replies fail without
+storing a plan. Recovery reattaches to the same process and key with one attempt.
+Stop proves the process has ended and stores no plan. The leaf, split, rejected
+leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
+context and retry findings.

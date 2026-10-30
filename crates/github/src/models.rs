@@ -169,7 +169,7 @@ pub struct LabelChange {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RepoChanges {
     pub repository: String,
     pub issues: Vec<Issue>,
@@ -191,4 +191,12 @@ pub struct CatchUp {
 pub struct ServedRepo {
     pub full_name: String,
     pub tracked_heads: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MergeGroup {
+    pub head_sha: String,
+    pub head_ref: String,
+    pub base_sha: String,
+    pub base_ref: String,
 }

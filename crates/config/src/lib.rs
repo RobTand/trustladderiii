@@ -176,6 +176,8 @@ fn default_agent_pool() -> u8 {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHub {
+    #[serde(default)]
+    pub webhook_listen: Option<SocketAddr>,
     pub app_credentials_file: PathBuf,
     pub rob: Identity,
     pub repos: Vec<Repository>,
@@ -356,6 +358,17 @@ impl Config {
                 "must be greater than zero and less than limits.context_tokens",
             ));
         }
+        let overhead = self
+            .planning
+            .overhead_tokens
+            .values()
+            .try_fold(0u32, |sum, value| sum.checked_add(*value));
+        if overhead.is_none_or(|sum| sum >= limits.fit_tokens) {
+            return Err(invalid(
+                "planning.overhead_tokens",
+                "sum must be less than limits.fit_tokens",
+            ));
+        }
         if limits.w != 1 {
             return Err(invalid("limits.w", "must be 1 in slice one (Q29)"));
         }
@@ -369,6 +382,14 @@ impl Config {
         )?;
         absolute("models.key_file", &self.models.key_file)?;
         absolute("prismabuild.tools_dir", &self.prismabuild.tools_dir)?;
+        if let Some(address) = self.github.webhook_listen
+            && (!address.ip().is_loopback() || address.port() == 0)
+        {
+            return Err(invalid(
+                "github.webhook_listen",
+                "use a loopback address with a nonzero port; cloudflared forwards locally",
+            ));
+        }
         github_name("github.rob.login", &self.github.rob.login, false)?;
         if self.github.rob.id == 0 {
             return Err(invalid(

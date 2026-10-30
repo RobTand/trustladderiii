@@ -1,0 +1,618 @@
+use crate::http;
+use crate::{
+    Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
+    executor::Observation,
+};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    io::{self, BufRead},
+    net::SocketAddr,
+    sync::{
+        Arc,
+        mpsc::{self, Sender},
+    },
+    thread,
+};
+use tl3_github::{
+    GitHub, ServedRepo,
+    webhook::{self, Event},
+};
+use tl3_store::Store;
+
+pub trait Source: Send + 'static {
+    fn run(self, sender: Sender<Input>) -> Result<()>;
+}
+
+pub struct Sources {
+    sender: Sender<Input>,
+    receiver: mpsc::Receiver<Input>,
+    exits: mpsc::Receiver<Result<()>>,
+    exit_sender: Sender<Result<()>>,
+}
+impl Default for Sources {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let (exit_sender, exits) = mpsc::channel();
+        Self {
+            sender,
+            receiver,
+            exits,
+            exit_sender,
+        }
+    }
+}
+impl Sources {
+    pub fn register(&mut self, source: impl Source) {
+        let sender = self.sender.clone();
+        let exits = self.exit_sender.clone();
+        thread::spawn(move || {
+            let name = std::any::type_name_of_val(&source);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                source.run(sender.clone())
+            }))
+            .unwrap_or(Err(Error::Invalid("ingress source panicked")));
+            match &result {
+                Ok(()) => eprintln!("ingress source {name} exited successfully"),
+                Err(error) => eprintln!("ingress source {name} failed: {error}"),
+            }
+            let _ = exits.send(result);
+            let _ = sender.send(Input::Wake);
+        });
+    }
+    pub fn run(self, controller: &mut Controller) -> Result<()> {
+        drop(self.sender);
+        drop(self.exit_sender);
+        drain(controller)?;
+        while controller.drive_once()? {}
+        for input in self.receiver {
+            for exit in self.exits.try_iter() {
+                exit?;
+            }
+            drain(controller)?;
+            apply(controller, input)?;
+            while controller.drive_once()? {}
+        }
+        for exit in self.exits {
+            exit?;
+        }
+        Ok(())
+    }
+}
+
+pub struct Stdin;
+impl Source for Stdin {
+    fn run(self, sender: Sender<Input>) -> Result<()> {
+        for line in io::stdin().lock().lines() {
+            if sender.send(serde_json::from_str(&line?)?).is_err() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
+    match input {
+        Input::Wake => {}
+        Input::LabelledIssue(issue) => {
+            controller.intake(issue)?;
+        }
+        Input::Observation { key, observation } => controller.observe(&key, observation)?,
+    }
+    Ok(())
+}
+
+/// Both paths preserve upstream evidence before translating it into controller inputs.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum GitHubDelivery {
+    Webhook(Box<webhook::Delivery>),
+    CatchUp {
+        repository: Repository,
+        changes: Box<tl3_github::RepoChanges>,
+    },
+}
+
+/// Translators run on the controller thread. Keys must survive duplicate evidence and replay.
+pub trait GitHubTranslator {
+    fn translate(
+        &mut self,
+        delivery: &GitHubDelivery,
+        snapshot: &tl3_store::Snapshot,
+    ) -> Result<Vec<Input>>;
+}
+pub(crate) struct Translation {
+    pub(crate) name: String,
+    pub(crate) translator: Box<dyn GitHubTranslator>,
+}
+
+fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
+    match delivery {
+        GitHubDelivery::Webhook(delivery) => inputs(&delivery.id, delivery.event, bootstrap),
+        GitHubDelivery::CatchUp {
+            repository,
+            changes,
+        } => {
+            let mut result = Vec::new();
+            for (number, change) in changes.labels {
+                if change.event == "labeled"
+                    && let Some(issue) = changes.issues.iter().find(|issue| issue.number == number)
+                    && issue.pull_request.is_none()
+                {
+                    result.push(Input::LabelledIssue(LabelledIssue {
+                        delivery: format!(
+                            "catch-up-label:{}/{}:{}",
+                            repository.owner, repository.name, change.id
+                        ),
+                        owner: repository.owner.clone(),
+                        repo: repository.name.clone(),
+                        installation: repository.installation,
+                        number,
+                        title: issue.title.clone(),
+                        actor: change.actor.id,
+                        label: change.label.name,
+                    }));
+                }
+            }
+            for comment in changes.comments {
+                // URLs were validated before advancing the durable catch-up cursor.
+                let number =
+                    comment_number(&repository, &comment.issue_url).expect("validated issue URL");
+                result.extend(comment_input(&repository, number, comment, bootstrap.rob));
+            }
+            result
+        }
+    }
+}
+
+/// Replays use the same intake and observation keys after a crash before consumption.
+pub fn drain(controller: &mut Controller) -> Result<()> {
+    let names: Vec<_> = controller
+        .github_translators
+        .iter()
+        .map(|entry| format!("github-translator:{}", entry.name))
+        .collect();
+    controller
+        .store
+        .register_ingress_translators(&names.iter().map(String::as_str).collect::<Vec<_>>())?;
+    loop {
+        let deliveries = controller.store.pending_ingress()?;
+        if deliveries.is_empty() {
+            break;
+        }
+        for stored in deliveries {
+            if let Some(delivery) = replay(&stored) {
+                for input in translate(delivery, &controller.bootstrap) {
+                    apply(controller, input)?;
+                }
+            }
+            controller.store.consume_ingress(stored.sequence)?;
+        }
+    }
+    for index in 0..controller.github_translators.len() {
+        let name = format!(
+            "github-translator:{}",
+            controller.github_translators[index].name
+        );
+        let mut cursor = controller.store.translator_cursor(&name)?;
+        loop {
+            let deliveries = controller.store.ingress_after(cursor)?;
+            if deliveries.is_empty() {
+                break;
+            }
+            let mut snapshot = None;
+            for stored in deliveries {
+                if let Some(delivery) = replay(&stored) {
+                    if snapshot.is_none() {
+                        snapshot = Some(controller.store.load()?);
+                    }
+                    let inputs = controller.github_translators[index]
+                        .translator
+                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))?;
+                    for input in inputs {
+                        apply(controller, input)?;
+                    }
+                }
+                controller
+                    .store
+                    .advance_translator(&name, stored.sequence)?;
+                cursor = stored.sequence;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {
+    let result = if stored.source == "github-webhook" {
+        webhook::parse(&stored.delivery_key, &stored.event_name, &stored.payload)
+            .map(|delivery| GitHubDelivery::Webhook(Box::new(delivery)))
+            .map_err(|error| error.to_string())
+    } else {
+        serde_json::from_slice(&stored.payload).map_err(|error| error.to_string())
+    };
+    match result {
+        Ok(delivery) => Some(delivery),
+        Err(error) => {
+            eprintln!(
+                "GitHub delivery {} skipped during replay: {error}",
+                stored.delivery_key
+            );
+            None
+        }
+    }
+}
+
+fn comment_number(repo: &Repository, url: &str) -> Result<u64> {
+    let invalid = || Error::Invalid("catch-up comment has an invalid issue URL");
+    let path = url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split_once('/'))
+        .map(|(_, path)| path)
+        .ok_or_else(invalid)?;
+    let parts: Vec<_> = path.split('/').collect();
+    let ["repos", owner, name, "issues", number] = parts.as_slice() else {
+        return Err(invalid());
+    };
+    if !repo.owner.eq_ignore_ascii_case(owner) || !repo.name.eq_ignore_ascii_case(name) {
+        return Err(invalid());
+    }
+    number
+        .parse()
+        .ok()
+        .filter(|number| *number > 0)
+        .ok_or_else(invalid)
+}
+
+pub fn run(controller: &mut Controller, receiver: mpsc::Receiver<Input>) -> Result<()> {
+    drain(controller)?;
+    while controller.drive_once()? {}
+    for input in receiver {
+        drain(controller)?;
+        apply(controller, input)?;
+        while controller.drive_once()? {}
+    }
+    Ok(())
+}
+
+fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
+    match event {
+        Some(Event::IssueLabeled {
+            context,
+            issue,
+            label,
+            actor,
+        }) if issue.pull_request.is_none() => {
+            vec![Input::LabelledIssue(LabelledIssue {
+                delivery: id.into(),
+                owner: context.repository.owner.login,
+                repo: context.repository.name,
+                installation: context.installation_id,
+                number: issue.number,
+                title: issue.title,
+                actor: actor.id,
+                label: label.name,
+            })]
+        }
+        Some(Event::CommentCreated {
+            context,
+            issue,
+            comment,
+            ..
+        }) => {
+            let Some(repo) = bootstrap.repos.iter().find(|repo| {
+                repo.owner
+                    .eq_ignore_ascii_case(&context.repository.owner.login)
+                    && repo.name.eq_ignore_ascii_case(&context.repository.name)
+                    && repo.installation == context.installation_id
+            }) else {
+                return vec![];
+            };
+            comment_input(repo, issue.number, comment, bootstrap.rob)
+                .into_iter()
+                .collect()
+        }
+        _ => vec![],
+    }
+}
+
+fn comment_input(
+    repo: &Repository,
+    issue: u64,
+    comment: tl3_github::Comment,
+    rob: u64,
+) -> Option<Input> {
+    (comment.user.id == rob).then(|| Input::Observation {
+        key: format!(
+            "github-comment:{}/{}/{}/{}",
+            repo.owner.to_ascii_lowercase(),
+            repo.name.to_ascii_lowercase(),
+            repo.installation,
+            comment.id
+        ),
+        observation: Observation::GitHubComment {
+            repository: repo.clone(),
+            issue,
+            comment,
+        },
+    })
+}
+
+pub struct CatchUp {
+    clients: BTreeMap<u64, GitHub>,
+    runtime: tokio::runtime::Runtime,
+}
+impl CatchUp {
+    pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
+        Ok(Self {
+            clients,
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        })
+    }
+    pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
+        let runtime = &self.runtime;
+        let since: DateTime<Utc> = store
+            .ingress_cursor("github-catch-up")?
+            .map(serde_json::from_value)
+            .transpose()?
+            .unwrap_or(DateTime::UNIX_EPOCH);
+        let snapshot = store.load()?;
+        let mut deliveries = Vec::new();
+        let mut notifications = Vec::new();
+        let mut cursor = None;
+        for repo in &bootstrap.repos {
+            let client = self
+                .clients
+                .get(&repo.installation)
+                .ok_or(Error::Invalid("missing GitHub installation client"))?;
+            let name = format!("{}/{}", repo.owner, repo.name);
+            let nodes: Vec<_> = snapshot
+                .rows
+                .iter()
+                .filter(|r| r.table == "requests")
+                .filter_map(|r| {
+                    serde_json::from_value::<crate::Request>(r.value.clone())
+                        .ok()
+                        .map(|request| (r.id.clone(), request))
+                })
+                .filter(|(_, request)| request.repo == *repo)
+                .map(|(id, _)| id)
+                .collect();
+            let tracked_heads = snapshot
+                .interned
+                .iter()
+                .filter(|entry| {
+                    entry.kind == tl3_store::InternKind::Commit && nodes.contains(&entry.scope)
+                })
+                .map(|entry| entry.value.clone())
+                .collect();
+            let result = runtime.block_on(client.catch_up(
+                &[ServedRepo {
+                    full_name: name.clone(),
+                    tracked_heads,
+                }],
+                since,
+            ))?;
+            cursor = Some(cursor.map_or(result.next_cursor, |old: DateTime<Utc>| {
+                old.min(result.next_cursor)
+            }));
+            for mut changes in result.repositories {
+                for (number, _) in &changes.labels {
+                    if !changes.issues.iter().any(|issue| issue.number == *number) {
+                        changes
+                            .issues
+                            .push(runtime.block_on(client.issue(&name, *number))?);
+                    }
+                }
+                for comment in &changes.comments {
+                    comment_number(repo, &comment.issue_url)?;
+                }
+                let delivery = GitHubDelivery::CatchUp {
+                    repository: repo.clone(),
+                    changes: Box::new(changes),
+                };
+                let payload = serde_json::to_vec(&delivery)?;
+                let key = format!("{name}:{:x}", Sha256::digest(&payload));
+                deliveries.push((key, payload));
+                notifications.push(Input::Wake);
+            }
+        }
+
+        if let Some(cursor) = cursor {
+            store.receive_catch_up("github-catch-up", &deliveries, &json!(cursor))?;
+        }
+        Ok(notifications)
+    }
+}
+
+enum WebhookMessage {
+    Request(http::Request, mpsc::SyncSender<u16>),
+    Gap,
+    Stop,
+    ServerExit(Result<()>),
+}
+struct Control {
+    sender: Sender<WebhookMessage>,
+    server: http::Control,
+}
+#[derive(Clone)]
+pub struct WebhookControl(Arc<Control>);
+impl WebhookControl {
+    /// Ticket 19 calls this after a tunnel gap, never on a timer.
+    pub fn gap(&self) {
+        let _ = self.0.sender.send(WebhookMessage::Gap);
+    }
+    pub fn stop(&self) {
+        let _ = self.0.sender.send(WebhookMessage::Stop);
+        self.0.server.stop();
+    }
+}
+
+pub struct Webhooks {
+    control: WebhookControl,
+    server: http::Server,
+    receiver: mpsc::Receiver<WebhookMessage>,
+    store: Store,
+    bootstrap: Bootstrap,
+    secret: Vec<u8>,
+    catch_up: Option<CatchUp>,
+}
+impl Webhooks {
+    pub fn bind(
+        address: SocketAddr,
+        store: Store,
+        bootstrap: Bootstrap,
+        secret: Vec<u8>,
+        catch_up: Option<CatchUp>,
+    ) -> Result<Self> {
+        if !address.ip().is_loopback() {
+            return Err(Error::Invalid("webhook listen address must be loopback"));
+        }
+        if secret.is_empty() {
+            return Err(Error::Invalid("webhook secret is empty"));
+        }
+        let server = http::Server::bind(address)?;
+        let (sender, receiver) = mpsc::channel();
+        Ok(Self {
+            control: WebhookControl(Arc::new(Control {
+                sender,
+                server: server.control(),
+            })),
+            server,
+            receiver,
+            store,
+            bootstrap,
+            secret,
+            catch_up,
+        })
+    }
+    pub fn address(&self) -> SocketAddr {
+        self.server.address()
+    }
+    pub fn control(&self) -> WebhookControl {
+        self.control.clone()
+    }
+}
+
+fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -> u16 {
+    let delivery = match webhook::verify_and_parse(
+        secret,
+        request.header("X-Hub-Signature-256"),
+        request.header("X-GitHub-Delivery"),
+        request.header("X-GitHub-Event"),
+        &request.body,
+    ) {
+        Ok(delivery) => delivery,
+        Err(_) => return 400,
+    };
+    let id = delivery.id.clone();
+    let event_name = delivery.event_name;
+    let payload = &request.body;
+    match store.receive_ingress("github-webhook", &id, &event_name, payload) {
+        Ok(_) => 202,
+        Err(error) => {
+            eprintln!("GitHub delivery {id} persistence failed: {error}");
+            match store
+                .reconnect()
+                .and_then(|()| store.receive_ingress("github-webhook", &id, &event_name, payload))
+            {
+                Ok(_) => 202,
+                Err(error) => {
+                    eprintln!("GitHub delivery {id} persistence retry failed: {error}");
+                    503
+                }
+            }
+        }
+    }
+}
+
+impl Source for Webhooks {
+    fn run(self, sender: Sender<Input>) -> Result<()> {
+        let Self {
+            control,
+            server,
+            receiver,
+            mut store,
+            bootstrap,
+            secret,
+            catch_up,
+        } = self;
+        let requests = control.0.sender.clone();
+        let exits = requests.clone();
+        let server_thread = thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                server.serve(move |connection| {
+                    let (status, head) = match connection.read(http::MAX_BODY) {
+                        Err((status, head)) => (status, head),
+                        Ok(request) if request.method != "POST" => (405, request.method == "HEAD"),
+                        Ok(request) if request.path != "/github/events" => (404, false),
+                        Ok(request) => {
+                            let (reply, response) = mpsc::sync_channel(1);
+                            if requests
+                                .send(WebhookMessage::Request(request, reply))
+                                .is_err()
+                            {
+                                return;
+                            }
+                            (response.recv().unwrap_or(503), false)
+                        }
+                    };
+                    let headers = if status == 405 { "Allow: POST\r\n" } else { "" };
+                    if connection.respond(status, "", head, headers).is_err() && status == 202 {
+                        let _ = requests.send(WebhookMessage::Gap);
+                    }
+                })
+            }))
+            .unwrap_or(Err(Error::Invalid("webhook HTTP server panicked")));
+            let _ = exits.send(WebhookMessage::ServerExit(result));
+        });
+        let mut gap = true;
+        let result = (|| {
+            loop {
+                if gap {
+                    gap = false;
+                    if let Some(catch_up) = &catch_up {
+                        if let Err(error) = catch_up.pass(&mut store, &bootstrap) {
+                            eprintln!("GitHub catch-up failed: {error}");
+                            gap = true;
+                        } else {
+                            let _ = sender.send(Input::Wake);
+                        }
+                    }
+                }
+                match receiver
+                    .recv()
+                    .map_err(|_| Error::Invalid("webhook receiver stopped"))?
+                {
+                    WebhookMessage::Request(request, reply) => {
+                        let status = receive_delivery(&mut store, &secret, &request);
+                        if status == 202 {
+                            let _ = sender.send(Input::Wake);
+                        }
+                        let disconnected = reply.send(status).is_err();
+                        if status == 503 || disconnected {
+                            gap = true;
+                        }
+                    }
+                    WebhookMessage::Gap => gap = true,
+                    WebhookMessage::Stop => return Ok(()),
+                    WebhookMessage::ServerExit(result) => {
+                        result?;
+                        return Err(Error::Invalid("webhook HTTP server stopped"));
+                    }
+                }
+            }
+        })();
+        control.0.server.stop();
+        drop(receiver);
+        server_thread
+            .join()
+            .map_err(|_| Error::Invalid("webhook HTTP server panicked"))?;
+        result
+    }
+}

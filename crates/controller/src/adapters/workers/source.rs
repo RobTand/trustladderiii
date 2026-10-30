@@ -45,6 +45,12 @@ pub struct WorkerOutputSource {
     watches: BTreeMap<i32, PathBuf>,
 }
 
+impl crate::ingress::Source for WorkerOutputSource {
+    fn run(self, sender: Sender<Input>) -> Result<()> {
+        WorkerOutputSource::run(self, sender)
+    }
+}
+
 fn io<T>(result: rustix::io::Result<T>) -> Result<T> {
     result.map_err(|error| std::io::Error::from(error).into())
 }
@@ -365,7 +371,11 @@ fn progress(value: &Value) -> bool {
         && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result"))
 }
 
-pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observation> {
+pub(super) fn parse_reply(
+    bytes: &[u8],
+    delivery: &Delivery,
+    inputs: &Value,
+) -> Result<Observation> {
     if !bytes.ends_with(b"\n") {
         return Err(Error::Invalid("incomplete worker output"));
     }
@@ -392,6 +402,7 @@ pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observati
             return Err(Error::Invalid("invalid worker event"));
         }
         protocol::map_reply(role, &value["reply"])?;
+        protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         reply = Some(value["reply"].clone());
     }
     Ok(Observation::WorkerReply {
