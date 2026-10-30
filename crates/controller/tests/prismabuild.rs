@@ -1558,6 +1558,39 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     assert_eq!(paths.contains("outside.py"), outside);
     drop(running);
 }
+fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        Bootstrap { repos: vec![repository()], rob: 1, slots: 1, pool: 1 },
+    ).unwrap();
+    for node in 0..3 {
+        controller.intake(LabelledIssue {
+            delivery: format!("retirement-{node}"), owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(), installation: 1, number: 42 + node,
+            title: "Retirement fixture".into(), actor: 1, label: "tl3".into(),
+        }).unwrap();
+        while controller.drive_once().unwrap() {}
+    }
+    assert!(controller.world().unwrap().nodes.iter().all(|n| n.phase.is_closed()));
+    let mut adapter = fixture(root.path(), "done");
+    let records = root.path().join("records");
+    for node in 0..3 {
+        fs::create_dir_all(records.join(node.to_string())).unwrap();
+    }
+    // Corrupt the first candidate regardless of filesystem directory ordering.
+    let bad = fs::read_dir(&records).unwrap().map(|e| e.unwrap().path())
+        .find(|p| p.is_dir()).unwrap();
+    fs::write(bad.join("corrupt.job"), "not JSON").unwrap();
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    assert!(adapter.retire(&mut store).is_err(), "retirement must still report the corrupt job");
+    assert!(bad.exists(), "unreadable evidence must remain for recovery");
+    let remaining: Vec<_> = fs::read_dir(&records).unwrap().map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir()).collect();
+    assert_eq!(remaining, vec![bad], "one corrupt node must not block other retirements");
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--kill-child") {
@@ -1571,6 +1604,13 @@ fn main() {
         loop {
             std::thread::park();
         }
+    }
+    if args.get(1).is_some_and(|arg| arg == "--retirement-regression") {
+        let mut database = support::Database::start();
+        retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+        database.stop();
+        println!("test retirement_continues_after_corrupt_node ... ok");
+        return;
     }
     for (name, test) in [
         ("recorded_endings", recorded_endings as fn()),
@@ -1623,6 +1663,8 @@ fn main() {
         println!("test {name} ... ok");
     }
     let mut database = support::Database::start();
+    retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+    println!("test retirement_continues_after_corrupt_node ... ok");
     through_controller(&database.create("pb_pass"), false, false, false);
     println!("test recorded_records_reach_kernel ... ok");
     through_controller(&database.create("pb_footprint"), true, false, false);
@@ -1634,5 +1676,5 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("23 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("24 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
