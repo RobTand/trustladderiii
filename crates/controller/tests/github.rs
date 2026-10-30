@@ -211,6 +211,13 @@ impl Respond for Api {
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
             }
+            (
+                "GET",
+                "/repos/owner/tl3/issues"
+                | "/repos/owner/tl3/issues/comments"
+                | "/repos/owner/tl3/issues/events"
+                | "/repos/owner/tl3/pulls",
+            ) => ResponseTemplate::new(200).set_body_json(json!([])),
             ("GET", "/repos/owner/sandbox/issues") => {
                 state.catch_up_passes += 1;
                 ResponseTemplate::new(200).set_body_json(json!([fixture(false)["issue"]]))

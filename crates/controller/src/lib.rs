@@ -1312,7 +1312,15 @@ fn observation_upstream(
             .find(|s| {
                 s.delivery.node() == *node
                     && s.delivery.generation == *generation
-                    && matches!(s.delivery.output, Out::Effect { .. })
+                    && match s.delivery.output {
+                        Out::Effect { kind, .. } => snapshot::decode(snapshot).is_ok_and(|world| {
+                            world
+                                .nodes
+                                .get(node.0 as usize)
+                                .is_some_and(|n| n.operation_pending(kind, *generation))
+                        }),
+                        Out::Notice { .. } => false,
+                    }
             })
             .map(|s| executor::upstream(s.delivery.output)),
         Observation::Kernel(Event::Fact {
