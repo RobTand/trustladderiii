@@ -116,11 +116,12 @@ run_worker = runtime.run
 
 def run_with_mismatch(request, emit):
     def emit_reply(event):
-        marker = Path(request['session_file']).parent / 'mismatch-injected'
-        if mode == 'self-check-mismatch' and event['event'] == 'reply' and not marker.exists():
-            # Corrupt a schema-valid reply after the real worker has committed.
-            event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
-            marker.touch()
+        if mode == 'self-check-mismatch' and event['event'] == 'reply':
+            marker = Path(request['session_file']).parent / 'mismatch-injected'
+            if not marker.exists():
+                # Corrupt a schema-valid reply after the real worker has committed.
+                event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
+                marker.touch()
         emit(event)
     return run_worker(request, emit_reply)
 
