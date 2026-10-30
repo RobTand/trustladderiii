@@ -196,14 +196,23 @@ fn failed_review_pin_reaches_the_next_review_reason() {
                  {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"]}]
     })).unwrap());
     let result = adapter.execute(&rebase).unwrap();
-    let run = result.observations.iter().find_map(|o| match o {
-        Observation::CheckPlan { run, .. } => Some(run),
-        _ => None,
-    }).unwrap();
+    let run = result
+        .observations
+        .iter()
+        .find_map(|o| match o {
+            Observation::CheckPlan { run, .. } => Some(run),
+            _ => None,
+        })
+        .unwrap();
     assert!(run.reviewed_sha.is_none());
     assert_eq!(run.plan.len(), 1);
     assert_eq!(run.plan[0].kind, Kind::Regression);
-    assert!(run.reproducing_unavailable.as_ref().unwrap().contains("pin failed"));
+    assert!(
+        run.reproducing_unavailable
+            .as_ref()
+            .unwrap()
+            .contains("pin failed")
+    );
     assert_eq!(
         serde_json::to_value(&result).unwrap(),
         serde_json::to_value(adapter.execute(&rebase).unwrap()).unwrap()

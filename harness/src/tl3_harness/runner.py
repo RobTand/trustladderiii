@@ -1,5 +1,6 @@
 """Loaded from the read-only harness mount before any checkout imports."""
 import ast
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,18 @@ import sys
 import types
 
 import pytest
+
+
+def module_candidates(module):
+    root = Path.cwd()
+    candidates = []
+    for entry in sys.path:
+        directory = Path(entry).resolve()
+        if directory.is_relative_to(root):
+            source = directory.joinpath(*module.split('.'))
+            candidates.extend([str(source.relative_to(root)) + suffix, ""]
+                              for suffix in (".py", "/__init__.py"))
+    return candidates
 
 
 def missing_name(error):
@@ -20,30 +33,46 @@ def missing_name(error):
             return [str(Path(source).relative_to(root)), error.name]
     if isinstance(error, ModuleNotFoundError) and error.name:
         # The host matches these candidates against committed additions, never error text.
-        return [[error.name.replace(".", "/") + suffix, ""]
-                for suffix in (".py", "/__init__.py")]
+        return module_candidates(error.name) or None
     if isinstance(error, ImportError) and error.name and error.path:
         source = Path(error.path)
         if source.is_relative_to(root):
             # ImportError.name is the module, not the missing symbol. Read the
             # failing import statement rather than interpreting Python's error message.
-            traceback = error.__traceback__
+            traceback, failing = error.__traceback__, None
             while traceback:
                 frame = traceback.tb_frame
                 filename = Path(frame.f_code.co_filename)
                 if filename.is_file() and filename.is_relative_to(root):
-                    try:
-                        module = ast.parse(filename.read_bytes())
-                        for node in ast.walk(module):
-                            if (isinstance(node, ast.ImportFrom)
-                                    and node.lineno <= traceback.tb_lineno <= node.end_lineno):
-                                loaded = sys.modules.get(error.name)
-                                for alias in node.names:
-                                    if loaded is None or not hasattr(loaded, alias.name):
-                                        return [str(source.relative_to(root)), alias.name]
-                    except (SyntaxError, OSError):
-                        pass
+                    failing = traceback
                 traceback = traceback.tb_next
+            if failing is None:
+                return None
+            try:
+                module = ast.parse(Path(failing.tb_frame.f_code.co_filename).read_bytes())
+                imports = [node for node in ast.walk(module) if isinstance(node, ast.ImportFrom)
+                           and node.lineno <= failing.tb_lineno <= node.end_lineno]
+                if len(imports) != 1:
+                    return None
+                node = imports[0]
+                imported = node.module
+                if node.level:
+                    imported = importlib.util.resolve_name(
+                        '.' * node.level + (imported or ''),
+                        failing.tb_frame.f_globals.get('__package__'))
+                loaded = sys.modules.get(error.name)
+                if imported != error.name or loaded is None:
+                    return None
+                for alias in node.names:
+                    if not hasattr(loaded, alias.name):
+                        candidates = [[str(source.relative_to(root)), alias.name]]
+                        if source.name == '__init__.py':
+                            child = source.parent / alias.name
+                            candidates.extend([str(child.relative_to(root)) + suffix, ""]
+                                              for suffix in (".py", "/__init__.py"))
+                        return candidates
+            except (SyntaxError, OSError, ImportError, ValueError):
+                pass
     return None
 
 

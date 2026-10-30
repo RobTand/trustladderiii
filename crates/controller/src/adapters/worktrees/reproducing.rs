@@ -87,11 +87,20 @@ pub(super) fn rebase(repo: &Path, branch: &BranchName, run: &mut CheckRun, targe
     match replay() {
         Ok(sha) => run.reviewed_sha = Some(sha),
         Err(_) => {
-            run.reviewed_sha = None;
-            run.plan.retain(|check| check.kind != Kind::Reproducing);
-            run.reproducing_unavailable = Some("Reproducing checks were dropped because the reviewed tree could not be replayed on the new base. Judge this reason under each original finding's goal or standing rule.".into());
+            unavailable(
+                run,
+                "the reviewed tree could not be replayed on the new base",
+            );
         }
     }
+}
+
+pub(super) fn unavailable(run: &mut CheckRun, reason: &str) {
+    run.reviewed_sha = None;
+    run.plan.retain(|check| check.kind != Kind::Reproducing);
+    run.reproducing_unavailable = Some(format!(
+        "Reproducing checks were dropped because {reason}. Judge this reason under each original finding's goal or standing rule."
+    ));
 }
 
 pub(super) fn remove(repo: &Path, branch: &BranchName) -> Result<()> {
