@@ -1,0 +1,229 @@
+import copy
+import json
+import os
+
+import pytest
+import tiktoken
+
+from tl3_workers.contracts import validate
+from worker_process import start_worker
+
+
+LEAF = {
+    "kind": "leaf",
+    "files": ["greeting.py", "tests/test_greeting.py"],
+    "checks": [
+        {"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
+         "goal_ids": [0]},
+        {"kind": "behavior-preserving", "node_ids": ["tests/test_greeting.py::test_api"],
+         "goal_ids": [1]},
+        {"kind": "regression", "node_ids": ["tests/test_greeting.py::test_existing"],
+         "goal_ids": [0, 1]},
+    ],
+    "no_design_questions": True,
+    "lands_on_its_own": True,
+}
+SPLIT = {
+    "kind": "split", "reason": "does_not_fit",
+    "pieces": [
+        {"brief": "Fix the greeting.", "goal_ids": [0], "files": ["greeting.py"]},
+        {"brief": "Keep the API.", "goal_ids": [1], "files": ["greeting.py", "new/api.py"]},
+    ],
+}
+CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unresolved.",
+             "files": []}
+
+
+@pytest.fixture
+def planner_request(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "greeting.py").write_text("hello world\n")
+    return {
+        "protocol": 1,
+        "operation": {"node": 1, "generation": 0, "kind": "planning"},
+        "role": "planner",
+        "model": {"base_url": "http://model.invalid/v1", "name": "fixture-model",
+                  "effort": "high", "budget_tokens": 32000},
+        "key_file": str(tmp_path / "never-read-key"),
+        "inputs": {
+            "ingest": {
+                "kind": "brief", "brief": "hello world",
+                "goals": [{"description": "Return hello.", "verification": "test"},
+                          {"description": "Keep the API clear.", "verification": "review"}],
+                "memory_ids": [],
+            },
+            "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
+                         "overhead_tokens": {"prompt": 10, "making": 20, "review": 30}},
+        },
+        "worktree": str(worktree),
+    }
+
+
+def run_reply(tmp_path, request, reply, calls=()):
+    turns = []
+    if calls:
+        turns.append({"content": "", "tool_calls": list(calls)})
+    turns.append({"content": json.dumps(reply)})
+    return start_worker(tmp_path, request, turns)
+
+
+def assert_rejected(result, phase="run"):
+    assert result.exit_code == 1
+    assert not any(event["event"] == "reply" for event in result.events)
+    assert result.stderr.strip() == f"tl3_workers: {phase} failed"
+
+
+@pytest.mark.parametrize("proposal,files", [
+    (LEAF, {"greeting.py": 3, "tests/test_greeting.py": 0}),
+    (SPLIT, {"greeting.py": 3, "new/api.py": 0}),
+    (CANT_MEET, {}),
+    ({**CANT_MEET, "files": ["greeting.py"]}, {"greeting.py": 3}),
+])
+def test_each_reply_has_code_forecast(tmp_path, planner_request, proposal, files):
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]["reply"]
+    assert result.events == [
+        {"event": "progress", "unit": "model_turn"},
+        {"event": "reply", "role": "planner", "reply": reply},
+    ]
+    assert reply == {**proposal, "forecast": {
+        "tokenizer": "o200k_base", "brief_tokens": 2, "file_tokens": files,
+        "overhead_tokens": 60, "tokens": 62 + sum(files.values()),
+        "fit_tokens": 100000, "context_tokens": 150000, "fits": True,
+    }}
+    validate("planner-reply", reply)
+
+
+@pytest.mark.parametrize("limit,fits", [(66, True), (65, False), (64, False)])
+def test_fit_boundary_uses_config(tmp_path, planner_request, limit, fits):
+    planner_request["inputs"]["forecast"]["fit_tokens"] = limit
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    forecast = result.events[-1]["reply"]["forecast"]
+    assert forecast["tokens"] == 65
+    assert forecast["fits"] is fits
+    assert forecast["fit_tokens"] == limit
+
+
+def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, planner_request):
+    content = ("こんにちは 🌍 <|endoftext|>\r\n" * 700) + "last line"
+    path = tmp_path / "worktree/greeting.py"
+    path.write_bytes(content.encode())
+    planner_request["inputs"]["ingest"]["brief"] = "<|endoftext|>"
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert result.exit_code == 0, result.stderr
+    forecast = result.events[-1]["reply"]["forecast"]
+    encoding = tiktoken.get_encoding("o200k_base")
+    assert forecast["file_tokens"]["greeting.py"] == len(encoding.encode_ordinary(content))
+    assert forecast["brief_tokens"] == len(encoding.encode_ordinary("<|endoftext|>"))
+
+
+@pytest.mark.parametrize("change", [
+    {"checks": []},
+    {"checks": [LEAF["checks"][0]]},
+    {"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]},
+    {"checks": [{**LEAF["checks"][0], "goal_ids": []}]},
+    {"checks": [{**LEAF["checks"][0], "node_ids": []}]},
+    {"checks": [{**LEAF["checks"][0], "kind": "guess"}]},
+    {"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]},
+    {"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]},
+    {"files": []},
+    {"files": ["greeting.py", "greeting.py"]},
+    {"no_design_questions": False},
+    {"lands_on_its_own": False},
+])
+def test_invalid_leaf_never_leaves_worker(tmp_path, planner_request, change):
+    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, **change}))
+
+
+@pytest.mark.parametrize("path", [
+    "../outside.py", "/etc/passwd", "new/../../outside.py", "new/../outside.py",
+    "new\\outside.py", ".git/config", "new/.git/config", "./greeting.py",
+    "new//file.py", "greeting.py/", ".", "bad\x00path",
+])
+def test_declared_paths_are_confined(tmp_path, planner_request, path):
+    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
+
+
+@pytest.mark.parametrize("link_kind", ["file", "directory", "dangling", "hard", "fifo", "directory_file"])
+def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("fixture only")
+    target = tmp_path / "worktree/unsafe"
+    path = "unsafe"
+    if link_kind == "file":
+        target.symlink_to(outside / "secret.py")
+    elif link_kind == "directory":
+        target.symlink_to(outside, target_is_directory=True)
+        path += "/new.py"
+    elif link_kind == "dangling":
+        target.symlink_to(outside / "missing.py")
+    elif link_kind == "hard":
+        os.link(outside / "secret.py", target)
+    elif link_kind == "fifo":
+        os.mkfifo(target)
+    else:
+        target.mkdir()
+    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
+
+
+@pytest.mark.parametrize("proposal", [
+    {**SPLIT, "pieces": SPLIT["pieces"][:1]},
+    {**SPLIT, "reason": "convenience"},
+    {**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]},
+    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]},
+    {**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]},
+    {**CANT_MEET, "report": ""},
+    {**CANT_MEET, "files": ["../escape"]},
+])
+def test_invalid_alternatives_never_leave_worker(tmp_path, planner_request, proposal):
+    assert_rejected(run_reply(tmp_path, planner_request, proposal))
+
+
+def test_model_cannot_supply_its_own_forecast(tmp_path, planner_request):
+    good = run_reply(tmp_path, planner_request, LEAF)
+    assert good.exit_code == 0, good.stderr
+    forged = good.events[-1]["reply"]
+    assert_rejected(run_reply(tmp_path, planner_request, forged))
+
+
+@pytest.mark.parametrize("change", [
+    {"fit_tokens": 150000}, {"context_tokens": 0}, {"fit_tokens": 0},
+    {"overhead_tokens": {}}, {"overhead_tokens": {"making": -1}},
+])
+def test_invalid_config_is_rejected(tmp_path, planner_request, change):
+    planner_request["inputs"]["forecast"].update(change)
+    phase = "run" if change == {"fit_tokens": 150000} else "request"
+    assert_rejected(run_reply(tmp_path, planner_request, LEAF), phase)
+
+
+def test_early_ingest_end_is_not_plannable(tmp_path, planner_request):
+    planner_request["inputs"]["ingest"] = {
+        "kind": "early_end", "outcome": "duplicate", "reason": "Another request covers it.",
+    }
+    assert_rejected(run_reply(tmp_path, planner_request, LEAF), "request")
+
+
+def test_read_only_tools_through_protocol(tmp_path, planner_request):
+    calls = [
+        {"name": name, "args": args, "id": name, "type": "tool_call"}
+        for name, args in [
+            ("list", {}), ("read", {"path": "greeting.py"}),
+            ("glob", {"pattern": "*.py"}), ("grep", {"pattern": "hello"}),
+            ("write", {"path": "forbidden.py", "content": "no"}),
+            ("edit", {"path": "greeting.py", "old": "hello", "new": "changed"}),
+        ]
+    ]
+    result = run_reply(tmp_path, planner_request, copy.deepcopy(LEAF), calls)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[:-1] == [
+        {"event": "progress", "unit": "model_turn"},
+        *[{"event": "progress", "unit": "tool_result"} for _ in calls],
+        {"event": "progress", "unit": "model_turn"},
+    ]
+    assert not (tmp_path / "worktree/forbidden.py").exists()
+    assert (tmp_path / "worktree/greeting.py").read_text() == "hello world\n"
+    assert result.events[-1]["reply"]["forecast"]["file_tokens"]["greeting.py"] == 3

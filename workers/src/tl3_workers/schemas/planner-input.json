@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/planner-input.json",
+  "type": "object",
+  "properties": {
+    "ingest": {
+      "allOf": [
+        {
+          "$ref": "ingest-reply.json"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "brief"
+            }
+          }
+        }
+      ]
+    },
+    "forecast": {
+      "type": "object",
+      "properties": {
+        "fit_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "overhead_tokens": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Named overhead constants from controller config, summed by code."
+        }
+      },
+      "required": [
+        "fit_tokens",
+        "context_tokens",
+        "overhead_tokens"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ingest",
+    "forecast"
+  ],
+  "additionalProperties": false
+}
