@@ -71,10 +71,28 @@ fn any_world(phase: Option<Phase>) -> World {
     world
 }
 
-/// Any world at rest, where events arrive.
+/// Clone the two-node fixture through an array. Vec<Node>::clone takes the
+/// element-by-element heap path once Node loses Copy, which costs Kani much
+/// more than constructing the fixed-size fixture's storage in one go.
+fn clone_world(world: &World) -> World {
+    assert_eq!(world.nodes.len(), 2);
+    World {
+        nodes: Vec::from([world.nodes[0].clone(), world.nodes[1].clone()]),
+        gates: world.gates.clone(),
+        pool_capacity: world.pool_capacity,
+        next_ticket: world.next_ticket,
+        next_question: world.next_question,
+    }
+}
+
+/// Any world at rest, where events arrive. Probe the two nodes just as
+/// World::is_settled does, using the fixed-size fixture clone.
 fn any_settled_world(phase: Option<Phase>) -> World {
     let world = any_world(phase);
-    kani::assume(world.is_settled());
+    let mut probe = clone_world(&world);
+    let mut out = Outbox::new();
+    kani::assume(!advance(&mut probe, 0, &mut out));
+    kani::assume(!advance(&mut probe, 1, &mut out));
     world
 }
 
@@ -172,22 +190,26 @@ fn check_effect(before: Option<&Node>, n: &Node, seq: u64, kind: EffectKind, hea
 /// Applying one event keeps the world consistent and keeps every rule.
 fn check_apply(event: Event) {
     let before = any_settled_world(None);
-    let mut after = before.clone();
+    let mut after = clone_world(&before);
     let mut out = Outbox::new();
-    apply(&mut after, event.clone(), &mut out);
-    // Not vacuous: some world in the bounds is one this event changes.
-    kani::cover!(after != before, "the event changes the world");
-    require_consistent(&after);
-    check_nodes(&before, &after);
-    let exempt = match event {
+    let exempt = match &event {
         Event::Ack { node, .. } => node.index(),
         Event::Command { node, command: Command::Resume, .. } => node.index(),
         _ => None,
     };
+    let answered = match &event {
+        Event::Command { command: Command::Answer { question, .. }, .. } => Some(*question),
+        _ => None,
+    };
+    apply(&mut after, event, &mut out);
+    // Not vacuous: some world in the bounds is one this event changes.
+    kani::cover!(after != before, "the event changes the world");
+    require_consistent(&after);
+    check_nodes(&before, &after);
     check_outputs(&before, &after, &out, exempt);
     // Each of Rob's answers applies only to the question it names, and only
     // once: anything it changes closes that question.
-    if let Event::Command { command: Command::Answer { question, .. }, .. } = event {
+    if let Some(question) = answered {
         let mut unchanged = before.nodes[0].clone();
         unchanged.last_cmd = after.nodes[0].last_cmd;
         if after.nodes[0] != unchanged {
@@ -203,7 +225,7 @@ fn check_apply(event: Event) {
 fn check_advance(phase: Phase, moves: bool) {
     let before = any_world(Some(phase));
     let rank = before.nodes[0].settle_rank();
-    let mut after = before.clone();
+    let mut after = clone_world(&before);
     let mut out = Outbox::new();
     let changed = advance(&mut after, 0, &mut out);
     // Not vacuous: settle takes a transition from this phase, or, for a phase
@@ -234,7 +256,7 @@ fn check_witness(phase: Phase) {
     if let Some(event) = event {
         let mut after = world;
         let mut out = Outbox::new();
-        apply(&mut after, event.clone(), &mut out);
+        apply(&mut after, event, &mut out);
         assert!(after.measure() < before);
     }
 }
@@ -357,9 +379,9 @@ fn check_pr_merged(phase: Phase) {
     kani::assume(head.0 < 8);
     let checks_passed: bool = kani::any();
     let event = fact(Fact::PrMerged { head, checks_passed });
-    let mut after = before.clone();
+    let mut after = clone_world(&before);
     let mut out = Outbox::new();
-    apply(&mut after, event.clone(), &mut out);
+    apply(&mut after, event, &mut out);
     kani::cover!(after != before, "the merge changes the world");
     require_consistent(&after);
     check_nodes(&before, &after);

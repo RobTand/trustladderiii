@@ -35,7 +35,10 @@ Scenarios exercise 300-file sets, high IDs, extensions and file locking across r
 
 The first implementation used a sorted vector for every footprint. Both `advance_ready` and `pr_merged_queued` exhausted a 10 GiB reservation.
 The hybrid set removes those file allocations from the bounded proofs. `Node` still loses `Copy`, so cloning the world also costs Kani more.
-Both hybrid probes also exhausted 10 GiB. The PR records completed measurements and the action keys for the probes.
+Both hybrid probes also exhausted 10 GiB.
+The proof fixtures now clone their two nodes through a fixed array. They probe settle with that clone, using the same `advance` function.
+This avoids `Vec<Node>::clone`'s element-by-element construction while preserving the same arbitrary starting worlds and assertions.
+The PR records completed measurements and the action keys for the probes.
 
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
