@@ -3,7 +3,7 @@
 from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
-from tl3_workers.forecast import measure
+from tl3_workers.forecast import Forecaster
 from tl3_workers.tools import _parts
 
 
@@ -62,7 +62,8 @@ def check_reply(inputs, reply):
             if any(PurePosixPath(path).full_match(pattern) for pattern in inputs["protected_paths"]):
                 violations.append(f"Declared file matches a protected path: {path}")
 
-    forecast = measure(inputs["ingest"]["brief"], paths, inputs["forecast"])
+    forecaster = Forecaster(inputs["forecast"])
+    forecast = forecaster.measure(inputs["ingest"]["brief"], paths)
     if reply["kind"] == "leaf" and not forecast["fits"]:
         violations.append("The leaf forecast does not fit. Propose smaller pieces.")
     if reply["kind"] == "split":
@@ -74,7 +75,7 @@ def check_reply(inputs, reply):
         if reason == "does_not_fit" and forecast["fits"]:
             violations.append("The forecast fits. Splitting needs a permitted reason.")
         for piece in reply["pieces"]:
-            child = measure(piece["brief"], piece["files"], inputs["forecast"])
+            child = forecaster.measure(piece["brief"], piece["files"])
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
     reply["forecast"] = forecast

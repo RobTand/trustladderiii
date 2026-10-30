@@ -344,7 +344,11 @@ fn progress(value: &Value) -> bool {
         && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result"))
 }
 
-pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observation> {
+pub(super) fn parse_reply(
+    bytes: &[u8],
+    delivery: &Delivery,
+    inputs: &Value,
+) -> Result<Observation> {
     if !bytes.ends_with(b"\n") {
         return Err(Error::Invalid("incomplete worker output"));
     }
@@ -371,6 +375,7 @@ pub(super) fn parse_reply(bytes: &[u8], delivery: &Delivery) -> Result<Observati
             return Err(Error::Invalid("invalid worker event"));
         }
         protocol::map_reply(role, &value["reply"])?;
+        protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         reply = Some(value["reply"].clone());
     }
     Ok(Observation::WorkerReply {
