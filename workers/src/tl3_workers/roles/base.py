@@ -12,3 +12,4 @@ class Role:
     reply_schema: str
     tools: Mapping[str, str] = field(default_factory=dict)
     check_reply: Callable[[dict, dict], None] | None = None
+    run: Callable[[object, dict, object, Callable[[dict], None]], dict] | None = None

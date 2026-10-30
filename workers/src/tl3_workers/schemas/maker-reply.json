@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-reply.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {"const": "done"},
+        "head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "description": "Added by worker code. The model must omit this field."},
+        "self_check": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {"goal_id": {"$ref": "#/$defs/text"}, "status": {"const": "met"}, "evidence": {"$ref": "#/$defs/text"}},
+                "required": ["goal_id", "status", "evidence"], "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {"goal_id": {"$ref": "#/$defs/text"}, "status": {"const": "not_met"}, "why": {"$ref": "#/$defs/text"}},
+                "required": ["goal_id", "status", "why"], "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": ["kind", "self_check", "head"], "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {"const": "needs_files"},
+        "files": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "properties": {"path": {"$ref": "#/$defs/text"}, "why": {"$ref": "#/$defs/text"}},
+            "required": ["path", "why"], "additionalProperties": false
+          }
+        }
+      },
+      "required": ["kind", "files"], "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {"kind": {"const": "cant_meet"}, "report": {"$ref": "#/$defs/text"}},
+      "required": ["kind", "report"], "additionalProperties": false
+    },
+    {
+      "type": "object", "properties": {"kind": {"const": "out_of_room"}},
+      "required": ["kind"], "additionalProperties": false
+    }
+  ],
+  "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S"}}
+}
