@@ -709,6 +709,8 @@ fn restart_after_replan(settings: &tl3_config::Store) {
 pub(super) fn run(database: &mut Database) {
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));
     println!("test maker_outside_paths_bounded ... ok");
+    real::recorded_failure_feedback(&database.create("maker_recorded_failure"));
+    println!("test maker_recorded_pytest_message_reaches_fix_round ... ok");
     real::acceptance(&database.create("maker_real_worktrees"));
     println!("test maker_real_worktrees_and_recorded_harness ... ok");
     for new_edits in [false, true] {

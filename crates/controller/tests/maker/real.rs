@@ -161,14 +161,16 @@ impl Flow {
     }
 }
 
-pub(super) fn acceptance(settings: &tl3_config::Store) {
+fn recorded_trial(prefix: &str) -> Value {
     use sha2::{Digest, Sha256};
     let records = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/maker/records");
     let receipt: Value =
-        serde_json::from_slice(&fs::read(records.join("receipt.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(records.join(format!("{prefix}receipt.json"))).unwrap())
+            .unwrap();
     let terminal: Value =
-        serde_json::from_slice(&fs::read(records.join("terminal.json")).unwrap()).unwrap();
-    let payload = fs::read(records.join("result.log")).unwrap();
+        serde_json::from_slice(&fs::read(records.join(format!("{prefix}terminal.json"))).unwrap())
+            .unwrap();
+    let payload = fs::read(records.join(format!("{prefix}result.log"))).unwrap();
     assert_eq!(receipt["action_key"], terminal["action_key"]);
     assert_eq!(terminal["exit_code"], 0);
     assert_eq!(
@@ -180,12 +182,16 @@ pub(super) fn acceptance(settings: &tl3_config::Store) {
         receipt["result"]["sha256"],
         format!("{:x}", Sha256::digest(&payload))
     );
-    let record = String::from_utf8(payload)
+    String::from_utf8(payload)
         .unwrap()
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|value| value["verification"] == "passed" && value.get("maker_trial").is_some())
-        .expect("recorded maker-to-harness result");
+        .expect("recorded maker-to-harness result")
+}
+
+pub(super) fn acceptance(settings: &tl3_config::Store) {
+    let record = recorded_trial("");
     let report = &record["report"][0];
     assert_eq!(report["verdict"], "pass");
     assert_eq!(report["kind"], "demonstrating");
@@ -410,4 +416,36 @@ pub(super) fn outside_paths_bounded(settings: &tl3_config::Store) {
     flow.until(|phase| phase == Phase::Checking);
     let runs = requests(&flow.config);
     assert_eq!(runs.last().unwrap()["inputs"]["feedback"][0], *finding);
+}
+
+pub(super) fn recorded_failure_feedback(settings: &tl3_config::Store) {
+    let record = recorded_trial("failure-");
+    let results = &record["failure_report"];
+    let message = results[0]["tests"][0]["message"].as_str().unwrap();
+    assert!(message.contains("goodbye") && message.contains("hello"));
+    assert_eq!(results[0]["verdict"], "fail");
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start(settings, root.path());
+    let current = flow.record();
+    assert_eq!(current["blobs"], record["maker_trial"]["blobs"]);
+    let queue = root.path().join("fakes/checks/queue");
+    fs::write(queue.join("mode"), "check_fail").unwrap();
+    fs::write(
+        queue.join("recorded_results.json"),
+        serde_json::to_vec(results).unwrap(),
+    )
+    .unwrap();
+    flow.until(|phase| phase == Phase::Making);
+    let findings = Store::open(settings)
+        .unwrap()
+        .worker_document("0", "maker_findings")
+        .unwrap()
+        .unwrap();
+    assert_eq!(findings[0]["failed_tests"][0]["message"], message);
+    flow.until(|phase| phase == Phase::Checking);
+    let runs = requests(&flow.config);
+    assert_eq!(
+        runs.last().unwrap()["inputs"]["feedback"][0]["failed_tests"][0]["message"],
+        message
+    );
 }
