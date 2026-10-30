@@ -236,6 +236,11 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--r3") {
+        external_wait_survives_restart(&database.create("workers_r3_wait"));
+        database.stop();
+        return;
+    }
     quota_resumes_same_operation(&database.create("workers_quota"));
     println!("test announced_quota_resumes_same_operation_without_failure ... ok");
     clock_stops_stalled_worker(&database.create("workers_stall"));
@@ -1768,6 +1773,18 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
         "a declaration is not agent progress"
     );
     let before = store.worker_progress(None).unwrap();
+    let run = &before[0];
+    let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
+    let record_path = root
+        .path()
+        .join(format!("queue/claimed/{}.json", waits::key()));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["checkout_snapshot"]["parent"] = json!(waits::bind(
+        root.path(),
+        &config.workers.runs.join(&encoded).join("worktree")
+    ));
+    fs::write(record_path, record.to_string()).unwrap();
     c.look_now().unwrap();
     drop(c);
     drop(source);
@@ -1778,7 +1795,29 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     assert!(rx.try_recv().is_err(), "replaying a wait is not progress");
     clock.0.set(1_000_000);
     c.look_due().unwrap();
-    assert_eq!(c.world().unwrap().nodes[0].run_failures, 0);
+    while c.drive_once().unwrap() {}
+    assert_eq!(
+        c.world().unwrap().nodes[0].run_failures,
+        0,
+        "claimed action survives after driving RunFailed"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.value["stopping"] == true),
+        "claimed action never enters stop_stalled"
+    );
+    assert!(
+        !config
+            .workers
+            .runs
+            .join(&encoded)
+            .join("cancel.json")
+            .exists(),
+        "claimed action has no stop intent"
+    );
     waits::record(root.path(), "done");
     c.look_now().unwrap();
     clock.0.set(1_003_000);

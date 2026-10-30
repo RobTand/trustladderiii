@@ -23,6 +23,9 @@ fn main() {
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
         ),
+        ("wait_clears_on_progress", wait_clears_on_progress),
+        ("wait_resets_on_attempt", wait_resets_on_attempt),
+        ("wait_resets_on_generation", wait_resets_on_generation),
         ("all_effect_transitions", all_effect_transitions),
         ("credit_and_interning", credit_and_interning),
         ("concurrent_writers", concurrent_writers),
@@ -36,6 +39,9 @@ fn main() {
         ("ingress_retirement", ingress_retirement),
     ];
     for (name, test) in &cases {
+        if args.get(1).is_some_and(|s| s == "--r3") && !name.starts_with("wait_") {
+            continue;
+        }
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
@@ -907,4 +913,87 @@ fn ingress_retirement(settings: &tl3_config::Store) {
     store.register_ingress_translators(&[]).unwrap();
     store.consume_ingress(sequence).unwrap();
     assert!(store.ingress_after(0).unwrap().is_empty());
+}
+
+fn declared_wait(store: &mut Store, key: &str) -> ExternalWait {
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker(key, "0", epoch, 1).unwrap();
+    let wait = ExternalWait {
+        upstream: "prismabuild".into(),
+        key: "a".repeat(64),
+    };
+    store
+        .record_worker_progress(key, 1, 10, "external_wait", Some(&wait))
+        .unwrap();
+    assert_eq!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .find(|r| r.key == key)
+            .unwrap()
+            .external_wait
+            .as_ref(),
+        Some(&wait)
+    );
+    wait
+}
+fn wait_clears_on_progress(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "run:1");
+    store
+        .record_worker_progress("run:1", 1, 20, "tool_result", None)
+        .unwrap();
+    let row = store.worker_progress(None).unwrap().remove(0);
+    assert!(row.external_wait.is_none(), "own progress clears a wait");
+    assert_eq!(row.unit, "tool_result");
+    assert!(row.last_progress_ms.is_some());
+}
+fn wait_resets_on_attempt(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "run:1");
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("run:1", "0", epoch, 2).unwrap();
+    let row = store.worker_progress(None).unwrap().remove(0);
+    assert!(row.external_wait.is_none(), "new attempt clears a wait");
+    assert_eq!(row.output_offset, 0);
+    assert_eq!(row.attempt, 2);
+    store
+        .record_worker_progress(
+            "run:1",
+            1,
+            30,
+            "external_wait",
+            Some(&ExternalWait {
+                upstream: "prismabuild".into(),
+                key: "b".repeat(64),
+            }),
+        )
+        .unwrap();
+    assert!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .remove(0)
+            .external_wait
+            .is_none(),
+        "old attempt cannot restore its wait"
+    );
+}
+fn wait_resets_on_generation(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    declared_wait(&mut store, "effect:0:1");
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("effect:0:2", "0", epoch, 1).unwrap();
+    assert!(
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .find(|r| r.key == "effect:0:2")
+            .unwrap()
+            .external_wait
+            .is_none(),
+        "new generation has no inherited wait"
+    );
 }

@@ -41,7 +41,50 @@ pub fn adapter(root: &Path) -> Adapter {
     .unwrap()
 }
 
+pub fn bind(root: &Path, checkout: &Path) -> String {
+    use std::process::Command;
+    fs::create_dir_all(checkout).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(checkout)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    };
+    if !checkout.join(".git").exists() {
+        git(&["init", "--quiet", "--template=", "-b", "main"]);
+        git(&[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            &checkout.display().to_string(),
+        ]);
+    }
+    let parent = git(&["rev-parse", "HEAD"]);
+    fs::write(root.join("wait-parent"), &parent).unwrap();
+    parent
+}
+
 pub fn record(root: &Path, state: &str) {
+    let parent = fs::read_to_string(root.join("wait-parent"))
+        .unwrap_or_else(|_| bind(root, &root.join("worktree")));
     for slot in ["ready", "claimed", "done", "failed", "withdrawn"] {
         let _ = fs::remove_file(
             root.join("queue")
@@ -55,7 +98,7 @@ pub fn record(root: &Path, state: &str) {
     let terminal = matches!(state, "done" | "failed" | "withdrawn");
     let record = serde_json::json!({
         "schema": if terminal { "prismaquant.prismabuild.pool_outcome.v1" } else { "prismaquant.prismabuild.pool_item.v1" },
-        "action_key": key(), "published_unix": 100,
+        "action_key": key(), "published_unix": 100, "checkout_root": root.join("worktree"), "checkout_snapshot": {"parent":parent},
         "status": if state == "done" { "executed" } else { "lease_lost" },
         "detail": {"returncode":0},
     });

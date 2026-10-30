@@ -1534,6 +1534,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--r3") {
+        declared_wait_uses_bell();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--kill-child") {
         let root = Path::new(&args[2]);
         let delivery: Delivery =
@@ -1547,6 +1551,7 @@ fn main() {
         }
     }
     for (name, test) in [
+        ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
         ("recorded_endings", recorded_endings as fn()),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
@@ -1605,4 +1610,35 @@ fn main() {
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
     println!("22 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+}
+
+fn declared_wait_uses_bell() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    let key: tl3_prismabuild::ActionKey = "a".repeat(64).parse().unwrap();
+    let wait = tl3_store::ExternalWait {
+        upstream: "prismabuild".into(),
+        key: key.to_string(),
+    };
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    adapter.watch_wait(&delivery, Some(&wait)).unwrap();
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    assert!(
+        waiting.line.contains(key.as_str()),
+        "the declared key is in the bell's awaited set"
+    );
+    while receiver.try_recv().is_ok() {}
+    finish(root.path(), key.as_str(), "done");
+    waiting.reply(1, serde_json::json!([{"seq":1, "dir":"done", "key":key}]));
+    assert!(
+        receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "one ending wakes its declaring allowance"
+    );
+    assert!(receiver.try_recv().is_err(), "one event causes one look");
+    adapter.watch_wait(&delivery, None).unwrap();
+    drop(running);
 }

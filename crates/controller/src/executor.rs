@@ -195,6 +195,13 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn watch_wait(
+        &mut self,
+        _delivery: &Delivery,
+        _wait: Option<&tl3_store::ExternalWait>,
+    ) -> Result<()> {
+        todo!("subscribe declared waits to PrismaBuild bell")
+    }
     fn wait_record(&mut self, _key: &str) -> Result<WaitRecord> {
         Ok(WaitRecord::Pending)
     }

@@ -951,7 +951,43 @@ fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     assert_eq!(c.snapshot().unwrap(), before);
 }
 fn main() {
+    // These run in the normal suite as well as the focused red action.
+    if std::env::args().any(|s| s == "--r3") {
+        let mut db = support::Database::start();
+        let mut failed = 0;
+        for name in [
+            "missing_wait",
+            "unknown_owner",
+            "foreign_wait",
+            "unreadable_wait",
+            "quiet_wait",
+            "github_due",
+        ] {
+            let settings = db.create(name);
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| r3(&settings, name)))
+                .is_err()
+            {
+                eprintln!("R3 {name}: FAIL");
+                failed += 1;
+            } else {
+                println!("R3 {name}: PASS");
+            }
+        }
+        db.stop();
+        assert_eq!(failed, 0, "R3 regression failures");
+        return;
+    }
     let mut db = support::Database::start();
+    for name in [
+        "missing_wait",
+        "unknown_owner",
+        "foreign_wait",
+        "unreadable_wait",
+        "quiet_wait",
+        "github_due",
+    ] {
+        r3(&db.create(name), name);
+    }
     worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
     println!("test worker_look_does_not_read_github_deliveries ... ok");
     declared_maker_wait(&db.create("maker_wait_ended"), "done");
@@ -992,6 +1028,7 @@ fn main() {
 struct WaitingMaker {
     fake: adapters::workers::Fake,
     stops: Rc<Cell<u32>>,
+    owner: String,
 }
 impl WaitingMaker {
     fn maker(d: &Delivery) -> bool {
@@ -1022,7 +1059,7 @@ impl Executor for WaitingMaker {
     fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
         if Self::maker(d) {
             Ok(Look::Waiting(tl3_store::ExternalWait {
-                upstream: "prismabuild".into(),
+                upstream: self.owner.clone(),
                 key: waits::key(),
             }))
         } else {
@@ -1055,6 +1092,7 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
             WaitingMaker {
                 fake: adapters::workers::Fake::new(root.path()),
                 stops: stops.clone(),
+                owner: "prismabuild".into(),
             },
         );
         registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
@@ -1167,4 +1205,164 @@ fn worker_look_does_not_read_github_deliveries(settings: &tl3_config::Store) {
         2,
         "explicit gap recovery still reads deliveries"
     );
+}
+
+fn r3(settings: &tl3_config::Store, case: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let stops = Rc::new(Cell::new(0));
+    let reads = Rc::new(Cell::new(0));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        WaitingMaker {
+            fake: adapters::workers::Fake::new(root.path()),
+            stops: stops.clone(),
+            owner: if case == "unknown_owner" {
+                "token_grant"
+            } else {
+                "prismabuild"
+            }
+            .into(),
+        },
+    );
+    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    registry.register(
+        Upstream::GitHub,
+        DeliveryCounter {
+            fake: adapters::github::Fake::new(root.path()),
+            reads: reads.clone(),
+        },
+    );
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    c.set_allowances(allowances());
+    waits::record(root.path(), "claimed");
+    if case == "missing_wait" {
+        waits::record(root.path(), "missing");
+    }
+    if case == "foreign_wait" {
+        let file = root
+            .path()
+            .join(format!("queue/claimed/{}.json", waits::key()));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        value["checkout_snapshot"]["parent"] =
+            serde_json::json!(waits::bind(root.path(), &root.path().join("foreign")));
+        std::fs::write(file, value.to_string()).unwrap();
+    }
+    if case == "unreadable_wait" {
+        std::fs::write(
+            root.path()
+                .join(format!("queue/claimed/{}.json", waits::key())),
+            "broken JSON",
+        )
+        .unwrap();
+    }
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    if case == "github_due" {
+        // A held GitHub write leaves a due GitHub allowance; no forced look.
+        let mut snapshot = c.snapshot().unwrap();
+        let mut store = Store::open(settings).unwrap();
+        let mut change = tl3_store::Commit::new("github-due", serde_json::json!(null), &snapshot);
+        let delivery: Delivery = serde_json::from_value(
+            store
+                .effects()
+                .unwrap()
+                .into_iter()
+                .find(|e| {
+                    serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
+                        tl3_controller::executor::upstream(d.output) == Upstream::GitHub
+                    })
+                })
+                .unwrap()
+                .payload,
+        )
+        .unwrap();
+        let mut value = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances")
+            .unwrap()
+            .value
+            .clone();
+        value["delivery"] = serde_json::to_value(&delivery).unwrap();
+        value["due_ms"] = serde_json::json!(clock.0.get());
+        change.rows.push(tl3_store::RowChange::Put {
+            table: "allowances".into(),
+            id: delivery.key,
+            value,
+        });
+        store.commit(&change).unwrap();
+        snapshot = c.snapshot().unwrap();
+        assert!(!snapshot.rows.iter().any(|r| r.table == "delivery_looks"));
+        c.look_due().unwrap();
+        assert_eq!(
+            reads.get(),
+            1,
+            "a due GitHub allowance reads its delivery log"
+        );
+        return;
+    }
+    c.look_now().unwrap();
+    if case == "quiet_wait" {
+        // Count real opens of the action record rather than mocking wait_record.
+        use rustix::fs::inotify;
+        let fd = inotify::init(inotify::CreateFlags::NONBLOCK).unwrap();
+        inotify::add_watch(
+            &fd,
+            root.path()
+                .join(format!("queue/claimed/{}.json", waits::key())),
+            inotify::WatchFlags::OPEN,
+        )
+        .unwrap();
+        let before = c.snapshot().unwrap();
+        for _ in 0..4 {
+            clock.advance(120);
+            c.look_due().unwrap();
+            drain(&mut c);
+        }
+        let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 4096];
+        let mut reader = inotify::Reader::new(&fd, &mut buffer);
+        let mut opens = 0;
+        while reader.next().is_ok() {
+            opens += 1;
+        }
+        assert_eq!(opens, 0, "a claimed wait has no timed PrismaBuild reads");
+        assert_eq!(
+            c.snapshot().unwrap(),
+            before,
+            "a claimed wait has no timed store commits"
+        );
+        return;
+    }
+    clock.advance(3);
+    c.look_due().unwrap();
+    drain(&mut c);
+    clock.advance(3);
+    c.look_due().unwrap();
+    drain(&mut c);
+    if case == "unreadable_wait" {
+        assert_eq!(stops.get(), 0, "read errors do not authorize a stop");
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents" && r.value["open"] == true)
+        );
+    } else {
+        assert_eq!(stops.get(), 1, "an invalid wait must not protect the maker");
+        assert_eq!(
+            c.world().unwrap().nodes[0].run_failures,
+            1,
+            "failure is checked after driving"
+        );
+    }
 }
