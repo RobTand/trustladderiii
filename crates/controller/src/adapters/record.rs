@@ -56,6 +56,10 @@ impl Records {
     }
     pub fn deliver(&self, delivery: &Delivery, completion: Completion) -> Result<Completion> {
         self.fence(delivery.epoch)?;
+        self.remember(delivery, completion)
+    }
+
+    pub fn remember(&self, delivery: &Delivery, completion: Completion) -> Result<Completion> {
         let path = self.path(&delivery.key);
         let mut record = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Record>(&bytes)?,

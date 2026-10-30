@@ -526,6 +526,7 @@ fn ignored_events(settings: &tl3_config::Store) {
                 .is_empty()
         );
     }
+    api.state.lock().unwrap().checks = fixture("failed", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
     body["check_suite"] =
@@ -564,6 +565,7 @@ fn ignored_events(settings: &tl3_config::Store) {
             .unwrap()
             .is_empty()
     );
+    api.state.lock().unwrap().checks = fixture("running", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("checks_requested");
     body["merge_group"] = json!({"head_sha":"draft-head","head_ref":"gh-readonly-queue/main/pr-100","base_ref":"refs/heads/main"});
@@ -693,6 +695,12 @@ fn executor_recovery() {
         adapter.reconcile(&delivery).unwrap(),
         Reconciliation::Found(_)
     ));
+    assert_eq!(api.state.lock().unwrap().posts, posts + 1);
+    api.state.lock().unwrap().label = false;
+    api.state.lock().unwrap().checks = fixture("waiting", "checks");
+    drop(adapter);
+    let mut adapter = api.adapter(root.path(), 2);
+    assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
     assert_eq!(api.state.lock().unwrap().posts, posts + 1);
     delivery.epoch = 1;
     drop(adapter);

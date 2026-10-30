@@ -280,6 +280,14 @@ impl Executor for Adapter {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // Reads retain the original effect's epoch, including after a controller upgrade.
         match self.completion(delivery) {
+            Ok(Reconciliation::Found(completion)) => {
+                if !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_)) {
+                    // This receipt writes no upstream state and may name an older epoch.
+                    self.records
+                        .remember(delivery, Completion::confirmed(vec![]))?;
+                }
+                Ok(Reconciliation::Found(completion))
+            }
             Ok(result) => Ok(result),
             Err(_) => Ok(Reconciliation::Pending),
         }
