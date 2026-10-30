@@ -158,8 +158,10 @@ Each adapter's ticket extends `Delivery` with the fields it needs, such as
 issue text in #10 and branch and PR text in #13. Those fields are not added
 speculatively here.
 
-`adapters::simulation` is currently the only registry builder, and `tl3d`
-requires `--simulate`. A test can replace one entry while keeping the other fakes:
+`adapters::simulation` builds the fake registry. `simulation_with_workers`
+replaces ingest and audit with supervised Python and returns its output source.
+`tl3d` requires `--simulate` until #10 registers sources in the shared ingress
+loop. A test can replace one entry while keeping the other fakes:
 
 ```rust
 let mut registry = adapters::simulation(fake_records)?;
@@ -177,7 +179,8 @@ older writes after an adapter restart. Reconciliation can read earlier epochs.
 They survive controller process death. They represent upstream records, not a
 replacement for Postgres. They cover every effect kind, including rebase and
 teardown. A fake queue receipt supplies a merge fact independently of its enqueue
-acknowledgement. Production GitHub ingress and the remaining live clients stay with their tickets.
+acknowledgement. Production GitHub ingress and the remaining live clients stay
+with their tickets.
 
 ## Commands and verification
 
