@@ -588,3 +588,42 @@ gh_reference!(unicode_kelvin_lowercase_gh, "Kgh-5");
 gh_reference!(unicode_kelvin_uppercase_gh, "KGH-5");
 gh_reference!(unicode_long_s_lowercase_gh, "ſgh-5");
 gh_reference!(unicode_long_s_uppercase_gh, "ſGH-5");
+
+#[test]
+fn unicode_boundaries_preserve_own_numbers_code_and_unique_feedback() {
+    let policy = Policy {
+        own_issue: Some(12),
+        own_pull_request: Some(34),
+        ..Policy::default()
+    };
+    for prefix in ["ｏ", "a\u{200b}", "K", "ſ", "а", "ο", "a\u{301}"] {
+        for token in ["gh-12", "GH-34"] {
+            let text = format!("{prefix}{token}");
+            assert!(check_prose(&text, &policy).is_ok(), "{text}");
+        }
+        for token in ["@octocat", "gh-5", "GH-5"] {
+            let text = format!("{prefix}{token}");
+            let expected = if token.starts_with('@') {
+                Violation::Mention(token.into())
+            } else {
+                Violation::ForeignReference(token.into())
+            };
+            assert_eq!(check_prose(&text, &policy).unwrap_err(), vec![expected]);
+            for code in [
+                format!("`{text}`"),
+                format!("    {text}"),
+                format!("~~~\n{text}\n~~~"),
+            ] {
+                assert!(check_prose(&code, &policy).is_ok(), "{code}");
+            }
+        }
+    }
+    for (text, expected) in [
+        ("＠octocat", Violation::Mention("@octocat".into())),
+        ("ＧＨ-5", Violation::ForeignReference("GH-5".into())),
+        ("g\u{200b}h-5", Violation::ForeignReference("gh-5".into())),
+        ("а@octocat", Violation::Mention("@octocat".into())),
+    ] {
+        assert_eq!(check_prose(text, &policy).unwrap_err(), vec![expected]);
+    }
+}

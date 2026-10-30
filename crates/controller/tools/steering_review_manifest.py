@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("hosts", "workers", "workspace", "steering", "writer", "references"))
+parser.add_argument("suite", choices=("hosts", "workers", "workspace", "steering", "writer", "references", "unicode"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -17,7 +17,19 @@ env = {
     "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
-if args.suite == "references":
+if args.suite == "unicode":
+    command = "\n".join([
+        "set -euo pipefail",
+        "cargo test -p tl3-controller --test writer_references --test writer_quote --test github --locked",
+        "cargo test -p tl3-github --test messages --locked",
+        "cargo build -p tl3-controller --example tl3-deploy --locked",
+        'export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"',
+        "/home/rob/.local/bin/uv run --no-project --python 3.14+gil python tools/ci/check.py python",
+        "bash crates/controller/tools/verify.sh",
+    ])
+    rows = [{**common, "tags": [host], "argv": ["bash", "-c", command]}
+            for host in ("dl380g10", "sparky", "sparklina")]
+elif args.suite == "references":
     rows = [{**common, "tags": [host], "argv": ["bash", "-c", "cargo test -p tl3-controller --test writer_references --test writer_quote --test github --locked && cargo test -p tl3-github --test messages --locked"]}
             for host in ("dl380g10", "sparky", "sparklina")]
 elif args.suite == "steering":

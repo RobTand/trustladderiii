@@ -127,6 +127,14 @@ fn own_issue_and_pull_request_are_allowed_in_every_message_kind() {
             "_GH-12_",
             "*_GH-34_*",
             "__gh-12__",
+            "ｏgh-12",
+            "ｏGH-34",
+            "a\u{200b}gh-12",
+            "a\u{200b}GH-34",
+            "Kgh-12",
+            "KGH-34",
+            "ſgh-12",
+            "ſGH-34",
         ] {
             let mut writer = writer(text, false);
             assert!(
@@ -428,14 +436,54 @@ ordinary_ampersand!(research_ampersand_is_plain_prose, "R&D;");
 ordinary_ampersand!(questions_ampersand_is_plain_prose, "Q&A;");
 ordinary_ampersand!(company_ampersand_is_plain_prose, "AT&T;");
 
-rejection!(unicode_fullwidth_mention_in_every_message_kind, "ｏ@octocat", "@octocat");
-rejection!(unicode_zero_width_mention_in_every_message_kind, "a\u{200b}@octocat", "@octocat");
-rejection!(unicode_fullwidth_lowercase_gh_in_every_message_kind, "ｏgh-5", "gh-5");
-rejection!(unicode_fullwidth_uppercase_gh_in_every_message_kind, "ｏGH-5", "GH-5");
-rejection!(unicode_zero_width_lowercase_gh_in_every_message_kind, "a\u{200b}gh-5", "gh-5");
-rejection!(unicode_zero_width_uppercase_gh_in_every_message_kind, "a\u{200b}GH-5", "GH-5");
+rejection!(
+    unicode_fullwidth_mention_in_every_message_kind,
+    "ｏ@octocat",
+    "@octocat"
+);
+rejection!(
+    unicode_zero_width_mention_in_every_message_kind,
+    "a\u{200b}@octocat",
+    "@octocat"
+);
+rejection!(
+    unicode_fullwidth_lowercase_gh_in_every_message_kind,
+    "ｏgh-5",
+    "gh-5"
+);
+rejection!(
+    unicode_fullwidth_uppercase_gh_in_every_message_kind,
+    "ｏGH-5",
+    "GH-5"
+);
+rejection!(
+    unicode_zero_width_lowercase_gh_in_every_message_kind,
+    "a\u{200b}gh-5",
+    "gh-5"
+);
+rejection!(
+    unicode_zero_width_uppercase_gh_in_every_message_kind,
+    "a\u{200b}GH-5",
+    "GH-5"
+);
 
-rejection!(unicode_kelvin_lowercase_gh_in_every_message_kind, "Kgh-5", "gh-5");
-rejection!(unicode_kelvin_uppercase_gh_in_every_message_kind, "KGH-5", "GH-5");
-rejection!(unicode_long_s_lowercase_gh_in_every_message_kind, "ſgh-5", "gh-5");
-rejection!(unicode_long_s_uppercase_gh_in_every_message_kind, "ſGH-5", "GH-5");
+rejection!(
+    unicode_kelvin_lowercase_gh_in_every_message_kind,
+    "Kgh-5",
+    "gh-5"
+);
+rejection!(
+    unicode_kelvin_uppercase_gh_in_every_message_kind,
+    "KGH-5",
+    "GH-5"
+);
+rejection!(
+    unicode_long_s_lowercase_gh_in_every_message_kind,
+    "ſgh-5",
+    "gh-5"
+);
+rejection!(
+    unicode_long_s_uppercase_gh_in_every_message_kind,
+    "ſGH-5",
+    "GH-5"
+);

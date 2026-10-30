@@ -237,7 +237,7 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static GH_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|[^a-z0-9])(?P<reference>gh\\?-(?P<number>\d+))").unwrap()
+    Regex::new(r"(?i)(?:^|(?-i:[^a-zA-Z0-9]))(?P<reference>gh\\?-(?P<number>\d+))").unwrap()
 });
 
 static REFERENCE_URL: LazyLock<Regex> = LazyLock::new(|| {
@@ -270,7 +270,8 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
         }
     }
     // Complete UTF-8 ranges were replaced with ASCII spaces.
-    let prose = normalize(&String::from_utf8(prose).unwrap());
+    let original = String::from_utf8(prose).unwrap();
+    let prose = normalize(&original);
     let mut errors = Vec::new();
     // Entity syntax has its own feedback; its numeric payload is not an issue reference.
     let prose = HTML_ENTITY.replace_all(&prose, |capture: &regex::Captures<'_>| {
@@ -288,7 +289,12 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
         }
         " ".to_owned()
     });
-    for capture in MENTION.captures_iter(&prose) {
+    // GitHub sees Unicode boundaries before normalization can turn them into ASCII
+    // letters or strip them. Keep both passes, including normalization-only matches.
+    for capture in MENTION
+        .captures_iter(&original)
+        .chain(MENTION.captures_iter(&prose))
+    {
         let violation = Violation::Mention(capture["mention"].to_owned());
         if !errors.contains(&violation) {
             errors.push(violation);
@@ -296,6 +302,7 @@ fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     }
     for capture in REFERENCE
         .captures_iter(&prose)
+        .chain(GH_REFERENCE.captures_iter(&original))
         .chain(GH_REFERENCE.captures_iter(&prose))
     {
         let number = capture["number"].parse::<u64>().ok();
