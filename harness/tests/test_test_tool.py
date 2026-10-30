@@ -70,6 +70,37 @@ def test_collection_error(fixture):
     assert "collection fixture" in result["tests"][0]["message"]
 
 
+def test_missing_files_are_reported_before_launch(fixture, monkeypatch):
+    def unexpected_launch(*args):
+        pytest.fail("missing selectors must be checked before launching pytest")
+
+    monkeypatch.setattr(test_tool, "container_command", unexpected_launch)
+    selectors = ("missing.py", "other.py::test_absent")
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), selectors)
+    assert result["status"] == "completed"
+    assert result["totals"] == {"passed": 0, "failed": 0, "error": 2, "skipped": 0}
+    assert {item["test"] for item in result["tests"]} == set(selectors)
+    assert all("selector not found" in item["message"].lower() for item in result["tests"])
+
+
+def test_missing_node_is_selector_error(fixture):
+    selectors = ("test_value.py::test_absent", "test_value.py::test_also_absent")
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), selectors)
+    assert result["status"] == "completed"
+    assert result["totals"] == {"passed": 0, "failed": 0, "error": 2, "skipped": 0}
+    assert {item["test"] for item in result["tests"]} == set(selectors)
+    assert all("selector not found" in item["message"].lower() for item in result["tests"])
+
+
+def test_directory_selector(fixture):
+    tests = fixture / "tests"
+    tests.mkdir()
+    (tests / "test_nested.py").write_text("def test_nested():\n    assert True\n")
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ("tests",))
+    assert result["status"] == "completed"
+    assert result["totals"] == {"passed": 1, "failed": 0, "error": 0, "skipped": 0}
+
+
 def test_no_report_is_infrastructure(fixture):
     (fixture / "test_value.py").write_text('import os\nos._exit(0)\n')
     result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ())
