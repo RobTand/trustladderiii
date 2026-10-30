@@ -860,7 +860,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .lines()
             .filter(|line| line.contains("--seal-only"))
             .count(),
-        if matches!(mode, "review-retry" | "round-one-rebase") {
+        if mode == "review-retry" {
             2
         } else {
             reviews.len()
