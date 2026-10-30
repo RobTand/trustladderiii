@@ -919,7 +919,12 @@ pub(super) fn writer_rejection() {
             0,
             Policy::default(),
             root.path(),
-            None,
+            Some(tl3_config::OperationsIssue {
+                owner: "owner".into(),
+                name: "tl3".into(),
+                installation_id: 3,
+                number: 17,
+            }),
         )
         .unwrap();
         let mut note = delivery(Notice::MeasuresPosted);
