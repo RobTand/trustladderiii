@@ -317,7 +317,11 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|s| s == "--maker-failure") {
-        maker::scenario(&database.create("maker_failure"), &args[2], false);
+        maker::scenario(
+            &database.create("maker_failure"),
+            &args[2],
+            args.get(3).is_some_and(|arg| arg == "--checks-fail"),
+        );
         println!("test maker_failure_{} ... ok", args[2]);
         database.stop();
         return;

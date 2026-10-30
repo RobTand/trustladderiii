@@ -860,7 +860,13 @@ pub(super) fn run(database: &mut Database) {
         ("ci-fact", false),
     ] {
         let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
-        scenario(&database.create(&name), mode, fail);
+        // A daemon source lives until process exit; isolate it with its database.
+        let mut child = Command::new(env::current_exe().unwrap());
+        child.args(["--maker-failure", mode]);
+        if fail {
+            child.arg("--checks-fail");
+        }
+        assert!(child.status().unwrap().success(), "maker scenario {name}");
         println!("test maker_{name} ... ok");
     }
 }
