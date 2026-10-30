@@ -82,6 +82,15 @@ class DeployTests(unittest.TestCase):
         with patch.object(deploy.urllib.request, "urlopen", side_effect=AssertionError("unnecessary fetch")):
             deploy.checked_download("https://example.invalid", hashlib.sha256(content).hexdigest(), destination)
 
+    def test_existing_data_never_gets_a_replacement_password(self):
+        root, config, binaries = deploy.paths(self.home)
+        (binaries / "bin").mkdir(parents=True)
+        (binaries / "bin/postgres").touch()
+        (root / "postgres/data").mkdir(parents=True)
+        with self.assertRaisesRegex(RuntimeError, "original password"):
+            deploy.postgres(self.home)
+        self.assertFalse((config / "secrets/postgres-password").exists())
+
     def test_service_uses_systemd_credentials_and_direct_python(self):
         config, data = self.config()
         deployed = self.home / ".config/tl3/tl3.toml"

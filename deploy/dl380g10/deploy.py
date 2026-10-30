@@ -49,6 +49,14 @@ def private_file(path):
         raise RuntimeError("credential must be a regular owner-only file with mode 0600")
 
 
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def write_file(path, data, mode=0o600):
     private_dir(path.parent)
     fd, temporary = tempfile.mkstemp(prefix=".tl3-", dir=path.parent)
@@ -59,6 +67,7 @@ def write_file(path, data, mode=0o600):
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
+        sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -75,6 +84,7 @@ def password(path):
         write_file(temporary, (secrets.token_hex(32) + "\n").encode())
         try:
             os.link(temporary, path)
+            sync_directory(path.parent)
         except FileExistsError:
             private_file(path)
 
@@ -109,7 +119,10 @@ def postgres(home):
             os.rename(directory / "unpacked", binaries)
     if not (binaries / "bin/postgres").is_file():
         raise RuntimeError("incomplete versioned Postgres installation")
-    password(config / "secrets/postgres-password")
+    credential = config / "secrets/postgres-password"
+    if (root / "postgres/data").exists() and not credential.exists():
+        raise RuntimeError("existing Postgres data needs its original password file; refusing to generate another")
+    password(credential)
     private_dir(root / "postgres")
     private_dir(root / "postgres/socket")
     print(f"Postgres: Zonky {PG_VERSION} installed")
@@ -135,7 +148,10 @@ def initdb(home):
             output.write(f"\nlisten_addresses = ''\nport = 5543\nunix_socket_directories = '{socket_dir}'\n"
                          "unix_socket_permissions = 0700\nfsync = on\nsynchronous_commit = on\n"
                          "max_connections = 30\nshared_buffers = '128MB'\nmax_parallel_workers = 0\n")
+            output.flush()
+            os.fsync(output.fileno())
         os.rename(stage, data)
+        sync_directory(data.parent)
 
 
 def render_config(home, listen, installation=1, issue=None, image=None, primary=None, alternate=None):
