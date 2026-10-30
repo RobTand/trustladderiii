@@ -1806,6 +1806,7 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
         "reattachment does not commit allowance state"
     );
     before = store.worker_progress(None).unwrap();
+    c.look_now().unwrap();
     drop(c);
     drop(source);
     let mut source = supervisor.source();

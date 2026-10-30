@@ -954,6 +954,15 @@ fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     assert_eq!(c.snapshot().unwrap(), before);
 }
 fn main() {
+    if let Some(case) = std::env::args()
+        .nth(1)
+        .and_then(|s| s.strip_prefix("--r4-").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        wait_subscription_retirement(&db.create("wait_retirement"), &case);
+        db.stop();
+        return;
+    }
     // These run in the normal suite as well as the focused red action.
     if std::env::args().any(|s| s == "--r3") {
         let mut db = support::Database::start();
@@ -990,6 +999,10 @@ fn main() {
         "github_due",
     ] {
         r3(&db.create(name), name);
+    }
+    for case in ["progress", "look", "prune"] {
+        wait_subscription_retirement(&db.create(&format!("wait_retirement_{case}")), case);
+        println!("test wait_subscription_removed_after_{case} ... ok");
     }
     worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
     println!("test worker_look_does_not_read_github_deliveries ... ok");
@@ -1336,7 +1349,7 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             waiting.line.contains(&waits::key()),
             "declared action joins the awaited set"
         );
-        // Startup captures the cursor, then rereads outstanding waits once.
+        // Startup captures the cursor and rereads outstanding waits without a live look.
         for input in rx.try_iter() {
             tl3_controller::ingress::apply(&mut c, input).unwrap();
         }
@@ -1368,12 +1381,15 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             before,
             "a claimed wait has no timed store commits"
         );
-        // A bell reset, including overflow recovery, requests one fresh look.
+        // A reset already reads the live record, so it needs no controller look.
         waiting.response.send(serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]})).unwrap();
         waiting = bell.request();
-        let input = rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        tl3_controller::ingress::apply(&mut c, input).unwrap();
-        assert!(rx.try_recv().is_err(), "reset causes one look");
+        assert!(rx.try_recv().is_err(), "a live reset causes no look");
+        assert_eq!(
+            c.snapshot().unwrap(),
+            before,
+            "a live reset commits nothing"
+        );
         // One terminal event goes through ingress and the actual PB reader.
         waits::record(root.path(), "done");
         waiting.reply(
@@ -1417,4 +1433,111 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             "failure is checked after driving"
         );
     }
+}
+
+fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
+    struct Maker {
+        waiting: WaitingMaker,
+        resumed: Rc<Cell<bool>>,
+    }
+    impl Executor for Maker {
+        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+            self.waiting.execute(d)
+        }
+        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.waiting.reconcile(d)
+        }
+        fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
+            if self.resumed.get() && WaitingMaker::maker(d) {
+                Ok(Look::Alive {
+                    progress: "resumed".into(),
+                })
+            } else {
+                self.waiting.look(d)
+            }
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let resumed = Rc::new(Cell::new(false));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        Maker {
+            waiting: WaitingMaker {
+                fake: adapters::workers::Fake::new(root.path()),
+                stops: Rc::new(Cell::new(0)),
+                owner: "prismabuild".into(),
+                checkout: root.path().join("worktree"),
+            },
+            resumed: resumed.clone(),
+        },
+    );
+    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    waits::record(root.path(), "claimed");
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
+    c.set_allowances(allowances());
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    c.look_now().unwrap();
+    let snapshot = c.snapshot().unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "allowances" && r.value["external_wait"].is_object())
+        .unwrap();
+    let delivery: Delivery = serde_json::from_value(row.value["delivery"].clone()).unwrap();
+    let encoded: String = delivery.key.bytes().map(|b| format!("{b:02x}")).collect();
+    let path = root
+        .path()
+        .join(format!("records/{}/{encoded}.wait", delivery.node().0));
+    assert!(
+        path.is_file(),
+        "the waiting maker has a durable subscription"
+    );
+    match case {
+        "progress" => c
+            .observe(
+                "own-progress",
+                Observation::Progress {
+                    key: delivery.key.clone(),
+                    checkpoint: "own-work".into(),
+                },
+            )
+            .unwrap(),
+        "look" => {
+            resumed.set(true);
+            c.look_now().unwrap();
+        }
+        "prune" => {
+            c.observe(
+                "maker-ended",
+                Observation::Kernel(Event::Reply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    reply: tl3_kernel::Reply::RunFailed,
+                }),
+            )
+            .unwrap();
+            drain(&mut c);
+            assert!(
+                !c.snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "allowances" && r.id == delivery.key),
+                "the old allowance was pruned"
+            );
+        }
+        _ => panic!("unknown retirement case"),
+    }
+    assert!(
+        !path.exists(),
+        "{case} deletes the durable wait subscription"
+    );
 }
