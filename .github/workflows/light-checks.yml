@@ -35,13 +35,22 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: '0.10.10'
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: |
+            **/uv.lock
+            **/pyproject.toml
+          cache-suffix: ${{ github.job }}
       - name: Sync worker environment
         run: uv sync --locked --project workers --python 3.14+gil
       - name: Install Rust
         run: |
           rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.99.1
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Keep lockfile changes out of rust-cache's fallback restore scope.
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
       - name: Format, lint, and test every Rust project
         run: python tools/ci/check.py rust
 
@@ -59,11 +68,21 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: '0.10.10'
-          enable-cache: false
-      - name: Build deployment test helper
+          enable-cache: true
+          cache-dependency-glob: |
+            **/uv.lock
+            **/pyproject.toml
+          cache-suffix: ${{ github.job }}
+      - name: Install Rust
         run: |
           rustup toolchain install 1.99.1 --profile minimal
-          cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
+          rustup default 1.99.1
+      - name: Cache deployment helper dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build deployment test helper
+        run: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
       - name: Lint and test every Python project
         env:
           TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy

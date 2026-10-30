@@ -85,7 +85,7 @@ def python(files):
             command.append("--locked")
         if "test" in config["project"].get("optional-dependencies", {}):
             command.extend(["--extra", "test"])
-        command.extend(["--with", "pytest==9.0.2", "python", "-m", "pytest"])
+        command.extend(["--with", "pytest==9.0.2", "python", "-m", "pytest", "--durations=15"])
         # Nested projects own their files and run with their own dependencies.
         command.extend(
             f"--ignore={nested.relative_to(directory)}"
