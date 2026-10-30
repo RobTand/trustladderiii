@@ -70,6 +70,11 @@ test ! -e "$HOME/.config/tl3/production-ready"
 TL3 reuses TL2's connector, running as user `tl2`, which routes
 `https://tl2-hooks.prismaquant.org` to `http://localhost:8742`. Its availability
 is an external dependency. Confirm that connector is healthy before proceeding.
+
+```bash
+sudo -n -u tl2 env XDG_RUNTIME_DIR=/run/user/30033 \
+  systemctl --user is-active tl2-cloudflared.service
+```
 Do not install a token for TL3 or start `tl3-cloudflared.service`. The installer
 uses the external route by default. `install --managed-tunnel` is only for a
 future deployment that owns its own connector. `check` then requires that
@@ -127,13 +132,19 @@ curl --fail --silent http://192.168.1.107:8033/ >/dev/null
 journalctl --user -u tl3d.service --since '5 minutes ago' --no-pager
 ```
 
-Verify a second ping or redelivery after the restart. Restart the external TL2
-connector through its owning user's service manager too, then redeliver once
-more. Its service name and access belong to that deployment, so use the unit
-identified in its existing runbook. Do not replace its configuration or token.
-Record that unit name, restart result and the post-restart delivery ID. If access
-is unavailable, record the external connector restart as outstanding and keep
-the production gate closed.
+Verify a second ping or redelivery after the restart. Restart the external TL2 connector through its owning user's service manager,
+then redeliver once more. Read-only inspection confirmed this unit and UID.
+Do not replace its configuration or token.
+
+```bash
+sudo -n -u tl2 env XDG_RUNTIME_DIR=/run/user/30033 \
+  systemctl --user restart tl2-cloudflared.service
+sudo -n -u tl2 env XDG_RUNTIME_DIR=/run/user/30033 \
+  systemctl --user is-active tl2-cloudflared.service
+```
+
+Record the restart result and post-restart delivery ID. If access is unavailable,
+record that restart as outstanding and keep the production gate closed.
 
 Workers receive a private attempt directory containing only `model-key`.
 The saved request points there rather than into the controller's systemd

@@ -15,7 +15,9 @@ fn config(root: &Path) -> tl3_config::Config {
     config.worktrees_root = root.join("worktrees");
     config.workers.runs = root.join("worker-runs");
     config.workers.python = root.join("app/workers/.venv/bin/python");
-    config.github.webhook_listen = Some("127.0.0.1:0".parse().unwrap());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    config.github.webhook_listen = Some(listener.local_addr().unwrap());
+    drop(listener);
     config.github.operations = Some(tl3_config::OperationsIssue {
         owner: "RobTand".into(),
         name: "trustladderiii".into(),

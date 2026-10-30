@@ -122,9 +122,9 @@ pub struct Supervisor {
 }
 
 impl Supervisor {
-    pub fn new(config: &tl3_config::Config, fake_root: &Path) -> Result<Self> {
+    pub fn new(config: &tl3_config::Config, records_root: &Path) -> Result<Self> {
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
-        fs::create_dir_all(fake_root)?;
+        fs::create_dir_all(records_root)?;
         let active = ActiveRuns::default();
         let mut store = Store::open(&config.store)?;
         for delivery in watched_deliveries(&mut store)? {
@@ -147,7 +147,7 @@ impl Supervisor {
             planning: config.planning.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
-            records_root: fake_root.to_owned(),
+            records_root: records_root.to_owned(),
             materials_provider: None,
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),

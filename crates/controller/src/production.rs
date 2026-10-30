@@ -201,7 +201,7 @@ impl Materials {
             .fetch_main(&remote, Some(&token))
             .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
         let repo = repository_materials(&path, base.as_str())?;
-        let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":issue.user.login,
+        let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});
         let inputs = json!({"issue":issue,"repo":repo});
         Ok(json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs}))

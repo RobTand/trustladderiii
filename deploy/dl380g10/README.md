@@ -1,5 +1,11 @@
 # Deploy TL3 on dl380g10
 
+Use [GO-LIVE.md](GO-LIVE.md) for production startup, release builds and rollback.
+The default deployment reuses TL2's external tunnel at
+`tl2-hooks.prismaquant.org`, forwarding to `127.0.0.1:8742`. It requires no TL3
+Cloudflare token or connector. Use `install --managed-tunnel` only when TL3
+owns its own connector. `check` then requires that unit and token.
+
 This deployment uses Rob's user manager and lingering. It needs no sudo.
 Run one installer at a time. Never read credential files into an agent session.
 The scripts suppress child output on failure because it can contain credentials.
