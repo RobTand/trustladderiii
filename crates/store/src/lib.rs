@@ -462,6 +462,17 @@ impl Store {
         load_effects(&mut self.client)
     }
 
+    /// Retirement commits retain comment IDs without loading their old payloads.
+    pub fn comment_retired(&mut self, id: &str) -> Result<bool> {
+        Ok(self
+            .client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM tl3_events WHERE event_key = $1)",
+                &[&format!("retire-comment:{id}")],
+            )?
+            .get(0))
+    }
+
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.
     pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
         load_events(&mut self.client, revision, limit)

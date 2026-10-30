@@ -1,3 +1,4 @@
+use crate::executor::Output as Out;
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
@@ -11,7 +12,7 @@ pub use source::WorkerOutputSource;
 
 use crate::{
     Error, Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{CommentKind, Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use process::{alive, cancel, read, write};
 use serde_json::{Value, json};
@@ -23,7 +24,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
 };
-use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};
 
 #[derive(Clone, Default)]
@@ -33,13 +34,21 @@ impl ActiveRuns {
         self.0
             .lock()
             .unwrap()
-            .entry(delivery.node().0.to_string())
+            .entry(if delivery.is_classifier() {
+                format!("comment:{}", delivery.node().0)
+            } else {
+                delivery.node().0.to_string()
+            })
             .or_default()
             .insert(delivery.key.clone());
     }
     fn remove(&self, delivery: &Delivery) {
         let mut nodes = self.0.lock().unwrap();
-        let node = delivery.node().0.to_string();
+        let node = if delivery.is_classifier() {
+            format!("comment:{}", delivery.node().0)
+        } else {
+            delivery.node().0.to_string()
+        };
         if let Some(keys) = nodes.get_mut(&node) {
             keys.remove(&delivery.key);
             if keys.is_empty() {
@@ -137,9 +146,11 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let materials = store
-            .worker_materials(&node)?
-            .ok_or(Error::Invalid("worker materials are missing"))?;
+        let materials = if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
+            inputs.clone()
+        } else {
+            self.materials(delivery, store, snapshot)?
+        };
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
         let worktree = if role == "maker" {
             if !inputs.is_object() || !inputs["plan"].is_object() {
@@ -202,6 +213,7 @@ impl Supervisor {
         }
         protocol::validate_inputs(role, &inputs)?;
         let ladder: &[tl3_config::Model] = match role {
+            "classifier" => &self.models.comment_classifier,
             "ingest" => &self.models.ingest,
             "audit" => &self.models.audit,
             "maker" => &self.models.maker,
@@ -240,6 +252,41 @@ impl Supervisor {
             request["resume_session"] = json!(delivery.round == 1 || needs_files);
         }
         Ok(request)
+    }
+
+    fn materials(
+        &self,
+        delivery: &Delivery,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Value> {
+        let mut ancestor = delivery.node();
+        let mut linked_issue: Option<tl3_github::Issue> = None;
+        loop {
+            if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
+                if let Some(issue) = linked_issue {
+                    materials["issue"] = json!({"number": issue.number, "title": issue.title,
+                        "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});
+                }
+                return Ok(materials);
+            }
+            let link = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "request_links" && r.id == ancestor.0.to_string())
+                .ok_or(Error::Invalid("worker materials are missing"))?;
+            if linked_issue.is_none() {
+                linked_issue = Some(serde_json::from_value(link.value["issue"].clone())?);
+            }
+            let original: tl3_kernel::NodeId =
+                serde_json::from_value(link.value["original"].clone())?;
+            if original.0 >= ancestor.0 {
+                return Err(Error::Invalid(
+                    "request links must point to an earlier request",
+                ));
+            }
+            ancestor = original;
+        }
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.
@@ -349,6 +396,10 @@ impl Executor for Supervisor {
                 kind: EffectKind::StartRun(role),
                 ..
             } => protocol::role(role),
+            Out::Comment {
+                kind: CommentKind::Classify,
+                ..
+            } => protocol::delivery_role(delivery),
             Out::Effect {
                 kind: EffectKind::StopRun,
                 ..
@@ -391,9 +442,7 @@ impl Executor for Supervisor {
             fs::create_dir_all(root.join("worktree"))?;
         }
         if matches!(role, "ingest" | "planner") {
-            let materials = store
-                .worker_materials(&delivery.node().0.to_string())?
-                .ok_or(Error::Invalid("worker materials missing"))?;
+            let materials = self.materials(delivery, &mut store, &snapshot)?;
             materialize(&root.join("worktree"), &materials["repo"])?;
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
@@ -456,22 +505,26 @@ impl Executor for Supervisor {
             Out::Effect {
                 kind: EffectKind::StartRun(role),
                 ..
-            } if protocol::role(role).is_some() => {
-                let result = match latest(&self.root(&delivery.key))? {
-                    Some((_, attempt)) => inspect(&attempt, delivery)?,
-                    None => Reconciliation::Absent,
-                };
-                if !matches!(result, Reconciliation::Pending) {
-                    self.active.remove(delivery);
-                }
-                Ok(result)
-            }
-            Out::Effect {
-                kind: EffectKind::StopRun,
+            } if protocol::role(role).is_some() => self.reconcile_run(delivery),
+            Out::Comment {
+                kind: CommentKind::Classify,
                 ..
-            } => Fake::new(&self.fake_root).reconcile(delivery),
+            } => self.reconcile_run(delivery),
             _ => Fake::new(&self.fake_root).reconcile(delivery),
         }
+    }
+}
+
+impl Supervisor {
+    fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        let result = match latest(&self.root(&delivery.key))? {
+            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            None => Reconciliation::Absent,
+        };
+        if !matches!(result, Reconciliation::Pending) {
+            self.active.remove(delivery);
+        }
+        Ok(result)
     }
 }
 
@@ -507,7 +560,13 @@ pub(super) fn latest(root: &Path) -> Result<Option<(i64, PathBuf)>> {
     Ok(latest)
 }
 
-pub(super) fn failed(delivery: &Delivery) -> Completion {
+pub(crate) fn failed(delivery: &Delivery) -> Completion {
+    if delivery.is_classifier() {
+        return Completion::confirmed(vec![Observation::Classified {
+            key: delivery.key.clone(),
+            reply: None,
+        }]);
+    }
     Completion::confirmed(vec![Observation::Kernel(Event::Reply {
         node: delivery.node(),
         generation: delivery.generation,
@@ -562,8 +621,7 @@ fn watched_deliveries(store: &mut Store) -> Result<Vec<Delivery>> {
     for (key, value) in store.worker_watches()? {
         match serde_json::from_value::<Delivery>(value) {
             Ok(delivery) if delivery.key == key => {
-                if matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
-                {
+                if protocol::delivery_role(&delivery).is_some() {
                     deliveries.push(delivery);
                 }
             }

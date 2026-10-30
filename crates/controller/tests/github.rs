@@ -1,3 +1,6 @@
+use tl3_controller::executor::Output as Out;
+#[path = "github/steering.rs"]
+mod steering;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use chrono::Utc;
@@ -30,7 +33,7 @@ use tl3_controller::{
     ingress::{self, CatchUp, GitHubDelivery, GitHubTranslator, Source, Sources, Webhooks},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
-use tl3_kernel::{NodeId, Notice, Out, Outcome, Phase};
+use tl3_kernel::{NodeId, Notice, Outcome, Phase};
 use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -103,6 +106,8 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    linked: Vec<Value>,
+    lose_issue_reply: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -155,9 +160,28 @@ impl Respond for Api {
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
             }
+            ("POST", "/repos/owner/sandbox/issues") => {
+                let payload: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut issue = fixture(false)["issue"].clone();
+                issue["number"] = json!(1000 + state.linked.len());
+                issue["title"] = payload["title"].clone();
+                issue["body"] = payload["body"].clone();
+                issue["labels"] = json!([{"name": "tl3"}]);
+                issue["user"] = json!({"id": 99, "login": "factory[bot]"});
+                assert_eq!(payload["labels"], json!(["tl3"]));
+                state.linked.push(issue.clone());
+                if state.lose_issue_reply {
+                    state.lose_issue_reply = false;
+                    ResponseTemplate::new(500)
+                } else {
+                    ResponseTemplate::new(201).set_body_json(issue)
+                }
+            }
             ("GET", "/repos/owner/sandbox/issues") => {
                 state.catch_up_passes += 1;
-                ResponseTemplate::new(200).set_body_json(json!([fixture(false)["issue"]]))
+                let mut issues = state.linked.clone();
+                issues.push(fixture(false)["issue"].clone());
+                ResponseTemplate::new(200).set_body_json(issues)
             }
             ("GET", "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200)
                 .set_body_json(if state.gap {
@@ -210,6 +234,17 @@ impl Respond for Api {
                 } else {
                     json!({"check_suites": []})
                 }),
+            ("GET", path)
+                if path.starts_with("/repos/owner/sandbox/issues/1")
+                    && path.ends_with("/comments") =>
+            {
+                ResponseTemplate::new(200).set_body_json(json!([]))
+            }
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/issues/1") => {
+                let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
+                ResponseTemplate::new(200)
+                    .set_body_json(state.linked.iter().find(|v| v["number"] == number).unwrap())
+            }
             _ => panic!("unexpected mock API call {method} {path}"),
         }
     }
@@ -340,8 +375,28 @@ fn main() {
     println!("test catch_up_preserves_evidence ... ok");
     daemon_with_workers(&database.create("daemon_workers"));
     println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
+    steering::linked_reconciliation();
+    steering::commands(&database.create("steering_commands"));
+    steering::answers(&database.create("steering_answers"));
+    steering::replacement(&database.create("steering_replacement"));
+    steering::correction(&database.create("steering_correction"));
+    steering::queued_pause(&database.create("steering_queue"));
+    steering::answer_recovery(&database.create("steering_answer_recovery"));
+    steering::classifier_failures(&database.create("classifier_failures"));
+    steering::concurrent_requests(&database.create("concurrent_requests"));
+    steering::guidance(&database.create("steering_guidance"));
+    steering::credit(&database.create("steering_credit"));
+    steering::answer_replacement(&database.create("answer_replacement"));
+    steering::writer_rejection();
+    for race in ["label", "merge", "crash"] {
+        steering::replacement_race(
+            &database.create(&format!("replacement_window_{race}")),
+            race,
+        );
+    }
+    steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
     database.stop();
-    println!("11 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("28 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -404,7 +459,7 @@ fn receiver_is_durable(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     assert!(api.state.lock().unwrap().closed);
     assert_eq!(api.state.lock().unwrap().posts, 2);
@@ -466,7 +521,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
@@ -480,7 +535,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        1
+        0
     );
     let before = store.ingress_cursor("github-catch-up").unwrap();
     api.state.lock().unwrap().fail_reads = true;
@@ -584,6 +639,8 @@ fn delivery(notice: Notice) -> Delivery {
         replanned: false,
         question: None,
         question_context: None,
+        steering: None,
+        request_text: None,
         checks: None,
         job_generation: None,
         note: None,
@@ -698,10 +755,15 @@ impl Writer for ScriptWriter {
         let mut calls = self.calls.lock().unwrap();
         calls.push(input.clone());
         let mut reply = FakeWriter.draft("fake", input)?;
-        if calls.len() <= self.failures
-            && let WriterReply::Question(question) = &mut reply
-        {
-            question.obstacle = "The leaf needs attention.".into();
+        if calls.len() <= self.failures {
+            match &mut reply {
+                WriterReply::Question(question) => {
+                    question.obstacle = "The leaf needs attention.".into()
+                }
+                WriterReply::Text(text) => {
+                    text.text = "About \"Maybe do that\", did the leaf fail?".into()
+                }
+            }
         }
         Ok(reply)
     }
@@ -766,12 +828,24 @@ fn writer_checks() {
     )
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
-    assert_eq!(
-        rejecting.execute(&draft).unwrap().ack,
-        tl3_kernel::Ack::Permanent
-    );
-    assert_eq!(calls.lock().unwrap().len(), 3);
-    assert_eq!(api.state.lock().unwrap().posts, posted);
+    for notice in [
+        Notice::Ask { question: 9 },
+        Notice::Summary(Outcome::Stopped),
+    ] {
+        calls.lock().unwrap().clear();
+        draft.output = Out::Notice {
+            node: NodeId(0),
+            notice,
+        };
+        assert_eq!(
+            rejecting.execute(&draft).unwrap().ack,
+            tl3_kernel::Ack::Permanent
+        );
+        assert_eq!(calls.lock().unwrap().len(), 3);
+        let state = api.state.lock().unwrap();
+        assert_eq!(state.posts, posted);
+        assert!(!state.closed, "a rejected summary must not close the issue");
+    }
 }
 
 fn raw_http(address: SocketAddr, request: &[u8]) -> String {
@@ -1171,8 +1245,16 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 2);
-    assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert!(comments.is_empty());
+    for id in [9, 903] {
+        assert!(
+            store
+                .comment_retired(&format!("owner/sandbox/3/{id}"))
+                .unwrap()
+        );
+    }
+    assert!(calls.lock().unwrap().iter().any(|delivery| matches!(delivery,
+        GitHubDelivery::Webhook(delivery) if matches!(&delivery.event, Some(tl3_github::webhook::Event::CommentCreated { issue, .. }) if issue.number == 25))));
     assert!(store.pending_ingress().unwrap().is_empty());
     let later = Arc::new(Mutex::new(vec![]));
     controller.register_github_translator("later", RecordingTranslator(later.clone()));
@@ -1216,7 +1298,7 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
             .iter()
             .filter(|row| row.table == "github_comments")
             .count(),
-        2
+        0
     );
 }
 fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
@@ -1272,8 +1354,14 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
         .iter()
         .filter(|row| row.table == "github_comments")
         .collect();
-    assert_eq!(comments.len(), 3);
-    assert!(comments.iter().any(|row| row.value["issue"] == 25));
+    assert!(comments.is_empty());
+    for id in [9, 901, 903] {
+        assert!(
+            store
+                .comment_retired(&format!("owner/sandbox/3/{id}"))
+                .unwrap()
+        );
+    }
     assert_eq!(calls.lock().unwrap().len(), 1, "older shapes were skipped");
     assert!(
         store.ingress_after(0).unwrap().is_empty(),
@@ -1573,4 +1661,70 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
             .any(|line| line.contains("WorkerOutputSource failed:")),
         "{logs:?}"
     );
+}
+
+fn worker_daemon_config(
+    settings: &tl3_config::Store,
+    root: &Path,
+    mode: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../workers")
+        .canonicalize()
+        .unwrap();
+    let credentials = root.join("app.json");
+    let model_key = root.join("model-key");
+    fs::write(
+        &credentials,
+        serde_json::to_vec(&json!({
+            "id": 123, "slug": "factory", "pem": *PEM, "webhook_secret": "test-secret"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(&model_key, "fixture-only").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&credentials, &model_key] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let marker = root.join("entered");
+    let runs = root.join("runs");
+    let config = include_str!("../../config/example.toml")
+        .replace("port = 5432", &format!("port = {}", settings.port))
+        .replace(
+            "database = \"tl3\"",
+            &format!("database = {:?}", settings.database),
+        )
+        .replace("user = \"tl3\"", "user = \"postgres\"")
+        .replace(
+            "connect_timeout_secs = 10",
+            &format!(
+                "password_file = {:?}\nconnect_timeout_secs = 10",
+                settings.password_file.as_ref().unwrap()
+            ),
+        )
+        .replace(
+            "/home/rob/.config/tl3/github-app.json",
+            credentials.to_str().unwrap(),
+        )
+        .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        .replace("owner = \"RobTand\"", "owner = \"owner\"")
+        .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
+        .replace("installation_id = 1", "installation_id = 3")
+        .replace("id = 24923402", "id = 42")
+        .replace(
+            "/srv/tl3/workers/.venv/bin/python",
+            package.join(".venv/bin/python").to_str().unwrap(),
+        )
+        .replace("/srv/tl3/worker-runs", runs.to_str().unwrap())
+        .replace(
+            "command = [\"-m\", \"tl3_workers\", \"run\"]",
+            &format!(
+                "command = [{:?}, {mode:?}, {marker:?}]",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+            ),
+        );
+    let config_path = root.join("config.toml");
+    fs::write(&config_path, config).unwrap();
+    (config_path, marker, runs)
 }

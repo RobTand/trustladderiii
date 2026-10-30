@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -222,13 +222,16 @@ A plan that breaks a rule is re-run once with the reason. A second failure count
 
 ## Checks
 
-Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 (Q40). Each check names at least one test.
+Each leaf's plan lists checks of three kinds, which Rob confirmed on 2026-10-30 (Q40). A fix round after review adds a fourth kind (Q42). Each check names at least one test.
 
 | Kind | Used for | Passes when |
 |---|---|---|
 | **Demonstrating** | A measure that changes behavior | Each named test fails on the base and passes on the leaf's commit. The base run applies only the leaf's test changes. On the base, the failure must be an assertion, or a missing name the leaf adds. |
 | **Regression** | Showing that nothing which worked is now broken | It passes on the leaf's commit. A test already failing on the base is recorded as pre-existing and excused. Base results are cached per base commit. |
 | **Behavior-preserving** | A measure that changes no behavior, such as a refactor | It passes on both trees. Review judges the rest. |
+| **Reproducing** | A review finding about behavior, fixed in a fix round | Each named test fails on the commit that was reviewed and passes on the fixed commit. The run on the reviewed commit applies only the round's test changes. On the reviewed commit, the failure must be an assertion, or a missing name the round adds. |
+
+In a fix round after review, the maker names the tests that reproduce each finding about behavior. A finding no test can show, such as wording or docs, needs a stated reason instead, which the next review judges. Failed checks and CI failures need no new test, because the failing test already shows the problem.
 
 TL3 owns the check harness, and the code under test can't change it:
 
@@ -236,7 +239,7 @@ TL3 owns the check harness, and the code under test can't change it:
 - The test command comes from the repo's test configuration, which a leaf can't change without a second review. See "Containment".
 - The harness selects the named tests itself. It collects and parses the report outside the container.
 - A named test that is missing, skipped or not collected fails its check.
-- One check job runs both trees.
+- One check job runs both trees, and the reviewed commit as a third when the round has reproducing checks.
 - The harness commits progress to PrismaBuild after each test, so a long suite stays visibly alive.
 
 A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any other reason shows nothing, so the round fails.
@@ -611,7 +614,7 @@ Each pending operation has two allowances, set in config for each upstream: one 
 
 | Upstream | What the look reads | Progress means |
 |---|---|---|
-| Agent worker | The supervisor's record | New tool results |
+| Agent worker | The supervisor's record, and the record of any outside job the agent has declared it is waiting on | New tool results, or an outside job the agent has declared it is waiting on (such as a PrismaBuild test run) that, by that job's own record, has neither ended nor been lost (Q43) |
 | PrismaBuild | The job's record | Tests completed, as committed by TL3's harness under PrismaBuild's progress contract |
 | Mergify and GitHub | The PR, its checks and the queue | Checks finishing, or the queue moving |
 

@@ -1,0 +1,65 @@
+{
+  "Please pause": {
+    "kind": "pause"
+  },
+  "Please resume": {
+    "kind": "resume"
+  },
+  "Please stop": {
+    "kind": "stop"
+  },
+  "Thanks for the update": {
+    "kind": "remark"
+  },
+  "Maybe do that": {
+    "kind": "unsure",
+    "question": "Would you like me to stop or continue?"
+  },
+  "Change the request to return goodbye": {
+    "kind": "change_request",
+    "new_text": "Return goodbye instead of hello."
+  },
+  "The result is broken, revert it": {
+    "kind": "complaint",
+    "summary": "Restore the original greeting and correct the result.",
+    "revert": true
+  },
+  "The result is broken": {
+    "kind": "complaint",
+    "summary": "Correct the greeting.",
+    "revert": false
+  },
+  "Continue with the first reading": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "continue"
+  },
+  "Answer the old question": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "continue"
+  },
+  "My answer is unclear": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "unclear"
+  },
+  "Try again using the public API": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "try_again",
+    "guidance": "Use the public API."
+  },
+  "Add 3 credits": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "add_credit",
+    "amount": 3
+  },
+  "Use a smaller request": {
+    "kind": "answer",
+    "question_id": "current",
+    "answer": "change_request",
+    "new_text": "Return goodbye instead of hello."
+  }
+}

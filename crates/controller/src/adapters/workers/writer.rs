@@ -7,6 +7,7 @@ use tl3_github::message::{self, Draft, OptionDraft, Policy, Violation};
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
     Question,
+    Clarification,
     Note,
     Summary,
 }
@@ -79,6 +80,13 @@ impl Writer for FakeWriter {
                     .ok_or(Error::Invalid("missing answer instructions"))?
                     .into(),
             })),
+            MessageKind::Clarification => Ok(WriterReply::Text(TextDraft {
+                text: format!(
+                    "About \"{}\", {}",
+                    input.facts["comment_excerpt"].as_str().unwrap(),
+                    input.facts["question"].as_str().unwrap()
+                ),
+            })),
             MessageKind::Note | MessageKind::Summary => {
                 let field = if input.kind == MessageKind::Note {
                     "change"
@@ -127,6 +135,13 @@ pub fn checked_draft(
         .to_owned();
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
+        if input.kind == MessageKind::Clarification
+            && !matches!(&reply, WriterReply::Text(text) if short_question(&text.text)
+                && text.text.contains(&format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap())))
+        {
+            input.violations = vec!["Write one question on one line, at most 300 characters, ending in a question mark. Quote the supplied comment excerpt exactly in double quotes.".into()];
+            continue;
+        }
         let checked = match &reply {
             WriterReply::Question(question) if input.kind == MessageKind::Question => {
                 let draft = Draft {
@@ -143,7 +158,15 @@ pub fn checked_draft(
             WriterReply::Text(text) if input.kind != MessageKind::Question => {
                 let prefix = format!("You asked for \"{title}\".");
                 let written = text.text.strip_prefix(&prefix).unwrap_or(&text.text);
-                message::check_prose(written, policy).map(|_| text.text.clone())
+                let written = if input.kind == MessageKind::Clarification {
+                    written.replace(
+                        &format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap()),
+                        "your comment",
+                    )
+                } else {
+                    written.to_owned()
+                };
+                message::check_prose(&written, policy).map(|_| text.text.clone())
             }
             _ => Err(vec![Violation::MissingRequest]),
         };
@@ -222,4 +245,12 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
             format!("The {field} {problem} '{offending}'.")
         })
         .collect()
+}
+
+fn short_question(text: &str) -> bool {
+    !text.trim().is_empty()
+        && text.chars().count() <= 300
+        && !text.contains(['\r', '\n', '\u{0085}', '\u{2028}', '\u{2029}'])
+        && text.trim_end().ends_with('?')
+        && text.matches('?').count() == 1
 }

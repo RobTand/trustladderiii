@@ -1,4 +1,5 @@
 use super::record::Records;
+use crate::executor::Output as Out;
 use crate::{
     Error, Repository, Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
@@ -12,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
 };
-use tl3_kernel::{EffectKind, Event, Out, Reply};
+use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
 pub struct Fake(Records);

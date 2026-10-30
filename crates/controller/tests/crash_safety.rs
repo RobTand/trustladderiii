@@ -578,8 +578,11 @@ fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Valu
             assert!(observed.contains(&effect.key), "lost effect {}", effect.key);
         }
         let label = match delivery.output {
-            Out::Effect { kind, .. } => format!("{kind:?}"),
-            Out::Notice { notice, .. } => format!("Notice({notice:?})"),
+            tl3_controller::executor::Output::Effect { kind, .. } => format!("{kind:?}"),
+            tl3_controller::executor::Output::Notice { notice, .. } => {
+                format!("Notice({notice:?})")
+            }
+            tl3_controller::executor::Output::Comment { kind, .. } => format!("Comment({kind:?})"),
         };
         outputs.push(json!([
             label,

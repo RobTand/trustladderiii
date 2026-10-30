@@ -1,0 +1,41 @@
+{
+  "repository": {
+    "id": 7,
+    "name": "sandbox",
+    "owner": {
+      "id": 42,
+      "login": "owner"
+    }
+  },
+  "installation": {
+    "id": 3
+  },
+  "sender": {
+    "id": 42,
+    "login": "owner"
+  },
+  "action": "created",
+  "issue": {
+    "number": 12,
+    "title": "Add a blue button",
+    "body": "Show a blue button.",
+    "state": "open",
+    "updated_at": "2026-10-30T01:00:00Z",
+    "labels": [
+      {
+        "name": "tl3"
+      }
+    ]
+  },
+  "comment": {
+    "id": 10000,
+    "body": "Please pause",
+    "user": {
+      "id": 42,
+      "login": "owner"
+    },
+    "created_at": "2026-10-30T01:00:00Z",
+    "updated_at": "2026-10-30T01:00:00Z",
+    "issue_url": "https://api.github.com/repos/owner/sandbox/issues/12"
+  }
+}
