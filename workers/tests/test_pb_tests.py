@@ -153,3 +153,12 @@ def test_harness_inside_role_worktree_is_refused(submission, monkeypatch):
     result = call(submission, Summary().result)
     assert result["status"] == "infrastructure_error"
     assert not (submission[1] / "submitted.json").exists()
+
+
+@pytest.mark.parametrize("response", ["[]", "null", "not json"])
+@pytest.mark.parametrize("script", ["pbrun.py", "pbwait.py"])
+def test_malformed_prismabuild_response_is_infrastructure(submission, response, script):
+    (submission[1] / script).write_text("print(" + repr(response) + ")\n")
+    result = call(submission, Summary().result)
+    assert result["status"] == "infrastructure_error"
+    assert sum(result["totals"].values()) == 0

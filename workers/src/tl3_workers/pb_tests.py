@@ -91,7 +91,10 @@ def _json_command(command):
         raw = output.read(2_097_153)
     if len(raw) > 2_097_152:
         raise ValueError("PrismaBuild response exceeded its limit")
-    return result.returncode, json.loads(raw)
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("PrismaBuild response must be an object")
+    return result.returncode, value
 
 
 def _summary(ending, key):
@@ -161,6 +164,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
                     ])
                     if waited.get("schema") != "prismabuild.endings.v1":
                         raise ValueError("PrismaBuild returned an invalid ending")
+                    if type(waited.get("complete")) is not bool:
+                        raise ValueError("PrismaBuild returned no completion flag")
                     endings = waited["endings"]
                     if len(endings) != 1 or endings[0]["action_key"] != key:
                         raise ValueError("PrismaBuild returned another action")
