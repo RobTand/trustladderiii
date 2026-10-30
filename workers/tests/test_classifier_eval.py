@@ -172,3 +172,17 @@ def test_command_saves_and_prints_all_results_and_sets_exit_status(tmp_path, mon
     assert evaluation.main(['--config', 'unused', '--output', str(report_file)]) == 1
     assert json.loads(report_file.read_text()) == json.loads(capsys.readouterr().out)
     assert json.loads(report_file.read_text())['destructive_misses'] == ['case-1']
+
+
+@pytest.mark.parametrize('reply', [
+    {'kind': ['stop']},
+    {'kind': {'kind': 'stop'}},
+    {'kind': 'answer', 'answer': ['stop'], 'question_id': 'q'},
+    {'kind': 'answer', 'answer': {'kind': 'stop'}, 'question_id': 'q'},
+])
+def test_non_string_kind_or_answer_is_a_recorded_miss(reply):
+    report = evaluation.evaluate([case()], request(), model_factory=factory([message(reply)], []))
+    assert report['passed'] is False
+    assert report['misses'][0]['reply'] == reply
+    assert report['misses'][0]['error'] == 'invalid_reply'
+    assert report['destructive_misses'] == []
