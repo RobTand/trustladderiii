@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
+  "type": "object",
+  "properties": {
+    "brief": {"$ref": "#/$defs/text"},
+    "goals": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {"id": {"$ref": "#/$defs/text"}, "description": {"$ref": "#/$defs/text"}},
+        "required": ["id", "description"], "additionalProperties": false
+      }
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "files": {"$ref": "#/$defs/strings"},
+        "checks": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"$ref": "#/$defs/text"},
+              "kind": {"enum": ["demonstrating", "regression", "behavior-preserving"]},
+              "tests": {"$ref": "#/$defs/strings"},
+              "goal_ids": {"$ref": "#/$defs/strings"}
+            },
+            "required": ["name", "kind", "tests", "goal_ids"], "additionalProperties": false
+          }
+        }
+      },
+      "required": ["files", "checks"], "additionalProperties": false
+    },
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+    "round": {"type": "integer", "enum": [0, 1]},
+    "feedback": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {"enum": ["failed_check", "review_finding"]},
+          "report": {"$ref": "#/$defs/text"},
+          "goal_ids": {"$ref": "#/$defs/strings"}
+        },
+        "required": ["kind", "report", "goal_ids"], "additionalProperties": false
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "image": {"type": "string", "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"},
+        "tools_path": {"type": "string", "pattern": "^/", "minLength": 1},
+        "cpus": {"type": "integer", "minimum": 1},
+        "mem_gb": {"type": "integer", "minimum": 1},
+        "quiet_seconds": {"type": "integer", "minimum": 1}
+      },
+      "required": ["image", "tools_path"], "additionalProperties": false
+    },
+    "context_size": {"type": "integer", "minimum": 1}
+  },
+  "required": ["brief", "goals", "plan", "attempt", "round", "tests", "context_size"],
+  "additionalProperties": false,
+  "if": {"properties": {"round": {"const": 1}}},
+  "then": {"required": ["feedback"]},
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "strings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+  }
+}

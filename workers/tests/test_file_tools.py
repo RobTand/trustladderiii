@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import json
 import os
 
@@ -322,9 +323,67 @@ def test_grep_long_line_preview_points_to_read(tree):
     assert "Use read offset=0, column=0" in notice
 
 
+@pytest.mark.parametrize("ending", ["\n", "\r", "\r\n", ""])
+def test_grep_reads_bounded_chunks_and_finds_tail_and_boundary_matches(tree, monkeypatch, ending):
+    root, _ = tree
+    cap = OUTPUT_LIMITS["line_bytes"]
+    content = "x" * (cap - 1) + "needle" + "界" * 100_000 + "tail" + ending
+    (root / "huge").write_bytes(content.encode("utf-8"))
+    if ending:
+        with (root / "huge").open("ab") as stream:
+            stream.write(("needle" + ending).encode("utf-8"))
+    sizes = []
+    with Worktree(root) as worktree:
+        original = worktree._file
+
+        @contextmanager
+        def bounded_file(path):
+            with original(path) as stream:
+                class Bounded:
+                    def readline(self, size=-1):
+                        assert 0 < size <= cap + 1
+                        sizes.append(size)
+                        return stream.readline(size)
+
+                    def read(self, size=-1):
+                        assert size == 1
+                        return stream.read(size)
+
+                    def tell(self):
+                        return stream.tell()
+
+                    def seek(self, position):
+                        return stream.seek(position)
+                yield Bounded()
+
+        monkeypatch.setattr(worktree, "_file", bounded_file)
+        for pattern in ("needle", "tail", "界" * (cap * 2), "missing"):
+            result = worktree.grep(pattern)
+            matches = [match for match in result["matches"] if match["path"] == "huge"]
+            assert [match["line"] for match in matches] == (
+                [] if pattern == "missing" else [1, 2] if pattern == "needle" and ending else [1]
+            )
+            if matches:
+                assert "Truncated. Use read offset=0, column=0." in matches[0]["text"]
+    assert len(sizes) > 100
+
+
+def test_grep_crlf_split_at_chunk_boundary_preserves_line_numbers(tree):
+    root, _ = tree
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (root / "endings").write_bytes(("x" * cap + "\r\nneedle\r\n").encode("utf-8"))
+    with Worktree(root) as worktree:
+        assert worktree.grep("needle")["matches"] == [
+            {"path": "endings", "line": 2, "text": "needle"},
+        ]
+
+
 @pytest.mark.parametrize("name,args,expected", [
     ("edit", {"path": "src/code.py", "old": "hello", "new": "hi"},
      "Expected a unique match, or replace_all"),
+    ("edit", {"path": "src/code.py", "old": "absent", "new": "hi"}, "No match found"),
+    ("edit", {"path": "src/code.py", "old": "absent", "new": "hi", "replace_all": True},
+     "No match found"),
     ("read", {"path": "missing"}, "File not found"),
     ("read", {"path": "missing/child"}, "File or directory not found."),
 ])
@@ -337,6 +396,7 @@ def test_static_errors_help_the_model_correct_calls(tree, name, args, expected):
     assert result.status == "error"
     assert result.text == expected
     assert str(root) not in result.text
+    assert (root / "src/code.py").read_text() == "hello\nhello again\n"
 
 
 def test_os_error_does_not_expose_host_path(tree, monkeypatch):

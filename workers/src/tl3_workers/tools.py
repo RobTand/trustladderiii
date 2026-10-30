@@ -62,6 +62,36 @@ def _parts(path):
     return parts
 
 
+def _matching_lines(stream, pattern):
+    number = 1
+    prefix, tail = "", ""
+    length, found = 0, False
+    cap = OUTPUT_LIMITS["line_bytes"]
+    while chunk := stream.readline(cap + 1):
+        # newline="" preserves CRLF, including when readline's cap splits it.
+        if chunk.endswith("\r"):
+            position = stream.tell()
+            if stream.read(1) == "\n":
+                chunk += "\n"
+            else:
+                stream.seek(position)
+        prefix = (prefix + chunk)[:cap + 1]
+        length += len(chunk)
+        found |= pattern in tail + chunk
+        tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
+        if chunk.endswith(("\r", "\n")):
+            if found:
+                text = _clip(prefix.rstrip("\r\n"), cap)
+                ending = len(chunk) - len(chunk.rstrip("\r\n"))
+                yield number, text, length - ending > len(text)
+            number += 1
+            prefix, tail = "", ""
+            length, found = 0, False
+    if length and found:
+        text = _clip(prefix, cap)
+        yield number, text, length > len(text)
+
+
 class Worktree:
     def __init__(self, root):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -228,13 +258,10 @@ class Worktree:
                 relative = str(PurePosixPath(path) / name)
                 try:
                     with self._file(relative) as stream:
-                        for number, line in enumerate(stream, 1):
-                            if pattern in line:
-                                text = line.rstrip("\r\n")
-                                preview = _clip(text, OUTPUT_LIMITS["line_bytes"])
-                                if preview != text:
-                                    preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
-                                yield {"path": relative, "line": number, "text": preview}
+                        for number, preview, truncated in _matching_lines(stream, pattern):
+                            if truncated:
+                                preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
+                            yield {"path": relative, "line": number, "text": preview}
                 except UnicodeDecodeError:
                     continue
         with self._directory(_parts(path)) as directory:
@@ -256,7 +283,9 @@ class Worktree:
         with self._file(path, write=True) as stream:
             content = stream.read()
             count = content.count(old)
-            if not count or (count != 1 and not replace_all):
+            if not count:
+                raise ValueError("No match found")
+            if count != 1 and not replace_all:
                 raise ValueError("Expected a unique match, or replace_all")
             stream.seek(0)
             stream.write(content.replace(old, new))

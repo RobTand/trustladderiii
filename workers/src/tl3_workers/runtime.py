@@ -102,8 +102,11 @@ def run(request, emit: Callable[[dict], None]):
     role = ROLES[request["role"]]
     model = create_model(request)
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
-        agent = build_agent(model, role, worktree)
-        reply = _run_agent(agent, request, emit)
+        if role.run is None:
+            agent = build_agent(model, role, worktree)
+            reply = _run_agent(agent, request, emit)
+        else:
+            reply = role.run(model, request, worktree, emit)
     validate(role.reply_schema, reply)
     if role.check_reply is not None:
         role.check_reply(request["inputs"], reply)
