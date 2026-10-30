@@ -68,6 +68,7 @@ impl Adapter {
         policy: Policy,
         simulation: &Path,
     ) -> Result<Self> {
+        std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
             writer: Box::new(writer),

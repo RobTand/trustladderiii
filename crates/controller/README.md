@@ -206,8 +206,8 @@ HTTP receiver, a local REST server and embedded Postgres. It covers delivery
 persistence, unauthorized labels, gap recovery, duplicate reconciliation, writer
 rejections, epoch fencing and SIGKILL after posting before acknowledgement.
 
-`adapters::simulation_with_workers` replaces ingest, audit and planning with Python worker
-and review processes and returns a `WorkerOutputSource`. Making remains on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit, planning and review with
+Python worker processes and returns a `WorkerOutputSource`. Making remains on the worker fake. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
