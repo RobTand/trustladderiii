@@ -194,9 +194,8 @@ restart the writer loop. A worker transport error stays uncertain.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
 options. Closing summaries close the issue, except when the request is replaced.
-PR effects still use this module's fake until ticket #13. Incident and replacement
-notices also stay on the fake for their owning tickets. Incidents need the
-operations issue, and replacements need a new request, not another comment.
+PR effects still use this module's fake until ticket #13. Incident notices use the operations issue. Replacement notices stay on the fake
+until their ticket supplies a new request, not another comment.
 The checker uses the request's own `Delivery.paths` and any further paths
 supplied in the adapter policy. No build script inventories TL3's checkout.
 It rejects both `:line` and `:line:column` suffixes.
@@ -500,42 +499,61 @@ after restart or a webhook gap.
 The ingress receiver arms one timer for the next outstanding allowance. Expiry
 reads the adapter's own record through `Executor::look`. The first live record
 establishes a progress baseline. New checkpoints renew the allowance. An unchanged
-record after the no-progress allowance establishes a stall. An unanswered read
-disarms that allowance until upstream evidence or restart supplies another look.
-There is no recurring wake-up scan. Finished deliveries leave the active set.
+record after the no-progress allowance establishes a stall. A read that cannot
+reach its upstream is an infrastructure outage. Its allowance re-arms. These
+reads use the same earliest-allowance timer, with no new polling source.
+Finished deliveries leave the active set.
 
 Worker looks read the supervisor and `tl3_worker_progress`. A stop intent is
 stored before `stop_stalled` proves the exact process ended. A reply that raced
 the stop is still used. Otherwise the kernel receives `RunFailed` and decides the
 retry and incident. PrismaBuild alone decides whether its progress contract failed
 or a worker was lost. A queue stall enters as `Fact::UpstreamStalled`; the kernel
-raises its incident. The real Mergify adapter remains owned by PR #69. Its
-`Executor::look` must report a checkpoint from `Mergify::read`, including queue
-state and completed checks, rather than treating a dispatch receipt as progress.
+raises its incident. The Mergify token integration belongs to PR #69 and is
+specified in [the handoff](../../../docs/mergify-looks-handoff.md).
 
 When a failed write's allowance expires, authoritative absence counts that
 delivery as retryable through the kernel. A transport error never proves absence.
-A new Found result or a new checkpoint releases held effects. Repeated unchanged
-looks do not. Duplicate upstream deliveries also release holds. Those retries are
-bounded by upstream events.
+A new Found result, checkpoint or authenticated delivery releases holds only for
+its own upstream. Progress, quota and stall observations release none. Duplicate
+GitHub deliveries release GitHub holds. Repeated unchanged looks release none.
+
+Read failures cannot acknowledge an unknown write. The controller persists their
+failure count on its allowance and leaves that delivery pending under its original
+key. Every second failed read raises an outage incident holding that delivery.
+The first incident probes at each allowance until recovery or Rob's clearance;
+later incidents require Rob. This preserves the failure escalation rule without
+claiming that a transport error ended an operation. Incident-post failures retain
+their delivery and allowance without recursively creating incident posts.
+Stop and quota-resume errors are also logged, counted and re-armed. A persisted
+stop intent keeps the exact attempt identity across restart.
 
 Set `[github.operations]` to the existing pinned operations issue in TL3's own
 repo. The app needs an installation there as well as on served repos. That
 repository participates in authenticated comment intake and catch-up, but cannot
 start a request unless it is also explicitly served. Incident messages use the
 existing writer, checker, hidden markers and duplicate deletion. A real GitHub
-adapter refuses to post an incident without the operations target configured.
+adapter requires this section at startup, before reading credentials or opening
+webhooks. Its constructor also rejects a missing target. Incident writer inputs
+carry the original request title and link, plus the upstream and failure class
+translated into plain language. They never use the operations issue as the request.
 
 The deliberately narrow operations command is `clear incident <number>`, using
 the number printed in that incident's message. Only Rob's authenticated comment
 on that issue can clear it. A stale number cannot clear a later incident. This
-command uses #10's `github_comments` storage and leaves natural-language request
-classification to #14. A passing adapter probe clears a first incident; the
+command has its own translator before the request-comment arm and stores its
+deduplication keys in `operations_comments`. Operations-issue comments never
+enter `github_comments` or #14's classifier. Comments on other issues in an
+operations-only repository are filtered during webhook and catch-up translation.
+The PR that merges second must preserve that separation when combining #14. A passing adapter probe clears a first incident; the
 kernel refuses probe clearance for a later one. `status::load_request_details`
 loads all open incident summaries with one batched query.
 The worker probe starts the configured Python and imports its worker package.
 The GitHub probe reads the target issue. A failed operation's old ending does
-not itself prove recovery. Rob can also close a permanent-failure incident
+not itself prove recovery. The default `Executor::probe` returns false.
+PrismaBuild, Mergify and Worktrees first incidents cannot clear by probe until
+those adapters implement it. This is the handoff for #67 and #69.
+Rob can also close a permanent-failure incident
 record; its separate retry-or-handle question remains to be answered.
 
 A GitHub look also pages the App's delivery log with App JWT authentication.
@@ -543,6 +561,10 @@ Failed deliveries above the durable watermark request redelivery. A pending
 delivery holds that watermark back. The watermark advances only after all
 redelivery requests succeed, so a crash can repeat a request but cannot skip it.
 The receiver's existing delivery keys deduplicate the recovered webhook.
+On first start without a watermark, the controller takes the newest delivery ID
+from the current first page as its baseline for now. It does not redeliver the
+retained failed history. An empty first page durably records zero, which is distinct
+from having no watermark. Later looks recover failures newer than that baseline.
 
 Quota is a wait for a provider-announced reset, never an infrastructure failure.
 `Error::Quota` defers an uncertain write until the reset. A worker that receives
@@ -551,12 +573,13 @@ exits successfully. The supervisor proves that ending, and the controller resume
 under the same operation key and generation at the announced reset. Malformed
 or absent reset information remains an ordinary failure. No provider text enters
 the protocol. Other adapters can return `Look::Quota` or `Observation::Quota` and
-implement `resume_after_quota` for acknowledged operations.
+implement `resume_after_quota` for acknowledged operations. A zero reset remains
+due immediately, so a zero `retry_after` cannot strand a quota wait.
 The supervisor tracks the attempt as well as the key, so retirement of the quota
 ending cannot remove a resumed process from its active set.
 
-Generate the host runs, workspace checks, worker protocol tests and three Kani
-proofs with `python3 crates/controller/tools/looks_manifest.py`. Submit the
+From a clean detached worktree at the final commit, generate the host runs,
+workspace checks, worker protocol tests, kernel tests and stall proof with `python3 crates/controller/tools/looks_manifest.py`. Submit the
 manifest with the published `pbcampaign.py`. Process and timing tests run once
 on each of dl380g10, sparky and sparklina. Check every terminal record, log and CAS
 receipt before reporting a pass.

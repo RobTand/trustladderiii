@@ -442,7 +442,9 @@ impl Controller {
                     };
                     match result {
                         Reconciliation::Found(completion) => {
-                            self.retry_held_effects(executor::upstream(delivery.output));
+                            if completion.releases_holds() {
+                                self.retry_held_effects(executor::upstream(delivery.output));
+                            }
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -524,7 +526,9 @@ impl Controller {
                 if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                     continue;
                 }
-                self.retry_held_effects(executor::upstream(delivery.output));
+                if completion.releases_holds() {
+                    self.retry_held_effects(executor::upstream(delivery.output));
+                }
                 for (index, observation) in completion.observations.iter().enumerate() {
                     commit.rows.push(put(
                         "inbox",
@@ -846,7 +850,8 @@ impl Controller {
                     }),
                 ));
                 delivery.note = Some(format!(
-                    "{summary} Reply with \"clear incident {id}\" on this issue after fixing the cause."
+                    "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+                    delivery.repository.owner, delivery.repository.name, delivery.issue
                 ));
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
@@ -975,6 +980,7 @@ impl Controller {
                 ));
             } else {
                 incident.open = false;
+                self.resume_incident_look(snapshot, &incident, commit)?;
                 commit
                     .rows
                     .push(put("incidents", id.into(), json!(incident)));

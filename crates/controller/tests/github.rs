@@ -105,6 +105,7 @@ struct ApiState {
     empty_body: bool,
     catch_up_evidence: bool,
     redeliveries: Vec<u64>,
+    new_delivery: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -149,6 +150,13 @@ impl Respond for Api {
                         json!([{"id":18,"status_code":503,"delivered_at":"2026-10-30T00:00:00Z"}]),
                     )
                 } else {
+                    let mut deliveries = vec![
+                        json!({"id":20,"status_code":500,"delivered_at":"2026-10-30T00:00:02Z"}),
+                        json!({"id":19,"status_code":200,"delivered_at":"2026-10-30T00:00:01Z"}),
+                    ];
+                    if state.new_delivery {
+                        deliveries.insert(0, json!({"id":22,"status_code":500,"delivered_at":"2026-10-30T00:00:03Z"}));
+                    }
                     ResponseTemplate::new(200)
                         .insert_header(
                             "link",
@@ -157,9 +165,7 @@ impl Respond for Api {
                                 request.url.join("/").unwrap()
                             ),
                         )
-                        .set_body_json(json!([
-                        {"id":20,"status_code":500,"delivered_at":"2026-10-30T00:00:02Z"},
-                        {"id":19,"status_code":200,"delivered_at":"2026-10-30T00:00:01Z"}]))
+                        .set_body_json(deliveries)
                 }
             }
             ("POST", path)
@@ -1613,25 +1619,13 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         api.state.lock().unwrap().redeliveries.is_empty(),
         "first start skips retained failures"
     );
-    let mut store = Store::open(settings).unwrap();
-    let snapshot = store.load().unwrap();
-    let mut commit = tl3_store::Commit::new(
-        "fixture-delivery-watermark",
-        json!({"fixture":true}),
-        &snapshot,
-    );
-    commit.rows.push(tl3_store::RowChange::Put {
-        table: "delivery_looks".into(),
-        id: "github".into(),
-        value: json!(17),
-    });
-    store.commit(&commit).unwrap();
+    api.state.lock().unwrap().new_delivery = true;
     controller.look_now().unwrap();
-    assert_eq!(api.state.lock().unwrap().redeliveries, vec![20, 18]);
+    assert_eq!(api.state.lock().unwrap().redeliveries, vec![22]);
     controller.look_now().unwrap();
     assert_eq!(
         api.state.lock().unwrap().redeliveries,
-        vec![20, 18],
+        vec![22],
         "one recovery per failed delivery"
     );
     assert!(
@@ -1640,7 +1634,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
             .unwrap()
             .rows
             .iter()
-            .any(|r| r.table == "delivery_looks" && r.value == 20)
+            .any(|r| r.table == "delivery_looks" && r.value == 22)
     );
     let mut delivery = delivery(Notice::Incident { needs_rob: true });
     delivery.key = "incident-fixture".into();
@@ -1653,7 +1647,24 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         "For Fix a greeting, GitHub refused access. Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
             .into(),
     );
+    delivery.note = Some(format!(
+        "{} Request: https://github.com/owner/sandbox/issues/12",
+        delivery.note.unwrap()
+    ));
+    assert!(
+        adapters::github::Adapter::new(
+            BTreeMap::from([(3, client(&api.uri()))]),
+            FakeWriter,
+            0,
+            Policy::default(),
+            root.path(),
+            None
+        )
+        .is_err()
+    );
     let mut adapter = adapter(&api.uri(), root.path());
+    assert_eq!(adapter.recover_deliveries(Some(17)).unwrap(), Some(22));
+    assert_eq!(api.state.lock().unwrap().redeliveries, vec![22, 22, 20, 18]);
     assert!(adapter.probe(&delivery).unwrap());
     adapter.execute(&delivery).unwrap();
     adapter.execute(&delivery).unwrap();
@@ -1662,8 +1673,21 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         Reconciliation::Found(_)
     ));
     assert_eq!(api.state.lock().unwrap().posts, 1);
-    assert!(
-        api.requests().iter().any(|r| r.method.as_str() == "POST"
-            && r.url.path() == "/repos/owner/tl3/issues/17/comments")
-    );
+    let requests = api.requests();
+    let post = requests
+        .iter()
+        .find(|r| {
+            r.method.as_str() == "POST" && r.url.path() == "/repos/owner/tl3/issues/17/comments"
+        })
+        .unwrap();
+    let body: Value = serde_json::from_slice(&post.body).unwrap();
+    let text = body["body"].as_str().unwrap();
+    for expected in [
+        "Fix a greeting",
+        "https://github.com/owner/sandbox/issues/12",
+        "GitHub",
+        "refused access",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
 }

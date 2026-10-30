@@ -142,6 +142,33 @@ impl Controller {
             }
             looked = true;
             state.due_ms = None;
+            if let Some(id) = &state.incident
+                && let Some(row) = snapshot.rows.iter().find(|r| {
+                    r.table == "incidents"
+                        && r.id == *id
+                        && r.value["open"] == true
+                        && r.value["effect"].as_str() == Some(&state.delivery.key)
+                })
+            {
+                let incident: Incident = serde_json::from_value(row.value.clone())?;
+                if !incident.needs_rob {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
+                        Ok(true) => {
+                            self.probe_passed(&state)?;
+                            self.retry_held_effects(upstream(state.delivery.output));
+                            self.rearm(&mut state);
+                        }
+                        Ok(false) => self.rearm(&mut state),
+                        Err(error) => self.look_failed(&mut state, &error)?,
+                    }
+                }
+                self.save_allowance(&state)?;
+                continue;
+            }
             if state.quota_ms.is_some_and(|reset| reset > now) {
                 state.due_ms = state.quota_ms;
                 self.save_allowance(&state)?;
@@ -205,7 +232,9 @@ impl Controller {
                             && !completion.observations.is_empty());
                     state.found = Some(found);
                     if new {
-                        self.retry_held_effects(upstream(state.delivery.output));
+                        if completion.releases_holds() {
+                            self.retry_held_effects(upstream(state.delivery.output));
+                        }
                         if effect.state.is_pending() {
                             self.complete(&effect.key, completion)?;
                         } else {
@@ -241,9 +270,6 @@ impl Controller {
                         state.progress = Some(progress);
                         state.progress_ms = now;
                         self.retry_held_effects(upstream(state.delivery.output));
-                        if state.incident.is_some() {
-                            self.probe_passed(&state)?;
-                        }
                     } else if now.saturating_sub(state.progress_ms)
                         >= u64::from(allowance.no_progress_secs) * 1000
                     {
@@ -470,7 +496,8 @@ impl Controller {
         };
         delivery.epoch = snapshot.epoch.get();
         delivery.note = Some(format!(
-            "{summary} Reply with \"clear incident {id}\" on this issue after fixing the cause."
+            "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+            request.repo.owner, request.repo.name, request.issue
         ));
         delivery.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
@@ -513,30 +540,30 @@ impl Controller {
     }
 
     fn probe_passed(&mut self, state: &AllowanceState) -> Result<()> {
-        if let Some(id) = &state.incident {
-            let snapshot = self.store.load()?;
-            if let Some(row) = snapshot
+        let Some(id) = &state.incident else {
+            return Ok(());
+        };
+        let snapshot = self.store.load()?;
+        let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.id == *id)
+        else {
+            return Ok(());
+        };
+        let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+        if !incident.open || incident.needs_rob {
+            return Ok(());
+        }
+        if incident.effect.is_some() {
+            incident.open = false;
+            let mut commit =
+                Commit::new(format!("probe:{id}"), json!({"probe_passed":id}), &snapshot);
+            commit
                 .rows
-                .iter()
-                .find(|r| r.table == "incidents" && r.id == *id)
-            {
-                let mut incident: Incident = serde_json::from_value(row.value.clone())?;
-                if incident.effect.is_some() {
-                    if incident.open && !incident.needs_rob {
-                        incident.open = false;
-                        let mut commit = Commit::new(
-                            format!("probe:{id}"),
-                            json!({"probe_passed":id}),
-                            &snapshot,
-                        );
-                        commit
-                            .rows
-                            .push(put("incidents", id.clone(), json!(incident)));
-                        self.store.commit(&commit)?;
-                    }
-                    return Ok(());
-                }
-            }
+                .push(put("incidents", id.clone(), json!(incident)));
+            self.store.commit(&commit)?;
+            return Ok(());
         }
         let world = self.world()?;
         let node = &world.nodes[state.delivery.node().0 as usize];
@@ -551,6 +578,27 @@ impl Controller {
                     fact: Fact::IncidentCleared { by_rob: false },
                 }),
             )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resume_incident_look(
+        &self,
+        snapshot: &Snapshot,
+        incident: &Incident,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(key) = &incident.effect
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "allowances" && r.id == *key)
+        {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            state.due_ms = Some(self.now_ms());
+            commit
+                .rows
+                .push(put("allowances", key.clone(), json!(state)));
         }
         Ok(())
     }

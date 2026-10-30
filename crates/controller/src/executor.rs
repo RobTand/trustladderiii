@@ -95,6 +95,20 @@ pub struct Completion {
 }
 
 impl Completion {
+    pub(crate) fn releases_holds(&self) -> bool {
+        !self.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                Observation::Progress { .. }
+                    | Observation::Quota { .. }
+                    | Observation::Kernel(Event::Fact {
+                        fact: tl3_kernel::Fact::UpstreamStalled,
+                        ..
+                    })
+            )
+        })
+    }
+
     pub fn confirmed(observations: Vec<Observation>) -> Self {
         Self {
             ack: Ack::Confirmed,

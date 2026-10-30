@@ -213,7 +213,23 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
     // The fake GitHub receipt proves the incident was sent to the operations target.
     let deliveries = adapters::delivered_notes(root.path()).unwrap();
     assert!(deliveries.iter().any(|text| text.contains(&id)));
+    let mut store = Store::open(settings).unwrap();
+    let epoch = store.load().unwrap().epoch.get();
+    store
+        .claim_worker("fixture-progress", "0", epoch, 0)
+        .unwrap();
+    store
+        .record_worker_progress("fixture-progress", 0, 10, "model_turn")
+        .unwrap();
     let status = status::load(&mut Reader::open(settings).unwrap()).unwrap();
+    assert!(
+        status.requests[0]
+            .details
+            .last_progress
+            .as_ref()
+            .unwrap()
+            .contains("Model turn completed")
+    );
     assert_eq!(status.requests[0].details.open_incidents.len(), 1);
     clock.advance(1);
     c.look_due().unwrap();
@@ -260,7 +276,7 @@ struct WriteDown {
     fake: adapters::workers::Fake,
     found: Rc<Cell<bool>>,
     calls: Rc<Cell<usize>>,
-    quota: bool,
+    quota: u8,
 }
 impl Executor for WriteDown {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
@@ -273,9 +289,9 @@ impl Executor for WriteDown {
         ) && !self.found.get()
         {
             self.calls.set(self.calls.get() + 1);
-            if self.quota {
+            if self.quota >= 3 {
                 return Err(tl3_controller::Error::Quota {
-                    retry_after: Duration::from_secs(5),
+                    retry_after: Duration::from_secs(if self.quota == 4 { 0 } else { 5 }),
                 });
             }
             return Err(tl3_controller::Error::Invalid("fixture write outage"));
@@ -316,7 +332,7 @@ fn held(settings: &tl3_config::Store, mode: u8) {
             fake: adapters::workers::Fake::new(root.path()),
             found: found.clone(),
             calls: calls.clone(),
-            quota: mode == 3,
+            quota: mode,
         },
     );
     let key = c.snapshot().unwrap().pending_effects[0].key.clone();
@@ -379,6 +395,13 @@ fn held(settings: &tl3_config::Store, mode: u8) {
             drain(&mut c);
             assert_eq!(c.world().unwrap().nodes[0].run_failures, 0);
             assert!(!c.world().unwrap().nodes[0].waiting_incident);
+        }
+        4 => {
+            assert_eq!(c.next_look_in().unwrap(), Some(Duration::ZERO));
+            found.set(true);
+            c.look_due().unwrap();
+            drain(&mut c);
+            assert!(c.next_look_in().unwrap().is_none());
         }
         _ => unreachable!(),
     }
@@ -467,11 +490,7 @@ impl Executor for Outage {
     fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
         let mut s = self.state.borrow_mut();
         s.reads += 1;
-        if s.recovered {
-            Ok(Look::Healthy)
-        } else {
-            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
-        }
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
     }
     fn probe(&mut self, _: &Delivery) -> tl3_controller::Result<bool> {
         let mut s = self.state.borrow_mut();
@@ -567,7 +586,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             fake: adapters::workers::Fake::new(root.path()),
             found: Rc::new(Cell::new(false)),
             calls: calls.clone(),
-            quota: false,
+            quota: 0,
         },
     );
     let key = c.snapshot().unwrap().pending_effects[0].key.clone();
@@ -707,6 +726,7 @@ fn main() {
         "held_cancelled",
         "write_outage_incident",
         "quota_reset",
+        "zero_quota_reset",
     ]
     .into_iter()
     .enumerate()
@@ -727,5 +747,5 @@ fn main() {
     look_adapter_errors_survive(&db.create("resume_eperm"), true);
     settled_looks_are_quiet(&db.create("quiet_timer"));
     db.stop();
-    println!("14 allowance and incident scenarios passed; no skips");
+    println!("15 allowance and incident scenarios passed; no skips");
 }
