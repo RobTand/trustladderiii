@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(all(test, loom))]
+extern crate self as tl3_controller;
+
 pub mod findings;
 
 pub mod adapters;
