@@ -38,7 +38,7 @@ GitHub keeps job logs, while local diagnostics disappear with the container.
 
 The Containerfile pins the official Actions runner base by manifest digest.
 It adds build tools, a checksum-pinned rustup installer, Rust 1.99.1 with clippy
-and rustfmt, `systemd-analyze`, and shared libraries for embedded Postgres.
+and rustfmt, ShellCheck, `systemd-analyze`, and shared libraries for embedded Postgres.
 The existing workflow installs Python 3.14 and uv. Job names, steps, tests, and
 timeouts stay unchanged; only both `runs-on` values change.
 

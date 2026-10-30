@@ -3,7 +3,7 @@ FROM ghcr.io/actions/actions-runner@sha256:0ce3288e48b012a83685998f683a2ae0cbd28
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       build-essential ca-certificates curl git jq pkg-config unzip xz-utils \
+       build-essential ca-certificates curl git jq pkg-config shellcheck unzip xz-utils \
        systemd libssl-dev libssl3t64 libicu74 libldap2 libxml2 libxslt1.1 \
        libreadline8t64 liblz4-1 libzstd1 libpam0g libkrb5-3 libcurl4t64 libedit2 \
     && rm -rf /var/lib/apt/lists/* \
