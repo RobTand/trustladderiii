@@ -5,10 +5,13 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, validate
 from tl3_workers.roles.base import Role
 from tl3_workers.roles.maker import _save
+from tl3_workers.tools import build_tools
 
 
 def check_reply(inputs, reply):
@@ -22,6 +25,16 @@ def check_reply(inputs, reply):
         citation = finding["citation"]
         if citation["id"] not in known[citation["kind"]]:
             raise ValueError("blocking finding cites an unknown goal or standing rule")
+
+
+def _pending_calls(history):
+    pending = {}
+    for message in history:
+        if isinstance(message, AIMessage):
+            pending.update((call["id"], call) for call in message.tool_calls)
+        elif isinstance(message, ToolMessage):
+            pending.pop(message.tool_call_id, None)
+    return list(pending.values())
 
 
 def run(model, request, worktree, emit):
@@ -46,6 +59,19 @@ def run(model, request, worktree, emit):
     state = {"generation": saved["generation"] if retry else request["operation"]["generation"],
              "inputs": request["inputs"], "messages": messages_to_dict(history)}
     _save(session, state)
+    if calls := _pending_calls(history):
+        # Resume only the pending reads, without asking the model for another turn.
+        graph = StateGraph(MessagesState)
+        graph.add_node("tools", ToolNode(build_tools(worktree, ROLE.tools)))
+        graph.add_edge(START, "tools")
+        graph.add_edge("tools", END)
+        result = graph.compile().invoke({"messages": [AIMessage(content="", tool_calls=calls)]})
+        results = [message for message in result["messages"] if isinstance(message, ToolMessage)]
+        history.extend(results)
+        state["messages"] = messages_to_dict(history)
+        _save(session, state)
+        for message in results:
+            emit({"event": "progress", "unit": "tool_result"})
     stream = agent.stream({"messages": history}, stream_mode="updates")
     reply = None
     try:
@@ -61,16 +87,8 @@ def run(model, request, worktree, emit):
                     validate("reviewer-reply", reply)
                     check_reply(request["inputs"], reply)
                     state["reply"] = reply
-            # Only complete tool exchanges can be sent back to the model.
-            pending = set()
-            for message in history:
-                if isinstance(message, AIMessage):
-                    pending.update(call["id"] for call in message.tool_calls)
-                elif isinstance(message, ToolMessage):
-                    pending.discard(message.tool_call_id)
-            if not pending:
-                state["messages"] = messages_to_dict(history)
-                _save(session, state)
+            state["messages"] = messages_to_dict(history)
+            _save(session, state)
             for message in messages:
                 if isinstance(message, AIMessage):
                     emit({"event": "progress", "unit": "model_turn"})
