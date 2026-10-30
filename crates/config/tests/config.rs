@@ -9,7 +9,11 @@ fn writer_defaults_to_ingest_and_rejects_invalid_explicit_budget() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(config.models.writer[0].name, config.models.ingest[0].name);
     let mut document: Value = EXAMPLE.parse().unwrap();
-    document["models"]["writer"] = document["models"]["ingest"].clone();
+    let writer = document["models"]["ingest"].clone();
+    document["models"]
+        .as_table_mut()
+        .unwrap()
+        .insert("writer".into(), writer);
     document["models"]["writer"][0]["budget_tokens"] = Value::Integer(0);
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
 }

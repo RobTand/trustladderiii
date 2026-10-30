@@ -35,6 +35,10 @@ for every family in the maker ladder, including with an explicit reviewer ladder
 Other role ladders must contain at least one model. No model names or effort
 vocabulary are built into the crate.
 
+The optional writer ladder defaults to ingest for older configs. Deployment
+defaults, including the explicit writer choice, live in
+`deploy/dl380g10/models.toml`. Production role registration belongs to #20.
+
 `models.worker_model(step)` serializes exactly the worker's model fields:
 `base_url`, `name`, `effort`, and `budget_tokens`. Family stays in config.
 The supervisor supplies `models.key_file` and a worktree under `worktrees_root`
