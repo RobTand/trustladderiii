@@ -38,7 +38,13 @@ if name == "gh":
     print("synthetic-one-job-config")
 elif name == "podman":
     if args[0] == "info": print("true")
-    elif args[:2] == ["image", "inspect"]: print("sha256:" + "a" * 64)
+    elif args[:2] == ["image", "inspect"]:
+        key = "NEW_IMAGE" if (Path(os.environ["HOME"]) / "built").exists() else "OLD_IMAGE"
+        print(os.environ.get(key, "sha256:" + "a" * 64))
+    elif args[0] == "build": (Path(os.environ["HOME"]) / "built").touch()
+    elif args[:2] == ["image", "rm"]:
+        for config in (Path(os.environ["HOME"]) / ".config/tl3-ci-runners").glob("*.env"):
+            assert "CI_RUNNER_IMAGE=" + args[2] not in config.read_text().splitlines(), config
     elif args[0] == "run":
         assert sys.stdin.read() == "synthetic-one-job-config\\n"
 elif name == "uname": print("x86_64")
@@ -165,6 +171,33 @@ elif name == "id": print("1000")
         result = self.run_script("runner-slot.sh", "3", "tl3-ci-runner-sandbox")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.calls.exists())
+
+    def test_rebuild_updates_every_profile_before_removing_unreferenced_images(self):
+        new_image = "sha256:" + "b" * 64
+        other_image = "sha256:" + "c" * 64
+        self.env.update(OLD_IMAGE=IMAGE, NEW_IMAGE=new_image)
+        config = self.home / ".config/tl3-ci-runners"
+        config.mkdir(parents=True)
+        for profile in ("tl3", "sandbox"):
+            with self.subTest(profile=profile):
+                self.calls.unlink(missing_ok=True)
+                (self.home / "built").unlink(missing_ok=True)
+                (config / "runner.env").write_text(f"CI_RUNNER_IMAGE={IMAGE}\nCI_RUNNER_CPUSET=2,4\n")
+                (config / "tl3-ci-runner-sandbox.env").write_text(
+                    f"CI_RUNNER_IMAGE={other_image}\nCI_RUNNER_CPUSET=\n")
+                result = self.run_script("install.sh", "0", profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((config / "runner.env").read_text(),
+                                 f"CI_RUNNER_IMAGE={new_image}\nCI_RUNNER_CPUSET=2,4\n")
+                self.assertEqual((config / "tl3-ci-runner-sandbox.env").read_text(),
+                                 f"CI_RUNNER_IMAGE={new_image}\nCI_RUNNER_CPUSET=\n")
+                removals = [c for c in self.commands() if c[:3] == ["podman", "image", "rm"]]
+                self.assertCountEqual(removals, [["podman", "image", "rm", IMAGE],
+                                                  ["podman", "image", "rm", other_image]])
+                self.calls.unlink()
+                result = self.run_script("install.sh", "0", profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(any(c[:3] == ["podman", "image", "rm"] for c in self.commands()))
 
     def test_sandbox_install_is_idempotent_and_separate(self):
         config = self.home / ".config/tl3-ci-runners"
