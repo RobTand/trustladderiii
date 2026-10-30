@@ -2186,13 +2186,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
-            if m.waiting_incident
-                || m.phase.is_closed()
-                || m.phase.is_stopping()
-                || m.effect.is_some()
-                || m.run.is_some()
-                || m.job.is_some()
-            {
+            if m.phase != Phase::Queued || m.waiting_incident {
                 return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);

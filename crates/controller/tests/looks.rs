@@ -13,7 +13,7 @@ use tl3_controller::{
     executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation, Upstream},
     status,
 };
-use tl3_kernel::{Ack, Command, EffectKind, Event, NodeId, Out, Phase};
+use tl3_kernel::{Command, EffectKind, Event, NodeId, Out, Phase};
 use tl3_store::{EffectState, Reader, Store};
 
 #[derive(Clone)]

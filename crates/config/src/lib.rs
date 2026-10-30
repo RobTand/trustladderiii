@@ -545,6 +545,16 @@ impl Config {
                 "use a unicast listen address with a fixed port from 1 to 65535 (Q24)",
             ));
         }
+        if let Some(operations) = &self.github.operations {
+            github_name("github.operations.owner", &operations.owner, false)?;
+            github_name("github.operations.name", &operations.name, true)?;
+            if operations.installation_id == 0 || operations.number == 0 {
+                return Err(invalid(
+                    "github.operations",
+                    "installation_id and number must be greater than zero",
+                ));
+            }
+        }
         for (name, allowance) in [
             ("agent_worker", &self.allowances.agent_worker),
             ("prismabuild", &self.allowances.prismabuild),
