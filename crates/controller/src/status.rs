@@ -36,10 +36,16 @@ pub struct RequestDetails {
 /// Tickets #9 and #15 fill this hook from their store tables. Keep queries in
 /// this read-only transaction and return only public progress/incident summaries.
 pub fn load_request_details(
-    _tx: &mut Transaction<'_>,
-    _nodes: &[NodeId],
+    tx: &mut Transaction<'_>,
+    nodes: &[NodeId],
 ) -> Result<BTreeMap<NodeId, RequestDetails>> {
-    Ok(BTreeMap::new())
+    let mut details: BTreeMap<NodeId, RequestDetails> = BTreeMap::new();
+    let ids: Vec<String> = nodes.iter().map(|n| n.0.to_string()).collect();
+    for row in tx.query("SELECT value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
+        let incident: crate::looks::Incident = serde_json::from_value(row.get(0))?;
+        details.entry(incident.node).or_default().open_incidents.push(incident.summary);
+    }
+    Ok(details)
 }
 
 pub fn load(reader: &mut Reader) -> Result<Status> {

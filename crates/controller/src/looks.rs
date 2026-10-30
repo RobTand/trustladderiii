@@ -18,6 +18,10 @@ pub(crate) struct AllowanceState {
     quota_ms: Option<u64>,
     stopping: bool,
     pub incident: Option<String>,
+    #[serde(default)]
+    healthy: bool,
+    #[serde(default)]
+    found: Option<String>,
 }
 
 impl AllowanceState {
@@ -30,6 +34,8 @@ impl AllowanceState {
             quota_ms: None,
             stopping: false,
             incident: None,
+            healthy: false,
+            found: None,
         }
     }
 }
@@ -146,7 +152,11 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    let new = effect.state.is_pending() || !completion.observations.is_empty();
+                    let found = serde_json::to_string(&completion)?;
+                    let new = effect.state.is_pending()
+                        || (state.found.as_ref() != Some(&found)
+                            && !completion.observations.is_empty());
+                    state.found = Some(found);
                     if new {
                         self.retry_held_effects();
                         if effect.state.is_pending() {
@@ -225,19 +235,22 @@ impl Controller {
                     }
                 }
                 Ok(Look::Healthy) => {
-                    self.retry_held_effects();
+                    if !state.healthy {
+                        self.retry_held_effects();
+                    }
+                    state.healthy = true;
                     self.probe_passed(&state)?;
                 }
                 Ok(Look::Quota { reset_ms }) => {
                     state.quota_ms = Some(reset_ms);
-                    state.due_ms = Some(reset_ms.max(now));
+                    state.due_ms = (reset_ms > now).then_some(reset_ms);
                 }
                 Ok(Look::Pending) => {}
                 Err(crate::Error::Quota { retry_after }) => {
                     let reset =
                         now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
                     state.quota_ms = Some(reset);
-                    state.due_ms = Some(reset);
+                    state.due_ms = (reset > now).then_some(reset);
                 }
                 Err(error) => {
                     eprintln!("allowance look failed for {}: {error}", state.delivery.key)
@@ -268,7 +281,7 @@ impl Controller {
                     );
                     commit
                         .rows
-                        .push(put("delivery_looks", "github", json!(next)));
+                        .push(put("delivery_looks", "github".into(), json!(next)));
                     self.store.commit(&commit)?;
                     // Kept in the same controller snapshot as other look evidence.
                 }
@@ -352,7 +365,7 @@ impl Controller {
                 .now_ms()
                 .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
             state.quota_ms = Some(reset);
-            state.due_ms = Some(reset);
+            state.due_ms = (reset > now).then_some(reset);
             self.save_allowance(&state)?;
         }
         Ok(())

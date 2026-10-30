@@ -418,6 +418,7 @@ impl Controller {
                     };
                     match result {
                         Reconciliation::Found(completion) => {
+                            self.retry_held_effects();
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
@@ -494,6 +495,7 @@ impl Controller {
                 if completion.ack != Ack::Confirmed || completion.observations.is_empty() {
                     continue;
                 }
+                self.retry_held_effects();
                 for (index, observation) in completion.observations.iter().enumerate() {
                     commit.rows.push(put(
                         "inbox",

@@ -51,3 +51,8 @@ harness = false
 name = "workers"
 path = "tests/workers.rs"
 harness = false
+
+[[test]]
+name = "looks"
+path = "tests/looks.rs"
+harness = false
