@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -59,7 +59,14 @@ fn matches(identity: &Identity) -> Result<bool> {
     if fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim() != identity.boot {
         return Ok(false);
     }
-    let stat = match fs::read_to_string(format!("/proc/{}/stat", identity.pid)) {
+    stat_matches(
+        identity,
+        fs::read_to_string(format!("/proc/{}/stat", identity.pid)),
+    )
+}
+
+fn stat_matches(identity: &Identity, stat: io::Result<String>) -> Result<bool> {
+    let stat = match stat {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.into()),
@@ -137,4 +144,23 @@ fn temporary(path: &Path) -> PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disappearing_process_is_absent() {
+        let identity = Identity {
+            pid: 1,
+            machine: String::new(),
+            start: 0,
+            boot: String::new(),
+        };
+        for error in [rustix::io::Errno::NOENT, rustix::io::Errno::SRCH] {
+            assert!(!stat_matches(&identity, Err(io::Error::from(error))).unwrap());
+        }
+        assert!(stat_matches(&identity, Err(io::Error::from(rustix::io::Errno::ACCESS))).is_err());
+    }
 }
