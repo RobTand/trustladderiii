@@ -16,7 +16,6 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
         Role::Make => Some("maker"),
         Role::Plan => Some("planner"),
         Role::Review => Some("reviewer"),
-        _ => None,
     }
 }
 

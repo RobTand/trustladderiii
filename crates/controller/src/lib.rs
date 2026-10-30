@@ -1300,9 +1300,10 @@ impl Controller {
                         }));
                     }
                     if reply["verdict"] == "approve" {
-                        mapped = Reply::Approved {
-                            head: n.head.ok_or(Error::Invalid("review has no head"))?,
-                        };
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
+                                head: n.head.ok_or(Error::Invalid("review has no head"))?,
+                            });
                     }
                     let mut findings = self
                         .store

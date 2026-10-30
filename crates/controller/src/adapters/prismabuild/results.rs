@@ -134,10 +134,9 @@ pub(super) async fn ending(tool: &Tool, job: &Job, withdrawal: bool) -> Result<O
     Ok(Some(completion(job, report, pass, results, failed_tests)?))
 }
 
-fn evidence(
-    ending: Ending,
-    job: &Job,
-) -> Result<(bool, bool, Vec<serde_json::Value>, Vec<FailedTest>)> {
+type CheckEvidence = (bool, bool, Vec<serde_json::Value>, Vec<FailedTest>);
+
+fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
     let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
         && ending.succeeded
         && ending.exit_code == Some(0);

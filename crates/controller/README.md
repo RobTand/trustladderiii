@@ -99,9 +99,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Run this from the repository root. Use `pbwait.py --endings KEY` and inspect the
 exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
-`adapters::simulation_with_workers` replaces ingest, audit, planning and maker with Python
-worker processes and returns a `WorkerOutputSource`. Review remains on
-the worker fake. Supply issue and repository text through `Store::put_worker_materials`
+`adapters::simulation_with_workers` replaces ingest, audit, planning, maker and review
+with Python worker processes and returns a `WorkerOutputSource`. Review needs
+committed Git and check evidence. Supply issue and repository text through `Store::put_worker_materials`
 before dispatch. Audit reads the stored ingest reply. An ingest revision reads
 the audit's objections. Missing materials block dispatch.
 
@@ -433,6 +433,7 @@ registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, recor
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
 check baselines and receipts by effect key. A label write alone leaves enqueue
 uncertain. Mergify must report queue membership or the attempt's terminal result.
+An outside commit between Mergify's head check and adding `tl3-queue` can leave a stale label; the new head has no approval check, so it cannot merge.
 The kernel has no dequeue effect, so this adapter adds none. The GitHub adapter
 owns approval checks and opening and closing PRs.
 
@@ -966,5 +967,3 @@ merges. It covers merge and cleanup, an outside commit, a free catch-up recheck,
 an unapproved merge, and lost-response recovery for GitHub writes. No test submits
 nested fleet work. After the host runs pass, generate the `workspace` campaign
 and submit it for formatting, Clippy and full workspace verification.
-
-An outside commit between Mergify's head check and adding `tl3-queue` can leave a stale label; the new head has no approval check, so it cannot merge.
