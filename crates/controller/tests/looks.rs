@@ -1323,6 +1323,10 @@ fn r3(settings: &tl3_config::Store, case: &str) {
     }
     c.look_now().unwrap();
     if case == "quiet_wait" {
+        assert!(
+            c.next_look_in().unwrap().is_none(),
+            "a claimed wait disarms the allowance instead of becoming an outage"
+        );
         let (tx, rx) = std::sync::mpsc::channel();
         let running = source.spawn(tx);
         bell.request().reply(0, serde_json::json!([]));
