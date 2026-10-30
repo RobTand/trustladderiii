@@ -333,6 +333,74 @@ fn cleanup_that_fails_waits_for_rob_then_closes() {
 }
 
 #[test]
+fn failed_notice_cleanup_retries_the_question_before_cleanup() {
+    let mut run = Run::new();
+    run.start_making();
+    let mut head = HeadId(0);
+    run.pass(&mut head);
+    run.send(Event::Fact {
+        node: NodeId(0),
+        fact: Fact::PrMerged {
+            head,
+            checks_passed: true,
+        },
+    });
+    let effect = run.node().effect.unwrap();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::Permanent,
+    });
+    let question = run.node().question.unwrap();
+    run.send(Event::NoticeFailed {
+        node: NodeId(0),
+        question: question.id,
+    });
+    assert!(
+        run.node().question.unwrap().post_failed,
+        "failed cleanup question must record its failed post"
+    );
+    let credit = run.node().credit;
+    run.answer(Answer::Retry);
+    let retry = run
+        .node()
+        .question
+        .expect("retry must post the question before retrying cleanup");
+    assert_ne!(retry.id, question.id);
+    assert!(!retry.post_failed);
+    assert_eq!(retry.kind, question.kind);
+    assert_eq!(retry.cont, question.cont);
+    assert_eq!(run.node().credit, credit);
+    assert_eq!(run.phase(), Phase::Stopping(Outcome::Merged));
+    assert!(run.node().effect.is_none());
+    run.answer(Answer::MarkHandled);
+    assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
+}
+
+#[test]
+fn failed_notice_question_ignores_a_cleanup_answer() {
+    let mut run = Run::new();
+    run.reply(Reply::IngestDone { size: 1 });
+    run.reply(Reply::AuditDisagrees);
+    run.reply(Reply::IngestDone { size: 1 });
+    run.reply(Reply::AuditDisagrees);
+    let id = run.node().question.unwrap().id;
+    run.send(Event::NoticeFailed {
+        node: NodeId(0),
+        question: id,
+    });
+    let failed = run.node().question.unwrap();
+    let count = run.notices.len();
+    run.answer(Answer::Retry);
+    assert_eq!(
+        run.node().question,
+        Some(failed),
+        "effect-failed questions offer Continue, not the cleanup Retry answer"
+    );
+    assert_eq!(run.notices.len(), count);
+}
+
+#[test]
 fn a_crash_loop_reaches_rob_after_its_second_incident() {
     let mut run = Run::new();
     run.start_making();
