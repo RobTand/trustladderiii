@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CARGO_BUILD_JOBS: '2'
-  RUST_TEST_THREADS: '2'
+  CARGO_BUILD_JOBS: '4'
+  RUST_TEST_THREADS: '4'
   OMP_NUM_THREADS: '1'
   MKL_NUM_THREADS: '1'
   OPENBLAS_NUM_THREADS: '1'
@@ -23,9 +23,16 @@ env:
 jobs:
   rust:
     name: Rust
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    runs-on: [self-hosted, tl3-fleet]
+    timeout-minutes: 40
     steps:
+      - name: Verify runner input is scrubbed
+        run: |
+          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
+            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
+            exit 1
+          fi
+          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
@@ -56,9 +63,16 @@ jobs:
 
   python:
     name: Python
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    runs-on: [self-hosted, tl3-fleet]
+    timeout-minutes: 30
     steps:
+      - name: Verify runner input is scrubbed
+        run: |
+          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
+            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
+            exit 1
+          fi
+          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false

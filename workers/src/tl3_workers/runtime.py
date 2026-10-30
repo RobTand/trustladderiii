@@ -103,6 +103,8 @@ def run(request, emit: Callable[[dict], None]):
     role = ROLES[request["role"]]
     model = create_model(request)
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
+        if worktree is not None:
+            worktree.progress_emit = emit
         if role.run is None:
             agent = build_agent(model, role, worktree)
             reply = _run_agent(agent, request, emit)

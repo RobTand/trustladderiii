@@ -410,6 +410,7 @@ When the last step confirms, the leaf moves to Queued.
 | CI failed | A test failed on the code | A failed round | Dequeue |
 | CI failed | The runner or its setup failed | See "Failures" | Enqueue again, when the failure rules allow |
 | Conflict | | Rebasing | Rebase onto main, in a new generation |
+| GitHub or Mergify stalled | No incident is already open | Queued, waiting on an incident | Raise an incident. A probe or Rob clears the first; only Rob clears later incidents. See "Looks and stalls" and Q7. |
 
 ### Rebasing
 

@@ -83,6 +83,42 @@ startup, middleware hooks and elapsed time do not produce progress events.
 {"event":"reply","role":"ingest","reply":{"kind":"brief","brief":"Fix the greeting.","goals":[{"description":"Return hello.","verification":"test"}],"memory_ids":[]}}
 ```
 
+An outside job declares its owner and durable key before blocking:
+
+```json
+{"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+```
+
+`run_tests` emits this event after submission and on each reattachment to
+`pbwait`. A declaration does not count as agent work. The next `model_turn` or
+`tool_result` clears it. Only `prismabuild` has a record reader today. Its keys
+require 64 lowercase hexadecimal digits. Unknown owners cannot grant liveness.
+
+The supervisor persists the declaration with the output offset and attempt.
+A restart preserves it without refreshing agent progress. The look reads
+PrismaBuild's action record and verifies that `checkout_snapshot.parent` is an
+ancestor of HEAD in the declaring run's worktree. A wait whose action has
+unrelated lineage gives no liveness. This check cannot distinguish sibling runs
+from the same base. Git runs with `GIT_NO_LAZY_FETCH=1` so the worktree cannot
+trigger an implicit fetch. Missing actions give no liveness. Read or parse errors
+remain outages.
+
+Maker looks use the served checkout, including after recovery or a `RunFailed`
+retry. The private `run_tests` input retains that checkout's HEAD as its parent.
+PrismaBuild seals the staged files above that parent without changing the maker's
+HEAD, index or files. The staged input fetches the checkout's full history,
+because PrismaBuild's snapshot needs it, so every `run_tests` copies that
+history. Its Git commands run with a fixed environment that inherits nothing
+from the worker's, so no `GIT_*` setting or hook can change what gets staged.
+
+Queued or claimed actions keep the agent alive. The controller registers their
+keys with PrismaBuild's bell source and disarms the agent's allowance timer.
+Without an event, it reads no action record and commits no wait state. An ending,
+loss or withdrawal requests a look. A bell reset rereads the record and requests
+a look only if the record has ended or errored. Missing records also count as
+ended. The first ending starts the agent's own no-progress allowance once.
+Progress, replacement and completion remove the subscription.
+
 Exactly one reply ends a successful run, followed by exit 0. Any other exit is
 a failed run, even if progress was emitted. Schema failures never emit a reply.
 Malformed JSON, duplicate keys, non-finite numbers, invalid requests, missing
@@ -355,6 +391,18 @@ Planner replies also append code-generated `violations`. Leaf and split rule
 violations are successful evidence reports, so the controller can preserve the
 reason for the kernel's next planner run. Transport errors, malformed replies
 and unsafe file reads still fail the process. Models cannot supply `violations`.
+
+A provider HTTP 429 with a valid `Retry-After` or `X-RateLimit-Reset` header ends
+with a quota record and exit 0 instead of a failed run:
+
+```json
+{"event":"quota","role":"ingest","reset_ms":1893456000000}
+```
+
+`reset_ms` is the announced Unix time in milliseconds. It is the last event.
+The controller waits for that reset and the supervisor starts another attempt
+under the same operation key and generation. A 429 without a valid future reset
+still fails. The protocol includes no exception text or response body.
 
 Maker recall uses `[hindsight].endpoint` and `[hindsight].bank` from controller
 config. The model supplies only a query. One 30-second deadline covers connection,

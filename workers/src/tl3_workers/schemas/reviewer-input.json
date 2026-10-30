@@ -104,6 +104,10 @@
                 },
                 "passed": {
                   "type": "boolean"
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 1000
                 }
               },
               "required": [

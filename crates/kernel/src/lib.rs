@@ -611,13 +611,24 @@ pub enum Ack {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
-    PrMerged { head: HeadId, checks_passed: bool },
+    PrMerged {
+        head: HeadId,
+        checks_passed: bool,
+    },
     PrClosedByPerson,
     PrDequeuedByPerson,
-    PushByOther { head: HeadId },
-    CiFailed { infra: bool },
+    PushByOther {
+        head: HeadId,
+    },
+    CiFailed {
+        infra: bool,
+    },
     Conflict,
-    IncidentCleared { by_rob: bool },
+    IncidentCleared {
+        by_rob: bool,
+    },
+    /// A PR or queue record is alive but unchanged across allowance looks.
+    UpstreamStalled,
 }
 
 #[cfg_attr(
@@ -1482,6 +1493,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Fact::CiFailed { .. } => "apply_ci_failed",
             Fact::Conflict => "apply_conflict",
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
+            Fact::UpstreamStalled => "apply_upstream_stalled",
         },
         Event::Command { command, .. } => match command {
             Command::Stop => "apply_stop",
@@ -2171,6 +2183,15 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
             if m.phase == Phase::Queued {
                 set_phase(m, Phase::Rebasing);
             }
+        }
+        Fact::UpstreamStalled => {
+            let m = &mut w.nodes[i];
+            if m.phase != Phase::Queued || m.waiting_incident {
+                return;
+            }
+            m.run_incidents = (m.run_incidents + 1).min(2);
+            let needs_rob = m.run_incidents >= 2;
+            raise_incident(w, i, needs_rob, out);
         }
         Fact::IncidentCleared { by_rob } => {
             let m = &mut w.nodes[i];
