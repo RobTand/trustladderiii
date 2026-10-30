@@ -557,7 +557,10 @@ fn load_checks_metadata_without_parsing_secret_contents() {
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["github"]["app_credentials_file"] = Value::String(app.display().to_string());
     document["models"]["key_file"] = Value::String(key.display().to_string());
-    document["store"]["password_file"] = Value::String(password.display().to_string());
+    document["store"].as_table_mut().unwrap().insert(
+        "password_file".into(),
+        Value::String(password.display().to_string()),
+    );
     let path = directory.path().join("config.toml");
     fs::write(&path, toml::to_string(&document).unwrap()).unwrap();
     Config::load(&path).unwrap();
@@ -583,7 +586,10 @@ fn load_checks_password_file_metadata_and_private_modes() {
     let mut document: Value = EXAMPLE.parse().unwrap();
     document["github"]["app_credentials_file"] = Value::String(app.display().to_string());
     document["models"]["key_file"] = Value::String(key.display().to_string());
-    document["store"]["password_file"] = Value::String(password.display().to_string());
+    document["store"].as_table_mut().unwrap().insert(
+        "password_file".into(),
+        Value::String(password.display().to_string()),
+    );
     let path = directory.path().join("config.toml");
     fs::write(&path, toml::to_string(&document).unwrap()).unwrap();
     Config::load(&path).unwrap();
