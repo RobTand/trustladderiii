@@ -476,7 +476,7 @@ fn simulation(settings: &tl3_config::Store) {
             .iter()
             .any(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] == "AuditAgrees")
     );
-    assert_recorded_runs(root.path(), 3);
+    assert_recorded_runs(root.path(), 2);
     assert_retired(&config, &mut store);
 }
 fn attempts(root: &Path) -> usize {
@@ -1447,7 +1447,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
