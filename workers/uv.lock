@@ -1287,6 +1287,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "jsonschema" },
     { name = "langchain-openai" },
+    { name = "tiktoken" },
     { name = "tl3-harness" },
 ]
 
@@ -1300,6 +1301,7 @@ requires-dist = [
     { name = "deepagents", specifier = "==0.7.32" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "langchain-openai", specifier = "==1.7.3" },
+    { name = "tiktoken", specifier = "==0.14.0" },
     { name = "tl3-harness", directory = "../harness" },
 ]
 
