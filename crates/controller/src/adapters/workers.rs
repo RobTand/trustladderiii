@@ -162,6 +162,12 @@ impl Supervisor {
         if role == "ingest" {
             inputs["forecast"] = forecast;
         }
+        if role != "reviewer" {
+            inputs
+                .as_object_mut()
+                .ok_or(Error::Invalid("worker materials must be an object"))?
+                .remove("standing_rules");
+        }
         protocol::validate_inputs(role, &inputs)?;
         let ladder = if role == "ingest" {
             &self.models.ingest
