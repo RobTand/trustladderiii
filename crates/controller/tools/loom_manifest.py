@@ -21,16 +21,25 @@ env = {
 }
 rows = []
 for host in ["dl380g10", "sparky", "sparklina"]:
+    command = "bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
+    if host == "dl380g10":
+        command += " && for iteration in {1..50}; do TL3_LOOM_BOUND=2 cargo test -p tl3-controller --features loom --lib --locked loom_bell_ -- --test-threads=1 || exit; done"
     rows.append({
         "cwd": str(root), "tags": [host], "cpus": 2,
         "demand": {"mem_gb": 6}, "env": env,
         "priority": -10, "timeout_s": 3600,
-        "argv": ["bash", "-c", "bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"],
+        "argv": ["bash", "-c", command],
     })
 rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
     "demand": {"mem_gb": 6}, "env": env,
     "priority": -10, "timeout_s": 3600,
     "argv": ["bash", "crates/controller/tools/verify.sh"],
+})
+rows.append({
+    "cwd": str(root), "anywhere": True, "cpus": 2,
+    "demand": {"mem_gb": 6}, "env": env,
+    "priority": -10, "timeout_s": 3600,
+    "argv": ["bash", "-c", "for mutant in ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage; do python3 crates/controller/tools/loom_mutants.py \"$mutant\" || exit; done"],
 })
 print(json.dumps(rows, indent=2))
