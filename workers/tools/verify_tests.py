@@ -6,4 +6,5 @@ import pytest
 
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / "harness/src"))
-raise SystemExit(pytest.main([str(root / "workers/tests"), str(root / "harness/tests"), "-q"]))
+raise SystemExit(pytest.main([str(root / "workers/tests"), str(root / "harness/tests"),
+                             "--ignore=" + str(root / "harness/tests/fixtures"), "-q"]))

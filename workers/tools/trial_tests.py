@@ -19,10 +19,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="tl3-test-trial-") as directory:
         root = Path(directory)
         (root / "test_trial.py").write_text(
-            'import os\nimport pytest\nfrom pathlib import Path\n'
+            'import os\nimport socket\nimport pytest\nfrom pathlib import Path\n'
             'def test_containment():\n'
             '    assert not Path("/mnt/shared/prismabuild-fleet").exists()\n'
             '    assert not Path("/var/run/docker.sock").exists()\n'
+            '    assert {name for _, name in socket.if_nameindex()} == {"lo"}\n'
+            '    with pytest.raises(OSError):\n'
+            '        Path("/harness/write-probe").write_text("forbidden")\n'
             '    assert "PRISMABUILD_ACTION_PROGRESS_TOKEN" not in os.environ\n'
             '    with pytest.raises(OSError):\n'
             '        Path("/checkout/write-probe").write_text("forbidden")\n'
