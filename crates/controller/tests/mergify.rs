@@ -113,6 +113,23 @@ impl State {
         }
         checks
     }
+    fn queue_check(&self) -> Value {
+        self.checks()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == tl3_mergify::QUEUE_CHECK)
+            .unwrap()
+            .clone()
+    }
+    fn queue_check_mut(&mut self) -> &mut Value {
+        self.checks
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|check| check["name"] == tl3_mergify::QUEUE_CHECK)
+            .unwrap()
+    }
     fn merged(&mut self, unapproved: bool) {
         self.pull["state"] = json!("closed");
         self.pull["merged"] = json!(true);
@@ -351,7 +368,7 @@ fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
     api.state.lock().unwrap().checks = fixture("failed", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
-    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    body["check_run"] = api.state.lock().unwrap().queue_check();
     deliver(settings, &api, "check_run", &body);
     ingress::drain(&mut controller).unwrap();
     controller.drive_once().unwrap();
@@ -499,12 +516,12 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
         state.checks = fixture(if conflict { "conflict" } else { "failed" }, "checks");
         if infra {
             // Synthetic timeout variant of the recorded queue check.
-            state.checks[0]["conclusion"] = json!("timed_out");
+            state.queue_check_mut()["conclusion"] = json!("timed_out");
         }
     }
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
-    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    body["check_run"] = api.state.lock().unwrap().queue_check();
     if infra {
         body["check_suite"] =
             json!({"id":700,"head_sha":head,"status":"completed","conclusion":"timed_out"});
@@ -620,7 +637,7 @@ fn ignored_events(settings: &tl3_config::Store) {
         ] {
             let mut body = webhook_fixture();
             body["action"] = json!(action);
-            body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+            body["check_run"] = api.state.lock().unwrap().queue_check();
             body["check_run"]["name"] = json!(name);
             body["check_run"]["app"] = app;
             let reads = api.state.lock().unwrap().reads;
@@ -776,7 +793,7 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
     if webhook {
         let mut body = webhook_fixture();
         body["action"] = json!("completed");
-        body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+        body["check_run"] = api.state.lock().unwrap().queue_check();
         let inputs = Translator::new(api.clients())
             .unwrap()
             .webhook(
@@ -788,13 +805,19 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
         assert_eq!(
             inputs.len(),
             1,
-            "closed unmerged node must translate the final check; node={:?}; check={}",
-            controller.world().unwrap().nodes[0],
-            body["check_run"]
+            "closed unmerged node must translate the final check"
         );
         deliver(settings, &api, "check_run", &body);
         drain(&mut controller);
     } else {
+        // This branch supplies a PR in the next catch-up window. The webhook
+        // branch above covers a final check after the PR left that window.
+        let cursor = Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-catch-up")
+            .unwrap()
+            .unwrap();
+        api.state.lock().unwrap().pull["updated_at"] = cursor;
         catch_up(settings, &api, &mut controller);
     }
     assert_eq!(
@@ -831,7 +854,7 @@ fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
     api.state.lock().unwrap().checks = fixture("failed", "checks");
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
-    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    body["check_run"] = api.state.lock().unwrap().queue_check();
     api.state.lock().unwrap().fail_reads = true;
     deliver(settings, &api, "check_run", &body);
     assert!(ingress::drain(&mut controller).is_err());
@@ -1026,7 +1049,7 @@ fn delayed_merge(settings: &tl3_config::Store, passed: bool, webhook: bool) {
     let mut controller = queued(settings, &api, root.path(), true);
     api.state.lock().unwrap().merged(false);
     assert_eq!(
-        api.state.lock().unwrap().checks()[0]["status"],
+        api.state.lock().unwrap().queue_check()["status"],
         "in_progress"
     );
     deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
@@ -1042,7 +1065,7 @@ fn delayed_merge(settings: &tl3_config::Store, passed: bool, webhook: bool) {
     if webhook {
         let mut body = webhook_fixture();
         body["action"] = json!("completed");
-        body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+        body["check_run"] = api.state.lock().unwrap().queue_check();
         deliver(settings, &api, "check_run", &body);
         drain(&mut controller);
     } else {
@@ -1112,7 +1135,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
     assert_eq!(check.title.as_deref(), Some("Running merge queue checks"));
     assert_eq!(
         check.id,
-        api.state.lock().unwrap().checks()[0]["id"]
+        api.state.lock().unwrap().queue_check()["id"]
             .as_u64()
             .unwrap()
     );
@@ -1141,10 +1164,10 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
         {
             let mut state = api.state.lock().unwrap();
             match field {
-                "id" => state.checks[0]["id"] = json!(9999),
-                "status" => state.checks[0]["status"] = json!("queued"),
-                "conclusion" => state.checks[0]["conclusion"] = json!("neutral"),
-                "title" => state.checks[0]["output"]["title"] = json!("In merge queue"),
+                "id" => state.queue_check_mut()["id"] = json!(9999),
+                "status" => state.queue_check_mut()["status"] = json!("queued"),
+                "conclusion" => state.queue_check_mut()["conclusion"] = json!("neutral"),
+                "title" => state.queue_check_mut()["output"]["title"] = json!("In merge queue"),
                 _ => unreachable!(),
             }
         }
@@ -1202,7 +1225,7 @@ fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
         )
     );
     assert_eq!(
-        api.state.lock().unwrap().checks()[0]["status"],
+        api.state.lock().unwrap().queue_check()["status"],
         "in_progress"
     );
 }
