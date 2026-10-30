@@ -293,7 +293,7 @@ impl Respond for Api {
             }
             _ => panic!("unexpected mock request: {method} {path}"),
         };
-        if s.lose_response == Some(path) {
+        if method != "GET" && s.lose_response == Some(path) {
             s.lose_response = None;
             return ResponseTemplate::new(503);
         }
