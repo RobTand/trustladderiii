@@ -78,7 +78,8 @@ def create_model(request):
     ])
 
 
-def fake_recall(endpoint, bank, query):
+def fake_recall(endpoint, bank, query, key_file):
+    assert key_file is None
     assert bank == 'tl3'
     assert endpoint == 'http://127.0.0.1:9/' and query == 'greeting decisions'
     return {'results': [{'id': 'fixture-memory', 'text': 'Keep the greet interface.'}]}
