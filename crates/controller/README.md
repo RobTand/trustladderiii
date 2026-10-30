@@ -133,6 +133,11 @@ accepts a reply, retries retain the checkpoint across new generations and count
 commits left by a crash or a failed session save. An accepted reply ends the visit.
 Each attempt stores one checkpoint with its generation and head; visits replace it
 so retries cannot accumulate checkpoint files.
+An accepted `maker_session` without a numeric generation is rejected before a
+worker starts, with `maker session has no accepted generation`. Slice one is
+unreleased; legacy sessions need explicit repair rather than guessing whether
+an old checkpoint belongs to the current visit. An absent session still starts
+normally and can recover unaccepted commits.
 Only clean, resumable completions save conversation history. Out-of-room runs
 preserve any previous conversation without saving the exhausted one.
 

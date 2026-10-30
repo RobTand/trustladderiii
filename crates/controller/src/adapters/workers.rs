@@ -243,10 +243,10 @@ impl Supervisor {
                     session["attempt"] == delivery.attempt
                         && session["replanned"] == delivery.replanned
                 });
-            if let Some(generation) = session
-                .as_ref()
-                .and_then(|session| session["generation"].as_u64())
-            {
+            if let Some(session) = &session {
+                let generation = session["generation"]
+                    .as_u64()
+                    .ok_or(Error::Invalid("maker session has no accepted generation"))?;
                 request["last_accepted_generation"] = json!(generation);
             }
             let needs_files = session.is_some_and(|session| session["needs_files"] == true);
