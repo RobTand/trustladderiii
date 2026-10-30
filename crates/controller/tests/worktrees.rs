@@ -125,6 +125,7 @@ fn crashes() {
                     f.delivery(kind, 3)
                 }
             };
+            let target = git(&f.remote, &["rev-parse", "main"]);
             kill(&f, &delivery, boundary);
             let before = if boundary == "after" && kind != EffectKind::RemoveWorktree {
                 Some(f.head(&delivery))
@@ -157,6 +158,19 @@ fn crashes() {
                     delivery.head_sha.unwrap()
                 ),
                 EffectKind::StartRebase => {
+                    assert_eq!(
+                        git(
+                            &f.repo,
+                            &[
+                                "rev-parse",
+                                &format!(
+                                    "refs/tl3/bases/{}",
+                                    Real::branch(&delivery).unwrap().as_str()
+                                )
+                            ]
+                        ),
+                        target
+                    );
                     assert!(matches!(
                         completion.observations.as_slice(),
                         [Observation::Rebased { .. }]

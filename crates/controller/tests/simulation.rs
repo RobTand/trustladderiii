@@ -1363,6 +1363,40 @@ impl Executor for GitHeadWorker {
         })
     }
 }
+struct ConflictQueue {
+    fake: adapters::mergify::Fake,
+    root: PathBuf,
+    first: Option<String>,
+}
+impl ConflictQueue {
+    fn result(&self, delivery: &Delivery, mut completion: Completion) -> Completion {
+        if self.first.as_deref() == Some(&delivery.key) {
+            completion.observations = vec![Observation::Kernel(Event::Fact {
+                node: delivery.node(),
+                fact: Fact::Conflict,
+            })];
+        }
+        completion
+    }
+}
+impl Executor for ConflictQueue {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if self.first.is_none() {
+            worktree_fixture::Fixture::open(&self.root).advance_main(false);
+            self.first = Some(delivery.key.clone());
+        }
+        let completion = self.fake.execute(delivery)?;
+        Ok(self.result(delivery, completion))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(match self.fake.reconcile(delivery)? {
+            Reconciliation::Found(completion) => {
+                Reconciliation::Found(self.result(delivery, completion))
+            }
+            other => other,
+        })
+    }
+}
 fn mixed_registry(settings: &tl3_config::Store) {
     use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
@@ -1378,6 +1412,14 @@ fn mixed_registry(settings: &tl3_config::Store) {
             root: root.path().into(),
         },
     );
+    registry.register(
+        Upstream::Mergify,
+        ConflictQueue {
+            fake: adapters::mergify::Fake::new(&records),
+            root: root.path().into(),
+            first: None,
+        },
+    );
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(labelled()).unwrap();
@@ -1387,33 +1429,21 @@ fn mixed_registry(settings: &tl3_config::Store) {
     let mut created = false;
     let mut pushed = false;
     let mut rebased = false;
-    let mut conflict_sent = false;
     let mut original = None;
     for _ in 0..300 {
         let world = controller.world().unwrap();
         if checkout.join(".git").is_file() {
             created = true;
         }
-        if world.nodes[0].phase == Phase::Queued && !conflict_sent {
+        if world.nodes[0].phase == Phase::Queued && !pushed {
             original = Some(fixture.head(&prepare));
             assert_eq!(
                 git(&fixture.remote, &["rev-parse", branch.as_str()]),
                 original.clone().unwrap()
             );
             pushed = true;
-            fixture.advance_main(false);
-            controller
-                .observe(
-                    "local-conflict",
-                    Observation::Kernel(Event::Fact {
-                        node: NodeId(0),
-                        fact: Fact::Conflict,
-                    }),
-                )
-                .unwrap();
-            conflict_sent = true;
         }
-        if conflict_sent && world.nodes[0].phase == Phase::Checking {
+        if pushed && world.nodes[0].phase == Phase::Checking {
             let head = fixture.head(&prepare);
             assert_ne!(Some(head.clone()), original);
             let snapshot = controller.snapshot().unwrap();
@@ -1431,7 +1461,8 @@ fn mixed_registry(settings: &tl3_config::Store) {
     }
     assert!(
         created && pushed && rebased,
-        "all real worktree operations must be exercised"
+        "real lifecycle incomplete: created={created}, pushed={pushed}, rebased={rebased}, phase={:?}",
+        controller.world().unwrap().nodes[0].phase
     );
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
