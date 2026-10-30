@@ -4,8 +4,8 @@
 executors. Read [the architecture note](../../docs/architecture.md) for the
 transaction and recovery contracts.
 
-All commands use the same TOML configuration as `tl3-config`. Controller execution
-supports explicit simulation only. Status commands read the configured store
+All commands use the same TOML configuration as `tl3-config`. The daemon runs
+production adapters by default, or simulation with `--simulate`. Status commands read the configured store
 and do not load GitHub or model credentials.
 
 The daemon uses `Config::load`, which checks all secret-file metadata. Status
@@ -17,10 +17,11 @@ reports an uninitialized database clearly.
 ```text
 tl3 status --config /absolute/path/to/config.toml
 tl3 status-serve --config /absolute/path/to/config.toml
+tl3d --config /absolute/path/to/config.toml
 tl3d --config /absolute/path/to/config.toml --simulate /absolute/path/to/fake-records
 ```
 
-The daemon reads one JSON `cli::Input` per line on stdin. For example:
+In simulation, the daemon reads one JSON `cli::Input` per line on stdin. For example:
 
 ```json
 {"LabelledIssue":{"delivery":"fixture-42","owner":"RobTand","repo":"tl3-sandbox","installation":1,"number":42,"title":"Fix the sandbox build","actor":24923402,"label":"tl3"}}
@@ -169,16 +170,12 @@ transaction as its kernel fact. A bare non-infrastructure CI fact still records
 feedback, explicitly stating when the upstream supplied no check details.
 Infrastructure failures and stale replies do not add maker findings.
 
-Production integration still requires:
-
-1. The controller's production material assembler must write the `maker` object
-   with `Store::put_worker_materials` before dispatch. There is no production
-   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
-   and planner check plan to this store API. The supervisor supplies kernel fields
-   and deployment settings; it does not invent a brief or checks.
-2. Mergify #63, PR #69, has merged. Connecting its queue evidence to maker
-   feedback with the failed check's name and link or summary remains pending.
-   Its current bare fact is supported but lacks details.
+Production registration supplies committed repository materials. Before maker
+dispatch, the supervisor translates the accepted brief and planner checks into
+the stored `maker` object, with stable goal IDs. It also stores the initial
+check plan. The supervisor adds kernel fields and deployment settings.
+Mergify's current queue CI fact supplies no check text. Maker feedback records
+that details are unavailable when it receives a bare fact.
 
 The merged PrismaBuild checks observation supplies changed paths and up to 20
 failing test IDs with messages capped at 1,000 characters each. The trusted
@@ -225,9 +222,9 @@ To exercise the receiver against a local GitHub mock server, supply
 address. With `--github-api` and no explicit listen address, the receiver defaults
 to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
 on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
-The API must be loopback HTTP in this simulation release. Ordinary stdin
-simulation still needs no App credentials. Live startup and tunnel deployment
-remain tickets #20 and #19.
+The mock API must be loopback HTTP. Ordinary stdin simulation needs no App
+credentials. Without `--simulate`, the daemon uses the configured App and real
+adapters. Follow [GO-LIVE.md](../../deploy/dl380g10/GO-LIVE.md) for deployment.
 
 POST deliveries to `/github/events`, matching the App manifest, with GitHub's
 delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
@@ -343,9 +340,10 @@ records its identity before exec. Atomic claims also let recovery cancel a
 launcher that has not started. No file locks are used. Machine ID, PID, process start time
 and boot ID identify each process. A record from another machine stays unknown. Stop uses pidfds and waits for termination.
 Keep these runs on the controller's host, including after a restart.
-For #19, workers and their supervisors must live outside the controller's kill
-scope. Use systemd `KillMode=process` for the controller or put workers in their
-own scope. Otherwise stopping the controller kills the workers too.
+The deployed unit uses `KillMode=control-group`: a service restart stops workers,
+supervisors and other local children. Recovery reconciles durable records before
+retrying. A process-only controller crash can still reattach to a live supervisor.
+See [the startup procedure](../../deploy/dl380g10/GO-LIVE.md) for restart checks.
 
 Sync the worker environment once at deployment with
 `uv sync --locked --project /srv/tl3/workers --python 3.14+gil`.
@@ -514,8 +512,8 @@ the daemon supervisor, which must stop the ingress loop and exit on failure.
 The source sends existing `cli::Input` values.
 It also implements `ingress::Source`, so the shared ingress supervisor registers
 it with `sources.register(adapter.source())` and propagates its errors.
-The production registry remains with #20. The default simulation registry still
-uses the fake.
+Production registers this adapter and its bell source from config.
+The default simulation registry still uses the fake.
 
 Before `SubmitChecks`, a maker/worktree caller supplies
 `Observation::CheckPlan { node, sha, run: CheckRun { repository, base_sha, plan } }`.
@@ -1016,8 +1014,8 @@ must cite a supplied goal or rule. Approvals must name the exact reviewed head.
 The controller carries blocking findings into planning.
 
 Round 1 currently starts a fresh reviewer session. [Ticket #88](https://github.com/RobTand/trustladderiii/issues/88)
-covers resuming the round-0 session with the session store from #12. It is blocked
-by #12 and #13 and must land before the live tracer, #20.
+covers resuming the round-0 session with the session store from #12. That follow-up
+is outside the first live tracer run, as recorded in #20.
 
 `github::Adapter` executes `PostApproval`, `OpenPr` and `ClosePr` through the App
 client. The check is named `TL3 approval`. Its external ID contains the effect key
