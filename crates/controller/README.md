@@ -376,7 +376,7 @@ for manual initialization locks and half-registered adds that need operator clea
 
 ## Add a worker role
 
-For #11, #12 and #13, update each boundary together:
+For each new worker role, update these boundaries together:
 
 - Add the kernel role mapping in `adapters/workers/protocol.rs` `role`.
 - Map and validate the reply in `map_reply`, using the package's role schema.
@@ -413,17 +413,22 @@ files. The controller initializes size with `ceil(tokens / fit_tokens)`. The ker
 adds the credit reserve. An unrepresentable size fails explicitly rather than
 wrapping or silently clamping the request's credit.
 
-Supply a complete text snapshot in `repo.materials` for each existing path in
-`repo.file_list`, through `Store::put_worker_materials`. Ingest and planner runs
+Supply the text snapshot in `repo.materials` for each UTF-8 text path in
+`repo.file_list`, through `Store::put_worker_materials`. Listed paths without text
+receive a binary marker in the worktree. They do not block dispatch, but declaring
+one for measurement fails instead of treating it as an empty new file. Ingest and planner runs
 materialize that snapshot into their own worktree. Paths must be canonical and
 relative. New declared files have no base content. Deployment must preload the
 pinned o200k_base data in `TIKTOKEN_CACHE_DIR`. Files above 1 MiB fail measurement.
 
 `[planning.overhead_tokens]` contains named initial estimates. It is the seam for
-later MLflow calibration. No MLflow calls run in this flow. Protected paths can
+later MLflow calibration. Their sum must be below `limits.fit_tokens`.
+No MLflow calls run in this flow. Protected paths can
 be extended in config, but the slice-one defaults cannot be removed.
 
-Accepted plans live in `plans`; `plan_reports` retains each generation's evidence.
+`plans` holds the latest schema-valid planner reply, accepted or rejected;
+`plan_reports` retains each generation's evidence. Malformed output fails the run
+and does not replace either document.
 `findings` includes rejected-plan reasons and reports for the next planner run.
 Callers that record failed checks or review findings append them to that same
 text-list document before requesting a re-plan.
@@ -437,3 +442,13 @@ question. This adapter does not draft messages.
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.
+Generate all three host actions with
+`python3 crates/controller/tools/worker_review_manifest.py planning` and submit
+the manifest through `pbcampaign.py --detach`.
+
+The planner process scenarios cover malformed output, a controller killed while a
+planner is running, and stopping a live planner. Malformed replies fail without
+storing a plan. Recovery reattaches to the same process and key with one attempt.
+Stop proves the process has ended and stores no plan. The leaf, split, rejected
+leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
+context and retry findings.

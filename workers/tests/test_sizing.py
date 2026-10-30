@@ -37,8 +37,17 @@ def test_root_forecast_uses_declared_scope_and_shared_measurement(tmp_path, requ
     assert forecast["file_tokens"] == {"greeting.py": 3, "new.py": 0}
 
 
-@pytest.mark.parametrize("reply", [BRIEF, {**BRIEF, "files": [], "forecast": {}}])
+FORGED = {**BRIEF, "files": [], "forecast": {
+    "tokenizer": "o200k_base", "brief_tokens": 1, "file_tokens": {},
+    "overhead_tokens": 10, "tokens": 11, "fit_tokens": 100,
+    "context_tokens": 150, "fits": True,
+}}
+
+
+@pytest.mark.parametrize("reply", [BRIEF, FORGED])
 def test_sized_ingest_requires_declarations_and_refuses_forged_evidence(tmp_path, request_doc, reply):
+    from tl3_workers.contracts import validate
+    validate("ingest-reply", reply)
     request_doc["inputs"]["forecast"] = {
         "fit_tokens": 100, "context_tokens": 150, "overhead_tokens": {"prompt": 10},
     }
