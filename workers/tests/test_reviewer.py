@@ -294,3 +294,35 @@ def test_round_one_crash_and_retry_do_not_duplicate_turns(
     runtime.run(review_request, events.append)
     assert len(observed) == 1
     assert Path(review_request["session_file"]).read_bytes() == checkpoint
+
+
+def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, responses = session_model
+    responses.insert(0, AIMessage(content="", tool_calls=[{
+        "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}]))
+
+    def crash(event):
+        if event.get("unit") == "tool_result":
+            raise RuntimeError("injected crash after tool result")
+
+    with pytest.raises(RuntimeError, match="after tool result"):
+        runtime.run(review_request, crash)
+    responses.pop(0)
+    review_request["operation"]["generation"] += 1
+    runtime.run(review_request, lambda event: None)
+    assert len(observed) == 2
+    assert len([m for m in observed[-1] if m.type == "human"]) == 2
+    assert len([m for m in observed[-1] if m.type == "tool"]) == 1
+    assert len([m for m in observed[-1] if m.type == "ai" and m.tool_calls]) == 1
+
+
+def test_accepted_round_one_recheck_is_a_new_visit(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    runtime.run(review_request, lambda event: None)
+    review_request["last_accepted_generation"] = review_request["operation"]["generation"]
+    review_request["operation"]["generation"] += 2
+    runtime.run(review_request, lambda event: None)
+    assert len(observed) == 2
+    assert len([m for m in observed[-1] if m.type == "human"]) == 3
