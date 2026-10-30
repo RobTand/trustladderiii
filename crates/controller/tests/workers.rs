@@ -1,3 +1,4 @@
+mod maker;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use serde_json::{Value, json};
@@ -176,8 +177,7 @@ fn main() {
         let settings: tl3_config::Store = serde_json::from_str(&config_text).unwrap();
         let root = Path::new(&args[3]);
         let config = config(&settings, root, "blocked");
-        let (registry, _) =
-            adapters::simulation_with_workers(&root.join("fakes"), &config).unwrap();
+        let (registry, _) = ingest_audit_simulation(&root.join("fakes"), &config).unwrap();
         let mut controller = Controller::open(
             Store::open(&settings).unwrap(),
             registry,
@@ -220,8 +220,57 @@ fn main() {
     println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
     event_source(&database.create("workers_events"));
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
+    maker::run(&mut database);
     database.stop();
     println!("14 required worker supervisor scenarios passed; no skips");
+}
+
+// These scenarios isolate ingest/audit. Maker acceptance below uses the real
+// supervisor with its own git fixture and model, rather than these role fakes.
+fn ingest_audit_simulation(
+    root: &Path,
+    config: &tl3_config::Config,
+) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
+    struct IngestAudit(Supervisor, adapters::workers::Fake);
+    impl Executor for IngestAudit {
+        fn execute(
+            &mut self,
+            delivery: &Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            if matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            ) {
+                self.1.execute(delivery)
+            } else {
+                self.0.execute(delivery)
+            }
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            if matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            ) {
+                self.1.reconcile(delivery)
+            } else {
+                self.0.reconcile(delivery)
+            }
+        }
+    }
+    let mut registry = adapters::simulation(root).unwrap();
+    let supervisor = Supervisor::new(config, root).unwrap();
+    let source = supervisor.source();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        IngestAudit(supervisor, adapters::workers::Fake::new(root)),
+    );
+    Ok((registry, source))
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -239,7 +288,7 @@ fn simulation(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -394,7 +443,7 @@ fn killed_controller(settings: &tl3_config::Store) {
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -498,7 +547,7 @@ fn early_and_objections(database: &mut Database) {
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
         let (registry, mut source) =
-            adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+            ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
         let mut controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -543,7 +592,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
     let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,

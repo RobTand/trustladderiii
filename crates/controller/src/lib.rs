@@ -686,6 +686,7 @@ impl Controller {
                     (n.phase, role.as_str()),
                     (tl3_kernel::Phase::Ingesting, "ingest")
                         | (tl3_kernel::Phase::Auditing, "audit")
+                        | (tl3_kernel::Phase::Making, "maker")
                 );
                 let mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
@@ -697,7 +698,12 @@ impl Controller {
                         }));
                     }
                 };
-                let document = if role == "ingest" { "briefs" } else { "audits" };
+                let document = match role.as_str() {
+                    "ingest" => "briefs",
+                    "audit" => "audits",
+                    "maker" => "maker_replies",
+                    _ => unreachable!(),
+                };
                 commit
                     .rows
                     .push(put(document, node.0.to_string(), reply.clone()));
@@ -708,6 +714,49 @@ impl Controller {
                         reply.get("goals").cloned().unwrap_or(json!([])),
                     ));
                 }
+                let mapped = match mapped {
+                    adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
+                    adapters::workers::protocol::MappedReply::Made(sha) => {
+                        let inputs = self
+                            .store
+                            .worker_materials(&node.0.to_string())?
+                            .ok_or(Error::Invalid("maker materials missing"))?;
+                        let goals = inputs.get("maker").unwrap_or(&inputs)["goals"]
+                            .as_array()
+                            .ok_or(Error::Invalid("maker goals missing"))?;
+                        let checks = reply["self_check"].as_array().unwrap();
+                        let expected: BTreeSet<_> =
+                            goals.iter().map(|g| g["id"].as_str()).collect();
+                        let checked: BTreeSet<_> =
+                            checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        if expected != checked || checks.len() != goals.len() {
+                            Reply::RunFailed
+                        } else {
+                            Reply::MakerDone {
+                                head: self.head(node, &sha)?,
+                            }
+                        }
+                    }
+                    adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        let request = request(snapshot, node)?;
+                        let repo = self
+                            .store
+                            .intern_repo(&request.repo.owner, &request.repo.name)?;
+                        let mut files = world
+                            .files(n.footprint)
+                            .ok_or(Error::Invalid("unknown footprint"))?
+                            .collect::<Vec<_>>();
+                        for path in paths {
+                            files.push(tl3_kernel::FileId(
+                                self.store.intern_path(repo, &path)?.get() as u64,
+                            ));
+                        }
+                        Reply::MakerNeedsFiles {
+                            files: world.intern_footprint(files),
+                            fits,
+                        }
+                    }
+                };
                 Event::Reply {
                     node,
                     generation,

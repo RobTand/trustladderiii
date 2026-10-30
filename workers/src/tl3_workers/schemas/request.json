@@ -75,6 +75,13 @@
     "worktree": {
       "type": "string",
       "pattern": "^/"
+    },
+    "session_file": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "resume_session": {
+      "type": "boolean"
     }
   },
   "required": [

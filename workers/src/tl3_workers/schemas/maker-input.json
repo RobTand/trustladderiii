@@ -61,6 +61,12 @@
       },
       "required": ["image", "tools_path"], "additionalProperties": false
     },
+    "hindsight": {
+      "type": "object",
+      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}},
+      "required": ["endpoint"], "additionalProperties": false
+    },
+    "fit_tokens": {"type": "integer", "minimum": 1},
     "context_size": {"type": "integer", "minimum": 1}
   },
   "required": ["brief", "goals", "plan", "attempt", "round", "tests", "context_size"],

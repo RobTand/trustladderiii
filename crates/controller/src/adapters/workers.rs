@@ -61,6 +61,10 @@ pub struct Supervisor {
     store: tl3_config::Store,
     fake_root: PathBuf,
     active: ActiveRuns,
+    worktrees: PathBuf,
+    limits: tl3_config::Limits,
+    tests: tl3_config::PrismaBuild,
+    hindsight: tl3_config::Hindsight,
 }
 
 impl Supervisor {
@@ -87,6 +91,10 @@ impl Supervisor {
             models: config.models.clone(),
             store: config.store.clone(),
             fake_root: fake_root.to_owned(),
+            worktrees: config.worktrees_root.clone(),
+            limits: config.limits.clone(),
+            tests: config.prismabuild.clone(),
+            hindsight: config.hindsight.clone(),
         })
     }
 
@@ -112,31 +120,65 @@ impl Supervisor {
 
     fn request(&self, delivery: &Delivery, role: &str, store: &mut Store) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let mut inputs = store
+        let materials = store
             .worker_materials(&node)?
             .ok_or(Error::Invalid("worker materials are missing"))?;
+        let mut inputs = materials.get(role).unwrap_or(&materials).clone();
+        let worktree = if role == "maker" {
+            inputs["attempt"] = json!(delivery.attempt);
+            inputs["round"] = json!(delivery.round);
+            inputs["plan"]["files"] = json!(delivery.paths);
+            inputs["context_size"] = json!(self.limits.context_tokens);
+            inputs["fit_tokens"] = json!(self.limits.fit_tokens);
+            inputs["tests"] =
+                json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
+            inputs["hindsight"] = json!({"endpoint": self.hindsight.endpoint});
+            self.worktrees
+                .join(&delivery.repository.owner)
+                .join(&delivery.repository.name)
+                .join(format!(
+                    "issue-{}-node-{}",
+                    delivery.issue,
+                    delivery.node().0
+                ))
+        } else {
+            self.root(&delivery.key).join("worktree")
+        };
         if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("audit needs an ingest reply"))?;
-        } else if let Some(audit) = store.worker_document(&node, "audits")?
+        } else if role == "ingest"
+            && let Some(audit) = store.worker_document(&node, "audits")?
             && audit["verdict"] == "disagree"
         {
             inputs["audit_objections"] = audit["objections"].clone();
         }
         protocol::validate_inputs(role, &inputs)?;
-        let ladder = if role == "ingest" {
-            &self.models.ingest
-        } else {
-            &self.models.audit
+        let ladder: &[tl3_config::Model] = match role {
+            "ingest" => &self.models.ingest,
+            "audit" => &self.models.audit,
+            "maker" => &self.models.maker,
+            _ => return Err(Error::Invalid("unsupported worker role")),
         };
         let model = &ladder[usize::from(delivery.attempt.saturating_sub(1)).min(ladder.len() - 1)];
-        Ok(json!({
+        let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
-            "inputs": inputs, "worktree": self.root(&delivery.key).join("worktree"),
-        }))
+            "inputs": inputs, "worktree": worktree,
+        });
+        if role == "maker" {
+            request["session_file"] = json!(
+                self.settings
+                    .runs
+                    .join("sessions")
+                    .join(&node)
+                    .join(format!("attempt-{}.json", delivery.attempt))
+            );
+            request["resume_session"] = json!(delivery.round == 1);
+        }
+        Ok(request)
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.

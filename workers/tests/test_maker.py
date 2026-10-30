@@ -116,7 +116,7 @@ def maker_request(tmp_path):
 
 
 def test_maker_declares_only_file_and_pb_tools():
-    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests"}
+    assert ROLES["maker"].tools.keys() == READ_TOOLS | WRITE_TOOLS | {"run_tests", "recall"}
 
 
 @pytest.mark.parametrize("reply", [
@@ -222,8 +222,8 @@ def test_done_with_an_unmet_goal_is_rejected_before_commit(tmp_path, maker_reque
     reply = {"kind": "done", "self_check": [DONE["self_check"][0],
              {"goal_id": "interface", "status": "not_met", "why": "Signature check is still failing."}]}
     result = start_worker(tmp_path, maker_request, [write_turn(), turn(reply)])
-    assert result.exit_code == 1
-    assert all(event["event"] != "reply" for event in result.events)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"]["kind"] == "cant_meet"
     assert git(root, "rev-parse", "HEAD") == before
     assert git(root, "diff", "--cached", "--name-only") == ""
     assert (root / "greeting.py").read_text() == "def greet(): return 'hello'\n"
