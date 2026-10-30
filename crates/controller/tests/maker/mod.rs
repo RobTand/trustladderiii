@@ -297,8 +297,26 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let checks_running = checks_source.spawn(tx.clone());
     let mut source_thread = Some(thread::spawn(move || source.run(tx)));
     controller.intake(labelled()).unwrap();
+    let mut checked_self_check_failure = false;
     loop {
         let world = controller.world().unwrap();
+        if mode == "self-check-mismatch"
+            && world
+                .nodes
+                .first()
+                .is_some_and(|node| node.run_failures == 1)
+        {
+            assert_eq!(world.nodes[0].phase, Phase::Making);
+            assert_ne!(git(&worktree, &["rev-parse", "HEAD"]), base);
+            assert!(
+                Store::open(settings)
+                    .unwrap()
+                    .worker_document("0", "maker_session")
+                    .unwrap()
+                    .is_none()
+            );
+            checked_self_check_failure = true;
+        }
         if mode == "twice-killed"
             && world
                 .nodes
@@ -350,44 +368,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     source_thread.take().unwrap().join().unwrap()
                 )
             });
-            let Input::Observation {
-                key,
-                mut observation,
-            } = input
-            else {
+            let Input::Observation { key, observation } = input else {
                 panic!("worker observation required")
             };
-            if mode == "self-check-mismatch"
-                && let Observation::WorkerReply { reply, .. } = &mut observation
-                && requests(&config).len() == 1
-            {
-                assert_ne!(git(&worktree, &["rev-parse", "HEAD"]), base);
-                reply["self_check"][0]["goal_id"] = json!("unexpected-goal");
-                observe(&mut controller, &key, observation, &worktree, &base);
-                while controller
-                    .snapshot()
-                    .unwrap()
-                    .rows
-                    .iter()
-                    .any(|row| row.table == "inbox" && row.id == format!("external:{key}"))
-                {
-                    assert!(controller.drive_once().unwrap());
-                }
-                let node = controller.world().unwrap().nodes[0];
-                assert_eq!(node.phase, Phase::Making);
-                assert_eq!(
-                    node.run_failures, 1,
-                    "self-check mismatch must become RunFailed"
-                );
-                assert!(
-                    Store::open(settings)
-                        .unwrap()
-                        .worker_document("0", "maker_session")
-                        .unwrap()
-                        .is_none()
-                );
-                continue;
-            }
             if fail
                 && matches!(&observation, Observation::Checks { pass: false, .. })
                 && controller.world().unwrap().nodes[0].attempt == 1
@@ -415,6 +398,12 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             }
             observe(&mut controller, &key, observation, &worktree, &base);
         }
+    }
+    if mode == "self-check-mismatch" {
+        assert!(
+            checked_self_check_failure,
+            "a committed self-check mismatch must become RunFailed"
+        );
     }
     let world = controller.world().unwrap();
     if world.nodes[0].phase.is_closed() {

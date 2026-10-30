@@ -96,7 +96,22 @@ def no_network(*args, **kwargs):
     raise AssertionError('network forbidden in maker acceptance')
 
 
+run_worker = runtime.run
+
+
+def run_with_mismatch(request, emit):
+    def emit_reply(event):
+        marker = Path(request['session_file']).parent / 'mismatch-injected'
+        if mode == 'self-check-mismatch' and event['event'] == 'reply' and not marker.exists():
+            # Corrupt a schema-valid reply after the real worker has committed.
+            event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
+            marker.touch()
+        emit(event)
+    return run_worker(request, emit_reply)
+
+
 with patch.object(runtime, 'create_model', create_model), \
+     patch.object(runtime, 'run', run_with_mismatch), \
      patch.object(recall, 'recall', fake_recall), \
      patch.dict(tools.TOOL_FACTORIES, {'run_tests': recorded_tests}), \
      patch.object(socket.socket, 'connect', no_network), \
