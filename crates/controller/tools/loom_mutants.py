@@ -27,7 +27,7 @@ MUTANTS = {
         "crates/controller/src/ingress.rs",
         "        let _ = self.0.sender.send(WebhookMessage::Gap);",
         "        // Mutant: lose the tunnel gap notification.",
-        "loom_webhook_", "deadlock",
+        "loom_webhook_", "gap lost or reordered",
     ),
     "progress": (
         "crates/controller/src/adapters/workers/source.rs",
