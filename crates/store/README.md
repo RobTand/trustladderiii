@@ -134,3 +134,10 @@ its second transaction after writing the event, rows and effects. The parent
 checks the uncommitted data is invisible, kills the writer with SIGKILL,
 reopens the store and compares the complete snapshot with the first commit.
 It then reuses the killed event key successfully.
+
+GitHub ingress retains verified parsed events and complete catch-up results in
+`tl3_ingress`. `ingress_after(sequence)` includes consumed deliveries for new
+translators. Each translator advances its own `tl3_ingress_cursors` row only
+after applying idempotent inputs. This does not change the kernel revision.
+`Store::reconnect` replaces the ingress source's connection after a failed insert;
+the controller's ownership session is never reconnected.

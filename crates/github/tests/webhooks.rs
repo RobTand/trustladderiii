@@ -261,3 +261,35 @@ fn inbox_failure_is_retryable_without_losing_the_event() {
         .unwrap()
     );
 }
+
+#[test]
+fn pull_request_updates_and_merge_groups_retain_typed_and_raw_evidence() {
+    let mut pull: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/pull-request-synchronize.json")).unwrap();
+    pull["action"] = serde_json::json!("opened");
+    let merge = serde_json::json!({"action": "checks_requested", "repository": pull["repository"], "installation": pull["installation"],
+        "merge_group": {"head_sha": "abc1234", "head_ref": "queue/main/test", "base_sha": "def5678", "base_ref": "main"}});
+    for (name, payload) in [
+        ("pull_request", pull),
+        ("merge_group", merge),
+        (
+            "ping",
+            serde_json::json!({"zen": "Retain the verified event"}),
+        ),
+    ] {
+        let body = serde_json::to_vec(&payload).unwrap();
+        let delivery =
+            verify_and_parse(b"throwaway", &signature(&body), "delivery-7", name, &body).unwrap();
+        assert_eq!(delivery.payload, payload);
+        assert_eq!(delivery.event_name, name);
+        match name {
+            "pull_request" => assert!(
+                matches!(delivery.event, Some(Event::PullRequestUpdated { action, .. }) if action == "opened")
+            ),
+            "merge_group" => assert!(
+                matches!(delivery.event, Some(Event::MergeGroup { action, .. }) if action == "checks_requested")
+            ),
+            _ => assert!(delivery.event.is_none()),
+        }
+    }
+}

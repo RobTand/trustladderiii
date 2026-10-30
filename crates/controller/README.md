@@ -96,31 +96,73 @@ exit code, logs and verified CAS receipt. CI runs separately on Mergify runners.
 
 `ingress::Source` runs on its own thread and sends `cli::Input` values to one
 controller thread. Register a source with `Sources::register`. The stdin reader
-uses that same interface. `ingress::run` drains persisted deliveries before
-applying inputs and drives the controller until no work remains.
+uses that same interface. `Sources::run` drains persisted deliveries before
+applying inputs and drives the controller until no work remains. Every source
+exit is logged. An error or panic wakes and stops the controller loop immediately,
+so `tl3d` exits and systemd can restart it while other sources are still alive.
 
 To exercise the receiver against a local GitHub mock server, supply
 `--github-listen 127.0.0.1:8081 --github-api http://127.0.0.1:8082/` alongside
 `--simulate`. `github.webhook_listen` in the TOML file also sets the listen
-address. The mock App credentials come from `github.app_credentials_file`.
+address. With `--github-api` and no explicit listen address, the receiver defaults
+to `127.0.0.1:8081`. Config and bind reject non-loopback addresses. `cloudflared`
+on the same host forwards its tunnel to this socket. The mock App credentials come from `github.app_credentials_file`.
 The API must be loopback HTTP in this simulation release. Ordinary stdin
 simulation still needs no App credentials. Live startup and tunnel deployment
 remain tickets #20 and #19.
 
-POST deliveries to `/webhooks/github` with GitHub's delivery, event and signature
-headers. The library verifies the signature. The receiver inserts the complete
-translated delivery into `tl3_ingress` before returning 202. Its connection never
-changes kernel rows or the controller revision. Delivery ids remain unique after
-consumption. A crash between applying an input and marking its delivery consumed
-replays the same intake or observation key.
+POST deliveries to `/github/events`, matching the App manifest, with GitHub's
+delivery, event and signature headers. Other methods return 405 with `Allow: POST`.
+The status page and receiver share `src/http.rs`. Four handlers cap open
+connections at eight, including queued sockets. Headers have an 8 KiB limit and
+webhook bodies have a 25 MiB limit. Each complete request has a two-second read
+deadline. Oversized bodies return 413, transfer encoding returns 400, and POST
+requires `Content-Length`. Socket reads finish before reaching the receiver
+thread, so a stalled client cannot hold delivery persistence or catch-up.
+Accept errors are logged and skipped. Response writes have a total deadline too.
 
-`Webhooks` runs catch-up once at startup. A tunnel supervisor calls
-`WebhookControl::gap` after an outage. A failed persistence or response also marks
-a gap, and the next connection event retries catch-up. There is no polling timer.
-Catch-up uses the library's paging and original label actors. Its transaction
-persists every recovered input and the new cursor together. Overlapping webhook
-and catch-up inputs name one request per issue and one observation per comment.
-Rob's comments stay in `github_comments` for ticket #14 to classify.
+The library verifies the HMAC before parsing. The receiver stores the parsed
+`GitHubDelivery::Webhook` under the delivery id in `tl3_ingress` before returning
+202. It retains both the typed event and the verified JSON payload, including
+unknown event names. PR updates, check runs, check suites and merge groups remain
+available for their owning adapters. Persistence errors log their `Display`,
+reopen the ingress connection and retry once. Only a failed retry returns 503.
+Delivery ids remain unique after consumption. A crash between applying an input
+and advancing its consumer cursor replays the same intake or observation key.
+
+`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
+receiver's blocking channel. There is no polling timer. A failed persistence or
+response marks a gap, which is retried at the next receiver event. Catch-up stores
+`GitHubDelivery::CatchUp` with the full `RepoChanges` and its cursor in one
+transaction, including PRs and check results. Comment URLs compare repository
+names without case and use the trailing issue number. Rob's comments on issues
+and PRs enter `github_comments` in both paths, deduplicated by repository,
+installation and comment id. Ticket #14 classifies them.
+
+### Register a delivery translator
+
+Ticket #63 registers its Mergify translator, and #13 registers its PR translator,
+on the controller before `Sources::run` or `ingress::drain`:
+
+```rust
+controller.register_github_translator("mergify", mergify_translator);
+```
+
+Implement `ingress::GitHubTranslator::translate(&mut self, &GitHubDelivery,
+&tl3_store::Snapshot) -> Result<Vec<cli::Input>>`. Translate both `Webhook` and
+`CatchUp` variants into observations. Validate the served repository and
+installation before producing evidence, and use stable observation keys across
+webhook and catch-up overlap. Translators never call the kernel.
+
+`ingress::drain` reads the stored deliveries in arrival order, calls the
+translator on the controller thread, applies its inputs and then persists its
+`github-translator:<name>` cursor. Each translator has an independent cursor.
+A new name starts at the first stored delivery, even if intake or another
+translator already consumed it. Reusing the name after restart resumes it.
+An error leaves that delivery's cursor unchanged. Inputs must be idempotent
+because a crash after applying them can replay the delivery. Legacy translated
+inbox rows from earlier #10 builds still drain normally.
 
 `adapters::github::Adapter` uses the REST client for kernel notices. It invokes
 `workers::writer::Writer`, checks every draft and allows two correction attempts.
@@ -132,8 +174,9 @@ options. Closing summaries close the issue, except when the request is replaced.
 PR effects still use this module's fake until ticket #13. Incident and replacement
 notices also stay on the fake for their owning tickets. Incidents need the
 operations issue, and replacements need a new request, not another comment.
-The checker includes TL3's tracked paths, generated during the build, the
-request's declared paths, and any further paths supplied in the adapter policy.
+The checker uses the request's own `Delivery.paths` and any further paths
+supplied in the adapter policy. No build script inventories TL3's checkout.
+It rejects both `:line` and `:line:column` suffixes.
 
 The `github` integration target uses the recorded webhook fixtures, the actual
 HTTP receiver, a local REST server and embedded Postgres. It covers delivery
@@ -151,3 +194,16 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3
 The campaign adds the kernel tests and three Kani harnesses covering retryable
 acknowledgements, publishing transitions, and queued progress. Read each terminal
 record, log, and CAS receipt before reporting a pass.
+
+For PR #64's receiver and status review evidence, create a clean detached worktree
+at the final commit. From that worktree, submit the three host checks:
+
+```bash
+python3 crates/controller/tools/github_review_manifest.py > /tmp/tl3-github-review.json
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-github-review.json
+```
+
+The manifest pins the controller and GitHub test targets to `dl380g10`, `sparky`
+and `sparklina`. Controller targets include the status page and process tests.
+After they pass, submit the full workspace `tools/verify.sh` command shown above
+once with `--anywhere`. Record every action key and result in the PR body.
