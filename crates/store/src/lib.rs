@@ -173,8 +173,8 @@ impl Store {
         if next_epoch != epoch && tx.query_one("SELECT EXISTS (SELECT 1 FROM tl3_effects WHERE state IN ('Sent', 'Uncertain', 'Cancelling'))", &[])?.get::<_, bool>(0) {
             return Err(Error::ActiveDeliveries);
         }
-        tx.execute("INSERT INTO tl3_events (event_key, revision, epoch, payload, result) VALUES ($1, $2, $3, $4, $5)",
-            &[&change.event_key, &revision.get(), &next_epoch.get(), &change.event, &change.result])?;
+        let committed = receipt(tx.query_one("INSERT INTO tl3_events (event_key, revision, epoch, payload, result) VALUES ($1, $2, $3, $4, $5) RETURNING revision, epoch, result",
+            &[&change.event_key, &revision.get(), &next_epoch.get(), &change.event, &change.result])?)?;
         for row in &change.rows {
             match row {
                 RowChange::Put { table, id, value } => {
@@ -233,11 +233,7 @@ impl Store {
             &[&revision.get(), &next_epoch.get()],
         )?;
         tx.commit()?;
-        Ok(CommitReceipt {
-            revision,
-            epoch: next_epoch,
-            result: change.result.clone(),
-        })
+        Ok(committed)
     }
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {

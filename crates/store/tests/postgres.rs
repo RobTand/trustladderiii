@@ -168,7 +168,7 @@ fn seed(store: &mut Store) -> Commit {
         reason: "initial".into(),
         amount: 4,
     }];
-    change.result = json!({"accepted": 1});
+    change.result = json!({"accepted": 1, "large_number": 1.0e18});
     change
 }
 
