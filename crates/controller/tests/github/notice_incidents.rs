@@ -148,7 +148,13 @@ pub(super) fn run(db: &mut support::Database) {
         }
     }
     assert_eq!(failures, 0, "notice incident scenarios failed");
-    for name in ["rejected_ask", "lost_summary", "dropped_change"] {
+    for name in [
+        "rejected_ask",
+        "lost_summary",
+        "dropped_change",
+        "lost_note",
+        "filing_403",
+    ] {
         for point in [
             "EventWritten",
             "RowsWritten",
@@ -302,22 +308,9 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     faults.lock().unwrap().incident = false;
     api.state.lock().unwrap().forbidden_question = false;
     api.state.lock().unwrap().forbidden_filing = false;
-    let mut comment = fixture(true)["comment"].clone();
-    comment["id"] = json!(90001);
-    comment["body"] = json!(format!("clear incident {incident_id}"));
-    c.observe(
-        "retry-notice",
-        Observation::GitHubComment {
-            repository: Repository {
-                owner: "owner".into(),
-                name: "tl3".into(),
-                installation: 3,
-            },
-            issue: 17,
-            comment: serde_json::from_value(comment).unwrap(),
-        },
-    )
-    .unwrap();
+    if point == "none" {
+        clear_incident(&mut c, &incident_id);
+    }
     drop(c);
     if point != "none" {
         let config = root.path().join("settings.json");
@@ -345,6 +338,7 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
                 .arg(root.path())
                 .arg(api.uri())
                 .arg(kind)
+                .arg(&incident_id)
                 .env("TL3_NOTICE_CUT", point)
                 .status()
                 .unwrap();
@@ -413,6 +407,25 @@ fn cut(root: &Path, selected: &str, actual: &str, key: &str) {
         }
     }
 }
+
+fn clear_incident(c: &mut Controller, id: &str) {
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(90001);
+    comment["body"] = json!(format!("clear incident {id}"));
+    c.observe(
+        "retry-notice",
+        Observation::GitHubComment {
+            repository: Repository {
+                owner: "owner".into(),
+                name: "tl3".into(),
+                installation: 3,
+            },
+            issue: 17,
+            comment: serde_json::from_value(comment).unwrap(),
+        },
+    )
+    .unwrap();
+}
 pub(super) fn child(args: &[String]) {
     let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
     let root = Path::new(&args[3]);
@@ -422,6 +435,7 @@ pub(super) fn child(args: &[String]) {
         ..Faults::default()
     }));
     let mut c = open(&settings, root, &args[4], faults);
+    clear_incident(&mut c, &args[6]);
     for _ in 0..500 {
         let progressed = c
             .drive_once_with(|point, key| {
