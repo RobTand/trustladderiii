@@ -26,6 +26,8 @@ def no_network(*args, **kwargs):
 
 
 def create_model(request):
+    with marker.with_suffix(".requests").open("a") as output:
+        output.write(json.dumps({"pid": os.getpid(), "request": request}) + "\n")
     if mode != "plan-blocked" or request["role"] == "planner":
         marker.write_text(str(os.getpid()))
     if mode == "quota-once" and not marker.with_suffix(".quota").exists():

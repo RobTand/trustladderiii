@@ -518,6 +518,7 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        self.adapters.retire(&mut self.store)?;
         let snapshot = self.store.load()?;
         Ok(self.prune_allowances(&snapshot)? || progressed)
     }

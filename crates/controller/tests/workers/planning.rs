@@ -44,16 +44,12 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     let n = &world.nodes[0];
     let plan = store.worker_document("0", "plans").unwrap();
     let snapshot = store.load().unwrap();
-    let requests: Vec<Value> = fs::read_dir(&config.workers.runs)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.is_dir())
-        .map(|p| {
-            serde_json::from_slice(&fs::read(p.join("attempt-00000000/request.json")).unwrap())
-                .unwrap()
-        })
+    let requests: Vec<Value> = recorded_runs(root.path())
+        .into_iter()
+        .map(|value| value["request"].clone())
         .filter(|v: &Value| v["role"] == "planner")
         .collect();
+    assert_retired(&config, &mut store);
     if mode == "plan-bad-schema" {
         assert!(matches!(n.phase, Phase::Planning { .. }));
         assert_eq!(n.run_incidents, 1);
@@ -67,6 +63,13 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
         return;
     }
     let plan = plan.unwrap();
+    let mut reader = tl3_store::Reader::open(settings).unwrap();
+    let status = tl3_controller::status::load(&mut reader).unwrap();
+    assert_eq!(
+        status.requests[0].details.last_progress.is_some(),
+        !n.phase.is_closed(),
+        "progress survives retirement while waiting for Rob, and is removed on closure"
+    );
     if mode == "normal" {
         assert!(n.phase.is_closed());
         assert_eq!(requests.len(), 1);

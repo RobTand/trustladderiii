@@ -33,14 +33,48 @@ pub struct RequestDetails {
     pub open_incidents: Vec<String>,
 }
 
-/// Tickets #9 and #15 fill this hook from their store tables. Keep queries in
-/// this read-only transaction and return only public progress/incident summaries.
+/// Read public progress summaries in the status reader's snapshot.
+/// Active runs take precedence; retirement preserves progress while a request waits.
 pub fn load_request_details(
     tx: &mut Transaction<'_>,
     nodes: &[NodeId],
 ) -> Result<BTreeMap<NodeId, RequestDetails>> {
-    let mut details: BTreeMap<NodeId, RequestDetails> = BTreeMap::new();
-    let ids: Vec<String> = nodes.iter().map(|n| n.0.to_string()).collect();
+    let ids: Vec<_> = nodes.iter().map(|node| node.0.to_string()).collect();
+    let rows = tx
+        .query(
+            "SELECT active.unit, CASE WHEN active.unit IS NOT NULL THEN active.last_progress_ms
+                   ELSE summary.last_progress_ms END, summary.unit
+         FROM unnest($1::text[]) WITH ORDINALITY AS n(node_id, position)
+         LEFT JOIN LATERAL (
+             SELECT unit, last_progress_ms FROM tl3_worker_progress
+             WHERE node_id = n.node_id ORDER BY started_ms DESC, run_key LIMIT 1
+         ) active ON true
+         LEFT JOIN tl3_worker_summary summary ON summary.node_id = n.node_id
+         ORDER BY n.position",
+            &[&ids],
+        )
+        .map_err(tl3_store::Error::from)?;
+    let mut details = BTreeMap::new();
+    for (node, row) in nodes.iter().zip(rows) {
+        let time: Option<i64> = row.get(1);
+        let unit: Option<String> = row.get::<_, Option<String>>(0).or_else(|| row.get(2));
+        let last_progress = time
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|time| {
+                let action = match unit.as_deref() {
+                    Some("model_turn") => "Model turn completed",
+                    _ => "Tool result received",
+                };
+                format!("{action} at {}", time.format("%Y-%m-%d %H:%M:%S UTC"))
+            });
+        details.insert(
+            *node,
+            RequestDetails {
+                last_progress,
+                ..RequestDetails::default()
+            },
+        );
+    }
     for row in tx.query("SELECT value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
         let incident: crate::looks::Incident = serde_json::from_value(row.get(0))?;
         details.entry(incident.node).or_default().open_incidents.push(incident.summary);
