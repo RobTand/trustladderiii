@@ -546,8 +546,14 @@ fn late_launcher(settings: &tl3_config::Store) {
         .status()
         .unwrap();
     assert!(status.success());
+    let cancellation: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    assert_eq!(
+        cancellation["cancelled"], true,
+        "the delayed worker must retain its cancellation claim"
+    );
     assert!(
-        !attempt.join("process.json").exists(),
+        !attempt.join("stdout.jsonl").exists(),
         "a cancelled delayed launch must never exec a worker"
     );
     supervisor.execute(&delivery).unwrap();
