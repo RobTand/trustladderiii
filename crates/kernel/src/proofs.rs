@@ -411,3 +411,43 @@ proof!(pr_merged_awaiting_rob, check_pr_merged(Phase::AwaitingRob));
 proof!(pr_merged_stopping, check_pr_merged(Phase::Stopping(kani::any())));
 proof!(pr_merged_closed, check_pr_merged(Phase::Closed(kani::any())));
 
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn probe_fixture() {
+    let world = any_world(Some(Phase::Ready(kani::any())));
+    require_consistent(&world);
+    kani::cover!(true);
+}
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn probe_clone() {
+    let world = any_world(Some(Phase::Ready(kani::any())));
+    let after = clone_world(&world);
+    require_consistent(&after);
+    kani::cover!(true);
+}
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn probe_advance() {
+    let world = any_world(Some(Phase::Ready(kani::any())));
+    let mut after = clone_world(&world);
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out);
+    require_consistent(&after);
+    kani::cover!(changed);
+}
+
+#[kani::proof]
+#[kani::unwind(6)]
+fn probe_advance_eq() {
+    let world = any_world(Some(Phase::Ready(kani::any())));
+    let mut after = clone_world(&world);
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out);
+    require_consistent(&after);
+    if changed { assert!(after.nodes[1] == world.nodes[1]); }
+    kani::cover!(changed);
+}
