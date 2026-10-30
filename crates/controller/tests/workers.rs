@@ -1040,8 +1040,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     let mut run = delivery();
     supervisor.execute(&run).unwrap();
     wait(|| root.path().join("entered").exists());
-    let source = supervisor.source();
-    assert_eq!(source.active_runs(), 1);
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
@@ -1058,7 +1057,9 @@ fn fake_stop(settings: &tl3_config::Store) {
         head: None,
     };
     supervisor.execute(&run).unwrap();
-    assert_eq!(source.active_runs(), 0);
+    let process: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    assert_eq!(process["cancelled"], true);
     assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),
