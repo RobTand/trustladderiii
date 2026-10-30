@@ -768,6 +768,18 @@ fn source_skips_bad_jobs_and_surfaces_failure() {
     assert_passing_input(receiver.recv_timeout(Duration::from_secs(10)).unwrap());
     drop(running);
     assert!(!record_path(root.path(), &bad.key, "done").exists());
+    let mut withdrawal = bad.clone();
+    withdrawal.output = Out::Effect {
+        node: NodeId(0),
+        seq: 8,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    assert!(
+        adapter.execute(&withdrawal).is_err(),
+        "a corrupt active binding must not confirm withdrawal"
+    );
+    assert!(adapter.reconcile(&withdrawal).is_err());
 
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);

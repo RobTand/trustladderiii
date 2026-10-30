@@ -1,4 +1,4 @@
-use super::{Job, Settings, encoded, jobs, read_job, results, retire_superseded, write};
+use super::{Job, Settings, encoded, job_paths, read_job, results, retire_superseded, write};
 use crate::{Result, cli::Input};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -95,8 +95,10 @@ impl Source {
 
     fn rebuild(&mut self) -> Result<()> {
         let mut active = BTreeMap::new();
-        for (_, job) in jobs(&self.settings.records, false)? {
-            active.insert(job.action.clone(), job);
+        for path in job_paths(&self.settings.records, false)? {
+            if let Some(job) = read_job(&path) {
+                active.insert(job.action.clone(), job);
+            }
         }
         self.tool_errors.retain(|key| active.contains_key(key));
         self.active = Some(active);

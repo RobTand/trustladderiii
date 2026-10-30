@@ -122,22 +122,25 @@ fn read_job(path: &Path) -> Option<Job> {
         }
     }
 }
-fn jobs(root: &Path, completed: bool) -> Result<Vec<(PathBuf, Job)>> {
+fn job_paths(root: &Path, completed: bool) -> Result<Vec<PathBuf>> {
     let mut found = vec![];
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
         if path.extension().is_some_and(|v| v == "job")
             && path.with_extension("done").exists() == completed
-            && let Some(job) = read_job(&path)
         {
-            found.push((path, job));
+            found.push(path);
         }
     }
     Ok(found)
 }
 
 fn retire_superseded(root: &Path, delivery: &Delivery) -> Result<()> {
-    for (path, job) in jobs(root, false)?.into_iter().chain(jobs(root, true)?) {
+    for path in job_paths(root, false)?
+        .into_iter()
+        .chain(job_paths(root, true)?)
+    {
+        let Some(job) = read_job(&path) else { continue };
         if job.delivery.node() == delivery.node() && job.delivery.generation < delivery.generation {
             // A later delivered check proves the prior effect and watch have settled.
             // Delete the binding first so a crash cannot expose a job without its done marker.
@@ -296,14 +299,17 @@ impl Adapter {
     }
 
     fn targets(&self, delivery: &Delivery) -> Result<Vec<Job>> {
-        Ok(jobs(&self.settings.records, false)?
-            .into_iter()
-            .map(|(_, job)| job)
-            .filter(|job| {
-                job.delivery.node() == delivery.node()
-                    && Some(job.delivery.generation) == delivery.job_generation
-            })
-            .collect())
+        let mut targets = vec![];
+        for path in job_paths(&self.settings.records, false)? {
+            // An unreadable active binding cannot prove that withdrawal has finished.
+            let job: Job = serde_json::from_slice(&fs::read(path)?)?;
+            if job.delivery.node() == delivery.node()
+                && Some(job.delivery.generation) == delivery.job_generation
+            {
+                targets.push(job);
+            }
+        }
+        Ok(targets)
     }
 
     fn check_result(&self, job: &Job) -> Result<Reconciliation> {
