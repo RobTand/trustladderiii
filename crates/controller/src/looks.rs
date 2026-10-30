@@ -677,7 +677,7 @@ impl Controller {
         };
         delivery.epoch = snapshot.epoch.get();
         delivery.note = Some(format!(
-            "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+            "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
             request.repo.owner, request.repo.name, request.issue
         ));
         delivery.question_context = Some(json!({"issue_title":request.title,

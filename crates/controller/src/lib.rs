@@ -1118,7 +1118,7 @@ impl Controller {
                     }),
                 ));
                 delivery.note = Some(format!(
-                    "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+                    "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
                     delivery.repository.owner, delivery.repository.name, delivery.issue
                 ));
                 delivery.question_context = Some(json!({"issue_title":request.title,
