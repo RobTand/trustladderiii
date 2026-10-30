@@ -196,6 +196,7 @@ impl Supervisor {
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "reviewer" {
             inputs = review::inputs(delivery, store, snapshot)?;
+            inputs["context_size"] = json!(self.limits.context_tokens);
         } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];

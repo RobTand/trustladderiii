@@ -7,6 +7,7 @@ grep tools on that worktree. Follow tool continuation notices when needed.
 On a fix round, your earlier conversation contains your findings and reasoning.
 The new diff runs from the last reviewed head in base_sha to the new head_sha.
 Check the fixes against your findings and every supplied goal and standing rule.
+Report a blocker only if it still holds at `head_sha`. Re-judge each earlier finding against the new diff and checks.
 When supplied, check_base_sha names the base for the check results. That commit
 can differ from the diff's base_sha. Each check still compares its own base and
 the new head, so do not treat the fix diff's base as the checks' base.

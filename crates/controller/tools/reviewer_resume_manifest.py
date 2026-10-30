@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("hosts", "workspace"))
+parser.add_argument("suite", choices=("red", "hosts", "workspace"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -25,6 +25,16 @@ rows = [{
     "cwd": str(root), "argv": ["bash", "-ec", command],
     "cpus": 2, "demand": {"mem_gb": 6}, "tags": [host], "env": env,
 } for host in ("dl380g10", "sparky", "sparklina")]
+if args.suite == "red":
+    rows = [{
+        "cwd": str(root), "argv": ["bash", "-c", """status=0
+for mode in changes round-one-rebase; do
+    cargo test --locked -p tl3-controller --test publishing -- "$mode" || status=1
+done
+/home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil pytest -c workers/pyproject.toml workers/tests/test_reviewer.py -q -k stops_before_context_exhaustion || status=1
+exit "$status"""],
+        "cpus": 2, "demand": {"mem_gb": 6}, "anywhere": True, "env": env,
+    }]
 if args.suite == "workspace":
     rows = [{
         "cwd": str(root), "argv": ["bash", "crates/controller/tools/verify.sh"],

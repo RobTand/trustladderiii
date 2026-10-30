@@ -95,8 +95,7 @@ impl Executor for Workers {
                     if fs::read_to_string(checkout.join("value.py")).unwrap()
                         == "def value(): return 2\n"
                     {
-                        git(&checkout, &["commit", "--allow-empty", "-m", "fix round"]);
-                        *sha = git(&checkout, &["rev-parse", "HEAD"]);
+                        *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
                     } else {
                         *sha = commit(&checkout, "value.py", "def value(): return 2\n");
                     }
@@ -678,8 +677,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert_eq!(reviews[2]["resume_session"], true);
         assert_eq!(reviews[1]["session_file"], reviews[2]["session_file"]);
         assert_eq!(
-            reviews[2]["inputs"]["base_sha"],
-            reviews[2]["inputs"]["check_base_sha"],
+            reviews[2]["inputs"]["base_sha"], reviews[2]["inputs"]["check_base_sha"],
             "a rebased review must start at the leaf's new check base"
         );
         assert_eq!(
@@ -696,7 +694,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "rebased round 1 must contain only the leaf's own change"
         );
     }
-    if matches!(mode, "changes" | "new-attempt" | "review-retry" | "round-one-rebase") {
+    if matches!(
+        mode,
+        "changes" | "new-attempt" | "review-retry" | "round-one-rebase"
+    ) {
         assert_eq!(reviews[0]["resume_session"], false);
         assert_eq!(reviews[1]["resume_session"], true);
         assert_eq!(reviews[0]["session_file"], reviews[1]["session_file"]);
@@ -735,9 +736,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     for (index, review) in reviews.iter().enumerate() {
         assert_eq!(
             review["inputs"]["check_base_sha"],
-            if review["resume_session"] == true
-                && !(mode == "round-one-rebase" && index == 2)
-            {
+            if review["resume_session"] == true && !(mode == "round-one-rebase" && index == 2) {
                 reviews[0]["inputs"]["base_sha"].clone()
             } else {
                 review["inputs"]["base_sha"].clone()

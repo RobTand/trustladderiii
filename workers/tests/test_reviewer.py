@@ -347,3 +347,29 @@ def test_reviewer_stops_before_context_exhaustion(review_request, session_model,
         with pytest.raises(ValueError, match="reviewer out of room"):
             runtime.run(review_request, events.append)
         assert len(observed) == 1, "retry must not repeat an exhausted model turn"
+
+
+@pytest.mark.parametrize("field,value", [("diff", "different fix"), ("checks", [])])
+def test_review_retry_rejects_changed_evidence(review_request, session_model, tmp_path, field, value):
+    observed, responses = session_model
+    review_request["session_file"] = str(tmp_path / "reviewer.json")
+    responses[:] = [AIMessage(content=json.dumps(APPROVE))]
+    runtime.run(review_request, lambda event: None)
+    review_request["inputs"][field] = value
+    with pytest.raises(ValueError, match="review retry evidence changed before acceptance"):
+        runtime.run(review_request, lambda event: None)
+    assert len(observed) == 1
+
+
+def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, session_model, tmp_path):
+    observed, responses = session_model
+    review_request["session_file"] = str(tmp_path / "reviewer.json")
+    review_request["inputs"]["context_size"] = 1_000
+    responses[:] = [AIMessage(content="", tool_calls=[{
+        "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}])]
+    events = []
+    for _ in range(2):
+        with pytest.raises(ValueError, match="reviewer out of room"):
+            runtime.run(review_request, events.append)
+    assert not events
+    assert len(observed) == 1

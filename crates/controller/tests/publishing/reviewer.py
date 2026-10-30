@@ -19,7 +19,8 @@ def model(request):
     inputs = request["inputs"]
     assert any(rule["id"] == "test-report-integrity" for rule in inputs["standing_rules"])
     assert all(check["custody"] == "in-process" for check in inputs["checks"])
-    assert Path(request["worktree"], "value.py").read_text() == "def value(): return 2\n"
+    assert Path(request["worktree"], "value.py").read_text() == (
+        "def value():\n    return 2\n" if request["resume_session"] else "def value(): return 2\n")
     count = len(record.read_text().splitlines()) if record.exists() else 0
     first = count == 0
     with record.open("a") as output:

@@ -919,13 +919,18 @@ Each reviewer attempt uses the maker's session directory and atomic writer,
 with a distinct file named `reviewer-attempt-N.json`. The re-plan directory keeps
 attempt 1 of a new plan separate from attempt 1 of the old plan. Round 1 resumes
 its own conversation, including model reasoning and tool results. Its new `diff`
-starts at the last reviewed head in `base_sha`. `check_base_sha` separately names
-the commit used for the new check results' base outcomes. If round 0 failed checks
+starts at the last reviewed head in `base_sha` while that head contains the
+current check base. After a rebase moves the check base beyond that history,
+`base_sha` uses the new check base, so the diff contains only the leaf's change.
+`check_base_sha` names the recorded commit used for the check results' base
+outcomes (`CheckRun.base_sha`), including the new target after a clean rebase. If round 0 failed checks
 and never reached review, round 1 starts a fresh conversation.
 
 The controller records each accepted review's generation, attempt, re-plan flag
 and head in the existing worker document store. A retry before acceptance keeps
-the same visit across generations. The worker checkpoints model turns and tool
+the same visit across generations. A retry with inputs that differ from the saved
+session fails on purpose: reusing its reply or pending reads would mix evidence
+from different heads or checks. The worker checkpoints model turns and tool
 results before emitting progress. Recovery executes pending reads without another
 model turn. It validates and saves its final reply before emitting completion.
 A read interrupted before its result was saved may be repeated. A completed visit returns
@@ -933,6 +938,13 @@ its saved reply without appending the input or calling the model again. A later
 accepted recheck is a new visit, even if its evidence is unchanged. New attempts
 start fresh. Closing the node deletes reviewer files with the maker sessions
 through the existing retirement path.
+
+The reviewer uses the maker's 85% context guard, including provider usage counts
+and the character-count fallback. The controller supplies `context_size` from
+its limits; direct requests without it use 150,000 tokens. Exhaustion fails the
+worker without a verdict. The session records exhaustion before failure, so a
+retry does not repeat the model turn. Bounded rounds do not bound tool reads
+within a visit. No new kernel reply or transition is needed.
 
 To reproduce #88's checks, generate a manifest with
 `python3 crates/controller/tools/reviewer_resume_manifest.py hosts` or `workspace`,

@@ -3,6 +3,10 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/reviewer-input.json",
   "type": "object",
   "properties": {
+    "context_size": {
+      "type": "integer",
+      "minimum": 1
+    },
     "goals": {
       "type": "array",
       "items": {

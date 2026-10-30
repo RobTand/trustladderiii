@@ -42,7 +42,7 @@ pub(super) fn inputs(
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
     let session = session(delivery, store)?;
-    let base = if delivery.round == 1 {
+    let mut base = if delivery.round == 1 {
         session
             .as_ref()
             .map(|s| {
@@ -62,6 +62,13 @@ pub(super) fn inputs(
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err(Error::Invalid("invalid review commit"));
+        }
+    }
+    if base != run.base_sha {
+        let common = git(&run.repository, &["merge-base", base, &run.base_sha])?;
+        if common.trim_ascii() != run.base_sha.as_bytes() {
+            // Rebasing moves the check base beyond the previously reviewed history.
+            base = &run.base_sha;
         }
     }
     let node = delivery.node().0.to_string();

@@ -7,10 +7,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, validate
 from tl3_workers.roles.base import Role
-from tl3_workers.roles.maker import _save
+from tl3_workers.roles.maker import _ContextCharacters, _out_of_room, _save
 from tl3_workers.tools import build_tools
 
 
@@ -38,16 +39,19 @@ def _pending_calls(history):
 
 
 def run(model, request, worktree, emit):
-    from tl3_workers.runtime import build_agent, _run_agent
+    from tl3_workers.runtime import build_agent
 
+    if isinstance(model, ChatOpenAI):
+        model.stream_usage = True
     agent = build_agent(model, ROLE, worktree)
-    if "session_file" not in request:
-        return _run_agent(agent, request, emit)
-    session = Path(request["session_file"])
-    saved = read_json(session.read_text()) if session.exists() else None
+    characters = _ContextCharacters()
+    session = Path(request["session_file"]) if "session_file" in request else None
+    saved = read_json(session.read_text()) if session and session.exists() else None
     retry = saved is not None and saved["generation"] > request.get("last_accepted_generation", -1)
     if retry and saved["inputs"] != request["inputs"]:
         raise ValueError("review retry evidence changed before acceptance")
+    if retry and saved.get("out_of_room"):
+        raise ValueError("reviewer out of room")
     history = messages_from_dict(saved["messages"]) if saved and (
         retry or request.get("resume_session")) else []
     if retry and "reply" in saved:
@@ -58,7 +62,8 @@ def run(model, request, worktree, emit):
         history.append(HumanMessage(content=json.dumps(request["inputs"], ensure_ascii=False)))
     state = {"generation": saved["generation"] if retry else request["operation"]["generation"],
              "inputs": request["inputs"], "messages": messages_to_dict(history)}
-    _save(session, state)
+    if session:
+        _save(session, state)
     if calls := _pending_calls(history):
         # Resume only the pending reads, without asking the model for another turn.
         graph = StateGraph(MessagesState)
@@ -69,10 +74,12 @@ def run(model, request, worktree, emit):
         results = [message for message in result["messages"] if isinstance(message, ToolMessage)]
         history.extend(results)
         state["messages"] = messages_to_dict(history)
-        _save(session, state)
+        if session:
+            _save(session, state)
         for message in results:
             emit({"event": "progress", "unit": "tool_result"})
-    stream = agent.stream({"messages": history}, stream_mode="updates")
+    stream = agent.stream({"messages": history}, config={"callbacks": [characters]},
+                          stream_mode="updates")
     reply = None
     try:
         for update in stream:
@@ -80,6 +87,13 @@ def run(model, request, worktree, emit):
                         for message in result.get("messages", [])]
             history.extend(messages)
             for message in messages:
+                if isinstance(message, AIMessage) and _out_of_room(
+                        message, request["inputs"].get("context_size", 150_000), characters.prompt):
+                    state["out_of_room"] = True
+                    state["messages"] = messages_to_dict(history)
+                    if session:
+                        _save(session, state)
+                    raise ValueError("reviewer out of room")
                 if isinstance(message, AIMessage) and not message.tool_calls:
                     if message.invalid_tool_calls:
                         raise ValueError("invalid reviewer tool calls")
@@ -88,7 +102,8 @@ def run(model, request, worktree, emit):
                     check_reply(request["inputs"], reply)
                     state["reply"] = reply
             state["messages"] = messages_to_dict(history)
-            _save(session, state)
+            if session:
+                _save(session, state)
             for message in messages:
                 if isinstance(message, AIMessage):
                     emit({"event": "progress", "unit": "model_turn"})
