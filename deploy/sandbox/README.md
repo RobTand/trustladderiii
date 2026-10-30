@@ -57,3 +57,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 
 CI on Mergify runners runs directly. Agent development tests always use
 PrismaBuild. Test records and live results are documented on issue #17.
+
+The trial also found that GitHub Actions check outputs can have a null title.
+The GitHub model preserves that absence; Mergify treats it as an unknown title.
+The regression fixture is a real response from sandbox PR #16.

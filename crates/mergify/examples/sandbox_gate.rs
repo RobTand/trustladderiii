@@ -25,19 +25,38 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if operation == "deliveries" {
         let destination = PathBuf::from(subject);
         fs::create_dir_all(&destination)?;
-        for page in 1..=20 {
-            let deliveries: Vec<serde_json::Value> = http
-                .get(format!(
-                    "https://api.github.com/app/hook/deliveries?per_page=100&page={page}"
-                ))
+        let mut url = "https://api.github.com/app/hook/deliveries?per_page=100".to_owned();
+        for _ in 0..20 {
+            let response = http
+                .get(&url)
                 .header("User-Agent", "tl3-sandbox-gate")
                 .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
                 .bearer_auth(&jwt)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
                 .await?;
+            let next = response
+                .headers()
+                .get(reqwest::header::LINK)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|links| links.split(',').find(|link| link.contains("rel=\"next\"")))
+                .and_then(|link| {
+                    link.split_once('<')?
+                        .1
+                        .split_once('>')
+                        .map(|(url, _)| url.to_owned())
+                });
+            let status = response.status();
+            let body: serde_json::Value = response.json().await?;
+            if !status.is_success() {
+                let record = json!({"status": status.as_u16(), "message": body["message"], "errors": body["errors"]});
+                fs::write(
+                    destination.join("unavailable.json"),
+                    serde_json::to_vec_pretty(&record)?,
+                )?;
+                println!("delivery API unavailable: {record}");
+                return Err("delivery API unavailable".into());
+            }
+            let deliveries: Vec<serde_json::Value> = serde_json::from_value(body)?;
             for delivery in &deliveries {
                 if !matches!(
                     delivery["event"].as_str(),
@@ -74,8 +93,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
                 println!("recorded delivery {id}");
             }
-            if deliveries.len() < 100 {
-                return Ok(());
+            match next {
+                Some(next) if next.starts_with("https://api.github.com/app/hook/deliveries?") => {
+                    url = next
+                }
+                None => return Ok(()),
+                Some(_) => return Err("unexpected delivery pagination URL".into()),
             }
         }
         return Err("delivery pagination limit reached".into());
