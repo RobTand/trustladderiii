@@ -522,6 +522,7 @@ impl Executor for Real {
                 &Self::branch(delivery)?,
                 &self.checkout(delivery),
                 writable,
+                &mut |_| {},
             )? {
                 Some(completion) => Reconciliation::Found(completion),
                 None => Reconciliation::Pending,

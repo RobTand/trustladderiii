@@ -23,3 +23,8 @@ tempfile = "3"
 name = "simulation"
 path = "tests/simulation.rs"
 harness = false
+
+[[test]]
+name = "worktrees"
+path = "tests/worktrees.rs"
+harness = false

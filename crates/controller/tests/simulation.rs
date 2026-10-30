@@ -1333,124 +1333,120 @@ fn config_permissions_and_pool(settings: &tl3_config::Store) {
     }
 }
 
-// A test can wire a real client for part of one upstream, delegating its other
-// effects to that upstream's fake. Production adapters belong to their own tickets.
-struct LocalWorktrees {
-    git: tl3_worktrees::Worktrees,
-    checkout: PathBuf,
-    fake: adapters::worktrees::Fake,
+mod worktree_fixture;
+
+struct GitHeadWorker {
+    fake: adapters::workers::Fake,
+    root: PathBuf,
 }
-impl Executor for LocalWorktrees {
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        let branch = tl3_worktrees::BranchName::new("tl3/mixed-fixture").unwrap();
-        let map = |error| tl3_controller::Error::Adapter(Box::new(error));
-        match delivery.output {
-            Out::Effect {
-                kind: EffectKind::PrepareWorktree,
-                ..
-            } => {
-                self.git.create_branch(&branch).map_err(map)?;
-                self.git
-                    .create_worktree(&branch, &self.checkout)
-                    .map_err(map)?;
+impl GitHeadWorker {
+    fn actual_head(&self, delivery: &Delivery, mut completion: Completion) -> Completion {
+        for observation in &mut completion.observations {
+            if let Observation::Made { sha, .. } = observation {
+                *sha = worktree_fixture::Fixture::open(&self.root).head(delivery);
             }
-            Out::Effect {
-                kind: EffectKind::RemoveWorktree,
-                ..
-            } => {
-                self.git
-                    .remove_worktree(&branch, &self.checkout)
-                    .map_err(map)?;
-                self.git.delete_local_branch(&branch).map_err(map)?;
-            }
-            _ => return self.fake.execute(delivery),
         }
-        Ok(Completion::confirmed(vec![]))
+        completion
+    }
+}
+impl Executor for GitHeadWorker {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        let completion = self.fake.execute(delivery)?;
+        Ok(self.actual_head(delivery, completion))
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        let found = match delivery.output {
-            Out::Effect {
-                kind: EffectKind::PrepareWorktree,
-                ..
-            } => self.checkout.join(".git").exists(),
-            Out::Effect {
-                kind: EffectKind::RemoveWorktree,
-                ..
-            } => !self.checkout.exists(),
-            _ => return self.fake.reconcile(delivery),
-        };
-        Ok(if found {
-            Reconciliation::Found(Completion::confirmed(vec![]))
-        } else {
-            Reconciliation::Absent
+        Ok(match self.fake.reconcile(delivery)? {
+            Reconciliation::Found(completion) => {
+                Reconciliation::Found(self.actual_head(delivery, completion))
+            }
+            other => other,
         })
     }
 }
 fn mixed_registry(settings: &tl3_config::Store) {
+    use adapters::worktrees::Real;
+    use worktree_fixture::{Fixture, git};
     let root = tempfile::tempdir().unwrap();
-    let repository = root.path().join("repo");
-    fs::create_dir(&repository).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec![
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "fixture",
-        ],
-    ] {
-        let output = Command::new("git")
-            .current_dir(&repository)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let worktrees = root.path().join("worktrees");
-    fs::create_dir(&worktrees).unwrap();
-    let checkout = worktrees.join("request");
+    let fixture = Fixture::create(root.path());
     let records = root.path().join("upstreams");
     let mut registry = adapters::simulation(&records).unwrap();
+    registry.register(Upstream::Worktrees, fixture.adapter());
     registry.register(
-        Upstream::Worktrees,
-        LocalWorktrees {
-            git: tl3_worktrees::Worktrees::open(&repository, &worktrees).unwrap(),
-            checkout: checkout.clone(),
-            fake: adapters::worktrees::Fake::new(&records),
+        Upstream::Workers,
+        GitHeadWorker {
+            fake: adapters::workers::Fake::new(&records),
+            root: root.path().into(),
         },
     );
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(labelled()).unwrap();
-    for _ in 0..100 {
-        if checkout.join(".git").exists() {
+    let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
+    let checkout = fixture.adapter().checkout(&prepare);
+    let branch = Real::branch(&prepare).unwrap();
+    let mut created = false;
+    let mut pushed = false;
+    let mut rebased = false;
+    let mut conflict_sent = false;
+    let mut original = None;
+    for _ in 0..300 {
+        let world = controller.world().unwrap();
+        if checkout.join(".git").is_file() {
+            created = true;
+        }
+        if world.nodes[0].phase == Phase::Queued && !conflict_sent {
+            original = Some(fixture.head(&prepare));
+            assert_eq!(
+                git(&fixture.remote, &["rev-parse", branch.as_str()]),
+                original.clone().unwrap()
+            );
+            pushed = true;
+            fixture.advance_main(false);
+            controller
+                .observe(
+                    "local-conflict",
+                    Observation::Kernel(Event::Fact {
+                        node: NodeId(0),
+                        fact: Fact::Conflict,
+                    }),
+                )
+                .unwrap();
+            conflict_sent = true;
+        }
+        if conflict_sent && world.nodes[0].phase == Phase::Checking {
+            let head = fixture.head(&prepare);
+            assert_ne!(Some(head.clone()), original);
+            let snapshot = controller.snapshot().unwrap();
+            assert!(
+                snapshot
+                    .interned
+                    .iter()
+                    .any(|i| i.kind == tl3_store::InternKind::Commit && i.value == head)
+            );
+            rebased = true;
+        }
+        if !controller.drive_once().unwrap() {
             break;
         }
-        assert!(controller.drive_once().unwrap());
     }
     assert!(
-        checkout.join(".git").exists(),
-        "the registered real client must create the checkout"
+        created && pushed && rebased,
+        "all real worktree operations must be exercised"
     );
-    drain(&mut controller);
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
         Phase::Closed(Outcome::Merged)
     );
+    assert!(!checkout.exists());
     assert!(
-        !checkout.exists(),
-        "the same real client must remove the checkout"
+        git(
+            &fixture.repo,
+            &["for-each-ref", "refs/heads/tl3", "refs/tl3/bases/tl3"]
+        )
+        .is_empty()
     );
-    assert!(
-        adapters::delivery_counts(&records).unwrap().len() > 10,
-        "other upstreams use fakes"
-    );
+    assert!(git(&fixture.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+    let counts = adapters::delivery_counts(&records).unwrap();
+    assert!(counts.len() > 10, "other upstreams use persistent fakes");
+    assert!(counts.values().all(|count| *count == 1));
 }
