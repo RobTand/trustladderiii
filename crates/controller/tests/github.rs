@@ -78,11 +78,14 @@ fn labelled() -> LabelledIssue {
     }
 }
 fn client(uri: &str) -> GitHub {
+    client_with_pem(uri, PEM.clone())
+}
+fn client_with_pem(uri: &str, pem: String) -> GitHub {
     GitHub::new(
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: PEM.clone(),
+            pem,
             webhook_secret: "test-secret".into(),
         },
         3,
@@ -385,8 +388,11 @@ impl Server {
     }
 }
 fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
+    adapter_with_client(client(uri), root)
+}
+fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter {
     adapters::github::Adapter::new(
-        BTreeMap::from([(3, client(uri))]),
+        BTreeMap::from([(3, client)]),
         FakeWriter,
         0,
         Policy {
@@ -457,7 +463,24 @@ fn main() {
         crash_child(&args);
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--merge-pending-child")
+    {
+        steering::merge_pending_child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
+        match scenario {
+            "quote" => steering::dropped_change_quote(),
+            "second" => steering::second_replacement(&database.create("second_replacement")),
+            "merge" => steering::merge_pending(&database.create("merge_pending"), "none"),
+            _ => panic!("unknown followup scenario"),
+        }
+        database.stop();
+        return;
+    }
     operations_and_delivery_log(&database.create("operations"));
     println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
@@ -502,6 +525,24 @@ fn main() {
         );
     }
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
+    steering::dropped_change_quote();
+    steering::second_replacement(&database.create("second_replacement"));
+    for point in [
+        "none",
+        "EventWritten",
+        "RowsWritten",
+        "EffectsWritten",
+        "TransitionsWritten",
+        "CreditWritten",
+        "BeforeCommit",
+        "AfterCommit",
+        "BeforeDispatch",
+        "AfterDispatch",
+        "BeforeReconcile",
+        "AfterReconcile",
+    ] {
+        steering::merge_pending(&database.create(&format!("pending_{point}")), point);
+    }
     database.stop();
     println!("GitHub integration scenarios passed; no skips; no live GitHub calls");
 }

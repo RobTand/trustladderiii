@@ -27,6 +27,7 @@ pub enum CommentKind {
     Classify,
     Clarify,
     FileCorrection,
+    ReplacementDropped,
 }
 
 impl From<tl3_kernel::Out> for Output {
