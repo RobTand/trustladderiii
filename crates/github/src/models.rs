@@ -58,6 +58,8 @@ pub struct PullRequest {
     pub user: Actor,
     pub state: String,
     pub merged_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub merge_commit_sha: Option<String>,
     pub head: PullHead,
     pub base: PullHead,
     pub updated_at: DateTime<Utc>,
@@ -74,6 +76,8 @@ pub struct PullHead {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckRun {
     pub id: u64,
+    #[serde(default)]
+    pub pull_requests: Vec<CheckPullRequest>,
     pub name: String,
     pub head_sha: String,
     pub external_id: Option<String>,
@@ -99,6 +103,8 @@ pub struct CheckApp {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckSuite {
     pub id: u64,
+    #[serde(default)]
+    pub pull_requests: Vec<CheckPullRequest>,
     pub head_sha: String,
     pub status: String,
     pub conclusion: Option<String>,
@@ -175,6 +181,8 @@ pub struct RepoChanges {
     pub issues: Vec<Issue>,
     pub comments: Vec<Comment>,
     pub labels: Vec<(u64, LabelChange)>,
+    #[serde(default)]
+    pub closed: Vec<(u64, PullClosed)>,
     pub pull_requests: Vec<PullRequest>,
     pub check_runs: Vec<CheckRun>,
     pub check_suites: Vec<CheckSuite>,
@@ -191,6 +199,13 @@ pub struct CatchUp {
 pub struct ServedRepo {
     pub full_name: String,
     pub tracked_heads: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PullClosed {
+    pub id: u64,
+    pub actor: Option<Actor>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -212,4 +227,18 @@ pub struct HookDelivery {
 pub struct HookDeliveryPage {
     pub deliveries: Vec<HookDelivery>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CheckPullRequest {
+    pub number: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IssueActivity {
+    pub id: u64,
+    pub event: String,
+    pub actor: Option<Actor>,
+    pub created_at: DateTime<Utc>,
+    pub label: Option<Label>,
 }

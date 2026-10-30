@@ -221,24 +221,50 @@ impl Controller {
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
             match result {
-                Ok(Look::Found(completion)) => {
+                Ok(Look::Found(mut completion)) => {
                     let effect = self
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    let found = serde_json::to_string(&completion)?;
-                    let new = effect.state.is_pending()
-                        || (state.found.as_ref() != Some(&found)
-                            && !completion.observations.is_empty());
-                    state.found = Some(found);
-                    if new {
-                        if completion.releases_holds() {
-                            self.retry_held_effects(upstream(state.delivery.output));
+                    let token_only = completion.progress.is_some() && completion.observations.is_empty();
+                    let changed = if completion.progress.is_some() {
+                        let snapshot = self.store.load()?;
+                        let mut commit = Commit::new(
+                            format!("look-progress:{}:{}", state.delivery.key, snapshot.revision.get()),
+                            json!({"progress_read":state.delivery.key}),
+                            &snapshot,
+                        );
+                        let changed = self.record_progress(&snapshot, &mut commit,
+                            &state.delivery.key, completion.progress.as_ref())?;
+                        if !commit.rows.is_empty() {
+                            self.store.commit(&commit)?;
                         }
+                        changed == Some(true)
+                    } else { false };
+                    // The typed watch row is the sole token store.
+                    completion.progress = None;
+                    if token_only {
                         if effect.state.is_pending() {
                             self.complete(&effect.key, completion)?;
-                        } else {
-                            self.look_observations(&state.delivery, completion)?;
+                        }
+                        if self.look_alive(&mut state, changed)? {
+                            continue;
+                        }
+                    } else {
+                        let found = serde_json::to_string(&completion)?;
+                        let new = effect.state.is_pending()
+                            || (state.found.as_ref() != Some(&found)
+                                && !completion.observations.is_empty());
+                        state.found = Some(found);
+                        if new {
+                            if completion.releases_holds() {
+                                self.retry_held_effects(upstream(state.delivery.output));
+                            }
+                            if effect.state.is_pending() {
+                                self.complete(&effect.key, completion)?;
+                            } else {
+                                self.look_observations(&state.delivery, completion)?;
+                            }
                         }
                     }
                 }
@@ -256,6 +282,7 @@ impl Controller {
                         self.complete(
                             &effect.key,
                             Completion {
+                                progress: None,
                                 ack: Ack::Retryable,
                                 observations: vec![],
                             },
@@ -264,46 +291,10 @@ impl Controller {
                     }
                 }
                 Ok(Look::Alive { progress }) => {
-                    let allowance = self.allowance(&state.delivery).clone();
                     let changed = state.progress.as_ref() != Some(&progress);
-                    if changed {
-                        state.progress = Some(progress);
-                        state.progress_ms = now;
-                        self.retry_held_effects(upstream(state.delivery.output));
-                    } else if now.saturating_sub(state.progress_ms)
-                        >= u64::from(allowance.no_progress_secs) * 1000
-                    {
-                        match upstream(state.delivery.output) {
-                            Upstream::Workers => {
-                                state.stopping = true;
-                                state.failure = Some("no_progress".into());
-                                self.save_allowance(&state)?;
-                                self.finish_stall(&mut state)?;
-                                continue;
-                            }
-                            Upstream::GitHub | Upstream::Mergify => {
-                                self.observe(
-                                    &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
-                                    Observation::Kernel(Event::Fact {
-                                        node: state.delivery.node(),
-                                        fact: Fact::UpstreamStalled,
-                                    }),
-                                )?;
-                            }
-                            // PrismaBuild owns its progress contract. Worktrees
-                            // has no progress contract for this look to judge.
-                            Upstream::PrismaBuild | Upstream::Worktrees => {}
-                        }
-                    }
-                    if changed
-                        || now.saturating_sub(state.progress_ms)
-                            < u64::from(allowance.no_progress_secs) * 1000
-                    {
-                        state.due_ms = Some(
-                            state
-                                .progress_ms
-                                .saturating_add(u64::from(allowance.no_progress_secs) * 1000),
-                        );
+                    state.progress = Some(progress);
+                    if self.look_alive(&mut state, changed)? {
+                        continue;
                     }
                 }
                 Ok(Look::Healthy) => {
@@ -417,6 +408,72 @@ impl Controller {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn record_progress(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        key: &str,
+        token: Option<&crate::executor::ProgressToken>,
+    ) -> Result<Option<bool>> {
+        let Some(token) = token else { return Ok(None) };
+        let Some(row) = snapshot.rows.iter().find(|r| r.table == "watches" && r.id == key) else {
+            return Ok(None);
+        };
+        let previous: Option<crate::executor::WatchProgress> = row.value.get("progress")
+            .map(|value| serde_json::from_value(value.clone())).transpose()?;
+        let progress = crate::executor::WatchProgress {
+            previous: previous.as_ref().map(|p| p.current.clone()),
+            current: token.clone(),
+        };
+        let changed = progress.changed();
+        if previous.as_ref() != Some(&progress) {
+            let mut value = row.value.clone();
+            value["progress"] = json!(progress);
+            commit.rows.push(put("watches", key.into(), value));
+        }
+        if changed && let Some(row) = snapshot.rows.iter().find(|r| r.table == "allowances" && r.id == key) {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            state.progress_ms = self.now_ms();
+            state.due_ms = Some(state.progress_ms.saturating_add(
+                u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000));
+            state.progress = None;
+            state.found = None;
+            commit.rows.push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(Some(changed))
+    }
+
+    fn look_alive(&mut self, state: &mut AllowanceState, changed: bool) -> Result<bool> {
+        let now = self.now_ms();
+        let allowance = self.allowance(&state.delivery).clone();
+        if changed {
+            state.progress_ms = now;
+            self.retry_held_effects(upstream(state.delivery.output));
+        } else if now.saturating_sub(state.progress_ms) >= u64::from(allowance.no_progress_secs) * 1000 {
+            match upstream(state.delivery.output) {
+                Upstream::Workers => {
+                    state.stopping = true;
+                    state.failure = Some("no_progress".into());
+                    self.save_allowance(state)?;
+                    self.finish_stall(state)?;
+                    return Ok(true);
+                }
+                Upstream::GitHub | Upstream::Mergify => {
+                    self.observe(
+                        &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
+                        Observation::Kernel(Event::Fact { node: state.delivery.node(), fact: Fact::UpstreamStalled }),
+                    )?;
+                }
+                // PrismaBuild owns progress. Worktrees has no progress contract.
+                Upstream::PrismaBuild | Upstream::Worktrees => {}
+            }
+        }
+        if changed || now.saturating_sub(state.progress_ms) < u64::from(allowance.no_progress_secs) * 1000 {
+            state.due_ms = Some(state.progress_ms.saturating_add(u64::from(allowance.no_progress_secs) * 1000));
+        }
+        Ok(false)
     }
 
     fn finish_stall(&mut self, state: &mut AllowanceState) -> Result<()> {

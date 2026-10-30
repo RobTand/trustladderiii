@@ -433,6 +433,7 @@ fn permanent_incident_clear(settings: &tl3_config::Store) {
     impl Executor for Permanent {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
             Ok(Completion {
+                progress: None,
                 ack: tl3_kernel::Ack::Permanent,
                 observations: vec![],
             })
@@ -756,6 +757,92 @@ fn look_adapter_errors_survive(settings: &tl3_config::Store, resume: bool) {
     });
     assert!(!incident(&mut c).is_empty());
 }
+struct TokenQueue {
+    token: Rc<RefCell<adapters::mergify::Progress>>,
+    terminal: Rc<Cell<bool>>,
+}
+impl TokenQueue {
+    fn completion(&self, delivery: &Delivery) -> Completion {
+        let mut completion = Completion::confirmed(if self.terminal.get() {
+            vec![Observation::Merged {
+                node: delivery.node(),
+                sha: delivery.head_sha.clone().unwrap(),
+                checks_passed: true,
+            }]
+        } else {
+            vec![]
+        });
+        completion.progress = Some(tl3_controller::executor::ProgressToken::Mergify(
+            self.token.borrow().clone(),
+        ));
+        completion
+    }
+}
+impl Executor for TokenQueue {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        Ok(self.completion(delivery))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Found(self.completion(delivery)))
+    }
+}
+fn token_only_queue_progress(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let token = Rc::new(RefCell::new(adapters::mergify::Progress {
+        merged_at: None,
+        merge_commit_sha: None,
+        queue_check: Some(adapters::mergify::QueueCheckProgress {
+            id: 1,
+            status: "in_progress".into(),
+            conclusion: None,
+            title: Some("Waiting".into()),
+        }),
+    }));
+    let terminal = Rc::new(Cell::new(false));
+    let mut c = open(settings, root.path(), &clock, Upstream::Mergify,
+        TokenQueue { token: token.clone(), terminal: terminal.clone() });
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
+    let row = c.snapshot().unwrap().rows.into_iter().find(|r| r.table == "watches").unwrap();
+    let key = row.id;
+    assert!(row.value["progress"]["current"].get("Mergify").is_some());
+    clock.advance(2);
+    token.borrow_mut().queue_check.as_mut().unwrap().title = Some("Next in queue".into());
+    drain(&mut c);
+    let progressed_at = clock.0.get();
+    let allowance = c.snapshot().unwrap().rows.into_iter()
+        .find(|r| r.table == "allowances" && r.id == key).unwrap().value;
+    assert_eq!(allowance["progress_ms"], progressed_at);
+    assert_eq!(allowance["due_ms"], progressed_at + 3000);
+    assert!(allowance["progress"].is_null() && allowance["found"].is_null());
+    let stable = c.snapshot().unwrap();
+    assert!(!c.drive_once().unwrap());
+    assert_eq!(c.snapshot().unwrap(), stable, "unchanged token writes nothing");
+    drop(c);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Mergify, TokenQueue { token: token.clone(), terminal: terminal.clone() });
+    c = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock.clone()).unwrap();
+    c.set_allowances(allowances());
+    drain(&mut c);
+    let allowance = c.snapshot().unwrap().rows.into_iter()
+        .find(|r| r.table == "allowances" && r.id == key).unwrap().value;
+    assert_eq!(allowance["progress_ms"], progressed_at, "restart is not fresh progress");
+    clock.advance(1);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    clock.advance(2);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(c.world().unwrap().nodes[0].waiting_incident, "token-only Found must reach the queue stall rule");
+    terminal.set(true);
+    drain(&mut c);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert!(matches!(c.world().unwrap().nodes[0].phase, Phase::Closed(_)));
+    assert!(c.next_look_in().unwrap().is_none());
+    assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "watches" && r.id == key));
+}
 fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let mut c = Controller::open(
@@ -803,5 +890,6 @@ fn main() {
     look_adapter_errors_survive(&db.create("resume_eperm"), true);
     settled_looks_are_quiet(&db.create("quiet_timer"));
     db.stop();
-    println!("15 allowance and incident scenarios passed; no skips");
+    token_only_queue_progress(&db.create("token_only_queue"));
+    println!("16 allowance and incident scenarios passed; no skips");
 }

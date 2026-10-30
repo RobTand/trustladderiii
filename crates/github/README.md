@@ -34,7 +34,7 @@ Public operations:
 
 | Methods | Purpose |
 |---|---|
-| `issue`, `comments` | Read an issue and all pages of comments |
+| `issue`, `comments`, `issue_events` | Read an issue and all pages of comments |
 | `post_comment`, `edit_comment`, `reconcile_comments`, `delete_comment` | Post, edit and deduplicate comments |
 | `close_issue` | Close with `Completed` or `NotPlanned` |
 | `create_check_run`, `check_runs`, `check_suites` | Create a check with a head and external id; read all check pages |
@@ -83,7 +83,7 @@ Pass the unchanged `X-Hub-Signature-256`, `X-GitHub-Delivery` and `X-GitHub-Even
 Unsupported event actions return a delivery with no event.
 
 Typed events cover issue labels, created issue comments, closed or merged PRs,
-synchronized PRs and completed check runs or suites. Label events retain the
+synchronized PRs, check-run updates and completed check suites. Label events retain the
 sender's numeric id. `Event::starts_request(rob_user_id)` accepts only Rob's
 `tl3` label on an issue. The controller also validates the served repo and installation.
 Webhook signatures authenticate GitHub delivery, not permission to start work.

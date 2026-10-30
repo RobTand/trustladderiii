@@ -1,6 +1,7 @@
 # Mergify progress handoff for PR #69
 
-PR #69 supplies `Completion.progress: Option<ProgressToken>` and
+PR #69 merged during the review of #80. This controller integration now supplies
+the allowance mapping described below. Its upstream adapter supplies `Completion.progress: Option<ProgressToken>` and
 `ProgressToken::Mergify(mergify::Progress)`. The token contains `merged_at`,
 `merge_commit_sha`, and the selected queue check's `id`, `status`, `conclusion`
 and `title`. Compare all fields with typed equality. No timestamp, request ID or
@@ -39,7 +40,7 @@ Keep the structured token available to the incident writer. For example, say
 "GitHub merged the change at X, but Mergify check Y is still in progress."
 Include the request title and link. An unreadable upstream is an outage and
 re-arms the allowance. It never proves the enqueue absent or the merge complete.
-The default probe returns false. PR #69 must implement an actual upstream health
+The default probe returns false. The Mergify adapter must implement an actual upstream health
 probe before first Mergify incidents can clear automatically.
 
 Retiring a finished watch removes its `WatchProgress` and allowance together.
