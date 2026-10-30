@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/writer-reply.json",
+  "oneOf": [
+    {"$ref": "#/$defs/question"},
+    {
+      "type": "object",
+      "properties": {"text": {"$ref": "#/$defs/text"}},
+      "required": ["text"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "option": {
+      "type": "object",
+      "properties": {
+        "action": {"$ref": "#/$defs/text"},
+        "outcome": {"$ref": "#/$defs/text"}
+      },
+      "required": ["action", "outcome"],
+      "additionalProperties": false
+    },
+    "options": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/option"},
+      "minItems": 2,
+      "maxItems": 3
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "request_quote": {"$ref": "#/$defs/text"},
+        "obstacle": {"$ref": "#/$defs/text"},
+        "options": {"$ref": "#/$defs/options"},
+        "recommended_option": {"type": "integer", "minimum": 0},
+        "recommendation_reason": {"$ref": "#/$defs/text"},
+        "how_to_answer": {"$ref": "#/$defs/text"}
+      },
+      "required": [
+        "request_quote", "obstacle", "options", "recommended_option",
+        "recommendation_reason", "how_to_answer"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
