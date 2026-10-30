@@ -1,4 +1,6 @@
 use tl3_controller::executor::Output as Out;
+#[path = "github/notice_incidents.rs"]
+mod notice_incidents;
 #[path = "github/steering.rs"]
 mod steering;
 #[path = "../../store/tests/support/mod.rs"]
@@ -114,6 +116,7 @@ struct ApiState {
     new_delivery: bool,
     linked: Vec<Value>,
     lose_issue_reply: bool,
+    forbidden_question: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -188,6 +191,12 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
             ("POST", "/repos/owner/sandbox/issues/12/comments") => {
+                if state.forbidden_question
+                    && original_path.contains("/sandbox/")
+                    && String::from_utf8_lossy(&request.body).contains("recommend option")
+                {
+                    return ResponseTemplate::new(403);
+                }
                 state.posts += 1;
                 let mut comment = fixture(true)["comment"].clone();
                 comment["id"] = json!(100 + state.posts as u64);
@@ -435,6 +444,12 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
+        notice_incidents::run(&mut database);
+        database.stop();
+        return;
+    }
+    notice_incidents::run(&mut database);
     operations_and_delivery_log(&database.create("operations"));
     println!("test operations_messages_and_missed_delivery_recovery ... ok");
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
