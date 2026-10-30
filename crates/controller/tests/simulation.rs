@@ -368,7 +368,12 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
         .unwrap();
     assert_eq!(ready.trim(), "READY");
     let settings = tl3_config::Config::load(config).unwrap().store;
-    let before = Store::open_read_only(&settings).unwrap().load().unwrap();
+    let mut reader = Store::open_read_only(&settings).unwrap();
+    let before = reader.load().unwrap();
+    let before_effects = reader.effects().unwrap();
+    let before_events = reader
+        .events_after(tl3_store::Revision::ZERO, u32::MAX)
+        .unwrap();
     if boundary == "plan" {
         assert!(
             before
@@ -412,6 +417,17 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
         .unwrap();
     let after = Store::open_read_only(&settings).unwrap().load().unwrap();
     assert_eq!(after, before, "SIGKILL must preserve every stored row");
+    assert_eq!(
+        reader.effects().unwrap(),
+        before_effects,
+        "terminal effects must survive too"
+    );
+    assert_eq!(
+        reader
+            .events_after(tl3_store::Revision::ZERO, u32::MAX)
+            .unwrap(),
+        before_events
+    );
     let mut recovered = open(&settings, records);
     assert_eq!(
         recovered.snapshot().unwrap(),
@@ -433,6 +449,22 @@ fn kill_at(config: &Path, records: &Path, boundary: &str) -> Snapshot {
             actual, expected,
             "recovery may only mark this Sent effect Uncertain"
         );
+        let mut expected_effects = before_effects;
+        let changed = expected_effects
+            .iter_mut()
+            .find(|e| e.key == expected.pending_effects[0].key)
+            .unwrap();
+        changed.state = EffectState::Uncertain;
+        changed.updated_revision = actual.revision;
+        assert_eq!(reader.effects().unwrap(), expected_effects);
+        let mut events = reader
+            .events_after(tl3_store::Revision::ZERO, u32::MAX)
+            .unwrap();
+        let transition = events.pop().unwrap();
+        assert_eq!(events, before_events);
+        assert_eq!(transition.payload["from"], "Sent");
+        assert_eq!(transition.payload["to"], "Uncertain");
+        assert_eq!(transition.receipt.revision, actual.revision);
     }
     // Return the parked snapshot, leaving recovery's real transition persisted.
     before
