@@ -114,8 +114,8 @@ Link the returned PR with `link_pull_request` as the next tool call. Then run:
 open_trial refusal
 ```
 
-Link that returned PR as the next tool call too. Both authors must be `tl3-robtand[bot]`, and both branches must begin
-`tl3/trial-`. Read each created
+Link that returned PR as the next tool call too. Both authors must be
+`tl3-robtand[bot]`, and both branches must begin `tl3/trial-`. Read each created
 PR’s files through `gh api` to confirm that only its `trials/` file changes.
 
 ## Queue the approved PR
@@ -219,9 +219,13 @@ assert not any(c["name"] == "TL3 approval" and (c.get("app") or {}).get("id") ==
 ci = [c for c in checks if c["name"] == "Sandbox tests" and (c.get("app") or {}).get("id") == 15368]
 assert ci and max(ci, key=lambda c: c["id"])["conclusion"] == "success", ci
 queue = [c for c in checks if c["name"] == "Mergify Merge Queue" and (c.get("app") or {}).get("id") == 10562]
-assert not queue, queue
+assert queue, "Mergify has not evaluated the labelled PR"
+latest = max(queue, key=lambda c: c["id"])
+output = latest.get("output") or {}
+assert output.get("title") == "Waiting for queue conditions to match", output
+assert "- [ ] `check-success = @tl3-robtand/TL3 approval`" in output.get("summary", ""), output
 print(json.dumps({"checks": checks, "mergify_comments": comments}, indent=2))
-print("Snapshot: labelled, green CI, no App approval, no queue check, still open.")
+print("Snapshot: labelled, green CI, no App approval, queue waiting for approval, still open.")
 PYBODY
 '
 ```
