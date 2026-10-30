@@ -171,7 +171,7 @@ impl Controller {
                 id: node.last_cmd + 1,
                 command: Command::Answer {
                     question,
-                    answer: if node.phase.is_stopping() {
+                    answer: if matches!(node.phase, tl3_kernel::Phase::Stopping(_)) {
                         Answer::Retry
                     } else {
                         Answer::Continue
