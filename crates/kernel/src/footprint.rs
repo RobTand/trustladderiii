@@ -2,31 +2,50 @@ use alloc::vec::Vec;
 
 use crate::FileId;
 
-/// A sorted set of controller-interned file IDs. There is no file-count bound.
+/// A set of controller-interned file IDs, with no file-count bound.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Footprint {
-    files: Vec<FileId>,
+    low: u64,
+    high: Vec<FileId>,
 }
 
 impl Footprint {
     pub fn new(files: impl IntoIterator<Item = FileId>) -> Self {
-        let mut files: Vec<_> = files.into_iter().collect();
-        files.sort_unstable();
-        files.dedup();
-        Self { files }
+        let mut set = Self::default();
+        for file in files {
+            if file.0 < 64 {
+                set.low |= 1 << file.0;
+            } else {
+                set.high.push(file);
+            }
+        }
+        set.high.sort_unstable();
+        set.high.dedup();
+        set
     }
 
-    pub fn files(&self) -> &[FileId] {
-        &self.files
+    /// File IDs in ascending order, with no duplicates.
+    pub fn iter(&self) -> impl Iterator<Item = FileId> + '_ {
+        (0..64)
+            .filter(|i| self.low & (1 << i) != 0)
+            .map(FileId)
+            .chain(self.high.iter().copied())
+    }
+
+    pub fn len(&self) -> usize {
+        self.low.count_ones() as usize + self.high.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.low == 0 && self.high.is_empty()
     }
 
     pub fn is_disjoint(&self, other: &Self) -> bool {
-        for file in &self.files {
-            if other.files.contains(file) {
+        if self.low & other.low != 0 {
+            return false;
+        }
+        for file in &self.high {
+            if other.high.contains(file) {
                 return false;
             }
         }
@@ -34,11 +53,12 @@ impl Footprint {
     }
 
     pub(crate) fn extend(&mut self, other: Self) {
-        self.files.reserve(other.files.len());
-        for file in other.files {
-            match self.files.binary_search(&file) {
+        self.low |= other.low;
+        self.high.reserve(other.high.len());
+        for file in other.high {
+            match self.high.binary_search(&file) {
                 Ok(_) => {}
-                Err(index) => self.files.insert(index, file),
+                Err(index) => self.high.insert(index, file),
             }
         }
     }
@@ -53,13 +73,13 @@ impl FromIterator<FileId> for Footprint {
 #[cfg(kani)]
 impl kani::Arbitrary for Footprint {
     fn any() -> Self {
-        let files = kani::vec::any_vec::<FileId, 4>();
-        for file in &files {
-            kani::assume(file.0 < 4);
+        // The proof worlds have four densely interned files per repo. Higher
+        // IDs use the same production type and are exercised by scenarios.
+        let low = kani::any();
+        kani::assume(low < 16);
+        Self {
+            low,
+            high: Vec::new(),
         }
-        for pair in files.windows(2) {
-            kani::assume(pair[0] < pair[1]);
-        }
-        Self { files }
     }
 }

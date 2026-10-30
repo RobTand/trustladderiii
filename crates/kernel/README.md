@@ -22,13 +22,19 @@ Unknown node and repo IDs are ignored without truncation to the machine's index 
 A later approval replaces it. A merge naming any other head raises the unapproved-merge incident and note.
 
 `Footprint::new(files)` sorts and deduplicates controller-interned `FileId`s.
-`files()` returns the sorted slice. Plans carry a footprint, and `MakerNeedsFiles` carries the additional files.
+`iter()` returns the IDs in ascending order, and `len()` returns the file count. Plans carry a footprint, and `MakerNeedsFiles` carries the additional files.
 The kernel unions extensions and derives file locks from the footprints of slot holders.
 There is no file-count ceiling.
 
-Footprints own sorted `Vec<FileId>` sets. `Node`, `Reply` and `Event` implement `Clone` instead of `Copy`.
-This avoids an interned-set table and a second identity for every footprint. Transitions borrow nodes where possible.
-The fixed `Outbox` remains in place. Proofs bound the set lengths and IDs with assumptions, and the PR records their measured memory.
+Footprints hold IDs 0 through 63 in a `u64` bitset and higher IDs in a sorted `Vec<FileId>`.
+This keeps the four-file proof worlds off the heap without limiting production footprints.
+`Node`, `Reply` and `Event` implement `Clone` instead of `Copy`. Transitions borrow nodes where possible.
+An interned-set table would keep `Node` copyable, but would add another persistent identity and table lookup to each set operation.
+The fixed `Outbox` remains in place. Proof assumptions bound file IDs below 4, so the overflow list is empty in those worlds.
+Scenarios exercise 300-file sets, high IDs, extensions and file locking across repositories.
+
+The first implementation used a sorted vector for every footprint. Both `advance_ready` and `pr_merged_queued` exhausted a 10 GiB reservation.
+The hybrid set removes those allocations from the bounded proofs. The PR records the before and after action keys and cgroup memory peaks.
 
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.

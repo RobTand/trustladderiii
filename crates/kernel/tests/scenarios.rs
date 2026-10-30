@@ -375,8 +375,8 @@ fn footprints_are_sets_with_more_than_eight_wide_file_ids() {
         files: Footprint::new([FileId(1 << 40), FileId(1 << 40), FileId(u64::MAX)]), fits: true,
     });
     let larger = run.node().footprint;
-    assert_eq!(larger.files().len(), 301);
-    assert_eq!(larger.files().last(), Some(&FileId(u64::MAX)));
+    assert_eq!(larger.len(), 301);
+    assert_eq!(larger.iter().last(), Some(FileId(u64::MAX)));
     assert!(!larger.is_disjoint(&files));
     assert!(larger.is_disjoint(&Footprint::new([FileId(7)])));
     assert_eq!(run.credit(), 3);
