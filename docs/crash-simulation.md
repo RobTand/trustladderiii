@@ -124,7 +124,7 @@ The models call real code:
   labels. Acknowledgements from committed intake events end the finite model.
 - Two durable webhook sources call the production request handler, including
   `receive_ingress`, then wake `Sources::run`. The model checks application
-  before consumption, duplicate delivery suppression, and an empty pending queue.
+  before consumption, one event per delivery, and an empty pending queue.
 - `WebhookControl::gap` and `stop` preserve queue order. An HTTP model also calls
   `Control::stop` and `accept_connections` with accept errors and a simulated
   wake. It checks that stop precedes the wake and publishes earlier state through

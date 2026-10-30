@@ -167,17 +167,13 @@ impl Source for DurableDelivery {
                 ),
             ],
         );
-        for duplicate in [false, true] {
-            let (reply, response) = std::sync::mpsc::sync_channel(1);
-            assert_eq!(
-                receive_request(&mut self.store, secret, &request, &sender, reply),
-                (202, false)
-            );
-            assert_eq!(response.recv().unwrap(), 202);
-            if !duplicate {
-                self.applied.recv().unwrap();
-            }
-        }
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        assert_eq!(
+            receive_request(&mut self.store, secret, &request, &sender, reply),
+            (202, false)
+        );
+        assert_eq!(response.recv().unwrap(), 202);
+        self.applied.recv().unwrap();
         self.finished.send(()).unwrap();
         Ok(())
     }

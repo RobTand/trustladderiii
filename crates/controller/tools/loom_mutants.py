@@ -78,13 +78,13 @@ MUTANTS.update({
         "crates/controller/src/http.rs",
         "        self.stopped.store(true, Ordering::Release);",
         "        // Mutant: stop is never published.",
-        "loom_http_stop_", "accept slept again after stop wake",
+        "loom_http_stop_", "stop wake before publication",
     ),
     "stop-after-wake": (
         "crates/controller/src/http.rs",
         "        self.stopped.store(true, Ordering::Release);\n        self.wake();",
         "        self.wake();\n        self.stopped.store(true, Ordering::Release);",
-        "loom_http_stop_", "accept slept again after stop wake",
+        "loom_http_stop_", "stop wake before publication",
     ),
     "stop-relaxed": (
         "crates/controller/src/http.rs",
