@@ -93,6 +93,8 @@ launches it directly with `workers.command`, defaulting to `-m tl3_workers run`.
 Per-run launches do not invoke uv or take its environment locks. Keep the run
 root across controller restarts. Tests replace only the worker arguments and
 model construction. Never configure a fixture launcher in deployment.
+Optional `workers.tiktoken_cache_dir` is an absolute path. The dl380g10 service
+wrapper exports it as `TIKTOKEN_CACHE_DIR` before launching the daemon.
 
 `planning` defaults to the slice-one protected paths and named overhead estimates
 of 5,000 prompt tokens, 20,000 making tokens and 5,000 review tokens.

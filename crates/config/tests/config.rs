@@ -302,6 +302,7 @@ fn all_paths_must_be_absolute() {
         vec!["github", "app_credentials_file"],
         vec!["models", "key_file"],
         vec!["prismabuild", "tools_dir"],
+        vec!["workers", "tiktoken_cache_dir"],
     ] {
         for value in [
             "",

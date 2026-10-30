@@ -156,6 +156,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
         'listen = "127.0.0.1:8033"': f'listen = {json.dumps(listen)}',
         '"/srv/tl3/workers/.venv/bin/python"': json.dumps(str(root / "app/workers/.venv/bin/python")),
         '"/srv/tl3/worker-runs"': json.dumps(str(root / "worker-runs")),
+        '# tiktoken_cache_dir = "/srv/tl3/tiktoken"': "tiktoken_cache_dir = " + json.dumps(str(root / "tiktoken")),
     }
     if image:
         replacements['sha256:' + '0' * 64] = image
@@ -201,9 +202,9 @@ def install(args):
     print("Workers: locked Python 3.14 venv synced; launches use Python directly")
     private_dir(root / "bin")
     for binary in ("tl3", "tl3d", "tl3-deploy"):
-        shutil.copy2(args.binaries / binary, root / "bin" / binary)
+        write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
     private_dir(root / "deploy")
-    shutil.copy2(HERE / "deploy.py", root / "deploy/deploy.py")
+    write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
     state_path = root / "app-state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     destination = config / "tl3.toml"
@@ -224,6 +225,9 @@ def service(home, name):
     runtime = Path(os.environ["RUNTIME_DIRECTORY"])
     credentials = Path(os.environ["CREDENTIALS_DIRECTORY"])
     text = (config / "tl3.toml").read_text()
+    cache = tomllib.loads(text)["workers"].get("tiktoken_cache_dir")
+    if name == "controller" and cache:
+        os.environ["TIKTOKEN_CACHE_DIR"] = cache
     for source, filename in ((config / "secrets/postgres-password", "postgres-password"),
                              (config / "github-app.json", "github-app.json"),
                              (config / "secrets/model-key", "model-key")):

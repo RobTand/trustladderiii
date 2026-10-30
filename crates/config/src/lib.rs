@@ -99,6 +99,8 @@ impl Default for Planning {
 pub struct Workers {
     pub python: PathBuf,
     pub runs: PathBuf,
+    #[serde(default)]
+    pub tiktoken_cache_dir: Option<PathBuf>,
     /// Arguments passed to the configured worker Python.
     pub command: Vec<String>,
 }
@@ -108,6 +110,7 @@ impl Default for Workers {
         Self {
             python: PathBuf::from("/srv/tl3/workers/.venv/bin/python"),
             runs: PathBuf::from("/srv/tl3/worker-runs"),
+            tiktoken_cache_dir: None,
             command: vec!["-m".into(), "tl3_workers".into(), "run".into()],
         }
     }
@@ -449,6 +452,9 @@ impl Config {
             ("workers.runs", &self.workers.runs),
         ] {
             absolute(field, path)?;
+        }
+        if let Some(path) = &self.workers.tiktoken_cache_dir {
+            absolute("workers.tiktoken_cache_dir", path)?;
         }
         if self.workers.command.is_empty() {
             return Err(invalid("workers.command", "must contain a Python command"));
