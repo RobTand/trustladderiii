@@ -54,7 +54,7 @@ impl Executor for SplitPlan {
 fn open(
     settings: &tl3_config::Store,
     root: &Path,
-    api: &Server,
+    uri: &str,
     faults: Arc<Mutex<Faults>>,
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
@@ -75,7 +75,7 @@ fn open(
     registry.register(
         Upstream::GitHub,
         adapters::github::Adapter::new(
-            BTreeMap::from([(3, client(&api.uri()))]),
+            BTreeMap::from([(3, client(uri))]),
             WriterFault(faults),
             0,
             Policy::default(),
@@ -84,7 +84,19 @@ fn open(
         )
         .unwrap(),
     );
-    Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap()
+    let mut store = Store::open(settings).unwrap();
+    if let Ok(point) = env::var("TL3_NOTICE_CUT") {
+        let root = root.to_path_buf();
+        store.set_boundary_hook(move |actual, key, event| {
+            let stable = if key.starts_with("delivery:") {
+                format!("{}:{}:{}", event["effect"], event["from"], event["to"])
+            } else {
+                key.into()
+            };
+            cut(&root, &point, &format!("{actual:?}"), &stable);
+        });
+    }
+    Controller::open(store, registry, boot).unwrap()
 }
 pub(super) fn run(db: &mut support::Database) {
     let mut failures = 0;
@@ -96,8 +108,10 @@ pub(super) fn run(db: &mut support::Database) {
         "dropped_change",
     ] {
         let settings = db.create(name);
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scenario(&settings, name)))
-            .is_err()
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scenario(&settings, name, "none")
+        }))
+        .is_err()
         {
             eprintln!("test notice_{name} ... FAILED");
             failures += 1;
@@ -106,8 +120,30 @@ pub(super) fn run(db: &mut support::Database) {
         }
     }
     assert_eq!(failures, 0, "notice incident scenarios failed");
+    for name in ["rejected_ask", "lost_summary", "dropped_change"] {
+        for point in [
+            "EventWritten",
+            "RowsWritten",
+            "EffectsWritten",
+            "TransitionsWritten",
+            "CreditWritten",
+            "BeforeCommit",
+            "AfterCommit",
+            "BeforeDispatch",
+            "AfterDispatch",
+            "BeforeReconcile",
+            "AfterReconcile",
+        ] {
+            scenario(
+                &db.create(&format!("notice_cut_{name}_{point}")),
+                name,
+                point,
+            );
+            println!("test notice_{name}_retry_{point} ... ok");
+        }
+    }
 }
-fn scenario(settings: &tl3_config::Store, name: &str) {
+fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let root = tempfile::tempdir().unwrap();
     let api = Server::new();
     let kind = match name {
@@ -144,7 +180,7 @@ fn scenario(settings: &tl3_config::Store, name: &str) {
         )
         .unwrap();
     }
-    let mut c = open(settings, root.path(), &api, faults.clone());
+    let mut c = open(settings, root.path(), &api.uri(), faults.clone());
     if name != "dropped_change" {
         c.intake(labelled()).unwrap();
     }
@@ -234,7 +270,45 @@ fn scenario(settings: &tl3_config::Store, name: &str) {
     )
     .unwrap();
     drop(c);
-    let mut c = open(settings, root.path(), &api, faults.clone());
+    if point != "none" {
+        let config = root.path().join("settings.json");
+        fs::write(&config, serde_json::to_vec(&json!({"host":settings.host,"port":settings.port,"database":settings.database,"user":settings.user,"password_file":settings.password_file,"connect_timeout_secs":settings.connect_timeout_secs})).unwrap()).unwrap();
+        let mut crashes = 0;
+        loop {
+            let mut connection = postgres::Config::new()
+                .host(&settings.host)
+                .port(settings.port)
+                .user(&settings.user)
+                .dbname(&settings.database)
+                .password("tl3-disposable-test-password")
+                .connect(postgres::NoTls)
+                .unwrap();
+            connection
+                .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+                .unwrap();
+            connection
+                .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+                .unwrap();
+            drop(connection);
+            let status = Command::new(env::current_exe().unwrap())
+                .arg("--notice-retry-child")
+                .arg(&config)
+                .arg(root.path())
+                .arg(api.uri())
+                .arg(kind)
+                .env("TL3_NOTICE_CUT", point)
+                .status()
+                .unwrap();
+            if status.success() {
+                break;
+            }
+            assert_eq!(status.code(), Some(86));
+            crashes += 1;
+            assert!(crashes < 200, "notice retry crash replay must converge");
+        }
+        assert!(crashes > 0, "the requested save point must be reached");
+    }
+    let mut c = open(settings, root.path(), &api.uri(), faults.clone());
     drain(&mut c);
     let count = |api: &Server| {
         api.state
@@ -267,7 +341,7 @@ fn scenario(settings: &tl3_config::Store, name: &str) {
         "retry posts the original notice exactly once"
     );
     drop(c);
-    let mut c = open(settings, root.path(), &api, faults);
+    let mut c = open(settings, root.path(), &api.uri(), faults);
     drain(&mut c);
     assert_eq!(
         count(&api),
@@ -284,4 +358,41 @@ fn scenario(settings: &tl3_config::Store, name: &str) {
                 .any(|r| r.table == "replacement")
         );
     }
+}
+
+fn cut(root: &Path, selected: &str, actual: &str, key: &str) {
+    if selected == actual {
+        let marker = root.join(format!(
+            "notice-cut-{actual}-{:x}",
+            Sha256::digest(key.as_bytes())
+        ));
+        if !marker.exists() {
+            fs::write(marker, key).unwrap();
+            std::process::exit(86);
+        }
+    }
+}
+pub(super) fn child(args: &[String]) {
+    let settings = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+    let root = Path::new(&args[3]);
+    let selected = env::var("TL3_NOTICE_CUT").unwrap();
+    let faults = Arc::new(Mutex::new(Faults {
+        kind: args[5].clone(),
+        ..Faults::default()
+    }));
+    let mut c = open(&settings, root, &args[4], faults);
+    for _ in 0..500 {
+        let progressed = c
+            .drive_once_with(|point, key| {
+                if selected.ends_with("Reconcile") && point == Boundary::AfterDispatch {
+                    cut(root, "lose-response", "lose-response", key);
+                }
+                cut(root, &selected, &format!("{point:?}"), key);
+            })
+            .unwrap();
+        if !progressed {
+            return;
+        }
+    }
+    panic!("notice retry child did not settle");
 }

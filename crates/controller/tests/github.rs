@@ -443,6 +443,10 @@ fn main() {
         steering::merge_pending_child(&args);
         return;
     }
+    if args.get(1).is_some_and(|arg| arg == "--notice-retry-child") {
+        notice_incidents::child(&args);
+        return;
+    }
     let mut database = support::Database::start();
     if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
         notice_incidents::run(&mut database);
