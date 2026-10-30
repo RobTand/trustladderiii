@@ -195,3 +195,25 @@ async fn main() {
         std::process::exit(1);
     }
 }
+
+fn trial_pull_request(branch: String, title: String, body: String) -> NewPullRequest {
+    todo!("use the caller's trial description")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_request_preserves_the_callers_trial_description() {
+        let request = trial_pull_request(
+            "tl3/issue-17-node-201".into(),
+            "Verify the approved head while main advances".into(),
+            "Merge a separate approved PR, then confirm this head is unchanged.".into(),
+        );
+        assert_eq!(request.head, "tl3/issue-17-node-201");
+        assert_eq!(request.base, "main");
+        assert_eq!(request.title, "Verify the approved head while main advances");
+        assert_eq!(request.body, "Merge a separate approved PR, then confirm this head is unchanged.");
+    }
+}

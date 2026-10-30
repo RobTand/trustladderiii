@@ -60,6 +60,11 @@ class CheckerTests(unittest.TestCase):
         self.assertEqual(settings.check(self.approved, self.github), [])
         self.assertEqual(sum(endpoint == self.prefix for endpoint, _ in self.github.calls), 1)
 
+    def test_post_recovery_mergify_matches_approved_copy(self):
+        response = json.loads((ROOT / "evidence/post-recovery/mergify-content.json").read_text())
+        self.github.responses[self.prefix + "/contents/.mergify.yml?ref=main"] = response
+        self.assertEqual(settings.check(self.approved, self.github), [])
+
     def test_each_repository_setting_is_checked(self):
         for key, value in self.approved["repository"].items():
             with self.subTest(key=key):
