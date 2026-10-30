@@ -155,7 +155,7 @@ impl Respond for Api {
                         json!({"id":19,"status_code":200,"delivered_at":"2026-10-30T00:00:01Z"}),
                     ];
                     if state.new_delivery {
-                        deliveries.insert(0, json!({"id":22,"status_code":500,"delivered_at":"2026-10-30T00:00:03Z"}));
+                        deliveries.insert(0, json!({"id":22,"status_code":500,"delivered_at":(Utc::now() + chrono::Duration::seconds(1)).to_rfc3339()}));
                     }
                     ResponseTemplate::new(200)
                         .insert_header(
@@ -1614,7 +1614,17 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::GitHub, adapter(&api.uri(), root.path()));
     let mut controller = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    api.state.lock().unwrap().fail_reads = true;
     controller.look_now().unwrap();
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_looks" && r.id == "github_started")
+    );
+    api.state.lock().unwrap().fail_reads = false;
     assert!(
         api.state.lock().unwrap().redeliveries.is_empty(),
         "first start skips retained failures"
@@ -1663,7 +1673,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         .is_err()
     );
     let mut adapter = adapter(&api.uri(), root.path());
-    assert_eq!(adapter.recover_deliveries(Some(17)).unwrap(), Some(22));
+    assert_eq!(adapter.recover_deliveries(17, 0).unwrap(), Some(22));
     assert_eq!(api.state.lock().unwrap().redeliveries, vec![22, 22, 20, 18]);
     assert!(adapter.probe(&delivery).unwrap());
     adapter.execute(&delivery).unwrap();

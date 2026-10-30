@@ -261,6 +261,12 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
         "stale clear cannot clear a newer incident"
     );
     comment(&mut c, &second, 42, 17, 4);
+    let rows = c.snapshot().unwrap().rows;
+    assert!(rows.iter().any(|r| r.table == "operations_comments"));
+    assert!(
+        !rows.iter().any(|r| r.table == "github_comments"),
+        "operations comments cannot reach the request classifier"
+    );
     assert!(!c.world().unwrap().nodes[0].waiting_incident);
     assert!(
         status::load(&mut Reader::open(settings).unwrap())
@@ -571,6 +577,41 @@ fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
             .rows
             .iter()
             .any(|r| r.table == "incidents" && r.id == id && r.value["open"] == false)
+    );
+    state.borrow_mut().recovered = false;
+    for _ in 0..2 {
+        clock.advance(1);
+        c.look_due().unwrap();
+        drain(&mut c);
+    }
+    let later = incident(&mut c);
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == later && r.value["needs_rob"] == true)
+    );
+    state.borrow_mut().recovered = true;
+    clock.advance(1);
+    c.look_due().unwrap();
+    assert_eq!(
+        incident(&mut c),
+        later,
+        "recovery cannot clear a later outage incident"
+    );
+    comment(&mut c, &later, 42, 17, 31);
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.id == later && r.value["open"] == false)
+    );
+    assert_eq!(
+        c.next_look_in().unwrap(),
+        Some(Duration::ZERO),
+        "Rob's clearance re-arms the held operation"
     );
 }
 fn progress_releases_nothing(settings: &tl3_config::Store) {

@@ -371,10 +371,32 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "delivery_looks" && r.id == "github")
                 .and_then(|r| r.value.as_u64());
+            let snapshot = self.store.load()?;
+            let since = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "delivery_looks" && r.id == "github_started")
+                .and_then(|r| r.value.as_u64());
+            let since = if let Some(since) = since {
+                since
+            } else if after.is_some() {
+                0
+            } else {
+                let mut commit = Commit::new(
+                    "github-delivery-start",
+                    json!({"delivery_start":now}),
+                    &snapshot,
+                );
+                commit
+                    .rows
+                    .push(put("delivery_looks", "github_started".into(), json!(now)));
+                self.store.commit(&commit)?;
+                now
+            };
             match self
                 .adapters
                 .get(Upstream::GitHub)?
-                .recover_deliveries(after)
+                .recover_deliveries(after.unwrap_or_default(), since)
             {
                 Ok(Some(next)) if Some(next) > after => {
                     let snapshot = self.store.load()?;

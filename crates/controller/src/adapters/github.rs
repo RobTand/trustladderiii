@@ -226,12 +226,10 @@ impl Executor for Adapter {
         }
         Ok(Completion::confirmed(vec![]))
     }
-    fn recover_deliveries(&mut self, after: Option<u64>) -> Result<Option<u64>> {
+    fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {
             return Ok(None);
         };
-        let baseline = after.is_none();
-        let after = after.unwrap_or_default();
         let mut cursor = None;
         let mut newest = after;
         let mut oldest = u64::MAX;
@@ -240,17 +238,14 @@ impl Executor for Adapter {
             let page = self
                 .runtime
                 .block_on(client.hook_deliveries(cursor.as_deref()))?;
-            if baseline {
-                return Ok(Some(
-                    page.deliveries.iter().map(|d| d.id).max().unwrap_or(0),
-                ));
-            }
             let mut reached = false;
             let previous_oldest = oldest;
             for delivery in page.deliveries {
                 newest = newest.max(delivery.id);
                 oldest = oldest.min(delivery.id);
-                if delivery.id <= after {
+                if delivery.id <= after
+                    || delivery.delivered_at.timestamp_millis() < since_ms as i64
+                {
                     reached = true;
                     continue;
                 }

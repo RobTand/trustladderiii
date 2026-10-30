@@ -105,6 +105,16 @@ pub fn daemon() -> Result<()> {
     } = arguments(true)?;
     let simulation =
         simulation.ok_or(Error::Invalid("this release requires --simulate DIRECTORY"))?;
+    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
+        github_api
+            .as_ref()
+            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
+    });
+    if listen.is_some() && config.github.operations.is_none() {
+        return Err(Error::Invalid(
+            "real GitHub adapter requires [github.operations]",
+        ));
+    }
     let bootstrap = Bootstrap::from_config(&config)?;
     let mut sources = crate::ingress::Sources::default();
     let mut adapters = if workers {
@@ -114,17 +124,7 @@ pub fn daemon() -> Result<()> {
     } else {
         adapters::simulation(&simulation)?
     };
-    let listen = github_listen.or(config.github.webhook_listen).or_else(|| {
-        github_api
-            .as_ref()
-            .map(|_| SocketAddr::from(([127, 0, 0, 1], 8081)))
-    });
     if let Some(listen) = listen {
-        if config.github.operations.is_none() {
-            return Err(Error::Invalid(
-                "real GitHub adapter requires [github.operations]",
-            ));
-        }
         if !listen.ip().is_loopback() {
             return Err(Error::Invalid("webhook listen address must be loopback"));
         }

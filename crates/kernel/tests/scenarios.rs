@@ -687,6 +687,9 @@ fn queue_stalls_raise_incidents_and_later_incidents_need_rob() {
     run.fact(Fact::UpstreamStalled);
     assert_eq!(run.node(), before, "stalls outside Queued are ignored");
     run.start_making();
+    let before = run.node();
+    run.fact(Fact::UpstreamStalled);
+    assert_eq!(run.node(), before);
     run.pass(&mut HeadId(0));
     run.fact(Fact::UpstreamStalled);
     assert!(run.node().waiting_incident && !run.node().incident_needs_rob);

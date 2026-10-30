@@ -561,10 +561,11 @@ Failed deliveries above the durable watermark request redelivery. A pending
 delivery holds that watermark back. The watermark advances only after all
 redelivery requests succeed, so a crash can repeat a request but cannot skip it.
 The receiver's existing delivery keys deduplicate the recovered webhook.
-On first start without a watermark, the controller takes the newest delivery ID
-from the current first page as its baseline for now. It does not redeliver the
-retained failed history. An empty first page durably records zero, which is distinct
-from having no watermark. Later looks recover failures newer than that baseline.
+On first start without a watermark, the controller records the current time before
+reading GitHub. It skips retained deliveries older than that durable start time,
+even if the first log read fails. New failures during that outage remain eligible.
+An empty first page durably records ID zero. Later looks recover newer IDs from
+the startup window. Existing ID watermarks retain their previous recovery window.
 
 Quota is a wait for a provider-announced reset, never an infrastructure failure.
 `Error::Quota` defers an uncertain write until the reset. A worker that receives
