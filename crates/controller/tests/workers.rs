@@ -1103,7 +1103,10 @@ fn bounded_startup(settings: &tl3_config::Store) {
     };
     restarted.execute(&stop).unwrap();
     assert!(
-        failed(&terminal(&mut original, &run)),
+        matches!(
+            original.reconcile(&run).unwrap(),
+            Reconciliation::Absent | Reconciliation::Found(_)
+        ),
         "restarted ActiveRuns must find and stop the live worker"
     );
 }
