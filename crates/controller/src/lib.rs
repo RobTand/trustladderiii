@@ -345,7 +345,7 @@ impl Controller {
             );
             if active {
                 delivery.epoch = effect.epoch.get();
-                delivery.checks = check_run(snapshot, delivery.node())?;
+                delivery.checks = check_run(&snapshot, delivery.node())?;
                 if let Ok(Reconciliation::Found(completion)) =
                     self.adapters.adapter(&delivery)?.reconcile(&delivery)
                 {

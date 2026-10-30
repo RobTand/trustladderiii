@@ -47,7 +47,7 @@ mod checks;
 mod results;
 mod source;
 pub use checks::{Check, CheckRun, Kind};
-pub use source::Source;
+pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -73,6 +73,7 @@ pub struct Settings {
     pub image: String,
     pub demand: Demand,
     pub quiet: Duration,
+    pub priority: i32,
     pub result_tool: Tool,
 }
 
@@ -203,7 +204,10 @@ impl Adapter {
         };
         let key = self
             .runtime
-            .block_on(self.client.seal(&action))
+            .block_on(
+                self.client
+                    .seal_at_priority(&action, self.settings.priority),
+            )
             .map_err(adapter_error)?;
         let job = Job {
             action: key,

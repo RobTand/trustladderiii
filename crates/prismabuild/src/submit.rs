@@ -157,11 +157,16 @@ impl PrismaBuild {
     }
 
     pub async fn submit(&self, action: &SubmitAction) -> Result<Submission, Error> {
-        self.submission(self.action_command(action, "--detach")?)
+        self.submission(self.action_command(action, "--detach", 0)?)
             .await
     }
 
-    fn action_command(&self, action: &SubmitAction, mode: &str) -> Result<Command, Error> {
+    fn action_command(
+        &self,
+        action: &SubmitAction,
+        mode: &str,
+        priority: i32,
+    ) -> Result<Command, Error> {
         action.validate()?;
         let mut command = self.tool();
         command
@@ -205,6 +210,7 @@ impl PrismaBuild {
         for (name, value) in env {
             command.arg("--env").arg(format!("{name}={value}"));
         }
+        command.arg("--priority").arg(priority.to_string());
         command.arg("--").args(&action.command);
         Ok(command)
     }
@@ -250,13 +256,21 @@ impl PrismaBuild {
 
     /// Seal inputs into CAS without publishing executable work. Persist the key before publish.
     pub async fn seal(&self, action: &SubmitAction) -> Result<ActionKey, Error> {
+        self.seal_at_priority(action, 0).await
+    }
+
+    pub async fn seal_at_priority(
+        &self,
+        action: &SubmitAction,
+        priority: i32,
+    ) -> Result<ActionKey, Error> {
         #[derive(Deserialize)]
         struct Sealed {
             schema: String,
             action_key: ActionKey,
             transport: String,
         }
-        let mut command = self.action_command(action, "--seal-only")?;
+        let mut command = self.action_command(action, "--seal-only", priority)?;
         let output = command.output().await.map_err(|source| Error::Io {
             path: self.options.tool.program.clone(),
             source,

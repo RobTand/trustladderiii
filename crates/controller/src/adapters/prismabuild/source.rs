@@ -78,7 +78,11 @@ impl Source {
             tokio::time::sleep(patience).await;
             return Ok(0);
         }
-        let changes = self.watcher.next(&awaited, patience).await;
+        let changes = self
+            .watcher
+            .next(&awaited, patience)
+            .await
+            .map_err(super::adapter_error)?;
         let mut records = changes.records;
         for key in std::mem::take(&mut self.retry) {
             if own.contains_key(&key) && !records.contains_key(&key) {

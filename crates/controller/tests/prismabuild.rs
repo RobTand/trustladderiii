@@ -152,6 +152,7 @@ fn fixture(root: &Path, mode: &str) -> Adapter {
                 gpu: false,
             },
             quiet: Duration::from_secs(120),
+            priority: -10,
             result_tool: tool,
         },
     )

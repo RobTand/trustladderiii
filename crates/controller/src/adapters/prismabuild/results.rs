@@ -65,9 +65,12 @@ enum Custody {
 #[derive(Deserialize)]
 struct TestResult {
     test: String,
-    base: Outcome,
-    head: Outcome,
-    pre_existing: bool,
+    #[serde(rename = "base")]
+    _base: Outcome,
+    #[serde(rename = "head")]
+    _head: Outcome,
+    #[serde(rename = "pre_existing")]
+    _pre_existing: bool,
     passed: bool,
 }
 #[derive(Deserialize)]
@@ -205,7 +208,6 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             if &result.test != test {
                 return None;
             }
-            let _ = (&result.base, &result.head, result.pre_existing);
         }
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|t| t.passed) {
             return None;
