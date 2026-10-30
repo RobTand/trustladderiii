@@ -110,6 +110,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        question_context: None,
         job_generation: Some(4),
         checks: Some(CheckRun {
             repository: repo,

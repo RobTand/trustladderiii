@@ -714,3 +714,21 @@ fn status_listen_requires_a_specific_unicast_address_and_fixed_port() {
         config.validate().unwrap();
     }
 }
+
+#[test]
+fn planning_cannot_remove_protection_or_overhead_evidence() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(
+        config.planning.overhead_tokens.values().sum::<u32>(),
+        30_000
+    );
+    let mut config = config;
+    config
+        .planning
+        .protected_paths
+        .retain(|p| p != "**/conftest.py");
+    assert!(config.validate().is_err());
+    config.planning = tl3_config::Planning::default();
+    config.planning.overhead_tokens.clear();
+    assert!(config.validate().is_err());
+}

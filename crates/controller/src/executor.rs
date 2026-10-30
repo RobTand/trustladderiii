@@ -23,6 +23,8 @@ pub struct Delivery {
     pub job_generation: Option<u64>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub question_context: Option<serde_json::Value>,
 }
 
 impl Delivery {

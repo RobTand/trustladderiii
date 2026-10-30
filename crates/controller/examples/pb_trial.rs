@@ -78,6 +78,7 @@ fn fixture(root: &Path) -> Delivery {
         attempt: 1,
         round: 0,
         note: None,
+        question_context: None,
         job_generation: Some(1),
         checks: Some(CheckRun {
             repository: repo,

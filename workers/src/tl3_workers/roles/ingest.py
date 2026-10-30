@@ -4,10 +4,18 @@ from tl3_workers.roles.base import Role
 
 
 def check_memory_ids(inputs, reply):
+    if "forecast" in reply:
+        raise ValueError("only code may supply a forecast")
     if reply["kind"] == "brief":
         supplied = {memory["id"] for memory in inputs.get("memories", [])}
         if not set(reply["memory_ids"]) <= supplied:
             raise ValueError("reply cites a memory it was not given")
+
+        if "forecast" in inputs:
+            from tl3_workers.forecast import measure
+            if "files" not in reply:
+                raise ValueError("sized briefs must declare their root files")
+            reply["forecast"] = measure(reply["brief"], reply["files"], inputs["forecast"])
 
 
 ROLE = Role(
