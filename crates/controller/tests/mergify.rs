@@ -692,6 +692,64 @@ fn ignored_events(settings: &tl3_config::Store) {
     );
     assert!(queue_facts(&mut controller).is_empty());
 }
+fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    controller
+        .observe(
+            "stop",
+            tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Stopped)
+    );
+    api.state.lock().unwrap().merged(false);
+    if webhook {
+        deliver(settings, &api, "pull_request", &pull_event(&api, "closed"));
+        drain(&mut controller);
+    } else {
+        catch_up(settings, &api, &mut controller);
+    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert!(queue_facts(&mut controller).is_empty());
+    assert_kernel_facts(settings, 1);
+}
+
+fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    api.state.lock().unwrap().checks = fixture("failed", "checks");
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().checks()[0].clone();
+    api.state.lock().unwrap().fail_reads = true;
+    deliver(settings, &api, "check_run", &body);
+    assert!(ingress::drain(&mut controller).is_err());
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-translator:mergify")
+            .unwrap()
+            .is_none()
+    );
+    api.state.lock().unwrap().fail_reads = false;
+    ingress::drain(&mut controller).unwrap();
+    assert!(controller.drive_once().unwrap());
+    assert_kernel_facts(settings, 1);
+}
+
 fn assert_kernel_facts(settings: &tl3_config::Store, expected: usize) {
     let count = Store::open(settings)
         .unwrap()
@@ -929,6 +987,9 @@ fn main() {
     println!("test executor_recovery ... ok");
     let mut database = support::Database::start();
     in_progress_confirms_enqueue(&database.create("progress"));
+    late_merge_after_close(&database.create("late_webhook"), true);
+    late_merge_after_close(&database.create("late_catchup"), false);
+    translator_retries_after_api_failure(&database.create("translation_retry"));
     outside_merge_checks(&database.create("outside_pass"), true);
     outside_merge_checks(&database.create("outside_fail"), false);
     merged(&database.create("merged_webhook"), false, true, true);
@@ -938,6 +999,7 @@ fn main() {
     watched_merge(&database.create("watched"));
     terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
     println!("test merged, catch-up, restart and unapproved head ... ok");
+    database.restart();
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
     queue_failure(&database.create("conflict"), true, false);
@@ -949,5 +1011,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("19 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("22 Mergify scenarios passed; no skips; no live upstream calls");
 }

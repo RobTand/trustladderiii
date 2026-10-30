@@ -220,16 +220,21 @@ The Mergify replacement registers as one executor. Enqueue converges by label,
 but confirmation requires the queue's own record. A persistent baseline prevents
 an earlier terminal queue check from confirming a fresh effect key. Receipts
 prevent a confirmed key from adding the label again after a person removes it.
+An applied marker also protects the interval before queue confirmation.
+A new retry removes an existing label before adding it again.
 An epoch fence covers mutations; reconciliation can still read old effects.
 
-GitHub's receiver and gap catch-up can use the Mergify translator in
-`controller/src/adapters/mergify.rs`. It reads queue evidence and emits ordinary
-`Input::Observation` values. Check runs, check suites and merge groups trigger
-queue reads. Person actions retain their upstream timestamps as identities.
+The controller registers the Mergify translator in
+`controller/src/adapters/mergify.rs` through `register_github_translator`.
+It translates durable webhook and catch-up deliveries on the controller thread.
+Check-run updates, check suites and merge groups trigger queue reads of open nodes.
+Person actions use issue-event IDs in both paths.
 Merge identities use the actual PR head, and failure identities use the Mergify
 check ID. The controller resolves repository and PR bindings and commits a
 `queue_facts` row with each kernel fact. The row suppresses later observations
-of that fact, including after restart. There is no store migration.
+of that fact, including after restart. A closed node's queue rows are pruned.
+The kernel's recorded merge prevents a repeated merge after pruning.
+There is no store migration.
 
 A terminal queue notification can arrive before the enqueue response. The
 controller reconciles that pending effect key before applying CI, conflict or

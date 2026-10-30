@@ -18,6 +18,7 @@
   "merge_group": {
     "head_sha": "batch-head",
     "head_ref": "gh-readonly-queue/main/pr-13-abc1234",
-    "base_ref": "refs/heads/main"
+    "base_ref": "refs/heads/main",
+    "base_sha": "base-head"
   }
 }

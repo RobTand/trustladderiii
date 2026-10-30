@@ -541,12 +541,28 @@ impl Translator {
         let mut facts = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
-                if let Some(item) = tracked
-                    .iter()
-                    .find(|item| item.number == pull_request.number)
+                let binding = QueueFact {
+                    repository: repo.clone(),
+                    number: pull_request.number,
+                    evidence: Evidence::Merged {
+                        head: pull_request.head.sha.clone(),
+                        checks_passed: false,
+                    },
+                };
+                if let Some(node) = binding.node(snapshot)?
+                    && crate::snapshot::decode(snapshot)?.nodes[node.0 as usize]
+                        .merged
+                        .is_none()
                     && !is_merge_queue_pr(pull_request)
                 {
-                    facts.extend(self.look(github, repo, item)?);
+                    let checks = self
+                        .runtime
+                        .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
+                    let state = tl3_mergify::observe(pull_request.clone(), &checks, "");
+                    facts.extend(
+                        self.runtime
+                            .block_on(queue_facts(github, repo, &state, ""))?,
+                    );
                 }
             }
             Event::PullRequestClosed {
@@ -653,6 +669,34 @@ impl Translator {
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let mut facts = Vec::new();
+        let world: World = crate::snapshot::decode(snapshot)?;
+        for pull in changes
+            .pull_requests
+            .iter()
+            .filter(|pull| pull.merged_at.is_some() && !is_merge_queue_pr(pull))
+        {
+            let binding = QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::Merged {
+                    head: pull.head.sha.clone(),
+                    checks_passed: false,
+                },
+            };
+            if let Some(node) = binding.node(snapshot)?
+                && matches!(
+                    world.nodes[node.0 as usize].phase,
+                    tl3_kernel::Phase::Closed(_)
+                )
+                && world.nodes[node.0 as usize].merged.is_none()
+            {
+                let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, "");
+                facts.extend(
+                    self.runtime
+                        .block_on(queue_facts(github, repo, &state, ""))?,
+                );
+            }
+        }
         for item in tracked(snapshot, repo)? {
             // Reread tracked PRs even when their updated_at is outside the catch-up window.
             facts.extend(self.look(github, repo, &item)?);

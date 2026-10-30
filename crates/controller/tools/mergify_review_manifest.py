@@ -6,6 +6,8 @@ import subprocess
 root = Path(__file__).resolve().parents[3]
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
     raise SystemExit("Commit changes and use a clean detached worktree before submitting.")
+if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=root, capture_output=True).returncode == 0:
+    raise SystemExit("Use git worktree add --detach at the final commit before submitting.")
 env = {
     "PATH": "/home/rob/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
     "RUSTUP_HOME": "/home/rob/.rustup",
