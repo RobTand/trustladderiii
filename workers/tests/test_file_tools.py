@@ -19,7 +19,7 @@ def tree(tmp_path):
     return root, outside
 
 
-def tools_for(worktree, names=TOOL_FACTORIES):
+def tools_for(worktree, names=READ_TOOLS | WRITE_TOOLS):
     return {tool.name: tool for tool in build_tools(
         worktree, {name: f"Fixture description for {name}." for name in names},
     )}
@@ -62,7 +62,7 @@ def test_all_file_operations(tree):
         assert (root / "src/code.py").read_text() == "hi\nhi again\n"
 
 
-@pytest.mark.parametrize("name", sorted(TOOL_FACTORIES))
+@pytest.mark.parametrize("name", sorted(READ_TOOLS | WRITE_TOOLS))
 @pytest.mark.parametrize("escape", [
     "absolute-outside", "absolute-inside", "../outside/secret.txt",
     "src/../../outside/secret.txt", "src/../code.py", "//outside/secret.txt",
@@ -82,7 +82,7 @@ def test_each_tool_rejects_absolute_and_parent_paths(tree, name, escape):
     assert not (outside / "new").exists()
 
 
-@pytest.mark.parametrize("name", sorted(TOOL_FACTORIES))
+@pytest.mark.parametrize("name", sorted(READ_TOOLS | WRITE_TOOLS))
 @pytest.mark.parametrize("when", ["before", "during"])
 @pytest.mark.parametrize("kind", ["file", "directory", "dangling", "chain", "loop", "internal"])
 def test_symlinks_are_rejected_even_when_created_during_run(tree, name, when, kind):
@@ -126,7 +126,7 @@ def test_glob_rejects_escape_in_pattern(tree, pattern):
         assert result.status == "error"
 
 
-@pytest.mark.parametrize("name", sorted(TOOL_FACTORIES))
+@pytest.mark.parametrize("name", sorted(READ_TOOLS | WRITE_TOOLS))
 def test_component_replaced_by_symlink_at_open_is_rejected(tree, name, monkeypatch):
     root, outside = tree
     real_open = os.open
@@ -185,7 +185,7 @@ def test_only_tl3_file_tools_can_be_declared(tree, name):
             build_tools(worktree, {name: "forbidden"})
 
 
-@pytest.mark.parametrize("name", sorted(TOOL_FACTORIES))
+@pytest.mark.parametrize("name", sorted(READ_TOOLS | WRITE_TOOLS))
 @pytest.mark.parametrize("path", [".git", ".git/config", "src/.git", "src/.git/hooks/run"])
 def test_git_metadata_paths_are_rejected(tree, name, path):
     root, _ = tree
