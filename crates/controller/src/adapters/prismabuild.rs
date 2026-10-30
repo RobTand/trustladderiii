@@ -216,6 +216,7 @@ impl Adapter {
                 let job: Job = serde_json::from_slice(&fs::read(&path)?)?;
                 let root = node_root(&settings.records, job.delivery.node());
                 fs::create_dir_all(&root)?;
+                File::open(&settings.records)?.sync_all()?;
                 let done = path.with_extension("done");
                 if done.try_exists()? {
                     fs::rename(&done, record_path(&settings.records, &job.delivery, "done"))?;

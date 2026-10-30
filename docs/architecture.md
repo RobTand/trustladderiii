@@ -253,8 +253,7 @@ a `.job`, because no attempt can have been published without that binding.
 Before answering `Absent` for a saved seal with no `.done` and no queue row,
 the adapter consults the cleaned ending. A readable ending supplies the result,
 including a receipt-only cache hit. A waiting ending leaves authoritative absence.
-A tool error stays unknown. A later
-input, look or restart lets the controller retry `execute`, which publishes the
+A tool error stays unknown. A later input, look or restart lets the controller retry `execute`, which publishes the
 same saved key idempotently. A Cancelling effect instead uses `cancel_absent`.
 Withdrawal of an absent sealed action saves an empty completion and notifies
 the source to forget its watch. There is no PB terminal event for that key.
@@ -280,7 +279,7 @@ capped transport backoff when the bell is unavailable.
 The source verifies cleaned endings and report-log digests before sending checks
 evidence. After delivery it fsyncs a `.done` marker containing the completion,
 then removes the job from memory. Restarts and recovery scans skip those records
-before parsing them. The channel and active set do not retain historical jobs;
+before parsing them. The channel and active set do not retain historical jobs.
 Records live under `<records>/<node id>/`, keyed by encoded effect key. Startup
 moves the prior flat bindings into these directories, preserving done markers.
 Normal supersession and withdrawal list only the affected node's files.
