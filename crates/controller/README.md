@@ -188,3 +188,43 @@ the three host actions, including controller and store process scenarios.
 After they pass, generate the portable full check with
 `python3 crates/controller/tools/worker_review_manifest.py workspace`.
 Submit each generated manifest with `pbcampaign.py --detach`.
+
+## Planning evidence
+
+The supervisor runs `planner` with the accepted brief, `must_split`, accumulated
+`findings`, protected paths and forecast settings. Planner retries select the
+next configured planner model. The kernel owns the retry count and questions.
+The worker reports leaf-rule violations in `violations`, alongside its forecast.
+The controller maps those reports and `cant_meet` to `PlanCantMeet`. A valid split
+maps to `PlanSplit`. A valid leaf interns its declared paths before `PlanLeaf`.
+
+Ingest declares the root's files when it receives forecast settings. Worker code
+uses the same pinned offline tokenizer as planning to measure the brief and those
+files. The controller initializes size with `ceil(tokens / fit_tokens)`. The kernel
+adds the credit reserve. An unrepresentable size fails explicitly rather than
+wrapping or silently clamping the request's credit.
+
+Supply a complete text snapshot in `repo.materials` for each existing path in
+`repo.file_list`, through `Store::put_worker_materials`. Ingest and planner runs
+materialize that snapshot into their own worktree. Paths must be canonical and
+relative. New declared files have no base content. Deployment must preload the
+pinned o200k_base data in `TIKTOKEN_CACHE_DIR`. Files above 1 MiB fail measurement.
+
+`[planning.overhead_tokens]` contains named initial estimates. It is the seam for
+later MLflow calibration. No MLflow calls run in this flow. Protected paths can
+be extended in config, but the slice-one defaults cannot be removed.
+
+Accepted plans live in `plans`; `plan_reports` retains each generation's evidence.
+`findings` includes rejected-plan reasons and reports for the next planner run.
+Callers that record failed checks or review findings append them to that same
+text-list document before requesting a re-plan.
+
+Every `Ask` notice atomically stores `question_context`, keyed by question ID,
+and carries it as `Delivery.question_context`. `Store::question_context(id)` reads
+it after a restart. `pieces` contains the proposed briefs, goal IDs and files.
+Ticket #10's message pipeline consumes these briefs to draft the narrowing
+question. This adapter does not draft messages.
+
+Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
+with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
+store process scenarios and the worker package's offline fake-model tests.

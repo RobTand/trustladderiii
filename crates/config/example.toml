@@ -120,3 +120,12 @@ no_progress_secs = 120
 python = "/srv/tl3/workers/.venv/bin/python"
 runs = "/srv/tl3/worker-runs"
 command = ["-m", "tl3_workers", "run"]
+
+[planning]
+protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
+
+# Calibration seam for future MLflow measurements. Code sums these estimates.
+[planning.overhead_tokens]
+prompt = 5000
+making = 20000
+review = 5000
