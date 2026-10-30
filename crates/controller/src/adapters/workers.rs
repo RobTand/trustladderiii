@@ -31,11 +31,30 @@ use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};
 
 pub(super) fn isolate_credentials(
-    _attempt: &Path,
-    _request: &mut Value,
-    _command: &mut Command,
+    attempt: &Path,
+    request: &mut Value,
+    command: &mut Command,
 ) -> Result<()> {
-    todo!("private worker credentials")
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let source = Path::new(
+        request["key_file"]
+            .as_str()
+            .ok_or(Error::Invalid("worker needs key_file"))?,
+    );
+    let directory = attempt.join("credentials");
+    fs::DirBuilder::new().mode(0o700).create(&directory)?;
+    let key = directory.join("model-key");
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key)?;
+    std::io::copy(&mut File::open(source)?, &mut output)?;
+    output.sync_all()?;
+    File::open(&directory)?.sync_all()?;
+    request["key_file"] = json!(key);
+    command.env("CREDENTIALS_DIRECTORY", &directory);
+    Ok(())
 }
 
 #[derive(Clone, Default)]
@@ -94,7 +113,8 @@ pub struct Supervisor {
     planning: tl3_config::Planning,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
-    fake_root: PathBuf,
+    records_root: PathBuf,
+    materials_provider: Option<crate::production::Materials>,
     active: ActiveRuns,
     worktrees: PathBuf,
     tests: tl3_config::PrismaBuild,
@@ -127,11 +147,17 @@ impl Supervisor {
             planning: config.planning.clone(),
             limits: config.limits.clone(),
             store: config.store.clone(),
-            fake_root: fake_root.to_owned(),
+            records_root: fake_root.to_owned(),
+            materials_provider: None,
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),
             hindsight: config.hindsight.clone(),
         })
+    }
+
+    pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
+        self.materials_provider = Some(provider);
+        self
     }
 
     pub fn source(&self) -> WorkerOutputSource {
@@ -163,12 +189,55 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
-        let materials =
+        let mut materials =
             if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
                 inputs.clone()
             } else {
                 self.materials(delivery, store, snapshot)?
             };
+        if role == "maker" && self.materials_provider.is_some() {
+            let brief = store
+                .worker_document(&node, "briefs")?
+                .ok_or(Error::Invalid("production maker needs the accepted brief"))?;
+            let plan = store
+                .worker_document(&node, "plans")?
+                .ok_or(Error::Invalid("production maker needs the accepted plan"))?;
+            materials["maker"] = crate::production::maker_inputs(&brief, &plan)?;
+            let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
+            let base = match delivery
+                .checks
+                .as_ref()
+                .map(|c| c.base_sha.clone())
+                .or_else(|| {
+                    materials["check_run"]["base_sha"]
+                        .as_str()
+                        .map(str::to_owned)
+                }) {
+                Some(base) => base,
+                None => {
+                    let output = Command::new("git")
+                        .arg("-C")
+                        .arg(&checkout)
+                        .args(["rev-parse", "HEAD"])
+                        .output()?;
+                    if !output.status.success() {
+                        return Err(Error::Invalid("maker checkout has no base"));
+                    }
+                    String::from_utf8(output.stdout)
+                        .map_err(|_| Error::Invalid("invalid maker base"))?
+                        .trim()
+                        .to_owned()
+                }
+            };
+            let checks = materials["maker"]["plan"]["checks"]
+                .as_array()
+                .ok_or(Error::Invalid("maker plan needs checks"))?
+                .iter()
+                .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
+                .collect::<Vec<_>>();
+            materials["check_run"] = json!({"repository":checkout,"base_sha":base,"plan":checks});
+            store.put_worker_materials(&node, &materials)?;
+        }
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
         if matches!(role, "ingest" | "audit")
             && let Some(issue) = materials.get("issue")
@@ -309,6 +378,21 @@ impl Supervisor {
                 }
                 return Ok(materials);
             }
+            if ancestor == delivery.node()
+                && self.materials_provider.is_some()
+                && !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "request_links" && r.id == ancestor.0.to_string())
+            {
+                let materials = self
+                    .materials_provider
+                    .as_ref()
+                    .expect("production provider")
+                    .load(delivery)?;
+                store.put_worker_materials(&ancestor.0.to_string(), &materials)?;
+                return Ok(materials);
+            }
             let link = snapshot
                 .rows
                 .iter()
@@ -444,12 +528,13 @@ impl Supervisor {
                 ..
             } => {
                 self.stop_node(delivery)?;
-                return Fake::new(&self.fake_root).execute(delivery);
+                return super::record::Records::new(&self.records_root)
+                    .deliver(delivery, Completion::confirmed(vec![]));
             }
             _ => return Err(Error::Invalid("unsupported worker effect")),
         };
         let Some(role) = role else {
-            return Fake::new(&self.fake_root).execute(delivery);
+            return Err(Error::Invalid("unsupported worker role"));
         };
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
@@ -479,7 +564,7 @@ impl Supervisor {
             }
             Reconciliation::Absent => {}
         }
-        let request = self.request(delivery, role, &mut store, &snapshot)?;
+        let mut request = self.request(delivery, role, &mut store, &snapshot)?;
         let attempt_number = previous.map_or(0, |(n, _)| n + 1);
         store.claim_worker(
             &delivery.key,
@@ -499,6 +584,8 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
+        let mut command = Command::new(&self.settings.python);
+        isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
         write(&attempt.join("command.json"), &self.settings.command)?;
         let mut script = File::create(attempt.join("supervisor.py"))?;
@@ -507,7 +594,7 @@ impl Supervisor {
         File::open(&attempt)?.sync_all()?;
         File::open(&root)?.sync_all()?;
         let errors = File::create(attempt.join("launcher.log"))?;
-        let mut child = Command::new(&self.settings.python)
+        let mut child = command
             .arg(attempt.join("supervisor.py"))
             .arg(&attempt)
             .stdin(Stdio::null())
@@ -640,7 +727,11 @@ impl Executor for Supervisor {
                 kind: CommentKind::Classify,
                 ..
             } => self.reconcile_run(delivery),
-            _ => Fake::new(&self.fake_root).reconcile(delivery),
+            Out::Effect {
+                kind: EffectKind::StopRun,
+                ..
+            } => super::record::Records::new(&self.records_root).reconcile(delivery),
+            _ => Err(Error::Invalid("unsupported worker effect")),
         }
     }
 }

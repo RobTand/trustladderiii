@@ -269,6 +269,9 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn implementation(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
     fn watch_wait(
         &mut self,
         _delivery: &Delivery,
@@ -348,7 +351,10 @@ pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
     pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
-        todo!("inspect registered implementations")
+        self.0
+            .iter()
+            .map(|(upstream, adapter)| (*upstream, adapter.implementation()))
+            .collect()
     }
     pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) {
         for (upstream, adapter) in &mut self.0 {

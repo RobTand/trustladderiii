@@ -104,7 +104,7 @@ class DeployTests(unittest.TestCase):
         runtime_config = tomllib.loads((runtime / "tl3.toml").read_text())
         self.assertEqual(runtime_config["models"]["key_file"], str(credentials / "model-key"))
         self.assertEqual(runtime_config["github"]["app_credentials_file"], str(credentials / "github-app.json"))
-        self.assertEqual(execute.call_args.args[1][-1], "--workers")
+        self.assertEqual(execute.call_args.args[1][-2:], ["--config", str(runtime / "tl3.toml")])
         self.assertNotIn("uv", runtime_config["workers"]["python"])
 
     def test_unit_syntax_and_ordering(self):
@@ -131,7 +131,7 @@ class DeployTests(unittest.TestCase):
         result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service"))], capture_output=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         controller = (units / "tl3d.service").read_text()
-        self.assertIn("KillMode=process", controller)
+        self.assertIn("KillMode=control-group", controller)
         self.assertIn("Requires=tl3-postgres.service", controller)
         self.assertIn("After=tl3-postgres.service", controller.splitlines())
         self.assertIn(f"ConditionPathExists={self.home}/.config/tl3/production-ready", controller.splitlines())

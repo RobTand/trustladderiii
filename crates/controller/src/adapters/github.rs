@@ -59,7 +59,7 @@ pub struct Adapter {
     epoch: i64,
     policy: Policy,
     runtime: &'static tokio::runtime::Runtime,
-    fake: Fake,
+    records: Records,
     operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
@@ -83,7 +83,7 @@ impl Adapter {
             epoch,
             policy,
             runtime: crate::executor::runtime()?,
-            fake: Fake::new(simulation),
+            records: Records::new(simulation),
             operations,
         })
     }
@@ -91,7 +91,7 @@ impl Adapter {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
         }
-        self.fake.0.fence(delivery.epoch)?;
+        self.records.fence(delivery.epoch)?;
         self.epoch = delivery.epoch;
         Ok(())
     }
@@ -207,7 +207,9 @@ impl Executor for Adapter {
                 }
             )
         {
-            return self.fake.execute(delivery);
+            return self
+                .records
+                .deliver(delivery, Completion::confirmed(vec![]));
         }
         if matches!(notice, Some(Notice::Incident { .. }))
             && !self.operations.as_ref().is_some_and(|o| {
@@ -385,7 +387,7 @@ impl Executor for Adapter {
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         // The current owner fences mutations while reading the original effect epoch.
-        self.fake.0.fence(self.epoch)?;
+        self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
             return Ok(self
                 .reconcile_publication(delivery)
@@ -419,7 +421,7 @@ impl Executor for Adapter {
                 }
             )
         {
-            return self.fake.reconcile(delivery);
+            return self.records.reconcile(delivery);
         }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);

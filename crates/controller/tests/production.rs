@@ -2,10 +2,13 @@
 mod support;
 
 use rand::rngs::OsRng;
-use rsa::{RsaPrivateKey, pkcs8::{EncodePrivateKey, LineEnding}};
+use rsa::{
+    RsaPrivateKey,
+    pkcs8::{EncodePrivateKey, LineEnding},
+};
 use serde_json::json;
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::Path};
-use tl3_controller::{production, executor::Upstream};
+use tl3_controller::{executor::Upstream, production};
 
 fn config(root: &Path) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -14,12 +17,18 @@ fn config(root: &Path) -> tl3_config::Config {
     config.workers.python = root.join("app/workers/.venv/bin/python");
     config.github.webhook_listen = Some("127.0.0.1:0".parse().unwrap());
     config.github.operations = Some(tl3_config::OperationsIssue {
-        owner: "RobTand".into(), name: "trustladderiii".into(), number: 81, installation_id: 987,
+        owner: "RobTand".into(),
+        name: "trustladderiii".into(),
+        number: 81,
+        installation_id: 987,
     });
     config.github.repos[0].installation_id = 987;
     config.github.app_credentials_file = root.join("github-app.json");
     config.models.key_file = root.join("model-key");
-    let pem = RsaPrivateKey::new(&mut OsRng, 2048).unwrap().to_pkcs8_pem(LineEnding::LF).unwrap();
+    let pem = RsaPrivateKey::new(&mut OsRng, 2048)
+        .unwrap()
+        .to_pkcs8_pem(LineEnding::LF)
+        .unwrap();
     fs::write(&config.github.app_credentials_file, serde_json::to_vec(&json!({"id":123,"slug":"fixture","pem":pem.as_str(),"webhook_secret":"fixture-secret"})).unwrap()).unwrap();
     fs::write(&config.models.key_file, "fixture-model-key").unwrap();
     for path in [&config.github.app_credentials_file, &config.models.key_file] {
@@ -36,11 +45,26 @@ fn production_registers_every_real_adapter_and_source() {
     config.store = database.create("production");
     let registered = production::register(&config).unwrap();
     let expected = BTreeMap::from([
-        (Upstream::GitHub, "tl3_controller::adapters::github::Adapter"),
-        (Upstream::Mergify, "tl3_controller::adapters::mergify::Adapter"),
-        (Upstream::PrismaBuild, "tl3_controller::adapters::prismabuild::Adapter"),
-        (Upstream::Workers, "tl3_controller::adapters::workers::Supervisor"),
-        (Upstream::Worktrees, "tl3_controller::adapters::worktrees::Real"),
+        (
+            Upstream::GitHub,
+            "tl3_controller::adapters::github::Adapter",
+        ),
+        (
+            Upstream::Mergify,
+            "tl3_controller::adapters::mergify::Adapter",
+        ),
+        (
+            Upstream::PrismaBuild,
+            "tl3_controller::adapters::prismabuild::Adapter",
+        ),
+        (
+            Upstream::Workers,
+            "tl3_controller::adapters::workers::Supervisor",
+        ),
+        (
+            Upstream::Worktrees,
+            "tl3_controller::adapters::worktrees::Real",
+        ),
     ]);
     assert_eq!(registered.adapters.registered_types(), expected);
     assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
@@ -58,18 +82,30 @@ fn production_refuses_missing_and_invalid_credential_paths_before_opening_store(
     let original = config.models.key_file.clone();
     for field in ["model", "github"] {
         let path = root.path().join(format!("{field}-missing"));
-        if field == "model" { config.models.key_file = path.clone(); }
-        else { config.models.key_file = original.clone(); config.github.app_credentials_file = path.clone(); }
-        assert!(matches!(production::register(&config), Err(tl3_controller::Error::Config(_))));
+        if field == "model" {
+            config.models.key_file = path.clone();
+        } else {
+            config.models.key_file = original.clone();
+            config.github.app_credentials_file = path.clone();
+        }
+        assert!(matches!(
+            production::register(&config),
+            Err(tl3_controller::Error::Config(_))
+        ));
         fs::write(&path, "fixture").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(matches!(production::register(&config), Err(tl3_controller::Error::Config(_))));
+        assert!(matches!(
+            production::register(&config),
+            Err(tl3_controller::Error::Config(_))
+        ));
     }
 }
 
 #[test]
 fn configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply() {
-    use tl3_controller::adapters::workers::writer::{ProcessWriter, Writer, WriteRequest, MessageKind, WriterReply};
+    use tl3_controller::adapters::workers::writer::{
+        MessageKind, ProcessWriter, WriteRequest, Writer, WriterReply,
+    };
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
     config.workers.python = "/usr/bin/python3".into();
@@ -86,9 +122,19 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
     config.workers.command = vec![script.to_str().unwrap().into()];
     config.models.writer[0].name = "writer-choice".into();
     config.models.writer[0].budget_tokens = 4321;
-    let input = WriteRequest { kind: MessageKind::Summary, facts: json!({"issue_title":"A change","request":"Make a change","outcome":"Delivered"}), violations: vec![] };
+    let input = WriteRequest {
+        kind: MessageKind::Summary,
+        facts: json!({"issue_title":"A change","request":"Make a change","outcome":"Delivered"}),
+        violations: vec![],
+    };
     let mut writer = ProcessWriter::new(&config, root.path()).unwrap();
-    assert!(matches!(writer.draft("notice:1", &input).unwrap(), WriterReply::Text(_)));
+    assert!(matches!(
+        writer.draft("notice:1", &input).unwrap(),
+        WriterReply::Text(_)
+    ));
     fs::remove_file(script).unwrap();
-    assert!(matches!(writer.draft("notice:1", &input).unwrap(), WriterReply::Text(_)));
+    assert!(matches!(
+        writer.draft("notice:1", &input).unwrap(),
+        WriterReply::Text(_)
+    ));
 }

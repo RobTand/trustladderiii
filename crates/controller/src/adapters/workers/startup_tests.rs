@@ -19,7 +19,16 @@ fn worker_credentials_survive_controller_credential_removal_and_expose_only_mode
     fs::remove_dir_all(inherited).unwrap();
     let path = Path::new(request["key_file"].as_str().unwrap());
     assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
-    assert_eq!(path.parent().unwrap().metadata().unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(
+        path.parent()
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
     let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
     serde_json::to_writer(child.stdin.take().unwrap(), &request).unwrap();
     assert!(child.wait().unwrap().success());

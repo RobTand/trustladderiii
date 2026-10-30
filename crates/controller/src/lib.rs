@@ -966,7 +966,25 @@ impl Controller {
                         .ok_or(Error::Invalid("path missing from intern dictionary"))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let checks = check_run(snapshot, node, head_sha.as_deref())?;
+            let mut checks = check_run(snapshot, node, head_sha.as_deref())?;
+            if checks.is_none()
+                && matches!(
+                    output,
+                    Out::Effect {
+                        kind: tl3_kernel::EffectKind::SubmitChecks,
+                        ..
+                    }
+                )
+                && let Some(sha) = &head_sha
+                && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+                && let Some(run) = materials.get("check_run")
+            {
+                let run: adapters::prismabuild::CheckRun = serde_json::from_value(run.clone())?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(&run)));
+                checks = Some(run);
+            }
             let question_context = if let Out::Notice {
                 notice: tl3_kernel::Notice::Ask { question },
                 ..
