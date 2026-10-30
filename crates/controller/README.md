@@ -764,7 +764,8 @@ python3 crates/controller/tools/publishing_review_manifest.py hosts > /tmp/tl3-p
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbcampaign.py --detach /tmp/tl3-publishing.json
 ```
 
-This pins process and socket tests to dl380g10, sparky and sparklina. The
+This runs `tools/verify-publishing.sh` on dl380g10, sparky and sparklina, including
+the worker package's offline tests. The
 `publishing` target combines local repositories, mock GitHub HTTP, recorded
 PrismaBuild records and recorded Mergify check fixtures. It runs the reviewer
 entry point with an offline model. Making uses the worker fake until ticket #12
