@@ -34,6 +34,13 @@ CANT_MEET = {"kind": "cant_meet", "report": "The required API decision is unreso
              "files": []}
 
 
+@pytest.fixture(scope="session", autouse=True)
+def cache_tokenizer():
+    # Provision public tokenizer data before the per-test socket denial. Worker
+    # subprocesses then use this cache while all model and tool calls stay offline.
+    tiktoken.get_encoding("o200k_base")
+
+
 @pytest.fixture
 def planner_request(tmp_path):
     worktree = tmp_path / "worktree"
