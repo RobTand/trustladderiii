@@ -302,7 +302,8 @@ fn deliver(settings: &tl3_config::Store, _api: &Server, event: &str, body: &Valu
     let (sender, receiver) = mpsc::channel();
     let handle = thread::spawn(move || source.run(sender));
     let identity = format!(
-        "{event}-{}",
+        "{}-{}",
+        event.replace('_', "-"),
         hex::encode(Sha256::digest(serde_json::to_vec(body).unwrap()))
     );
     let first = format!("{identity}-1");
