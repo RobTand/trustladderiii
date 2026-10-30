@@ -46,7 +46,10 @@ pub struct Store {
     client: Client,
 }
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/0001_store.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0001_store.sql")),
+    (2, include_str!("../migrations/0002_world_arrival.sql")),
+];
 
 impl Store {
     /// Uses only the supplied settings. No environment or implicit credential file is read.
@@ -74,7 +77,9 @@ impl Store {
             )?
             .get::<_, bool>(0)
         {
-            return Err(Error::Invalid("another controller owns this database"));
+            return Err(Error::Invalid(
+                "controller ownership is still held by a Postgres session; exit and let the service manager restart after that session ends",
+            ));
         }
         Ok(())
     }
@@ -215,13 +220,14 @@ impl Store {
             .map(decode_effect).transpose()
     }
 
+    /// Includes terminal deliveries so callers can audit coverage, not just pending work.
+    pub fn effects(&mut self) -> Result<Vec<Effect>> {
+        load_effects(&mut self.client)
+    }
+
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.
     pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
-        self.client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
-            .into_iter().map(|row| Ok(EventRecord {
-                key: row.get(0), payload: row.get(1),
-                receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },
-            })).collect()
+        load_events(&mut self.client, revision, limit)
     }
 
     pub fn intern_repo(&mut self, owner: &str, name: &str) -> Result<RepoId> {
@@ -319,6 +325,34 @@ impl Reader {
         tx.commit()?;
         Ok(snapshot)
     }
+
+    pub fn effects(&mut self) -> Result<Vec<Effect>> {
+        let mut tx = self.transaction()?;
+        let effects = load_effects(&mut tx)?;
+        tx.commit()?;
+        Ok(effects)
+    }
+
+    pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
+        let mut tx = self.transaction()?;
+        let events = load_events(&mut tx, revision, limit)?;
+        tx.commit()?;
+        Ok(events)
+    }
+
+}
+
+fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
+        client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
+            .into_iter().map(decode_effect).collect()
+}
+
+fn load_events(client: &mut impl postgres::GenericClient, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
+        client.query("SELECT event_key, payload, revision, epoch, result FROM tl3_events WHERE revision > $1 ORDER BY revision LIMIT $2", &[&revision.get(), &i64::from(limit)])?
+            .into_iter().map(|row| Ok(EventRecord {
+                key: row.get(0), payload: row.get(1),
+                receipt: CommitReceipt { revision: Revision::try_from(row.get::<_, i64>(2))?, epoch: Epoch::try_from(row.get::<_, i64>(3))?, result: row.get(4) },
+            })).collect()
 }
 
 fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
@@ -402,7 +436,7 @@ pub fn load_snapshot(tx: &mut Transaction<'_>) -> Result<Snapshot> {
     let (revision, epoch) = metadata(tx, false)?;
     let rows = tx
         .query(
-            "SELECT table_name, row_id, value, version FROM tl3_world ORDER BY table_name, row_id",
+            "SELECT table_name, row_id, value, version, arrival FROM tl3_world ORDER BY table_name, arrival",
             &[],
         )?
         .into_iter()
@@ -412,6 +446,7 @@ pub fn load_snapshot(tx: &mut Transaction<'_>) -> Result<Snapshot> {
                 id: row.get(1),
                 value: row.get(2),
                 version: Revision::try_from(row.get::<_, i64>(3))?,
+                arrival: row.get(4),
             })
         })
         .collect::<Result<_>>()?;

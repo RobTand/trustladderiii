@@ -4,7 +4,6 @@ use crate::{
 };
 use serde::Deserialize;
 use std::{
-    fs,
     io::{self, BufRead},
     path::PathBuf,
 };
@@ -52,7 +51,7 @@ fn arguments(daemon: bool) -> Result<(tl3_config::Config, Command)> {
         }
     }
     let path = path.ok_or(Error::Invalid("--config FILE is required"))?;
-    let config = tl3_config::Config::parse(&fs::read_to_string(path)?)?;
+    let config = tl3_config::Config::load(path)?;
     let command = if daemon {
         Command::Daemon {
             simulation: simulation

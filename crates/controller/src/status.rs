@@ -1,6 +1,6 @@
 use crate::{Result, request, snapshot};
 use std::{collections::BTreeMap, fmt::Write};
-use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
+use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role, Wait};
 use tl3_store::{Reader, Transaction};
 
 const COLUMNS: [&str; 6] = [
@@ -61,35 +61,33 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             } else {
                 &title
             };
-            let waiting_on = if node.waiting_incident {
-                "incident resolution"
-            } else if node.question.is_some() {
-                "Rob's answer"
-            } else if node.paused {
-                "resume"
-            } else if let Some(effect) = node.effect {
-                effect_wait(effect.kind)
-            } else if node.run.is_some() {
-                "the current task to finish"
-            } else if node.job.is_some() {
-                "check results"
-            } else {
-                match node.phase {
-                    Phase::Queued => "merge queue",
-                    Phase::Ready(_) => "another change to finish using these files",
-                    Phase::Planning { .. } => "a planner to become available",
+            let waiting_on = match node.waiting_on() {
+                Wait::Incident => "incident resolution",
+                Wait::Answer => "Rob's answer",
+                Wait::Resume => "resume",
+                Wait::Effect(kind) => effect_wait(kind),
+                Wait::WorkerReply => "the current task to finish",
+                Wait::CheckResults => "check results",
+                Wait::MergeQueue => "merge queue",
+                Wait::SlotOrFiles => "another change to finish using these files",
+                Wait::AgentPool => "a planner to become available",
+                Wait::None => "none",
+                Wait::UpstreamEvent => match node.phase {
                     Phase::Ingesting => "the request to be read",
                     Phase::Auditing => "the goals to be checked",
                     Phase::Unplanned => "planning to begin",
+                    Phase::Planning { .. } => "a planner to become available",
+                    Phase::Ready(_) => "another change to finish using these files",
                     Phase::Making => "the change to be written",
                     Phase::Checking => "checks to finish",
                     Phase::Reviewing => "the review to finish",
                     Phase::Publishing => "the pull request to be published",
+                    Phase::Queued => "merge queue",
                     Phase::Rebasing => "the branch update to finish",
                     Phase::AwaitingRob => "Rob's answer",
                     Phase::Stopping(_) => "cleanup to finish",
                     Phase::Closed(_) => "none",
-                }
+                },
             };
             requests.push(RequestStatus {
                 issue: format!(

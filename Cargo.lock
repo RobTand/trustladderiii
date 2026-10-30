@@ -2567,6 +2567,7 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "postgres",
  "postgresql_embedded",
  "serde",
  "serde_json",
@@ -2575,6 +2576,7 @@ dependencies = [
  "tl3-config",
  "tl3-kernel",
  "tl3-store",
+ "tl3-worktrees",
  "tokio",
 ]
 

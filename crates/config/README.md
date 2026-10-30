@@ -65,5 +65,9 @@ fixed nonzero port. The example status address is `127.0.0.1:8033`; deployment
 sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP and reject embedded credentials,
 queries, and fragments. Parse diagnostics omit source lines.
 
+`limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.
+It defaults to 1 for existing configuration files. Changing an initialized
+world's capacity requires a snapshot migration.
+
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.

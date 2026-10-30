@@ -12,6 +12,13 @@ All production crates share the root workspace and Cargo.lock. The optional `ser
 - `Event` carries new requests, operation replies, effect acknowledgements, facts and commands.
 - `Out::Effect` names the node, sequence, effect kind and exact head where needed. `Out::Notice` asks for a message.
 - `World::check`, `consistent` and `valid` check the invariant. `World::witness` and `measure` support progress checks.
+- `Node::waiting_on()` returns a `Wait` for status readers.
+- `Node::operation_pending(kind, generation)` tells the controller whether an acknowledged operation still needs a result.
+- `Node::effect_cancelling(seq)` identifies a delivery whose node has moved on.
+
+These queries live in `src/queries.rs`. They read the world without changing
+`step`, `settle`, or any transition. Enqueue watches name the generation before
+the acknowledgement advances Publishing to Queued.
 
 `HeadId`, `FileId`, `RepoId` and `NodeId` wrap `u64`. The controller interns external commit hashes, paths and repository names.
 Keep those mappings stable across restarts. File IDs are scoped to a repo. Head ID zero is valid.

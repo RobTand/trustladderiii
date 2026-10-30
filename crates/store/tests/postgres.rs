@@ -32,6 +32,7 @@ fn main() {
         ("durability_settings", durability_settings),
         ("read_only_reader", read_only_reader),
         ("reader_schema_versions", reader_schema_versions),
+        ("arrival_within_transaction", arrival_within_transaction),
     ] {
         let settings = database.create(name);
         test(&settings);
@@ -45,7 +46,7 @@ fn main() {
     assert_eq!(Reader::open(&settings).unwrap().load().unwrap(), before);
     println!("test reader_restart ... ok");
     database.stop();
-    println!("11 Postgres integration scenarios passed; no skips");
+    println!("12 Postgres integration scenarios passed; no skips");
 }
 
 fn raw(settings: &tl3_config::Store) -> Client {
@@ -65,6 +66,51 @@ fn put(id: &str, value: serde_json::Value) -> RowChange {
         id: id.into(),
         value,
     }
+}
+
+fn arrival_within_transaction(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("arrivals", json!(null), &snapshot);
+    for key in ["effect:2", "effect:12", "effect:1"] {
+        change.rows.push(RowChange::Put {
+            table: "inbox".into(),
+            id: key.into(),
+            value: json!(key),
+        });
+    }
+    store.commit(&change).unwrap();
+    let before = store.load().unwrap();
+    assert_eq!(
+        before
+            .rows
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        ["effect:2", "effect:12", "effect:1"]
+    );
+    assert!(
+        before
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].arrival < pair[1].arrival)
+    );
+    let mut update = Commit::new("update-arrival", json!(null), &before);
+    update.rows.push(RowChange::Put {
+        table: "inbox".into(),
+        id: "effect:2".into(),
+        value: json!("updated"),
+    });
+    store.commit(&update).unwrap();
+    let after = store.load().unwrap();
+    assert_eq!(
+        after.rows.iter().map(|r| r.arrival).collect::<Vec<_>>(),
+        before.rows.iter().map(|r| r.arrival).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        Reader::open(settings).unwrap().load().unwrap(),
+        after
+    );
 }
 
 fn effect(key: &str) -> NewEffect {
@@ -457,7 +503,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .query_one("SELECT count(*) FROM tl3_schema_migrations", &[])
             .unwrap()
             .get::<_, i64>(0),
-        1
+        2
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [

@@ -66,6 +66,11 @@ impl Database {
             .expect("start embedded Postgres");
         let password_file = root.join("client-password");
         fs::write(&password_file, "tl3-disposable-test-password\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&password_file, fs::Permissions::from_mode(0o600)).unwrap();
+        }
         Self {
             postgres,
             runtime,

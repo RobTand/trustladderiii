@@ -125,6 +125,8 @@ pub struct WorldRow {
     pub value: Value,
     /// The global commit revision that last changed this row.
     pub version: Revision,
+    /// Monotonic insertion order, preserved by updates and across restarts.
+    pub arrival: i64,
 }
 
 #[derive(Clone, Debug)]

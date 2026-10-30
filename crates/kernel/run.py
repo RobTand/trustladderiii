@@ -1,7 +1,7 @@
 """Run the kernel's tests, or Kani proofs, as one PrismaBuild action.
 
     run.py manifest [NAME...]  print a PrismaBuild campaign manifest
-    run.py tests             build the workspace, then run the tests
+    run.py tests             build the kernel, then run its tests
     run.py prove NAME...     prove only the named harnesses
     run.py prove             prove every harness
 
@@ -64,7 +64,7 @@ if mode == "tests":
     code = step("clippy", ["cargo", "clippy", "-p", "tl3-kernel", "--all-targets", "--locked", "--", "-D", "warnings"])
     if code:
         sys.exit(code)
-    code = step("workspace build (no_std)", ["cargo", "build", "-p", "tl3-kernel", "--release"])
+    code = step("kernel build (no_std)", ["cargo", "build", "-p", "tl3-kernel", "--release"])
     if code:
         sys.exit(code)
     sys.exit(step("tests", ["cargo", "test", "-p", "tl3-kernel", "--release", "--no-fail-fast", "--", "--nocapture"]))
