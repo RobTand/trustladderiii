@@ -177,7 +177,8 @@ Production integration still requires:
 
 Generate all-host verification with
 `python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
-the manifest with `pbcampaign.py --detach`. The three pinned actions run maker, worker, supervisor and GitHub ingress scenarios.
+the manifest with `pbcampaign.py --detach`. The three pinned actions run maker,
+worker, supervisor, GitHub ingress and worktrees scenarios.
 The daemon fixture makes and commits a real change through the shared ingress loop.
 A separate portable action runs the Python worker and harness suites and
 `tools/verify.sh`. These tests use fixtures and never submit nested jobs.
