@@ -1035,6 +1035,8 @@ impl Controller {
                 changed_paths,
                 report,
                 pass,
+                results,
+                base_sha,
                 ..
             } => {
                 let request = request(snapshot, node)?;
@@ -1047,6 +1049,13 @@ impl Controller {
                     .ok_or(Error::Invalid("unknown footprint"))?
                     .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
+                if n.job == Some(generation) && n.generation == generation && exact_head {
+                    commit.rows.push(put(
+                        "check_reports",
+                        format!("{}:{sha}", node.0),
+                        json!({"base_sha": base_sha, "results": results}),
+                    ));
+                }
                 let mut in_footprint = true;
                 for path in changed_paths {
                     let id = self.store.intern_path(repo, &path)?;
@@ -1080,6 +1089,7 @@ impl Controller {
                     (tl3_kernel::Phase::Ingesting, "ingest")
                         | (tl3_kernel::Phase::Auditing, "audit")
                         | (tl3_kernel::Phase::Planning { .. }, "planner")
+                        | (tl3_kernel::Phase::Reviewing, "reviewer")
                 );
                 let mut mapped = match adapters::workers::protocol::map_reply(&role, &reply) {
                     Ok(reply) if valid_role => reply,
@@ -1091,9 +1101,56 @@ impl Controller {
                         }));
                     }
                 };
+                if role == "reviewer" {
+                    let mut criteria = adapters::workers::review::criteria(&mut self.store, node)?;
+                    criteria["head_sha"] = json!(n.head.and_then(|head| {
+                        snapshot
+                            .interned
+                            .iter()
+                            .find(|i| {
+                                i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64
+                            })
+                            .map(|i| i.value.clone())
+                    }));
+                    if adapters::workers::review::validate_reply(&reply, &criteria).is_err() {
+                        return Ok(Some(Event::Reply {
+                            node,
+                            generation,
+                            reply: Reply::RunFailed,
+                        }));
+                    }
+                    if reply["verdict"] == "approve" {
+                        mapped = Reply::Approved {
+                            head: n.head.ok_or(Error::Invalid("review has no head"))?,
+                        };
+                    }
+                    let mut findings = self
+                        .store
+                        .worker_document(&node.0.to_string(), "findings")?
+                        .unwrap_or(json!([]));
+                    for finding in reply["blocking_findings"].as_array().unwrap() {
+                        findings
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("findings must be a list"))?
+                            .push(json!(format!(
+                                "{}: {}",
+                                finding["problem"].as_str().unwrap(),
+                                finding["evidence"].as_str().unwrap()
+                            )));
+                    }
+                    commit
+                        .rows
+                        .push(put("findings", node.0.to_string(), findings));
+                    commit.rows.push(put(
+                        "review_reports",
+                        format!("{}:{generation}", node.0),
+                        reply.clone(),
+                    ));
+                }
                 let document = match role.as_str() {
                     "ingest" => "briefs",
                     "audit" => "audits",
+                    "reviewer" => "reviews",
                     _ => "plans",
                 };
                 if role == "planner" {

@@ -67,6 +67,8 @@ pub enum Observation {
         changed_paths: Vec<String>,
         report: bool,
         pass: bool,
+        #[serde(default)]
+        results: Vec<serde_json::Value>,
     },
     Plan {
         node: NodeId,

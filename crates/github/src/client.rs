@@ -135,6 +135,10 @@ impl GitHub {
         self.0.installation
     }
 
+    pub fn app_id(&self) -> u64 {
+        self.0.app_id
+    }
+
     pub fn app_jwt(&self, now: DateTime<Utc>) -> Result<String, Error> {
         #[derive(Serialize)]
         struct Claims {
@@ -587,6 +591,16 @@ impl GitHub {
             format!("{}/pulls/{number}", repo_path(repo)?),
             vec![],
             Some(json!({"state":"closed"})),
+        )
+        .await
+    }
+
+    pub async fn reopen_pull_request(&self, repo: &str, number: u64) -> Result<PullRequest, Error> {
+        self.request(
+            Method::PATCH,
+            format!("{}/pulls/{number}", repo_path(repo)?),
+            vec![],
+            Some(json!({"state":"open"})),
         )
         .await
     }

@@ -27,6 +27,62 @@ use tl3_controller::{
 use tl3_kernel::{EffectKind, Event, NodeId, Out, Phase, Reply, Role};
 use tl3_store::{Commit, EffectState, EffectTransition, NewEffect, RowChange, Store};
 
+// These tests isolate ingest, audit and planning from publishing's real Git evidence.
+struct PlanningWorkers {
+    real: Supervisor,
+    fake: adapters::workers::Fake,
+}
+impl Executor for PlanningWorkers {
+    fn execute(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Review),
+                ..
+            }
+        ) {
+            self.fake.execute(delivery)
+        } else {
+            self.real.execute(delivery)
+        }
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(Role::Review),
+                ..
+            }
+        ) {
+            self.fake.reconcile(delivery)
+        } else {
+            self.real.reconcile(delivery)
+        }
+    }
+    fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
+        self.real.retire(store)
+    }
+}
+fn planning_workers(
+    root: &Path,
+    config: &tl3_config::Config,
+) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
+    let real = Supervisor::new(config, root)?;
+    let source = real.source();
+    let mut registry = adapters::simulation(root)?;
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        PlanningWorkers {
+            real,
+            fake: adapters::workers::Fake::new(root),
+        },
+    );
+    Ok((registry, source))
+}
+
 fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
@@ -201,8 +257,7 @@ fn main() {
         let root = Path::new(&args[3]);
         let mode = args.get(4).map(String::as_str).unwrap_or("blocked");
         let config = config(&settings, root, mode);
-        let (registry, mut source) =
-            adapters::simulation_with_workers(&root.join("fakes"), &config).unwrap();
+        let (registry, mut source) = planning_workers(&root.join("fakes"), &config).unwrap();
         let mut controller = Controller::open(
             Store::open(&settings).unwrap(),
             registry,
@@ -307,8 +362,7 @@ fn simulation(settings: &tl3_config::Store) {
     let config = config(settings, root.path(), "audit-blocked");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
-    let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let (registry, mut source) = planning_workers(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -453,8 +507,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     let worker_pid = fs::read_to_string(root.path().join("entered")).unwrap();
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
-    let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let (registry, mut source) = planning_workers(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -557,8 +610,7 @@ fn early_and_objections(database: &mut Database) {
         materials(&mut Store::open(settings).unwrap());
         let root = tempfile::tempdir().unwrap();
         let config = config(settings, root.path(), mode);
-        let (registry, mut source) =
-            adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+        let (registry, mut source) = planning_workers(&root.path().join("fakes"), &config).unwrap();
         let mut controller = Controller::open(
             Store::open(settings).unwrap(),
             registry,
@@ -601,8 +653,7 @@ fn kernel_retries_killed_worker(settings: &tl3_config::Store) {
     let config = config(settings, root.path(), "blocked");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
-    let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let (registry, mut source) = planning_workers(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -1355,8 +1406,7 @@ fn confirmed_absence(settings: &tl3_config::Store) {
     let config = config(settings, root.path(), "blocked");
     let mut store = Store::open(settings).unwrap();
     materials(&mut store);
-    let (registry, mut source) =
-        adapters::simulation_with_workers(&root.path().join("fakes"), &config).unwrap();
+    let (registry, mut source) = planning_workers(&root.path().join("fakes"), &config).unwrap();
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
         registry,

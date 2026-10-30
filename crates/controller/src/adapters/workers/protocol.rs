@@ -8,6 +8,7 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
         Role::Ingest => Some("ingest"),
         Role::Audit => Some("audit"),
         Role::Plan => Some("planner"),
+        Role::Review => Some("reviewer"),
         _ => None,
     }
 }
@@ -15,6 +16,7 @@ pub(super) fn role(role: Role) -> Option<&'static str> {
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
     static INGEST: OnceLock<jsonschema::Validator> = OnceLock::new();
     static PLANNER: OnceLock<jsonschema::Validator> = OnceLock::new();
+    static REVIEWER: OnceLock<jsonschema::Validator> = OnceLock::new();
     static AUDIT: OnceLock<jsonschema::Validator> = OnceLock::new();
     let (cell, schema) = match role {
         "ingest" => (
@@ -28,6 +30,10 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
         "planner" => (
             &PLANNER,
             include_str!("../../../../../workers/src/tl3_workers/schemas/planner-reply.json"),
+        ),
+        "reviewer" => (
+            &REVIEWER,
+            include_str!("../../../../../workers/src/tl3_workers/schemas/reviewer-reply.json"),
         ),
         _ => return Err(Error::Invalid("unsupported worker role")),
     };
@@ -57,6 +63,10 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<Reply> {
         }),
         "audit" if reply["verdict"] == "agree" => Reply::AuditAgrees,
         "audit" => Reply::AuditDisagrees,
+        "reviewer" if reply["verdict"] == "approve" => Reply::Approved {
+            head: tl3_kernel::HeadId(0),
+        },
+        "reviewer" => Reply::ChangesRequested,
         "planner" => {
             forecast(reply)?;
             let violations = reply["violations"]
@@ -82,6 +92,7 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
         jsonschema::Validator,
         jsonschema::Validator,
         jsonschema::Validator,
+        jsonschema::Validator,
     )> = OnceLock::new();
     let validators = VALIDATORS.get_or_init(|| {
         let ingest: Value = serde_json::from_str(include_str!(
@@ -100,8 +111,12 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
             "../../../../../workers/src/tl3_workers/schemas/planner-input.json"
         ))
         .unwrap();
+        let reviewer: Value = serde_json::from_str(include_str!(
+            "../../../../../workers/src/tl3_workers/schemas/reviewer-input.json"
+        ))
+        .unwrap();
         let mut registry = jsonschema::Registry::new();
-        for schema in [&ingest, &audit, &reply, &planner] {
+        for schema in [&ingest, &audit, &reply, &planner, &reviewer] {
             registry = registry
                 .add(schema["$id"].as_str().unwrap(), schema.clone())
                 .unwrap();
@@ -120,6 +135,10 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
                 .with_registry(&registry)
                 .build(&planner)
                 .unwrap(),
+            jsonschema::options()
+                .with_registry(&registry)
+                .build(&reviewer)
+                .unwrap(),
         )
     });
     let validator = if role == "ingest" {
@@ -128,6 +147,8 @@ pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
         &validators.1
     } else if role == "planner" {
         &validators.2
+    } else if role == "reviewer" {
+        &validators.3
     } else {
         return Err(Error::Invalid("unsupported worker role"));
     };

@@ -5,6 +5,7 @@ mod fake;
 mod json;
 mod process;
 pub(crate) mod protocol;
+pub(crate) mod review;
 mod source;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
@@ -136,7 +137,9 @@ impl Supervisor {
             .ok_or(Error::Invalid("worker materials are missing"))?;
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
-        if role == "planner" {
+        if role == "reviewer" {
+            inputs = review::inputs(delivery, store, snapshot)?;
+        } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];
             rung = usize::from(n.plan_retries);
@@ -167,7 +170,14 @@ impl Supervisor {
         } else {
             &self.models.planner
         };
-        let model = &ladder[rung.min(ladder.len() - 1)];
+        let model = if role == "reviewer" {
+            let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
+            self.models
+                .reviewer_for(&maker.family)
+                .ok_or(Error::Invalid("reviewer needs a different model family"))?
+        } else {
+            &ladder[rung.min(ladder.len() - 1)]
+        };
         Ok(json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
@@ -279,7 +289,9 @@ impl Executor for Supervisor {
             attempt_number,
         )?;
         fs::create_dir_all(root.join("worktree"))?;
-        if role != "audit" {
+        if role == "reviewer" {
+            review::checkout(&root.join("worktree"), delivery)?;
+        } else if role != "audit" {
             let materials = store
                 .worker_materials(&delivery.node().0.to_string())?
                 .ok_or(Error::Invalid("worker materials missing"))?;
