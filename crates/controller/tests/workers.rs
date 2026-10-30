@@ -77,6 +77,7 @@ fn labelled() -> LabelledIssue {
         repo: "tl3-sandbox".into(),
         installation: 1,
         number: 42,
+        title: "Fix greeting".into(),
         actor: 24923402,
         label: "tl3".into(),
     }
