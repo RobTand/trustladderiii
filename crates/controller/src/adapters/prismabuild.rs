@@ -96,6 +96,34 @@ pub struct Adapter {
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
     crate::Error::Adapter(Box::new(error))
 }
+
+fn read_wait(
+    client: &PrismaBuild,
+    runtime: &tokio::runtime::Runtime,
+    key: &str,
+) -> Result<crate::executor::WaitRecord> {
+    use crate::executor::WaitRecord;
+    let key = key.parse().map_err(adapter_error)?;
+    let Some(record) = runtime.block_on(client.read(&key)).map_err(adapter_error)? else {
+        return Ok(WaitRecord::Pending);
+    };
+    Ok(match record.state {
+        ActionState::Queued | ActionState::Claimed => WaitRecord::Alive {
+            progress: format!(
+                "{}:{}:{:?}:{:?}:{:?}",
+                record.key,
+                record.published_unix,
+                record.state,
+                record.lease,
+                record.progress_observation
+            ),
+        },
+        ActionState::Finished { .. }
+        | ActionState::Failed { .. }
+        | ActionState::LeaseLost
+        | ActionState::Withdrawn => WaitRecord::Ended,
+    })
+}
 fn encoded(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
 }
@@ -414,6 +442,9 @@ impl Adapter {
 }
 
 impl Executor for Adapter {
+    fn wait_record(&mut self, key: &str) -> Result<crate::executor::WaitRecord> {
+        read_wait(&self.client, &self.runtime, key)
+    }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery.epoch)?;
         match delivery.output {

@@ -371,14 +371,10 @@ Mergify's `retire_delivery` resolves an adapter only for delivery files requirin
 cleanup. Worker retirement keeps its separate store-based `retire` hook; errors
 from that hook are also logged without stopping the driver.
 
-The following handoff describes the state before PR #80.
-
-Ticket #15 owns allowances and scheduled looks. On an unchanged authoritative
-read after the progress allowance, it can report: "GitHub merged at X, Mergify
-check Y still in_progress", using `merged_at`, `queue_check.id` and
-`queue_check.status`. The read itself sets no timer and emits no stall incident.
-The kernel currently has no Mergify-stall fact. Ticket #15 must supply that path;
-this adapter does not change kernel rules.
+Allowance looks compare the durable watch token. If it remains unchanged past
+Mergify's no-progress allowance, the controller sends `Fact::UpstreamStalled`.
+The kernel raises an incident in Queued. Its text includes GitHub's merge time
+and Mergify's queue-check title and status from that watch.
 
 Create a clean detached worktree at the final commit, then submit its host checks:
 
@@ -710,7 +706,7 @@ context and retry findings.
 ## Allowance looks and incidents
 
 `looks` stores active allowances and incidents in `tl3_world`. It uses the
-existing schema versions 1 through 4. No store migration is needed.
+world-row schema. Store migration 6 adds the worker declaration of an outside wait.
 `Controller::now` supplies every allowance time. Simulation can advance a fake
 clock and call `look_due` without sleeping. `look_now` reads pending operations
 after restart or a webhook gap.
@@ -728,8 +724,9 @@ stored before `stop_stalled` proves the exact process ended. A reply that raced
 the stop is still used. Otherwise the kernel receives `RunFailed` and decides the
 retry and incident. PrismaBuild alone decides whether its progress contract failed
 or a worker was lost. A queue stall enters as `Fact::UpstreamStalled`; the kernel
-raises its incident. The Mergify token integration belongs to PR #69 and is
-specified in [the handoff](../../../docs/mergify-looks-handoff.md).
+raises its incident. The incident reads the merge time and queue-check title
+and status from the watch's `WatchProgress`. Worker declarations of outside waits
+are described in the [worker protocol](../../workers/README.md).
 
 When a failed write's allowance expires, authoritative absence counts that
 delivery as retryable through the kernel. A transport error never proves absence.
@@ -775,7 +772,7 @@ those adapters implement it. This is the handoff for #67 and #69.
 Rob can also close a permanent-failure incident
 record; its separate retry-or-handle question remains to be answered.
 
-A GitHub look also pages the App's delivery log with App JWT authentication.
+When a GitHub allowance is due, or on `look_now`, a look also pages the App's delivery log with App JWT authentication.
 Failed deliveries above the durable watermark request redelivery. A pending
 delivery holds that watermark back. The watermark advances only after all
 redelivery requests succeed, so a crash can repeat a request but cannot skip it.

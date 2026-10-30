@@ -365,7 +365,12 @@ impl WorkerOutputSource {
                             .try_into()
                             .map_err(|_| Error::Invalid("worker output offset overflow"))?,
                         value["unit"].as_str().unwrap(),
+                        external_wait(&value).as_ref(),
                     )?;
+                    // Reattachments declare liveness, not new agent work.
+                    if external_wait(&value).is_some() {
+                        continue;
+                    }
                     sender
                         .send(Input::Observation {
                             key: format!("{}:progress:{number}:{}", delivery.key, run.offset),
@@ -400,9 +405,34 @@ impl WorkerOutputSource {
 }
 
 fn progress(value: &Value) -> bool {
-    value.as_object().is_some_and(|o| o.len() == 2)
-        && value["event"] == "progress"
-        && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result"))
+    value["event"] == "progress"
+        && ((value.as_object().is_some_and(|o| o.len() == 2)
+            && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result")))
+            || (value.as_object().is_some_and(|o| {
+                o.len() == 3
+                    || (o.len() == 4
+                        && o.get("checkpoint")
+                            .and_then(Value::as_str)
+                            .is_some_and(|s| !s.is_empty() && s.len() <= 2048))
+            }) && value["unit"] == "external_wait"
+                && external_wait(value).is_some()))
+}
+
+fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
+    let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
+    let owner_valid = !wait.upstream.is_empty()
+        && wait.upstream.len() <= 64
+        && wait
+            .upstream
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'_');
+    let key_valid =
+        !wait.key.is_empty() && wait.key.len() <= 256 && !wait.key.chars().any(char::is_control);
+    (owner_valid
+        && key_valid
+        && (wait.upstream != "prismabuild"
+            || wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok()))
+    .then_some(wait)
 }
 
 pub(super) fn parse_reply(
@@ -479,6 +509,31 @@ fn ready_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_wait_protocol_is_strict_and_owner_independent() {
+        let event = serde_json::json!({"event":"progress", "unit":"external_wait",
+            "wait":{"upstream":"prismabuild", "key":"a".repeat(64)}});
+        assert!(progress(&event));
+        let mut token = event.clone();
+        token["wait"] = serde_json::json!({"upstream":"token_grant", "key":"request:7"});
+        assert!(progress(&token));
+        for change in [
+            serde_json::json!({"upstream":"prismabuild", "key":"invalid"}),
+            serde_json::json!({"upstream":"token_grant", "key":""}),
+            serde_json::json!({"upstream":"token_grant", "key":"valid", "extra":1}),
+        ] {
+            let mut invalid = event.clone();
+            invalid["wait"] = change;
+            assert!(!progress(&invalid));
+        }
+        let mut invalid = event.clone();
+        invalid["unexpected"] = serde_json::json!(true);
+        assert!(!progress(&invalid));
+        let mut checkpoint = event;
+        checkpoint["checkpoint"] = serde_json::json!("7 tests");
+        assert!(progress(&checkpoint));
+    }
 
     #[test]
     fn only_evidence_files_dirty_an_attempt() {

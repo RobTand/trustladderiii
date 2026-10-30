@@ -30,6 +30,10 @@ pub(crate) struct AllowanceState {
     read_failures: u8,
     #[serde(default)]
     read_incidents: u8,
+    #[serde(default)]
+    external_wait: Option<tl3_store::ExternalWait>,
+    #[serde(default)]
+    wait_ended: bool,
 }
 
 impl AllowanceState {
@@ -48,6 +52,8 @@ impl AllowanceState {
             failure: None,
             read_failures: 0,
             read_incidents: 0,
+            external_wait: None,
+            wait_ended: false,
         }
     }
 }
@@ -135,12 +141,12 @@ impl Controller {
             .map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let now = self.now_ms();
-        let mut looked = false;
+        let mut github_due = false;
         for mut state in states {
             if !force && !state.due_ms.is_some_and(|due| due <= now) {
                 continue;
             }
-            looked = true;
+            github_due |= upstream(state.delivery.output) == Upstream::GitHub;
             state.due_ms = None;
             if let Some(id) = &state.incident
                 && let Some(row) = snapshot.rows.iter().find(|r| {
@@ -216,10 +222,48 @@ impl Controller {
                 self.finish_stall(&mut state)?;
                 continue;
             }
-            let result = self
+            let mut result = self
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
+            let mut outside_alive = false;
+            if let Ok(Look::Waiting(wait)) = &result {
+                let wait = wait.clone();
+                if state.external_wait.as_ref() != Some(&wait) {
+                    state.external_wait = Some(wait.clone());
+                    state.wait_ended = false;
+                }
+                let record = match wait.upstream.as_str() {
+                    "prismabuild" => self
+                        .adapters
+                        .get(Upstream::PrismaBuild)?
+                        .wait_record(&wait.key),
+                    _ => Ok(crate::executor::WaitRecord::Pending),
+                };
+                result = match record {
+                    Ok(crate::executor::WaitRecord::Alive { progress }) => {
+                        state.wait_ended = false;
+                        // The owner still has work. An unchanged owner checkpoint
+                        // cannot authorize stopping the agent that awaits it.
+                        outside_alive = true;
+                        Ok(Look::Alive { progress })
+                    }
+                    Ok(crate::executor::WaitRecord::Ended) => {
+                        if !state.wait_ended {
+                            state.wait_ended = true;
+                            state.progress_ms = now;
+                        }
+                        Ok(Look::Alive {
+                            progress: state.progress.clone().unwrap_or_default(),
+                        })
+                    }
+                    Ok(crate::executor::WaitRecord::Pending) => Ok(Look::Pending),
+                    Err(error) => Err(error),
+                };
+            } else if matches!(result, Ok(Look::Alive { .. })) {
+                state.external_wait = None;
+                state.wait_ended = false;
+            }
             match result {
                 Ok(Look::Found(mut completion)) => {
                     let effect = self
@@ -310,10 +354,13 @@ impl Controller {
                 Ok(Look::Alive { progress }) => {
                     let changed = state.progress.as_ref() != Some(&progress);
                     state.progress = Some(progress);
-                    if self.look_alive(&mut state, changed)? {
+                    if outside_alive {
+                        self.rearm(&mut state);
+                    } else if self.look_alive(&mut state, changed)? {
                         continue;
                     }
                 }
+                Ok(Look::Waiting(_)) => unreachable!("declared wait resolved above"),
                 Ok(Look::Healthy) => {
                     if !state.healthy {
                         self.retry_held_effects(upstream(state.delivery.output));
@@ -372,7 +419,7 @@ impl Controller {
             }
             self.save_allowance(&state)?;
         }
-        if looked || force {
+        if github_due || force {
             let after = self
                 .store
                 .load()?
@@ -495,6 +542,8 @@ impl Controller {
                     return Ok(true);
                 }
                 Upstream::GitHub | Upstream::Mergify => {
+                    state.failure = Some("queue_unfinished".into());
+                    self.save_allowance(state)?;
                     self.observe(
                         &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
                         Observation::Kernel(Event::Fact {
@@ -1006,6 +1055,7 @@ pub(crate) fn incident_summary(title: &str, signature: &str, needs_rob: bool) ->
     };
     let reason = match class {
         "no_progress" => "stopped making progress",
+        "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
         "transport" => "could not be reached",
         "upstream_server" => "reported a service error",
@@ -1021,4 +1071,34 @@ pub(crate) fn incident_summary(title: &str, signature: &str, needs_rob: bool) ->
         "Work is waiting for recovery."
     };
     format!("For \"{title}\", {source} {reason}. {next}")
+}
+
+pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option<String> {
+    use crate::executor::{ProgressToken, WatchProgress};
+    let progress = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "watches")
+        .find_map(|row| {
+            let delivery: Delivery = serde_json::from_value(row.value.clone()).ok()?;
+            (delivery.node() == node)
+                .then(|| row.value.get("progress"))
+                .flatten()
+                .and_then(|value| serde_json::from_value::<WatchProgress>(value.clone()).ok())
+        })?;
+    let ProgressToken::Mergify(progress) = progress.current;
+    let check = progress.queue_check?;
+    let title = check.title.as_deref().unwrap_or("Merge queue");
+    let status = match check.status.as_str() {
+        "in_progress" => "still in progress",
+        "queued" => "still queued",
+        "completed" => "completed",
+        _ => "unfinished",
+    };
+    Some(match progress.merged_at {
+        Some(time) => format!(
+            "GitHub merged the change at {time}, but Mergify's check \"{title}\" is {status}."
+        ),
+        None => format!("Mergify's check \"{title}\" is {status}."),
+    })
 }

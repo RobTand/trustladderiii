@@ -160,3 +160,35 @@ def test_malformed_prismabuild_response_is_infrastructure(submission, response, 
     result = call(submission, Summary().result)
     assert result["status"] == "infrastructure_error"
     assert sum(result["totals"].values()) == 0
+
+
+def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatch):
+    from tl3_workers import pb_tests
+
+    root, scripts = submission
+    (scripts / "response.json").write_text(json.dumps(Summary().result))
+    original = pb_tests._json_command
+    events = []
+    waits = 0
+
+    def command(args):
+        nonlocal waits
+        if args[1].endswith("pbwait.py"):
+            waits += 1
+            assert events[-1] == {"event": "progress", "unit": "external_wait",
+                                  "wait": {"upstream": "prismabuild", "key": KEY}}
+            if waits == 1:
+                return 124, {"schema": "prismabuild.endings.v1", "complete": False,
+                             "endings": [{"action_key": KEY, "status": "waiting",
+                                          "progress_observation": {"accepted_count": 7}}]}
+        return original(args)
+
+    monkeypatch.setattr(pb_tests, "_json_command", command)
+    with Worktree(root) as tree:
+        tree.progress_emit = events.append
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+    assert result["status"] == "completed"
+    assert waits == 2
+    assert len(events) == 3
+    assert json.loads(events[1]["checkpoint"]) == {"accepted_count": 7}
+    assert events[0] == events[2]

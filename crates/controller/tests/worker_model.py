@@ -62,6 +62,15 @@ def create_model(request):
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
 
+if mode == "external-wait":
+    json.load(sys.stdin)
+    print(json.dumps({"event": "progress", "unit": "external_wait",
+                      "wait": {"upstream": "prismabuild", "key": "a" * 64}}), flush=True)
+    marker.write_text(str(os.getpid()))
+    while not marker.with_suffix(".release").exists():
+        time.sleep(0.01)
+    sys.exit(1)
+
 if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash", "oversized-size", "forged-fit", "forged-context", "forged-overhead", "forged-files"}:
     request = json.load(sys.stdin)
     reply = dict(brief) if mode != "bad-schema" else {"kind": "brief", "brief": "Missing goals"}

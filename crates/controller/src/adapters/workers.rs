@@ -381,8 +381,11 @@ impl Executor for Supervisor {
                     .into_iter()
                     .find(|r| r.key == delivery.key);
                 Ok(match row {
-                    Some(row) => Look::Alive {
-                        progress: format!("{}:{}", row.attempt, row.output_offset),
+                    Some(row) => match row.external_wait {
+                        Some(wait) => Look::Waiting(wait),
+                        None => Look::Alive {
+                            progress: format!("{}:{}", row.attempt, row.output_offset),
+                        },
                     },
                     None => Look::Pending,
                 })

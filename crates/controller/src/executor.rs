@@ -171,10 +171,18 @@ pub enum Look {
     Alive {
         progress: String,
     },
+    Waiting(tl3_store::ExternalWait),
     Healthy,
     Quota {
         reset_ms: u64,
     },
+}
+
+/// Only the outside owner can establish that a declared wait has ended.
+pub enum WaitRecord {
+    Alive { progress: String },
+    Ended,
+    Pending,
 }
 
 pub enum Reconciliation {
@@ -187,6 +195,9 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn wait_record(&mut self, _key: &str) -> Result<WaitRecord> {
+        Ok(WaitRecord::Pending)
+    }
     /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.

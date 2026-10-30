@@ -121,6 +121,7 @@ def run(model, request, worktree, emit):
     inputs = request["inputs"]
     _check_inputs(inputs)
     worktree.test_settings = TestSettings(**inputs["tests"])
+    worktree.progress_emit = emit
     if isinstance(model, ChatOpenAI):
         model.stream_usage = True
         model.model_kwargs = {**model.model_kwargs, "parallel_tool_calls": False}

@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import subprocess
-import sys
 
 root = Path(__file__).resolve().parents[3]
 if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
@@ -34,9 +33,4 @@ rows.extend({
     "priority": -10, "timeout_s": 3600, "env": env,
     "argv": ["/home/rob/.local/bin/uv", "run", "--locked", "--project", "workers", "--python", "3.14+gil", "python", "-m", "pytest", "workers/tests"],
 } for host in ["dl380g10", "sparky", "sparklina"])
-proofs = json.loads(subprocess.check_output([
-    sys.executable, str(root / "crates/kernel/run.py"), "manifest",
-    "tests", "apply_upstream_stalled",
-], text=True))
-rows.extend(proofs)
 print(json.dumps(rows, indent=2))

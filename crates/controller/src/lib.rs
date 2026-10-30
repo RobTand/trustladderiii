@@ -940,7 +940,13 @@ impl Controller {
                 let id = format!("{}.{}", snapshot.revision.get() + 1, index);
                 let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
                 let signature = format!("{source:?}:{class}");
-                let summary = looks::incident_summary(&request.title, &signature, needs_rob);
+                let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
+                if class == "queue_unfinished"
+                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)
+                {
+                    summary.push(' ');
+                    summary.push_str(&detail);
+                }
                 commit.rows.push(put(
                     "incidents",
                     id.clone(),

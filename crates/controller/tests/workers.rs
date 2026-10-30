@@ -4,6 +4,8 @@ mod planning;
 mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
+#[path = "fixtures/waits/mod.rs"]
+mod waits;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -238,6 +240,8 @@ fn main() {
     println!("test announced_quota_resumes_same_operation_without_failure ... ok");
     clock_stops_stalled_worker(&database.create("workers_stall"));
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
+    external_wait_survives_restart(&database.create("workers_external_wait"));
+    println!("test external_wait_persists_across_source_and_controller_restart ... ok");
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
     killed_worker(&database.create("workers_kill"));
@@ -1705,4 +1709,79 @@ fn overflow(settings: &tl3_config::Store) {
         events.len(),
         "overflow recovery never replays an event"
     );
+}
+
+fn external_wait_survives_restart(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "external-wait");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut source = supervisor.source();
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let open = || {
+        let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+        registry.register(
+            tl3_controller::executor::Upstream::Workers,
+            supervisor.clone(),
+        );
+        registry.register(
+            tl3_controller::executor::Upstream::PrismaBuild,
+            waits::adapter(root.path()),
+        );
+        let mut c = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        let mut allowances = config.allowances.clone();
+        allowances.agent_worker.silence_secs = 1;
+        allowances.agent_worker.no_progress_secs = 3;
+        c.set_allowances(allowances);
+        c
+    };
+    let mut c = open();
+    waits::record(root.path(), "claimed");
+    c.intake(labelled()).unwrap();
+    while c.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let (tx, rx) = mpsc::channel();
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .any(|r| r.external_wait.is_some())
+    });
+    assert!(
+        rx.try_recv().is_err(),
+        "a declaration is not agent progress"
+    );
+    let before = store.worker_progress(None).unwrap();
+    c.look_now().unwrap();
+    drop(c);
+    drop(source);
+    let mut source = supervisor.source();
+    let mut c = open();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(store.worker_progress(None).unwrap(), before);
+    assert!(rx.try_recv().is_err(), "replaying a wait is not progress");
+    clock.0.set(1_000_000);
+    c.look_due().unwrap();
+    assert_eq!(c.world().unwrap().nodes[0].run_failures, 0);
+    waits::record(root.path(), "done");
+    c.look_now().unwrap();
+    clock.0.set(1_003_000);
+    c.look_due().unwrap();
+    assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
 }

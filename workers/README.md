@@ -83,6 +83,30 @@ startup, middleware hooks and elapsed time do not produce progress events.
 {"event":"reply","role":"ingest","reply":{"kind":"brief","brief":"Fix the greeting.","goals":[{"description":"Return hello.","verification":"test"}],"memory_ids":[]}}
 ```
 
+An outside job declares its owner and durable key before blocking:
+
+```json
+{"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+```
+
+`run_tests` emits this event after submission and on each reattachment to
+`pbwait`. If `pbwait` returns `progress_observation`, it relays that JSON as an
+optional `checkpoint` string, capped at 2048 UTF-8 bytes. The current published
+`pbwait` returns only an ending document when its wait finishes.
+Declarations and relayed checkpoints do not count as agent work. The next
+`model_turn` or `tool_result` clears the declaration. Owner names contain up to
+64 lowercase letters or underscores. Keys contain up to 256 characters and no
+control characters. PrismaBuild keys require 64 lowercase hexadecimal digits.
+The shape also supports other outside owners, including future token grants.
+An owner without a record reader stays unknown and cannot authorize a stop.
+
+The supervisor persists the declaration with the output offset and attempt.
+A restart preserves it without refreshing agent progress. The Workers look
+resolves the owner through its adapter. Queued or claimed PrismaBuild records
+keep the agent alive, even with an unchanged checkpoint. Only an ended or lost
+record starts the agent's no-progress allowance. Missing or unreadable records
+remain unknown. PrismaBuild owns loss decisions and execution duration.
+
 Exactly one reply ends a successful run, followed by exit 0. Any other exit is
 a failed run, even if progress was emitted. Schema failures never emit a reply.
 Malformed JSON, duplicate keys, non-finite numbers, invalid requests, missing

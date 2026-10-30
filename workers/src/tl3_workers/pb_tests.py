@@ -123,9 +123,10 @@ def _summary(ending, key):
     return result
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
+    emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
 
     def run_tests(tests: list[str] | None = None) -> dict:
         """Run relative pytest paths/node IDs, or the whole suite when omitted."""
@@ -155,6 +156,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
                 # pbwait's observation allowance is not an execution deadline.
                 # Reattach to the same action whenever that allowance expires.
                 while True:
+                    emit({"event": "progress", "unit": "external_wait",
+                          "wait": {"upstream": "prismabuild", "key": key}})
                     code, waited = _json_command([
                         sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
                         "--endings", "--until", "cleaned", key,
@@ -166,6 +169,13 @@ def make_test_tool(worktree, settings: TestSettings | None = None):
                     endings = waited["endings"]
                     if len(endings) != 1 or endings[0]["action_key"] != key:
                         raise ValueError("PrismaBuild returned another action")
+                    progress = endings[0].get("progress_observation")
+                    if isinstance(progress, dict):
+                        checkpoint = json.dumps(progress, allow_nan=False, sort_keys=True)
+                        if len(checkpoint.encode()) <= 2048:
+                            emit({"event": "progress", "unit": "external_wait",
+                                  "wait": {"upstream": "prismabuild", "key": key},
+                                  "checkpoint": checkpoint})
                     if waited["complete"]:
                         if code:
                             raise ValueError("PrismaBuild action infrastructure failed")

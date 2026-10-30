@@ -1,5 +1,7 @@
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
+#[path = "fixtures/waits/mod.rs"]
+mod waits;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeSet,
@@ -822,6 +824,7 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
     assert!(row.value["progress"]["current"].get("Mergify").is_some());
     clock.advance(2);
     token.borrow_mut().queue_check.as_mut().unwrap().title = Some("Next in queue".into());
+    token.borrow_mut().merged_at = Some("2026-10-30T01:00:00Z".into());
     drain(&mut c);
     let progressed_at = clock.0.get();
     let allowance = c
@@ -884,6 +887,35 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         c.world().unwrap().nodes[0].waiting_incident,
         "token-only Found must reach the queue stall rule"
     );
+    let snapshot = c.snapshot().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "incidents" && r.value["open"] == true)
+        .unwrap();
+    assert_eq!(incident.value["signature"], "Mergify:queue_unfinished");
+    let summary = incident.value["summary"].as_str().unwrap();
+    assert!(
+        summary.contains("GitHub merged the change at 2026-10-30T01:00:00Z"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("Mergify's check \"Next in queue\" is still in progress"),
+        "{summary}"
+    );
+    let notice = Store::open(settings)
+        .unwrap()
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|e| {
+            e.key.starts_with("incident:")
+                || e.payload["note"]
+                    .as_str()
+                    .is_some_and(|note| note.contains(summary))
+        })
+        .unwrap();
+    assert!(notice.payload["note"].as_str().unwrap().contains(summary));
     terminal.set(true);
     drain(&mut c);
     c.look_now().unwrap();
@@ -920,6 +952,11 @@ fn settled_looks_are_quiet(settings: &tl3_config::Store) {
 }
 fn main() {
     let mut db = support::Database::start();
+    worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
+    println!("test worker_look_does_not_read_github_deliveries ... ok");
+    declared_maker_wait(&db.create("maker_wait_ended"), "done");
+    declared_maker_wait(&db.create("maker_wait_lost"), "failed");
+    println!("test declared_maker_wait_reads_live_ended_and_lost_owner_records ... ok");
     stalled_runs_and_incident_controls(&db.create("stalls"));
     println!("test stalled_runs_and_incident_controls ... ok");
     for (mode, name) in [
@@ -950,4 +987,184 @@ fn main() {
     token_only_queue_progress(&db.create("token_only_queue"));
     db.stop();
     println!("16 allowance and incident scenarios passed; no skips");
+}
+
+struct WaitingMaker {
+    fake: adapters::workers::Fake,
+    stops: Rc<Cell<u32>>,
+}
+impl WaitingMaker {
+    fn maker(d: &Delivery) -> bool {
+        matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::StartRun(tl3_kernel::Role::Maker),
+                ..
+            }
+        )
+    }
+}
+impl Executor for WaitingMaker {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if Self::maker(d) {
+            Ok(Completion::confirmed(vec![]))
+        } else {
+            self.fake.execute(d)
+        }
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if Self::maker(d) {
+            Ok(Reconciliation::Pending)
+        } else {
+            self.fake.reconcile(d)
+        }
+    }
+    fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
+        if Self::maker(d) {
+            Ok(Look::Waiting(tl3_store::ExternalWait {
+                upstream: "prismabuild".into(),
+                key: waits::key(),
+            }))
+        } else {
+            Ok(match self.reconcile(d)? {
+                Reconciliation::Found(c) => Look::Found(c),
+                Reconciliation::Absent => Look::Absent,
+                Reconciliation::Pending => Look::Pending,
+            })
+        }
+    }
+    fn stop_stalled(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        self.stops.set(self.stops.get() + 1);
+        Ok(Completion::confirmed(vec![Observation::Kernel(
+            Event::Reply {
+                node: d.node(),
+                generation: d.generation,
+                reply: tl3_kernel::Reply::RunFailed,
+            },
+        )]))
+    }
+}
+fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let stops = Rc::new(Cell::new(0));
+    let open = || {
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(
+            Upstream::Workers,
+            WaitingMaker {
+                fake: adapters::workers::Fake::new(root.path()),
+                stops: stops.clone(),
+            },
+        );
+        registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+        let mut c = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            bootstrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        c.set_allowances(allowances());
+        c
+    };
+    let mut c = open();
+    waits::record(root.path(), "ready");
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
+    c.look_now().unwrap();
+    for state in ["ready", "claimed"] {
+        waits::record(root.path(), state);
+        clock.advance(1000);
+        c.look_due().unwrap();
+        assert_eq!(stops.get(), 0, "{state} is alive past no_progress_secs");
+    }
+    drop(c);
+    let mut c = open();
+    clock.advance(1000);
+    c.look_due().unwrap();
+    assert_eq!(stops.get(), 0, "restart retains the owner's wait");
+    waits::record(root.path(), "missing");
+    clock.advance(1000);
+    c.look_due().unwrap();
+    assert_eq!(stops.get(), 0, "absence is not a terminal record");
+    waits::record(root.path(), ending);
+    c.look_now().unwrap();
+    assert_eq!(
+        stops.get(),
+        0,
+        "the agent gets its allowance after owner termination"
+    );
+    drop(c);
+    let mut c = open();
+    clock.advance(2);
+    c.look_due().unwrap();
+    assert_eq!(stops.get(), 0);
+    clock.advance(1);
+    c.look_due().unwrap();
+    assert_eq!(
+        stops.get(),
+        1,
+        "silent maker is stopped after the ended action"
+    );
+}
+
+struct DeliveryCounter {
+    fake: adapters::github::Fake,
+    reads: Rc<Cell<u32>>,
+}
+impl Executor for DeliveryCounter {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        self.fake.execute(d)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(d)
+    }
+    fn recover_deliveries(&mut self, _: u64, _: u64) -> tl3_controller::Result<Option<u64>> {
+        self.reads.set(self.reads.get() + 1);
+        Ok(None)
+    }
+}
+fn worker_look_does_not_read_github_deliveries(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let reads = Rc::new(Cell::new(0));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        Live(Rc::new(RefCell::new(LiveState::default()))),
+    );
+    registry.register(
+        Upstream::GitHub,
+        DeliveryCounter {
+            fake: adapters::github::Fake::new(root.path()),
+            reads: reads.clone(),
+        },
+    );
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    c.set_allowances(allowances());
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    c.look_now().unwrap();
+    assert_eq!(reads.get(), 1);
+    clock.advance(1);
+    c.look_due().unwrap();
+    assert_eq!(
+        reads.get(),
+        1,
+        "a worker allowance must not read GitHub's delivery log"
+    );
+    c.look_now().unwrap();
+    assert_eq!(
+        reads.get(),
+        2,
+        "explicit gap recovery still reads deliveries"
+    );
 }
