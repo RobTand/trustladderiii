@@ -238,7 +238,8 @@ impl Controller {
         }
         let mut progressed = false;
         for effect in &snapshot.pending_effects {
-            let delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+            let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+            delivery.epoch = effect.epoch.get();
             match effect.state {
                 EffectState::Intended => {
                     if effect.epoch != snapshot.epoch {
@@ -285,6 +286,65 @@ impl Controller {
                     unreachable!()
                 }
             }
+        }
+        // An acknowledged start can outlive its dispatch. Its authoritative
+        // record must also be read after a restart or a missed notification.
+        let snapshot = self.store.load()?;
+        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+            let mut delivery: Delivery = serde_json::from_value(row.value.clone())?;
+            let world = snapshot::decode(&snapshot)?;
+            let node = &world.nodes[delivery
+                .node()
+                .index()
+                .ok_or(Error::Invalid("node index overflow"))?];
+            let active = match delivery.output {
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                } => node.phase == tl3_kernel::Phase::Queued,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::SubmitChecks,
+                    ..
+                } => node.job == Some(delivery.generation),
+                Out::Effect { .. } => node.run == Some(delivery.generation),
+                Out::Notice { .. } => false,
+            };
+            let mut commit = Commit::new(
+                format!("look:{}:{}", row.id, snapshot.revision.get()),
+                json!({"look": row.id}),
+                &snapshot,
+            );
+            if active {
+                let effect = self
+                    .store
+                    .effect(&delivery.key)?
+                    .ok_or(Error::Invalid("missing watched effect"))?;
+                delivery.epoch = effect.epoch.get();
+                if let Reconciliation::Found(completion) = self
+                    .adapters
+                    .adapter(&delivery, snapshot.epoch.get())?
+                    .reconcile(&delivery)?
+                {
+                    if completion.observations.is_empty() {
+                        continue;
+                    }
+                    for (index, observation) in completion.observations.iter().enumerate() {
+                        commit.rows.push(put(
+                            "inbox",
+                            format!("{}:{index:08}", delivery.key),
+                            json!(observation),
+                        ));
+                    }
+                } else {
+                    continue;
+                }
+            }
+            commit.rows.push(RowChange::Delete {
+                table: "watches".into(),
+                id: row.id.clone(),
+            });
+            self.store.commit(&commit)?;
+            return Ok(true);
         }
         Ok(progressed)
     }
@@ -340,6 +400,15 @@ impl Controller {
                 &mut commit,
             )?;
         }
+        if completion.ack == Ack::Retryable {
+            // The kernel assigns a fresh sequence to its retry. Retire the old
+            // delivery so only that new decision can start another attempt.
+            commit.transitions.push(EffectTransition {
+                key: key.into(),
+                from: EffectState::Intended,
+                to: EffectState::Cancelled,
+            });
+        }
         if completion.ack == Ack::Confirmed {
             for (index, observation) in completion.observations.iter().enumerate() {
                 commit.rows.push(put(
@@ -394,6 +463,20 @@ impl Controller {
                 generation: n.generation,
                 head_sha,
             };
+            if matches!(
+                output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::StartRun(_)
+                        | tl3_kernel::EffectKind::StartRebase
+                        | tl3_kernel::EffectKind::SubmitChecks
+                        | tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            ) {
+                commit
+                    .rows
+                    .push(put("watches", key.clone(), json!(delivery)));
+            }
             commit.effects.push(NewEffect {
                 key,
                 kind: format!("{:?}", executor::upstream(output)),

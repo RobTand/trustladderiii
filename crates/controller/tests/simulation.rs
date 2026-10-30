@@ -1,13 +1,13 @@
-use postgresql_embedded::{PostgreSQL, Settings, VersionReq};
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     env, fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant},
 };
-use tempfile::TempDir;
+use support::Database;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
     executor::{Registry, Upstream},
@@ -58,96 +58,12 @@ fn main() {
     labelled_issue_closes(&database.create("clean"));
     println!("test labelled_issue_closes ... ok");
     restart_without_duplicate_deliveries(&database.create("restart"));
+    sent_but_absent(&database.create("absent"));
+    acknowledged_operation_look(&database.create("look"));
+    retry_uses_the_kernels_new_key(&database.create("retry"));
     println!("test restart_without_duplicate_deliveries ... ok");
     database.stop();
     println!("2 controller integration scenarios passed; no skips");
-}
-
-struct Database {
-    postgres: PostgreSQL,
-    runtime: tokio::runtime::Runtime,
-    scratch: TempDir,
-    password_file: PathBuf,
-}
-
-impl Database {
-    fn start() -> Self {
-        Self::start_with_fsync(true)
-    }
-
-    fn start_with_fsync(fsync: bool) -> Self {
-        // Every archive, executable, cluster and fixture credential belongs to this job.
-        let scratch = tempfile::Builder::new()
-            .prefix("tl3-controller-pg-")
-            .tempdir()
-            .unwrap();
-        let root = scratch.path();
-        let settings = Settings {
-            releases_url: "https://github.com/zonkyio/embedded-postgres-binaries".into(),
-            version: VersionReq::parse("=17.4.0").unwrap(),
-            installation_dir: root.join("binaries"),
-            password_file: root.join("pgpass"),
-            data_dir: root.join("data"),
-            host: "127.0.0.1".into(),
-            username: "postgres".into(),
-            password: "tl3-disposable-test-password".into(),
-            timeout: Some(Duration::from_secs(90)),
-            configuration: HashMap::from([
-                ("max_connections".into(), "20".into()),
-                ("shared_buffers".into(), "16MB".into()),
-                ("max_parallel_workers".into(), "0".into()),
-                ("max_worker_processes".into(), "0".into()),
-                // postgresql_embedded supplies -F; override it for every recovery test.
-                ("fsync".into(), if fsync { "on" } else { "off" }.into()),
-                ("synchronous_commit".into(), "on".into()),
-            ]),
-            ..Settings::default()
-        };
-        let mut postgres = PostgreSQL::new(settings);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .max_blocking_threads(2)
-            .build()
-            .unwrap();
-        let started = Instant::now();
-        runtime
-            .block_on(postgres.setup())
-            .expect("download and initialize embedded Postgres");
-        println!(
-            "embedded Postgres cold setup (fsync={fsync}): {:.2}s",
-            started.elapsed().as_secs_f64()
-        );
-        runtime
-            .block_on(postgres.start())
-            .expect("start embedded Postgres");
-        let password_file = root.join("client-password");
-        fs::write(&password_file, "tl3-disposable-test-password\n").unwrap();
-        Self {
-            postgres,
-            runtime,
-            scratch,
-            password_file,
-        }
-    }
-
-    fn create(&mut self, name: &str) -> tl3_config::Store {
-        self.runtime
-            .block_on(self.postgres.create_database(name))
-            .unwrap();
-        tl3_config::Store {
-            host: "127.0.0.1".into(),
-            port: self.postgres.settings().port,
-            database: name.into(),
-            user: "postgres".into(),
-            password_file: Some(self.password_file.clone()),
-            connect_timeout_secs: 10,
-        }
-    }
-
-    fn stop(&self) {
-        self.runtime.block_on(self.postgres.stop()).unwrap();
-        assert!(self.scratch.path().exists());
-    }
 }
 
 fn config_file(settings: &tl3_config::Store, root: &Path) -> PathBuf {
@@ -414,7 +330,13 @@ fn child(args: &[String]) {
         assert!(
             controller
                 .drive_once_with(|boundary, _| {
-                    if boundary == Boundary::AfterDispatch {
+                    if boundary
+                        == if args[4] == "picked_up" {
+                            Boundary::BeforeDispatch
+                        } else {
+                            Boundary::AfterDispatch
+                        }
+                    {
                         park();
                     }
                 })
@@ -428,4 +350,124 @@ fn park() {
     loop {
         std::thread::park();
     }
+}
+
+fn drain(controller: &mut Controller) {
+    for iteration in 0..300 {
+        if !controller.drive_once().unwrap() {
+            return;
+        }
+        assert!(iteration < 299, "controller failed to settle");
+    }
+}
+
+fn sent_but_absent(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config_file(settings, root.path());
+    let records = root.path().join("upstreams");
+    kill_at(&config, &records, "committed");
+    kill_at(&config, &records, "picked_up");
+    assert!(adapters::delivery_counts(&records).unwrap().is_empty());
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .load()
+            .unwrap()
+            .pending_effects[0]
+            .state,
+        EffectState::Sent
+    );
+    let mut controller = open(settings, &records);
+    drain(&mut controller);
+    assert_finished(&mut controller, &records);
+}
+
+struct DeferredWorker(adapters::workers::Fake);
+impl tl3_controller::executor::Executor for DeferredWorker {
+    fn execute(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        let mut completion = tl3_controller::executor::Executor::execute(&mut self.0, delivery)?;
+        completion.observations.clear();
+        Ok(completion)
+    }
+    fn reconcile(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        tl3_controller::executor::Executor::reconcile(&mut self.0, delivery)
+    }
+}
+fn acknowledged_operation_look(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        DeferredWorker(adapters::workers::Fake::new(root.path())),
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    controller.drive_once().unwrap();
+    assert!(controller.snapshot().unwrap().pending_effects.is_empty());
+    assert!(controller.world().unwrap().nodes[0].run.is_some());
+    drop(controller);
+    let mut controller = open(settings, root.path());
+    drain(&mut controller);
+    assert_finished(&mut controller, root.path());
+}
+
+struct RetryWorker {
+    fake: adapters::workers::Fake,
+    calls: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, u64>>>,
+    first: bool,
+}
+impl tl3_controller::executor::Executor for RetryWorker {
+    fn execute(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        *self
+            .calls
+            .borrow_mut()
+            .entry(delivery.key.clone())
+            .or_default() += 1;
+        if std::mem::take(&mut self.first) {
+            return Ok(tl3_controller::executor::Completion {
+                ack: tl3_kernel::Ack::Retryable,
+                observations: vec![],
+            });
+        }
+        tl3_controller::executor::Executor::execute(&mut self.fake, delivery)
+    }
+    fn reconcile(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        tl3_controller::executor::Executor::reconcile(&mut self.fake, delivery)
+    }
+}
+fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    let calls = std::rc::Rc::new(std::cell::RefCell::new(std::collections::BTreeMap::new()));
+    registry.register(
+        Upstream::Workers,
+        RetryWorker {
+            fake: adapters::workers::Fake::new(root.path()),
+            calls: calls.clone(),
+            first: true,
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    assert_finished(&mut controller, root.path());
+    assert_eq!(
+        controller.effect("effect:0:0").unwrap().unwrap().state,
+        EffectState::Cancelled
+    );
+    assert!(calls.borrow().values().all(|count| *count == 1));
 }
