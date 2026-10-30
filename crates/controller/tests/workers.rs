@@ -595,6 +595,21 @@ fn simulation(settings: &tl3_config::Store) {
     );
     assert_recorded_runs(root.path(), 2);
     assert_retired(&config, &mut store);
+    let memory = store.pending_memories(0).unwrap();
+    assert_eq!(memory.len(), 2, "both real workers survive a memory outage");
+    let roles: std::collections::BTreeSet<_> = memory
+        .iter()
+        .map(|(_, _, item)| {
+            let record: Value = serde_json::from_str(item["content"].as_str().unwrap()).unwrap();
+            assert_eq!(record["outcome"], "succeeded");
+            assert!(!record["reply"].is_null());
+            record["role"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_eq!(
+        roles,
+        std::collections::BTreeSet::from(["ingest".into(), "audit".into()])
+    );
 }
 fn attempts(root: &Path) -> usize {
     fs::read_dir(root)

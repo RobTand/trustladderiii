@@ -889,3 +889,52 @@ storing a plan. Recovery reattaches to the same process and key with one attempt
 Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
+
+## Hindsight write-back
+
+Every worker role uses the same runtime summary collector. Protocol v1 requests
+can carry `memory` with a controller-owned `summary_file`, repository, issue,
+request and epoch. The collector atomically replaces and fsyncs `memory.json`
+at file and test tool boundaries and when the run ends. It records paths, test
+selectors, outcomes and PrismaBuild action keys. It never copies file contents
+or a transcript. A failed run reports the exception class without its message.
+Summary-write errors do not change the worker reply or exit.
+
+Worker retirement queues one bounded item per physical attempt in
+`tl3_memory_outbox`, before removing the attempt's evidence. Missing summaries
+fall back to the request, structured reply and supervisor exit. Interrupted
+attempts are recorded as failures. Queue failures retain the existing cleanup
+row and files for another retirement pass; they do not change request state.
+
+A separate thread drains the outbox into `[hindsight].bank`, which defaults to
+`tl3`. The bank must be separate from the coordinator's bank. The thread wakes
+at startup and at controller drains through a channel of capacity one. An
+outage leaves rows for the next controller wake or restart. It never polls on
+a timer and never makes a request wait for Hindsight.
+
+The server's `/openapi.json`, read on 2026-10-30, documents
+`POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied
+`operation_id`. Repeating that UUID returns the original durable operation
+without creating new work. The UUID includes repository, request, epoch, effect
+key, generation and attempt. A stable document ID provides provenance. TL3
+deletes its outbox row only after validating the server's durable acknowledgement.
+Hindsight then owns extraction and its operation retries. This handoff uses
+Hindsight's operation contract; it does not wait for extraction on the request
+thread.
+
+Records have `repo:`, `request:` and `role:` tags. The controller selects summary
+fields, omits infrastructure and repository file contents, removes credential
+fields, and redacts bearer tokens, common provider keys, private keys,
+credential assignments and passwords in URLs before enqueueing. Each item is
+at most 32 KiB. Oversized sections carry a truncation marker. Pending reads use
+64-row pages, and acknowledged items are deleted without a local receipt
+history. An outage retains one bounded row per unsent run. Preserving all runs
+while requests continue necessarily requires space for that outstanding work.
+Full transcripts remain the tracing system's responsibility.
+
+`cargo test -p tl3-controller --test hindsight --locked` uses only a fake server.
+It covers every discovered role, outages, lost acknowledgements, real SIGKILL
+cuts, database restart, secret filtering, bounded records and cleanup. The
+worker scenarios also prove that requests close during a memory outage and
+leave their completed run records queued. Python's `test_memory.py` covers the
+shared runtime collector for every role.

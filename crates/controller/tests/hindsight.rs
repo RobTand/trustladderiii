@@ -186,15 +186,52 @@ fn outage_then_lost_ack_and_retry_retain_exactly_once() {
 
 #[test]
 fn crash_between_run_and_retain_preserves_record_and_identity() {
+    if let Ok(settings) = std::env::var("TL3_MEMORY_CRASH_SETTINGS") {
+        use std::io::{Read, Write};
+        let settings = serde_json::from_str(&settings).unwrap();
+        let attempt = std::env::var("TL3_MEMORY_CRASH_ATTEMPT").unwrap();
+        if std::env::var("TL3_MEMORY_CRASH_CUT").unwrap() == "after" {
+            memory::queue_attempt(
+                &mut Store::open(&settings).unwrap(),
+                "run:maker",
+                std::path::Path::new(&attempt),
+            )
+            .unwrap();
+        }
+        println!("MEMORY_CUT");
+        std::io::stdout().flush().unwrap();
+        std::io::stdin().read_exact(&mut [0]).unwrap();
+        return;
+    }
     let mut f = Fixture::new();
     let attempt = f.attempt(
         "maker",
         json!({"goals": ["Fix greeting"]}),
         json!({"kind": "done"}),
     );
-    // The worker's durable result survives before the controller queues memory.
-    memory::queue_attempt(&mut f.store(), "run:maker", &attempt).unwrap();
-    f.database.restart();
+    for cut in ["before", "after"] {
+        use std::io::{BufRead, BufReader, Read};
+        use std::process::{Command, Stdio};
+        let settings = &f.settings;
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "crash_between_run_and_retain_preserves_record_and_identity", "--nocapture"])
+            .env("TL3_MEMORY_CRASH_SETTINGS", json!({"host": settings.host, "port": settings.port, "database": settings.database, "user": settings.user, "password_file": settings.password_file, "connect_timeout_secs": settings.connect_timeout_secs}).to_string())
+            .env("TL3_MEMORY_CRASH_ATTEMPT", &attempt)
+            .env("TL3_MEMORY_CRASH_CUT", cut)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        let mut ready = false;
+        for line in reader.by_ref().lines() {
+            if line.unwrap().contains("MEMORY_CUT") {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready, "child did not reach the memory save point");
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        memory::queue_attempt(&mut f.store(), "run:maker", &attempt).unwrap();
+    }
     f.retain.lose_ack.store(true, Ordering::SeqCst);
     assert!(memory::flush(&mut f.store(), &f.hindsight()).is_err());
     f.database.restart();

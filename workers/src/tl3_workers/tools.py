@@ -99,6 +99,7 @@ class Worktree:
     def __init__(self, root):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self._mutation_lock = Lock()
+        self._memory = current.get()
 
     def __enter__(self):
         return self
@@ -150,6 +151,11 @@ class Worktree:
                 stream = os.fdopen(fd, "r+" if write else "r", encoding="utf-8", newline="")
                 fd = -1
                 with stream:
+                    if self._memory is not None:
+                        try:
+                            self._memory.file(path, write)
+                        except Exception:
+                            pass
                     yield stream
             finally:
                 if fd >= 0:

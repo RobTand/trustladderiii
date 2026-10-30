@@ -173,9 +173,9 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
             "worker exit or reply failed"
         })
     };
-    let repo = safe_text(context["repo"].as_str().unwrap_or("unknown"));
-    let request_id = safe_text(context["request"].as_str().unwrap_or("unknown"));
-    let role = safe_text(request["role"].as_str().unwrap_or("unknown"));
+    let repo = safe_text(clip(context["repo"].as_str().unwrap_or("unknown"), 256));
+    let request_id = safe_text(clip(context["request"].as_str().unwrap_or("unknown"), 128));
+    let role = safe_text(clip(request["role"].as_str().unwrap_or("unknown"), 128));
     let identity = json!([
         repo,
         request_id,
@@ -206,18 +206,22 @@ pub fn queue_attempt(store: &mut Store, key: &str, attempt: &Path) -> Result<()>
             repo.remove("materials");
         }
     }
-    let record = json!({
+    let mut record = json!({
         "role": role, "model": section(&request["model"]["name"]), "repo": repo,
         "issue": context["issue"], "request": request_id, "run": id,
         "inputs": section(&inputs), "activity": section(&summary["activity"]),
         "reply": section(&reply), "outcome": if succeeded { "succeeded" } else { "failed" },
         "reason": section(&reason),
     });
-    let item = json!({"content": record.to_string(), "document_id": format!("tl3-run-{id}"),
+    let mut item = json!({"content": record.to_string(), "document_id": format!("tl3-run-{id}"),
         "context": "TL3 Deep Agents run summary", "tags": [format!("repo:{repo}"), format!("request:{request_id}"), format!("role:{role}")],
         "metadata": {"source": "tl3", "run": id}});
     if item.to_string().len() > RECORD_BYTES {
-        return Err(Error::Invalid("memory record exceeds size limit"));
+        for field in ["inputs", "activity", "reply", "reason", "model"] {
+            record[field] =
+                json!({"summary": clip(&record[field].to_string(), 512), "truncated": true});
+        }
+        item["content"] = json!(record.to_string());
     }
     store.queue_memory(&id, &item)?;
     Ok(())
