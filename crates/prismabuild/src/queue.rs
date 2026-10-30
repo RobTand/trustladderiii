@@ -200,7 +200,10 @@ impl PrismaBuild {
     ) -> Result<Option<ActionRecord>, Error> {
         let root = &self.options.queue_root;
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
-        for (rank, state) in STATES.iter().enumerate() {
+        // Claims can return to ready. Revisit live slots after the terminal scan
+        // so a link-ready/unlink-claimed handoff cannot look like an ending.
+        for state in STATES.iter().chain(["ready", "claimed"].iter()) {
+            let rank = STATES.iter().position(|candidate| candidate == state).unwrap();
             let directory = root.join(state);
             let metadata = tokio::fs::metadata(&directory)
                 .await
@@ -233,6 +236,23 @@ impl PrismaBuild {
                     || (record.published_unix == old.published_unix && rank > *old_rank)
             }) {
                 chosen = Some((rank, path, record));
+            }
+        }
+        // PrismaBuild entombs claims before publishing retries or endings.
+        // Its own RecordStore.standing treats these sidecars as moving.
+        let claimed = root.join("claimed");
+        let mut entries = tokio::fs::read_dir(&claimed).await.map_err(|source| Error::Io {
+            path: claimed.clone(), source,
+        })?;
+        while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
+            path: claimed.clone(), source,
+        })? {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&format!("{key}."))
+                && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
+            {
+                return Err(invalid(&entry.path(), "queue record is moving; reconcile again"));
             }
         }
         let Some((rank, path, record)) = chosen else {
