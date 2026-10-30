@@ -138,6 +138,9 @@ async fn app(command: &str, config: &tl3_config::Config, args: &[String]) -> Res
             .map_err(|_| "cannot build GitHub client")?,
     };
     let info = api.get("app", &jwt).await?;
+    if info["id"] != 5542171 || info["slug"] != "tl3-robtand" {
+        return Err("deployment expects the existing tl3-robtand app".into());
+    }
     let manifest: Value = serde_json::from_str(include_str!("../github-app/manifest.json"))?;
     for (permission, level) in manifest["default_permissions"]
         .as_object()

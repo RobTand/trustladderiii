@@ -1,6 +1,7 @@
 [Unit]
 Description=TL3 controller with worker and webhook sources
 Requires=tl3-postgres.service
+PartOf=tl3-postgres.service
 After=tl3-postgres.service
 # Remove this gate only after #20 supplies production startup.
 ConditionPathExists=%h/.config/tl3/production-ready

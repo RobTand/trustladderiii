@@ -1,6 +1,7 @@
 [Unit]
 Description=TL3 LAN status page
 Requires=tl3-postgres.service
+PartOf=tl3-postgres.service
 After=tl3-postgres.service
 
 [Service]

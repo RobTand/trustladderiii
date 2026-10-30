@@ -108,7 +108,10 @@ class DeployTests(unittest.TestCase):
                     if executable.startswith(str(self.home)):
                         deploy.write_file(Path(executable), b"#!/bin/sh\nexit 0\n", 0o700)
             (units / source.name).write_text(text)
-        result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service"))], capture_output=True)
+        runtime = self.home / "runtime"
+        runtime.mkdir(mode=0o700)
+        environment = os.environ | {"XDG_RUNTIME_DIR": str(runtime)}
+        result = subprocess.run(["systemd-analyze", "--user", "--man=no", "verify", *map(str, units.glob("*.service"))], capture_output=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         controller = (units / "tl3d.service").read_text()
         self.assertIn("KillMode=process", controller)
