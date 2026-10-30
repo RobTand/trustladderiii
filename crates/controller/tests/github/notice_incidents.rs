@@ -254,11 +254,13 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
     let incident_id = incident.id.clone();
     let detail = incident.value.to_string();
     assert!(detail.contains("Add a blue button"));
-    assert!(detail.contains(if name == "question_403" {
-        "permission"
-    } else {
-        "message_rejected"
-    }));
+    assert!(
+        detail.contains(if name == "question_403" || kind == "filing" {
+            "permission"
+        } else {
+            "message_rejected"
+        })
+    );
     if kind == "question" {
         let status =
             tl3_controller::status::load(&mut tl3_store::Reader::open(settings).unwrap()).unwrap();
