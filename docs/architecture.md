@@ -251,11 +251,17 @@ prevent a confirmed key from adding the label again after a person removes it.
 An applied marker also protects the interval before queue confirmation.
 A new retry removes an existing label before adding it again.
 An epoch fence covers mutations; reconciliation can still read old effects.
+Removing a terminal effect's watch durably queues its retirement. The executor's
+idempotent retirement deletes intent, applied and receipt files. A crash retries
+cleanup from the retirement row, after the key has left reconciliation.
 
 The controller registers the Mergify translator in
 `controller/src/adapters/mergify.rs` through `register_github_translator`.
 It translates durable webhook and catch-up deliveries on the controller thread.
-Check-run updates, check suites and merge groups trigger queue reads of open nodes.
+Only updates to `Mergify Merge Queue` from the Mergify app and merge groups
+trigger queue reads of open nodes. Check suites do not identify that queue check.
+If GitHub records a merge before its queue check finishes, merge evidence waits
+for the completed check-run event or catch-up. No timer drives the read.
 Person actions use issue-event IDs in both paths.
 Merge identities use the actual PR head, and failure identities use the Mergify
 check ID. The controller resolves repository and PR bindings and commits a

@@ -841,6 +841,7 @@ fn delivery() -> Delivery {
         round: 0,
         question: None,
         note: None,
+        question_context: None,
     }
 }
 fn label_removed_before_confirmation() {
