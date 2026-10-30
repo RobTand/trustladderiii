@@ -314,6 +314,15 @@ impl WorkerOutputSource {
                             .map_err(|_| Error::Invalid("worker output offset overflow"))?,
                         value["unit"].as_str().unwrap(),
                     )?;
+                    sender
+                        .send(Input::Observation {
+                            key: format!("{}:progress:{number}:{}", delivery.key, run.offset),
+                            observation: Observation::Progress {
+                                key: delivery.key.clone(),
+                                checkpoint: format!("{number}:{}", run.offset),
+                            },
+                        })
+                        .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
                 }
             }
         }

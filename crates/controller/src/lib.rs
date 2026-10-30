@@ -885,6 +885,14 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let event = match observation {
+            Observation::Progress { key, checkpoint } => {
+                self.progress_allowance(snapshot, &key, checkpoint, commit)?;
+                return Ok(None);
+            }
+            Observation::Quota { key, reset_ms } => {
+                self.quota_allowance(snapshot, &key, reset_ms, commit)?;
+                return Ok(None);
+            }
             Observation::GitHubComment {
                 repository,
                 issue,

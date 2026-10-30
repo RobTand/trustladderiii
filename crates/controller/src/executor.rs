@@ -36,6 +36,14 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    Progress {
+        key: String,
+        checkpoint: String,
+    },
+    Quota {
+        key: String,
+        reset_ms: u64,
+    },
     GitHubComment {
         repository: crate::Repository,
         issue: u64,

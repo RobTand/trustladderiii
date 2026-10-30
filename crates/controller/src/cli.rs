@@ -174,7 +174,8 @@ pub fn daemon() -> Result<()> {
                 epoch,
                 tl3_github::message::Policy::default(),
                 &simulation,
-            )?,
+            )?
+            .with_operations(config.github.operations.clone()),
         );
         let webhooks = crate::ingress::Webhooks::bind(
             listen,

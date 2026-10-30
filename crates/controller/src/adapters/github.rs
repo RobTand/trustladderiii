@@ -57,6 +57,7 @@ pub struct Adapter {
     policy: Policy,
     runtime: tokio::runtime::Runtime,
     fake: Fake,
+    operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
     pub fn new(
@@ -75,8 +76,14 @@ impl Adapter {
                 .enable_all()
                 .build()?,
             fake: Fake::new(simulation),
+            operations: None,
         })
     }
+    pub fn with_operations(mut self, operations: Option<tl3_config::OperationsIssue>) -> Self {
+        self.operations = operations;
+        self
+    }
+
     fn fence(&mut self, delivery: &Delivery) -> Result<()> {
         if delivery.epoch < self.epoch {
             return Err(Error::Invalid("GitHub effect epoch is fenced"));
@@ -130,6 +137,18 @@ impl Executor for Adapter {
         let Some(notice) = Self::request_notice(delivery) else {
             return self.fake.execute(delivery);
         };
+        if matches!(notice, Notice::Incident { .. })
+            && !self.operations.as_ref().is_some_and(|o| {
+                o.owner.eq_ignore_ascii_case(&delivery.repository.owner)
+                    && o.name.eq_ignore_ascii_case(&delivery.repository.name)
+                    && o.installation_id == delivery.repository.installation
+                    && o.number == delivery.issue
+            })
+        {
+            return Err(Error::Invalid(
+                "incident delivery needs the configured operations issue",
+            ));
+        }
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
         if self
@@ -188,19 +207,26 @@ impl Executor for Adapter {
         };
         let mut cursor = None;
         let mut newest = after;
-        let mut cursors = std::collections::BTreeSet::new();
+        let mut oldest = u64::MAX;
+        let mut pending = None;
         loop {
             let page = self
                 .runtime
                 .block_on(client.hook_deliveries(cursor.as_deref()))?;
             let mut reached = false;
+            let previous_oldest = oldest;
             for delivery in page.deliveries {
                 newest = newest.max(delivery.id);
+                oldest = oldest.min(delivery.id);
                 if delivery.id <= after {
                     reached = true;
                     continue;
                 }
-                if !(200..300).contains(&delivery.status_code) {
+                let Some(status) = delivery.status_code else {
+                    pending = Some(pending.map_or(delivery.id, |old: u64| old.min(delivery.id)));
+                    continue;
+                };
+                if !(200..300).contains(&status) {
                     self.runtime.block_on(client.redeliver_hook(delivery.id))?;
                 }
             }
@@ -208,12 +234,18 @@ impl Executor for Adapter {
                 break;
             }
             match page.next_cursor {
-                Some(next) if cursors.insert(next.clone()) => cursor = Some(next),
+                Some(next) if oldest < previous_oldest && cursor.as_ref() != Some(&next) => {
+                    cursor = Some(next)
+                }
                 Some(_) => return Err(Error::Invalid("GitHub delivery cursor did not advance")),
                 None => break,
             }
         }
-        Ok(Some(newest))
+        Ok(Some(
+            pending
+                .map_or(newest, |id| newest.min(id.saturating_sub(1)))
+                .max(after),
+        ))
     }
 
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {

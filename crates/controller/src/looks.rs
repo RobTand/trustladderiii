@@ -165,9 +165,6 @@ impl Controller {
                             self.look_observations(&state.delivery, completion)?;
                         }
                     }
-                    if state.incident.is_some() {
-                        self.probe_passed(&state)?;
-                    }
                 }
                 Ok(Look::Absent) => {
                     let effect = self
@@ -353,6 +350,61 @@ impl Controller {
         Ok(())
     }
 
+    pub(crate) fn progress_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        checkpoint: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            if state.progress.as_ref() != Some(&checkpoint) {
+                state.progress = Some(checkpoint);
+                state.progress_ms = self.now_ms();
+                state.due_ms = Some(
+                    state.progress_ms.saturating_add(
+                        u64::from(
+                            self.allowance(&state.delivery)
+                                .silence_secs
+                                .min(self.allowance(&state.delivery).no_progress_secs),
+                        ) * 1000,
+                    ),
+                );
+                commit
+                    .rows
+                    .push(put("allowances", key.into(), json!(state)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn quota_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        reset_ms: u64,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            state.quota_ms = Some(reset_ms);
+            state.due_ms = (reset_ms > self.now_ms()).then_some(reset_ms);
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+
     pub(crate) fn defer_quota(&mut self, key: &str, retry_after: Duration) -> Result<()> {
         let snapshot = self.store.load()?;
         if let Some(row) = snapshot
@@ -365,7 +417,7 @@ impl Controller {
                 .now_ms()
                 .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
             state.quota_ms = Some(reset);
-            state.due_ms = (reset > now).then_some(reset);
+            state.due_ms = (reset > self.now_ms()).then_some(reset);
             self.save_allowance(&state)?;
         }
         Ok(())

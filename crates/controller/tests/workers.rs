@@ -207,6 +207,8 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    clock_stops_stalled_worker(&database.create("workers_stall"));
+    println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
     killed_worker(&database.create("workers_kill"));
@@ -246,7 +248,7 @@ fn main() {
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     database.stop();
-    println!("19 required worker supervisor and planning scenarios passed; no skips");
+    println!("20 required worker supervisor and planning scenarios passed; no skips");
 }
 
 fn drive(controller: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store) {
@@ -903,5 +905,79 @@ fn partial_crash(settings: &tl3_config::Store) {
             }),
             ..
         }
+    ));
+}
+
+fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    materials(&mut Store::open(settings).unwrap());
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        supervisor.clone(),
+    );
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut allowances = config.allowances.clone();
+    allowances.agent_worker.silence_secs = 1;
+    allowances.agent_worker.no_progress_secs = 3;
+    controller.set_allowances(allowances);
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let snapshot = controller.snapshot().unwrap();
+    let original: Delivery = serde_json::from_value(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches")
+            .unwrap()
+            .value
+            .clone(),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    clock.0.set(4000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.run_failures, 1);
+    assert!(node.generation > original.generation);
+    assert!(
+        !matches!(
+            supervisor.reconcile(&original).unwrap(),
+            Reconciliation::Pending
+        ),
+        "retry must start only after the original process ended"
+    );
+    controller
+        .observe(
+            "stop-after-stall",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
     ));
 }

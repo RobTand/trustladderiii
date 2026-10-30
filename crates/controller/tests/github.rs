@@ -104,13 +104,24 @@ struct ApiState {
     fail_reads: bool,
     empty_body: bool,
     catch_up_evidence: bool,
+    redeliveries: Vec<u64>,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
-        let path = request.url.path();
+        let original_path = request.url.path();
+        let mapped_path = original_path
+            .replace(
+                "/repos/owner/tl3/issues/17",
+                "/repos/owner/sandbox/issues/12",
+            )
+            .replace(
+                "/repos/owner/tl3/issues/comments/",
+                "/repos/owner/sandbox/issues/comments/",
+            );
+        let path = mapped_path.as_str();
         let method = request.method.as_str();
         if path == "/app/installations/3/access_tokens" {
             return ResponseTemplate::new(201).set_body_json(
@@ -121,6 +132,44 @@ impl Respond for Api {
             return ResponseTemplate::new(503);
         }
         match (method, path) {
+            ("GET", "/app/hook/deliveries") => {
+                let jwt = request
+                    .headers
+                    .get("authorization")
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
+                assert_eq!(
+                    jwt.split('.').count(),
+                    3,
+                    "delivery log requires an app JWT"
+                );
+                if request.url.query_pairs().any(|(key, _)| key == "cursor") {
+                    ResponseTemplate::new(200).set_body_json(
+                        json!([{"id":18,"status_code":503,"delivered_at":"2026-10-30T00:00:00Z"}]),
+                    )
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header(
+                            "link",
+                            format!(
+                                "<{}app/hook/deliveries?cursor=older>; rel=\"next\"",
+                                request.url.join("/").unwrap()
+                            ),
+                        )
+                        .set_body_json(json!([
+                        {"id":20,"status_code":500,"delivered_at":"2026-10-30T00:00:02Z"},
+                        {"id":19,"status_code":200,"delivered_at":"2026-10-30T00:00:01Z"}]))
+                }
+            }
+            ("POST", path)
+                if path.starts_with("/app/hook/deliveries/") && path.ends_with("/attempts") =>
+            {
+                let id = path.split('/').nth(4).unwrap().parse().unwrap();
+                state.redeliveries.push(id);
+                ResponseTemplate::new(202)
+            }
+
             ("GET", "/repos/owner/sandbox/issues/12/comments") => {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
@@ -319,6 +368,8 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    operations_and_delivery_log(&database.create("operations"));
+    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
@@ -342,7 +393,7 @@ fn main() {
     daemon_with_workers(&database.create("daemon_workers"));
     println!("test daemon_webhooks_worker_replies_and_source_failure ... ok");
     database.stop();
-    println!("11 GitHub integration scenarios passed; no skips; no live GitHub calls");
+    println!("12 GitHub integration scenarios passed; no skips; no live GitHub calls");
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -1496,5 +1547,60 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         logs.iter()
             .any(|line| line.contains("WorkerOutputSource failed:")),
         "{logs:?}"
+    );
+}
+
+fn operations_and_delivery_log(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let operations = tl3_config::OperationsIssue {
+        owner: "owner".into(),
+        name: "tl3".into(),
+        installation_id: 3,
+        number: 17,
+    };
+    let mut boot = bootstrap();
+    boot.operations = Some(operations.clone());
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        adapter(&api.uri(), root.path()).with_operations(Some(operations.clone())),
+    );
+    let mut controller = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    controller.look_now().unwrap();
+    assert_eq!(api.state.lock().unwrap().redeliveries, vec![20, 18]);
+    controller.look_now().unwrap();
+    assert_eq!(
+        api.state.lock().unwrap().redeliveries,
+        vec![20, 18],
+        "one recovery per failed delivery"
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "delivery_looks" && r.value == 20)
+    );
+    let mut delivery = delivery(Notice::Incident { needs_rob: true });
+    delivery.key = "incident-fixture".into();
+    delivery.repository.name = "tl3".into();
+    delivery.issue = 17;
+    delivery.note = Some(
+        "Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
+            .into(),
+    );
+    let mut adapter = adapter(&api.uri(), root.path()).with_operations(Some(operations));
+    adapter.execute(&delivery).unwrap();
+    adapter.execute(&delivery).unwrap();
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert!(
+        api.requests().iter().any(|r| r.method.as_str() == "POST"
+            && r.url.path() == "/repos/owner/tl3/issues/17/comments")
     );
 }
