@@ -590,7 +590,7 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     .await;
     get(&server,"/repos/owner/sandbox/issues/events",json!([
         {"id":1,"event":"labeled","actor":{"id":42,"login":"owner"},"label":{"name":"tl3"},"created_at":"2026-10-30T01:00:00Z","issue":{"number":12}},
-        {"id":2,"event":"closed","created_at":"2026-10-30T01:00:00Z"}
+        {"id":2,"event":"closed","created_at":"2026-10-30T01:00:00Z","actor":{"id":42,"login":"owner"},"issue":{"number":13}}
     ])).await;
     get(
         &server,
@@ -618,6 +618,8 @@ async fn catch_up_keeps_label_actors_and_rereads_checks_for_unchanged_heads() {
     assert!(changes.next_cursor > since);
     let changes = &changes.repositories[0];
     assert_eq!(changes.labels[0].1.actor.id, 42);
+    assert_eq!(changes.closed[0].0, 13);
+    assert_eq!(changes.closed[0].1.actor.id, 42);
     assert_eq!(changes.comments.len(), 1);
     assert_eq!(changes.pull_requests[0].number, 13);
     assert_eq!(changes.check_runs[0].id, 22);
@@ -877,7 +879,7 @@ async fn catch_up_stops_pr_pages_at_the_cursor_and_reads_repository_label_events
                     "label":{"name":"tl3"},"created_at":"2026-10-29T00:00:00Z","issue":{"number":14}},
                 {"id":3,"event":"unlabeled","actor":{"id":99,"login":"other"},
                     "label":{"name":"tl3"},"created_at":"2026-10-30T00:00:00Z","issue":{"number":15}},
-                {"id":4,"event":"closed"}
+                {"id":4,"event":"closed","created_at":"2026-10-30T00:00:00Z","actor":{"id":99,"login":"other"},"issue":{"number":17}}
             ])))
             .expect(1).mount(&server).await;
         get(
@@ -952,7 +954,10 @@ async fn assert_event_pages(disorder: Option<(usize, usize, Option<u64>)>, read_
         .enumerate()
         .map(|(page, timestamp)| {
             (0..100)
-                .map(|row| json!({"id":400 - page * 100 - row, "event":"closed", "created_at":timestamp}))
+                .map(|row| {
+                    json!({"id":400 - page * 100 - row, "event":"closed", "created_at":timestamp,
+                    "actor":{"id":99,"login":"other"},"issue":{"number":13}})
+                })
                 .collect()
         })
         .collect();
