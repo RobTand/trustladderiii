@@ -83,8 +83,13 @@ impl Flow {
     fn until(&mut self, done: impl Fn(Phase) -> bool) {
         loop {
             let world = self.controller.world().unwrap();
-            assert!(!world.nodes.first().is_some_and(|node| node.waiting_incident),
-                "the fixture must reach its target without an infrastructure incident");
+            assert!(
+                !world
+                    .nodes
+                    .first()
+                    .is_some_and(|node| node.waiting_incident),
+                "the fixture must reach its target without an infrastructure incident"
+            );
             if let Some(node) = world.nodes.first()
                 && done(node.phase)
             {

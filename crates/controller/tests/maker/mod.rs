@@ -228,6 +228,8 @@ fn observe(
                     run: adapters::prismabuild::CheckRun {
                         repository: repository.into(),
                         base_sha: base.into(),
+
+                        reviewed_sha: None,
                         plan: vec![adapters::prismabuild::Check {
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,

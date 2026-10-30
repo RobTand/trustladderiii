@@ -119,15 +119,21 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
 
 
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
-               container: Container) -> tuple[Result, ...]:
+               container: Container, reviewed: str | None = None) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code."""
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise ValueError("a plan needs uniquely named checks")
+    reproducing = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.REPRODUCING
+                                      for test in check.tests))
+    if reproducing and reviewed is None:
+        raise ValueError("a reproducing check needs the exact reviewed commit")
     repo = repo.resolve()
     if Path(__file__).resolve().is_relative_to(repo):
         raise ValueError("the installed harness must be outside the served checkout")
     base, head = commit(repo, base), commit(repo, head)
+    if reviewed is not None:
+        reviewed = commit(repo, reviewed)
     with tempfile.TemporaryDirectory(prefix="tl3-checks-") as directory:
         root = Path(directory)
         root.chmod(0o755)
@@ -139,7 +145,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
         if any(not is_test(test.split("::")[0], config["test-files"]) for test in tests):
             raise ValueError("a named test is outside the configured test files")
-        ordinary = tuple(dict.fromkeys(test for check in plan if check.kind != Kind.DEMONSTRATING
+        ordinary = tuple(dict.fromkeys(test for check in plan
+                                       if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests))
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
@@ -157,9 +164,21 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             demonstrated = run_tree(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions)
         else:
             demonstrated = {}
+        reproduced = {}
+        if reproducing:
+            reviewed_tree, round_tree = root / "reviewed", root / "reproducing"
+            export(repo, reviewed, reviewed_tree)
+            validate_configuration(old, reviewed_tree)
+            shutil.copytree(reviewed_tree, round_tree)
+            test_edits(reviewed_tree, new, round_tree, config["test-files"])
+            additions = added_names(reviewed_tree, new, config["test-files"])
+            reproduced = run_tree(round_tree, container, reproducing,
+                                  root / "reproducing.jsonl", progress, additions)
         messages = {}
         after = run_tree(new, container, tests, root / "head.jsonl", progress, messages=messages)
-        return tuple(judge(check, demonstrated if check.kind == Kind.DEMONSTRATING else before, after, messages=messages)
+        comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
+                       Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
+        return tuple(judge(check, comparisons[check.kind], after, messages=messages)
                      for check in plan)
 
 

@@ -40,6 +40,18 @@ def _check_reply(inputs, reply):
             raise ValueError("self-check must cover every goal exactly once")
         if any(check["status"] != "met" for check in reply["self_check"]):
             raise ValueError("done requires every goal to be met; use cant_meet with a report")
+        findings = {item["id"] for item in inputs.get("feedback", [])
+                    if inputs["round"] == 1 and inputs.get("reviewed_sha")
+                    and item["kind"] == "review_finding"
+                    and item.get("reviewed_sha") == inputs["reviewed_sha"]}
+        reproductions = reply.get("reproductions", [])
+        mapped = [item["finding_id"] for item in reproductions]
+        if len(mapped) != len(findings) or set(mapped) != findings:
+            raise ValueError("reproductions must cover each current review finding exactly once")
+        from tl3_harness import Check, Kind
+        for item in reproductions:
+            if "tests" in item:
+                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]))
     elif reply["kind"] == "needs_files":
         for item in reply["files"]:
             if not _parts(item["path"]):

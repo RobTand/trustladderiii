@@ -80,6 +80,14 @@ is recorded as pre-existing. It can excuse a head failure, but cannot excuse
 a skipped, missing, or uncollected test. A passing head also cannot excuse an
 unavailable base test. Behavior-preserving checks require passes on both trees.
 
+Reproducing checks use `Kind.REPRODUCING` and require the `reviewed` commit
+argument to `run_checks`. They run the fix round's test edits against that
+commit's production code, then require the tests to pass on the fixed head.
+Their failure rules match demonstrating checks. Setup errors, runtime errors,
+skips, missing tests and uncollected tests fail. In a reproducing result, `base`
+records the reviewed tree's outcome. Other check kinds still use the original
+base. The reviewed commit can be on another history after a rebase.
+
 The original base results are cached by base commit, image and selected tests
 within the admitted action's trusted process. No untrusted cache enters a
 container. Cache lifetime does not cross actions. A controller can retain

@@ -1397,12 +1397,44 @@ impl Controller {
                             goals.iter().map(|g| g["id"].as_str()).collect();
                         let checked: BTreeSet<_> =
                             checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        let feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let previous = commit_sha(snapshot, n.head);
+                        let reviewed = if n.round == 1 { previous } else { None };
+                        let fixes =
+                            adapters::workers::reproducing::check(&reply, &feedback, reviewed);
                         if expected != checked || checks.len() != goals.len() {
                             Reply::RunFailed
-                        } else {
+                        } else if let Ok(fixes) = fixes {
+                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                                let mut run = check_run(snapshot, node, Some(&sha))?
+                                    .or(check_run(snapshot, node, previous)?)
+                                    .ok_or(Error::Invalid(
+                                        "review fix needs its original check plan",
+                                    ))?;
+                                run.plan.retain(|check| {
+                                    check.kind != adapters::prismabuild::Kind::Reproducing
+                                });
+                                run.plan.extend(fixes.checks);
+                                run.reviewed_sha = reviewed.map(str::to_owned);
+                                commit.rows.push(put(
+                                    "check_plans",
+                                    format!("{}:{sha}", node.0),
+                                    json!(run),
+                                ));
+                                let mut evidence = fixes.evidence;
+                                evidence["head_sha"] = json!(sha);
+                                commit
+                                    .rows
+                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                            }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,
                             }
+                        } else {
+                            Reply::RunFailed
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
@@ -1589,6 +1621,8 @@ impl Controller {
                 .worker_document(&node.0.to_string(), "maker_findings")?
                 .unwrap_or(json!([]));
             let finding = findings::Finding {
+                id: None,
+                reviewed_sha: None,
                 kind,
                 report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
                 goal_ids,
@@ -1597,10 +1631,40 @@ impl Controller {
                 outside_paths_total,
                 ci_checks,
             };
-            findings
+            let detailed = commit.rows.iter().find_map(|row| match row {
+                RowChange::Put { table, value, .. } if table == "reviews" => {
+                    value["blocking_findings"].as_array()
+                }
+                _ => None,
+            });
+            let entries = findings
                 .as_array_mut()
-                .ok_or(Error::Invalid("invalid maker findings"))?
-                .push(serde_json::to_value(finding)?);
+                .ok_or(Error::Invalid("invalid maker findings"))?;
+            if let Some(detailed) = detailed {
+                let n = &world.nodes[node.0 as usize];
+                for (index, detail) in detailed.iter().enumerate() {
+                    let mut item = serde_json::to_value(&finding)?;
+                    item["id"] = json!(format!("review-{}-{index}", n.generation));
+                    item["reviewed_sha"] = json!(
+                        commit_sha(snapshot, n.head)
+                            .ok_or(Error::Invalid("review finding needs its exact commit"))?
+                    );
+                    item["report"] = json!(findings::clipped(
+                        &format!(
+                            "{}: {}",
+                            detail["problem"].as_str().unwrap(),
+                            detail["evidence"].as_str().unwrap()
+                        ),
+                        findings::MAX_REPORT_CHARS
+                    ));
+                    if detail["citation"]["kind"] == "goal" {
+                        item["goal_ids"] = json!([detail["citation"]["id"]]);
+                    }
+                    entries.push(item);
+                }
+            } else {
+                entries.push(serde_json::to_value(finding)?);
+            }
             commit
                 .rows
                 .push(put("maker_findings", node.0.to_string(), findings));
@@ -1737,4 +1801,13 @@ fn check_run(
         .map(|r| serde_json::from_value(r.value.clone()))
         .transpose()
         .map_err(Into::into)
+}
+
+fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
+    let head = head?;
+    snapshot
+        .interned
+        .iter()
+        .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
+        .map(|item| item.value.as_str())
 }

@@ -22,6 +22,10 @@ pub(crate) enum Kind {
 
 #[derive(Serialize)]
 pub(crate) struct Finding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewed_sha: Option<String>,
     pub kind: Kind,
     pub report: String,
     pub goal_ids: Vec<String>,

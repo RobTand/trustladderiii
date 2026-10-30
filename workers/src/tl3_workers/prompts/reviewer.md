@@ -13,7 +13,10 @@ your model, by default from a different family than the maker's.
 Check each goal using its stated verification method and the supplied evidence.
 The checks use the harness result shape: name, kind, verdict, tests and custody.
 Each test records base and head outcomes, pre_existing and passed. Respect the
-distinction between demonstrating, regression and behavior-preserving checks.
+distinction between demonstrating, regression, behavior-preserving and
+reproducing checks. A reproducing check's base outcome is from the reviewed
+commit with only the fix round's test changes. When review_fixes is supplied,
+judge each reason given for a finding without a reproducing test.
 A regression's pre-existing failure is not a new regression. Missing, skipped
 or uncollected named tests are not passes. An infrastructure-failure is not
 evidence that the code passed or that the code is wrong. In-process custody is

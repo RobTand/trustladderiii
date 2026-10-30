@@ -6,6 +6,7 @@ mod fake;
 mod json;
 mod process;
 pub(crate) mod protocol;
+pub(crate) mod reproducing;
 pub(crate) mod review;
 mod source;
 pub use fake::Fake;
@@ -181,6 +182,17 @@ impl Supervisor {
             }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
+            inputs.as_object_mut().unwrap().remove("reviewed_sha");
+            if delivery.round == 1
+                && let Some(head) = &delivery.head_sha
+                && inputs["feedback"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["kind"] == "review_finding" && item["reviewed_sha"] == *head
+                    })
+                })
+            {
+                inputs["reviewed_sha"] = json!(head);
+            }
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);

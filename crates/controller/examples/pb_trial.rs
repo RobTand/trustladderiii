@@ -88,6 +88,8 @@ fn fixture(root: &Path) -> Delivery {
         checks: Some(CheckRun {
             repository: repo,
             base_sha: base,
+
+            reviewed_sha: None,
             plan: vec![Check {
                 name: "value changes".into(),
                 kind: Kind::Demonstrating,

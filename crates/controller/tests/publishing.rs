@@ -47,6 +47,8 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
     CheckRun {
         repository: f.repo.clone(),
         base_sha: base,
+
+        reviewed_sha: None,
         plan: vec![Check {
             name: "value".into(),
             kind: Kind::Demonstrating,
