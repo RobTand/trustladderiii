@@ -1,0 +1,13 @@
+[
+  {
+    "id": 6524502455,
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-10-30T13:54:08.554957+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-10-30T13:54:50.660522+00:00\", \"dequeue_reason\": {\"code\": \"PR_DEQUEUED\", \"label\": \"pull request dequeued\", \"message\": \"Queue conditions are not satisfied\"}}\n-*- Mergify Payload End -*-\n-->\n\n### \ud83d\udeab Left the queue\n\n1 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 30 Oct, 13:54 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \ud83d\udeab **Left the queue** 13:54 \u00b7 `79ac4b9`\n\n**Reason**\n\nPull request #16 has been dequeued\n\nQueue conditions are not satisfied:\n\n> - [ ] `label = tl3-queue`\n\n**Hint**\n\nYou should look at the reason for the failure and decide if the pull request needs to be fixed or if you want to requeue it.\nIf you do update this pull request, it will automatically be requeued once the queue conditions match again.\nIf you think this was a flaky issue instead, you can requeue the pull request, without updating it, by posting a `@mergifyio queue` comment.\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=16) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-30T13:54:15Z",
+    "updated_at": "2026-10-30T13:54:51Z",
+    "issue_url": "https://api.github.com/repos/RobTand/tl3-sandbox/issues/16"
+  }
+]
