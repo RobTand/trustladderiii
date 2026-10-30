@@ -116,12 +116,13 @@ fn accept_connections(
                 continue;
             }
         };
-        if open
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                (count < MAX_CONNECTIONS).then_some(count + 1)
-            })
-            .is_err()
-        {
+        let reserve = |count| (count < MAX_CONNECTIONS).then_some(count + 1);
+        #[cfg(not(loom))]
+        let reserved = open.try_update(Ordering::Relaxed, Ordering::Relaxed, reserve);
+        // Loom 0.7 still exposes the old name for this operation.
+        #[cfg(loom)]
+        let reserved = open.fetch_update(Ordering::Relaxed, Ordering::Relaxed, reserve);
+        if reserved.is_err() {
             drop(stream);
             continue;
         }
