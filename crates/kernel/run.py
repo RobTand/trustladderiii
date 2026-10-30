@@ -42,7 +42,7 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        memory = 32 if name in {"apply_new_request", "progress_from_queued"} else 20 if name.startswith("progress_from_") else 10
+        memory = 64 if name in {"apply_new_request", "progress_from_queued"} else 40 if name.startswith("progress_from_") else 20
         rows.append({"cwd": str(HERE), "argv": ["/usr/bin/python3", "run.py", *(["tests"] if name == "tests" else ["prove", name])],
                      "cpus": 1, "demand": {"mem_gb": 4 if name == "tests" else memory},
                      "anywhere": True, "env": env, "priority": -10, "timeout_s": 3600})

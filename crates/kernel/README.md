@@ -34,7 +34,8 @@ The fixed `Outbox` remains in place. Proof assumptions bound file IDs below 4, s
 Scenarios exercise 300-file sets, high IDs, extensions and file locking across repositories.
 
 The first implementation used a sorted vector for every footprint. Both `advance_ready` and `pr_merged_queued` exhausted a 10 GiB reservation.
-The hybrid set removes those allocations from the bounded proofs. The PR records the before and after action keys and cgroup memory peaks.
+The hybrid set removes those file allocations from the bounded proofs. `Node` still loses `Copy`, so cloning the world also costs Kani more.
+Both hybrid probes also exhausted 10 GiB. The PR records completed measurements and the action keys for the probes.
 
 `Notice::Note(NoteKind::Replanned)` marks the one automatic re-plan after attempt three fails.
 It is emitted when the node goes back to Planning. If credit is exhausted, the note waits until Rob funds that continuation.
@@ -139,8 +140,8 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Most proofs reserve 10 GiB, `progress_from_*` reserves 20 GiB, and `progress_from_queued` and `apply_new_request` reserve 32 GiB.
-These are the spike's starting budgets. Compare each ending's cgroup memory peak against them when the representation changes.
+Most proofs reserve 20 GiB, `progress_from_*` reserves 40 GiB, and `progress_from_queued` and `apply_new_request` reserve 64 GiB.
+These budgets allow for the wider IDs and the loss of `Node: Copy`. Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
 
 To generate a smaller campaign, name `tests` or the proof harnesses:
