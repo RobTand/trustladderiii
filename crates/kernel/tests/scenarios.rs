@@ -413,3 +413,35 @@ fn repo_and_node_ids_do_not_truncate() {
     w = step(w, Event::NewRequest { repo: RepoId(u64::MAX) }).0;
     assert_eq!(w, before);
 }
+
+#[test]
+fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
+    fn reply(w: &mut World, node: NodeId, reply: Reply) {
+        let i = node.index().unwrap();
+        while let Some(e) = w.nodes[i].effect {
+            *w = step(w.clone(), Event::Ack { node, seq: e.seq, ack: Ack::Confirmed }).0;
+        }
+        *w = step(w.clone(), Event::Reply { node, generation: w.nodes[i].generation, reply }).0;
+        assert!(w.valid());
+    }
+    let mut w = World::new(&[2, 1], 3);
+    for repo in [RepoId(0), RepoId(0), RepoId(1)] {
+        w = step(w, Event::NewRequest { repo }).0;
+    }
+    let files = Footprint::new((0..300).map(|i| FileId((1 << 40) + i)));
+    for node in [NodeId(0), NodeId(1), NodeId(2)] {
+        reply(&mut w, node, Reply::IngestDone { size: 1 });
+        reply(&mut w, node, Reply::AuditAgrees);
+        reply(&mut w, node, Reply::PlanLeaf { footprint: files.clone(), fits: true });
+    }
+    assert_eq!(w.nodes[0].phase, Phase::Making);
+    assert_eq!(w.nodes[1].phase, Phase::Ready(Resume::Making));
+    assert_eq!(w.nodes[2].phase, Phase::Making);
+    w = step(w, Event::Command { node: NodeId(0), id: 1, command: Command::Stop }).0;
+    while let Some(e) = w.nodes[0].effect {
+        w = step(w, Event::Ack { node: NodeId(0), seq: e.seq, ack: Ack::Confirmed }).0;
+    }
+    assert_eq!(w.nodes[1].phase, Phase::Making);
+    assert!(w.nodes[1].holds && w.nodes[2].holds);
+    assert!(w.valid());
+}
