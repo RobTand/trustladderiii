@@ -1,3 +1,5 @@
+#[path = "fixtures/bell/mod.rs"]
+mod bell;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 #[path = "fixtures/waits/mod.rs"]
@@ -1029,6 +1031,7 @@ struct WaitingMaker {
     fake: adapters::workers::Fake,
     stops: Rc<Cell<u32>>,
     owner: String,
+    checkout: std::path::PathBuf,
 }
 impl WaitingMaker {
     fn maker(d: &Delivery) -> bool {
@@ -1058,10 +1061,13 @@ impl Executor for WaitingMaker {
     }
     fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
         if Self::maker(d) {
-            Ok(Look::Waiting(tl3_store::ExternalWait {
-                upstream: self.owner.clone(),
-                key: waits::key(),
-            }))
+            Ok(Look::Waiting {
+                wait: tl3_store::ExternalWait {
+                    upstream: self.owner.clone(),
+                    key: waits::key(),
+                },
+                checkout: self.checkout.clone(),
+            })
         } else {
             Ok(match self.reconcile(d)? {
                 Reconciliation::Found(c) => Look::Found(c),
@@ -1093,6 +1099,7 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
                 fake: adapters::workers::Fake::new(root.path()),
                 stops: stops.clone(),
                 owner: "prismabuild".into(),
+                checkout: root.path().join("worktree"),
             },
         );
         registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
@@ -1115,7 +1122,7 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
     for state in ["ready", "claimed"] {
         waits::record(root.path(), state);
         clock.advance(1000);
-        c.look_due().unwrap();
+        c.look_now().unwrap();
         assert_eq!(stops.get(), 0, "{state} is alive past no_progress_secs");
     }
     drop(c);
@@ -1125,8 +1132,8 @@ fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
     assert_eq!(stops.get(), 0, "restart retains the owner's wait");
     waits::record(root.path(), "missing");
     clock.advance(1000);
-    c.look_due().unwrap();
-    assert_eq!(stops.get(), 0, "absence is not a terminal record");
+    c.look_now().unwrap();
+    assert_eq!(stops.get(), 0, "missing starts the agent allowance once");
     waits::record(root.path(), ending);
     c.look_now().unwrap();
     assert_eq!(
@@ -1218,6 +1225,7 @@ fn r3(settings: &tl3_config::Store, case: &str) {
         WaitingMaker {
             fake: adapters::workers::Fake::new(root.path()),
             stops: stops.clone(),
+            checkout: root.path().join("worktree"),
             owner: if case == "unknown_owner" {
                 "token_grant"
             } else {
@@ -1226,7 +1234,10 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             .into(),
         },
     );
-    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    let bell = bell::Bell::new();
+    let pb = waits::adapter_with_bell(root.path(), &bell.url);
+    let source = pb.source();
+    registry.register(Upstream::PrismaBuild, pb);
     registry.register(
         Upstream::GitHub,
         DeliveryCounter {
@@ -1312,6 +1323,14 @@ fn r3(settings: &tl3_config::Store, case: &str) {
     }
     c.look_now().unwrap();
     if case == "quiet_wait" {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let running = source.spawn(tx);
+        bell.request().reply(0, serde_json::json!([]));
+        let mut waiting = bell.request();
+        // Startup captures the cursor, then rereads outstanding waits once.
+        for input in rx.try_iter() {
+            tl3_controller::ingress::apply(&mut c, input).unwrap();
+        }
         // Count real opens of the action record rather than mocking wait_record.
         use rustix::fs::inotify;
         let fd = inotify::init(inotify::CreateFlags::NONBLOCK).unwrap();
@@ -1340,6 +1359,30 @@ fn r3(settings: &tl3_config::Store, case: &str) {
             before,
             "a claimed wait has no timed store commits"
         );
+        // A bell reset, including overflow recovery, requests one fresh look.
+        waiting.response.send(serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]})).unwrap();
+        waiting = bell.request();
+        let input = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        tl3_controller::ingress::apply(&mut c, input).unwrap();
+        assert!(rx.try_recv().is_err(), "reset causes one look");
+        // One terminal event goes through ingress and the actual PB reader.
+        waits::record(root.path(), "done");
+        waiting.reply(
+            1,
+            serde_json::json!([{"seq":1,"dir":"done","key":waits::key()}]),
+        );
+        let input = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(matches!(&input, tl3_controller::cli::Input::Look { .. }));
+        let before_end = c.snapshot().unwrap().revision;
+        tl3_controller::ingress::apply(&mut c, input).unwrap();
+        assert_eq!(
+            c.snapshot().unwrap().revision.get(),
+            before_end.get() + 1,
+            "one ending causes exactly one look commit"
+        );
+        assert!(rx.try_recv().is_err(), "one ending produces one look");
+        assert_eq!(c.next_look_in().unwrap(), Some(Duration::from_secs(3)));
+        drop(running);
         return;
     }
     clock.advance(3);

@@ -116,6 +116,7 @@ impl Source for Stdin {
 pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
     match input {
         Input::Wake => {}
+        Input::Look { key } => controller.look_key(&key)?,
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
         }

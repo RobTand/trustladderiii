@@ -726,7 +726,12 @@ retry and incident. PrismaBuild alone decides whether its progress contract fail
 or a worker was lost. A queue stall enters as `Fact::UpstreamStalled`; the kernel
 raises its incident. The incident reads the merge time and queue-check title
 and status from the watch's `WatchProgress`. Worker declarations of outside waits
-are described in the [worker protocol](../../workers/README.md).
+are described in the [worker protocol](../../workers/README.md). A live declared
+wait has no timer and stores no heartbeat or sample token. Its action key joins
+the PrismaBuild source's bell awaited set. Endings and bell resets request a
+look for that effect. The subscription is durable until progress or retirement
+removes it. The action's snapshot parent must belong to the declaring run's
+worktree branch; missing or foreign records give no liveness.
 
 When a failed write's allowance expires, authoritative absence counts that
 delivery as retryable through the kernel. A transport error never proves absence.

@@ -171,7 +171,10 @@ pub enum Look {
     Alive {
         progress: String,
     },
-    Waiting(tl3_store::ExternalWait),
+    Waiting {
+        wait: tl3_store::ExternalWait,
+        checkout: std::path::PathBuf,
+    },
     Healthy,
     Quota {
         reset_ms: u64,
@@ -180,9 +183,8 @@ pub enum Look {
 
 /// Only the outside owner can establish that a declared wait has ended.
 pub enum WaitRecord {
-    Alive { progress: String },
+    Alive,
     Ended,
-    Pending,
 }
 
 pub enum Reconciliation {
@@ -200,10 +202,10 @@ pub trait Executor {
         _delivery: &Delivery,
         _wait: Option<&tl3_store::ExternalWait>,
     ) -> Result<()> {
-        todo!("subscribe declared waits to PrismaBuild bell")
+        Ok(())
     }
-    fn wait_record(&mut self, _key: &str) -> Result<WaitRecord> {
-        Ok(WaitRecord::Pending)
+    fn wait_record(&mut self, _key: &str, _checkout: &std::path::Path) -> Result<WaitRecord> {
+        Ok(WaitRecord::Ended)
     }
     /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;

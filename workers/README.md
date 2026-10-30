@@ -90,22 +90,22 @@ An outside job declares its owner and durable key before blocking:
 ```
 
 `run_tests` emits this event after submission and on each reattachment to
-`pbwait`. If `pbwait` returns `progress_observation`, it relays that JSON as an
-optional `checkpoint` string, capped at 2048 UTF-8 bytes. The current published
-`pbwait` returns only an ending document when its wait finishes.
-Declarations and relayed checkpoints do not count as agent work. The next
-`model_turn` or `tool_result` clears the declaration. Owner names contain up to
-64 lowercase letters or underscores. Keys contain up to 256 UTF-8 bytes and no
-control characters. PrismaBuild keys require 64 lowercase hexadecimal digits.
-The shape also supports other outside owners, including future token grants.
-An owner without a record reader stays unknown and cannot authorize a stop.
+`pbwait`. A declaration does not count as agent work. The next `model_turn` or
+`tool_result` clears it. Only `prismabuild` has a record reader today. Its keys
+require 64 lowercase hexadecimal digits. Unknown owners cannot grant liveness.
 
 The supervisor persists the declaration with the output offset and attempt.
-A restart preserves it without refreshing agent progress. The Workers look
-resolves the owner through its adapter. Queued or claimed PrismaBuild records
-keep the agent alive, even with an unchanged checkpoint. Only an ended or lost
-record starts the agent's no-progress allowance. Missing or unreadable records
-remain unknown. PrismaBuild owns loss decisions and execution duration.
+A restart preserves it without refreshing agent progress. The look reads
+PrismaBuild's action record and verifies that `checkout_snapshot.parent` is an
+ancestor of HEAD in the declaring run's worktree. Foreign or missing actions
+give no liveness. Read or parse errors remain outages.
+
+Queued or claimed actions keep the agent alive. The controller registers their
+keys with PrismaBuild's bell source and disarms the agent's allowance timer.
+Without an event, it reads no action record and commits no wait state. An ending,
+loss, withdrawal or bell reset requests a look. Missing records also count as
+ended. The first ending starts the agent's own no-progress allowance once.
+Progress, replacement and completion remove the subscription.
 
 Exactly one reply ends a successful run, followed by exit 0. Any other exit is
 a failed run, even if progress was emitted. Schema failures never emit a reply.

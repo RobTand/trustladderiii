@@ -170,13 +170,6 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                     endings = waited["endings"]
                     if len(endings) != 1 or endings[0]["action_key"] != key:
                         raise ValueError("PrismaBuild returned another action")
-                    progress = endings[0].get("progress_observation")
-                    if isinstance(progress, dict):
-                        checkpoint = json.dumps(progress, allow_nan=False, sort_keys=True)
-                        if len(checkpoint.encode()) <= 2048:
-                            emit({"event": "progress", "unit": "external_wait",
-                                  "wait": {"upstream": "prismabuild", "key": key},
-                                  "checkpoint": checkpoint})
                     if waited["complete"]:
                         if code:
                             raise ValueError("PrismaBuild action infrastructure failed")

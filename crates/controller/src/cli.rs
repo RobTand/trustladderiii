@@ -9,6 +9,9 @@ use tl3_store::{Reader, Store};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
     Wake,
+    Look {
+        key: String,
+    },
     LabelledIssue(LabelledIssue),
     Observation {
         key: String,

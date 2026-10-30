@@ -1,6 +1,6 @@
 use super::{
-    Job, Settings, job_paths, node_job_paths, node_root, read_job, record_path, results,
-    retire_superseded, write,
+    Job, Settings, WaitSubscription, job_paths, node_job_paths, node_root, read_job, record_path,
+    results, retire_superseded, wait_paths, write,
 };
 use crate::{Result, cli::Input};
 use std::{
@@ -20,6 +20,7 @@ pub struct Source {
     records_lock: Arc<Mutex<()>>,
     active: Option<BTreeMap<ActionKey, Job>>,
     tool_errors: BTreeSet<ActionKey>,
+    waits: BTreeMap<String, WaitSubscription>,
 }
 
 pub struct RunningSource {
@@ -68,6 +69,7 @@ impl Source {
             records_lock,
             active: None,
             tool_errors: BTreeSet::new(),
+            waits: BTreeMap::new(),
         }
     }
 
@@ -125,11 +127,27 @@ impl Source {
         }
         self.tool_errors.retain(|key| active.contains_key(key));
         self.active = Some(active);
+        self.waits.clear();
+        for entry in std::fs::read_dir(&self.settings.records)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                self.register_waits(entry.path())?;
+            }
+        }
         Ok(())
     }
 
     fn done(&self, job: &Job) -> std::path::PathBuf {
         record_path(&self.settings.records, &job.delivery, "done")
+    }
+
+    fn register_waits(&mut self, root: std::path::PathBuf) -> Result<()> {
+        for path in wait_paths(&root)? {
+            let wait: WaitSubscription = serde_json::from_slice(&std::fs::read(path)?)?;
+            let _: ActionKey = wait.wait.key.parse().map_err(super::adapter_error)?;
+            self.waits.insert(wait.delivery.key.clone(), wait);
+        }
+        Ok(())
     }
 
     fn register(&mut self, node: NodeId) -> Result<()> {
@@ -142,6 +160,8 @@ impl Source {
         }
         self.tool_errors
             .retain(|action| active.contains_key(action));
+        self.waits.retain(|_, wait| wait.delivery.node() != node);
+        self.register_waits(node_root(&self.settings.records, node))?;
         Ok(())
     }
 
@@ -149,7 +169,19 @@ impl Source {
         if self.active.is_none() {
             self.rebuild()?;
         }
-        let awaited = self.active.as_ref().unwrap().keys().cloned().collect();
+        let awaited: BTreeSet<_> = self
+            .active
+            .as_ref()
+            .unwrap()
+            .keys()
+            .cloned()
+            .chain(self.waits.values().map(|wait| {
+                wait.wait
+                    .key
+                    .parse::<ActionKey>()
+                    .expect("validated wait key")
+            }))
+            .collect();
         let changes = tokio::select! {
             key = self.keys.recv() => {
                 match key {
@@ -162,12 +194,33 @@ impl Source {
                 }
                 return Ok(0);
             }
-            changes = self.watcher.next(&awaited, patience), if !self.active.as_ref().unwrap().is_empty() => {
+            changes = self.watcher.next(&awaited, patience), if !awaited.is_empty() => {
                 changes.map_err(super::adapter_error)?
             }
         };
         let mut count = 0;
         for (key, record) in changes.records {
+            let ended = record.as_ref().is_ok_and(|record| {
+                record.as_ref().is_none_or(|record| {
+                    !matches!(record.state, ActionState::Queued | ActionState::Claimed)
+                })
+            });
+            if changes.reset || ended || record.is_err() {
+                for wait in self
+                    .waits
+                    .values()
+                    .filter(|wait| wait.wait.key == key.as_str())
+                {
+                    sender
+                        .send(Input::Look {
+                            key: wait.delivery.key.clone(),
+                        })
+                        .map_err(|_| {
+                            crate::Error::Invalid("PrismaBuild ingress receiver closed")
+                        })?;
+                    count += 1;
+                }
+            }
             let Some(job) = self.active.as_ref().unwrap().get(&key) else {
                 continue; // A newer completion in this batch retired the job.
             };

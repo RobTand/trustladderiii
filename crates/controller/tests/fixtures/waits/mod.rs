@@ -7,6 +7,10 @@ pub fn key() -> String {
 }
 
 pub fn adapter(root: &Path) -> Adapter {
+    adapter_with_bell(root, "http://127.0.0.1:9/")
+}
+
+pub fn adapter_with_bell(root: &Path, bell_url: &str) -> Adapter {
     let queue = root.join("queue");
     for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
         fs::create_dir_all(queue.join(state)).unwrap();
@@ -18,7 +22,7 @@ pub fn adapter(root: &Path) -> Adapter {
     let client = PrismaBuild::new(Options {
         queue_root: queue,
         tool: tool.clone(),
-        bell_url: "http://127.0.0.1:9/".into(),
+        bell_url: bell_url.into(),
     })
     .unwrap();
     Adapter::new(

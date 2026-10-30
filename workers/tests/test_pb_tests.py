@@ -196,6 +196,5 @@ def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatc
         result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
     assert result["status"] == "completed"
     assert waits == 2
-    assert len(events) == 3
-    assert json.loads(events[1]["checkpoint"]) == {"accepted_count": 7}
-    assert events[0] == events[2]
+    assert len(events) == 2
+    assert events[0] == events[1]

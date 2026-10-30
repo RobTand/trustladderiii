@@ -1769,8 +1769,9 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
             .any(|r| r.external_wait.is_some())
     });
     assert!(
-        rx.try_recv().is_err(),
-        "a declaration is not agent progress"
+        rx.try_iter()
+            .all(|input| matches!(input, Input::Look { .. })),
+        "a declaration requests a look without claiming agent progress"
     );
     let before = store.worker_progress(None).unwrap();
     let run = &before[0];
@@ -1809,14 +1810,20 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
             .any(|r| r.table == "allowances" && r.value["stopping"] == true),
         "claimed action never enters stop_stalled"
     );
+    let attempt = config
+        .workers
+        .runs
+        .join(&encoded)
+        .join(format!("attempt-{:08}", before[0].attempt));
+    let claim: serde_json::Value =
+        serde_json::from_slice(&fs::read(attempt.join("claim.json")).unwrap()).unwrap();
+    assert_ne!(
+        claim["cancelled"], true,
+        "claimed action has no cancellation"
+    );
     assert!(
-        !config
-            .workers
-            .runs
-            .join(&encoded)
-            .join("cancel.json")
-            .exists(),
-        "claimed action has no stop intent"
+        !attempt.join("exit.json").exists(),
+        "claimed action has not been stopped"
     );
     waits::record(root.path(), "done");
     c.look_now().unwrap();

@@ -382,7 +382,10 @@ impl Executor for Supervisor {
                     .find(|r| r.key == delivery.key);
                 Ok(match row {
                     Some(row) => match row.external_wait {
-                        Some(wait) => Look::Waiting(wait),
+                        Some(wait) => Look::Waiting {
+                            wait,
+                            checkout: self.root(&delivery.key).join("worktree"),
+                        },
                         None => Look::Alive {
                             progress: format!("{}:{}", row.attempt, row.output_offset),
                         },

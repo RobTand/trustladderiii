@@ -124,15 +124,19 @@ impl Controller {
     }
 
     pub fn look_due(&mut self) -> Result<()> {
-        self.looks(false)
+        self.looks(false, None)
     }
 
     /// Restart and webhook-gap recovery may request a look without consuming time.
     pub fn look_now(&mut self) -> Result<()> {
-        self.looks(true)
+        self.looks(true, None)
     }
 
-    fn looks(&mut self, force: bool) -> Result<()> {
+    pub fn look_key(&mut self, key: &str) -> Result<()> {
+        self.looks(true, Some(key))
+    }
+
+    fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows
@@ -143,6 +147,9 @@ impl Controller {
         let now = self.now_ms();
         let mut github_due = false;
         for mut state in states {
+            if key.is_some_and(|key| key != state.delivery.key) {
+                continue;
+            }
             if !force && !state.due_ms.is_some_and(|due| due <= now) {
                 continue;
             }
@@ -222,45 +229,14 @@ impl Controller {
                 self.finish_stall(&mut state)?;
                 continue;
             }
-            let mut result = self
+            let result = self
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
-            let mut outside_alive = false;
-            if let Ok(Look::Waiting(wait)) = &result {
-                let wait = wait.clone();
-                if state.external_wait.as_ref() != Some(&wait) {
-                    state.external_wait = Some(wait.clone());
-                    state.wait_ended = false;
-                }
-                let record = match wait.upstream.as_str() {
-                    "prismabuild" => self
-                        .adapters
-                        .get(Upstream::PrismaBuild)?
-                        .wait_record(&wait.key),
-                    _ => Ok(crate::executor::WaitRecord::Pending),
-                };
-                result = match record {
-                    Ok(crate::executor::WaitRecord::Alive { progress }) => {
-                        state.wait_ended = false;
-                        // The owner still has work. An unchanged owner checkpoint
-                        // cannot authorize stopping the agent that awaits it.
-                        outside_alive = true;
-                        Ok(Look::Alive { progress })
-                    }
-                    Ok(crate::executor::WaitRecord::Ended) => {
-                        if !state.wait_ended {
-                            state.wait_ended = true;
-                            state.progress_ms = now;
-                        }
-                        Ok(Look::Alive {
-                            progress: state.progress.clone().unwrap_or_default(),
-                        })
-                    }
-                    Ok(crate::executor::WaitRecord::Pending) => Ok(Look::Pending),
-                    Err(error) => Err(error),
-                };
-            } else if matches!(result, Ok(Look::Alive { .. })) {
+            if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
+                self.adapters
+                    .get(Upstream::PrismaBuild)?
+                    .watch_wait(&state.delivery, None)?;
                 state.external_wait = None;
                 state.wait_ended = false;
             }
@@ -354,13 +330,45 @@ impl Controller {
                 Ok(Look::Alive { progress }) => {
                     let changed = state.progress.as_ref() != Some(&progress);
                     state.progress = Some(progress);
-                    if outside_alive {
-                        self.rearm(&mut state);
-                    } else if self.look_alive(&mut state, changed)? {
+                    if self.look_alive(&mut state, changed)? {
                         continue;
                     }
                 }
-                Ok(Look::Waiting(_)) => unreachable!("declared wait resolved above"),
+                Ok(Look::Waiting { wait, checkout }) => {
+                    if state.external_wait.as_ref() != Some(&wait) {
+                        state.external_wait = Some(wait.clone());
+                        state.wait_ended = false;
+                    }
+                    let record = if wait.upstream == "prismabuild" {
+                        self.adapters
+                            .get(Upstream::PrismaBuild)?
+                            .wait_record(&wait.key, &checkout)
+                    } else {
+                        Ok(crate::executor::WaitRecord::Ended)
+                    };
+                    match record {
+                        Ok(crate::executor::WaitRecord::Alive) => {
+                            self.adapters
+                                .get(Upstream::PrismaBuild)?
+                                .watch_wait(&state.delivery, Some(&wait))?;
+                            state.wait_ended = false;
+                            state.progress = None;
+                        }
+                        Ok(crate::executor::WaitRecord::Ended) => {
+                            self.adapters
+                                .get(Upstream::PrismaBuild)?
+                                .watch_wait(&state.delivery, None)?;
+                            if !state.wait_ended {
+                                state.wait_ended = true;
+                                state.progress_ms = now;
+                            }
+                            if self.look_alive(&mut state, false)? {
+                                continue;
+                            }
+                        }
+                        Err(error) => self.look_failed(&mut state, &error)?,
+                    }
+                }
                 Ok(Look::Healthy) => {
                     if !state.healthy {
                         self.retry_held_effects(upstream(state.delivery.output));
@@ -419,7 +427,7 @@ impl Controller {
             }
             self.save_allowance(&state)?;
         }
-        if github_due || force {
+        if key.is_none() && (github_due || force) {
             let after = self
                 .store
                 .load()?
@@ -829,7 +837,7 @@ impl Controller {
     }
 
     pub(crate) fn progress_allowance(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         key: &str,
         checkpoint: String,
@@ -842,6 +850,12 @@ impl Controller {
         {
             let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
             if state.progress.as_ref() != Some(&checkpoint) {
+                if state.external_wait.take().is_some() {
+                    self.adapters
+                        .get(Upstream::PrismaBuild)?
+                        .watch_wait(&state.delivery, None)?;
+                }
+                state.wait_ended = false;
                 state.progress = Some(checkpoint);
                 state.progress_ms = self.now_ms();
                 state.due_ms = Some(
@@ -968,6 +982,11 @@ impl Controller {
                 .iter()
                 .any(|r| r.table == "watches" && r.id == row.id);
             if !pending && !watched && !incident_open {
+                if state.external_wait.is_some() {
+                    self.adapters
+                        .get(Upstream::PrismaBuild)?
+                        .watch_wait(&state.delivery, None)?;
+                }
                 commit.rows.push(RowChange::Delete {
                     table: "allowances".into(),
                     id: row.id.clone(),

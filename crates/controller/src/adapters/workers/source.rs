@@ -369,6 +369,11 @@ impl WorkerOutputSource {
                     )?;
                     // Reattachments declare liveness, not new agent work.
                     if external_wait(&value).is_some() {
+                        sender
+                            .send(Input::Look {
+                                key: delivery.key.clone(),
+                            })
+                            .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
                         continue;
                     }
                     sender
@@ -408,24 +413,14 @@ fn progress(value: &Value) -> bool {
     value["event"] == "progress"
         && ((value.as_object().is_some_and(|o| o.len() == 2)
             && matches!(value["unit"].as_str(), Some("model_turn" | "tool_result")))
-            || (value.as_object().is_some_and(|o| {
-                o.len() == 3
-                    || (o.len() == 4
-                        && o.get("checkpoint")
-                            .and_then(Value::as_str)
-                            .is_some_and(|s| !s.is_empty() && s.len() <= 2048))
-            }) && value["unit"] == "external_wait"
+            || (value.as_object().is_some_and(|o| o.len() == 3)
+                && value["unit"] == "external_wait"
                 && external_wait(value).is_some()))
 }
 
 fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
     let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
-    let owner_valid = !wait.upstream.is_empty()
-        && wait.upstream.len() <= 64
-        && wait
-            .upstream
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b == b'_');
+    let owner_valid = wait.upstream == "prismabuild";
     let key_valid =
         !wait.key.is_empty() && wait.key.len() <= 256 && !wait.key.chars().any(char::is_control);
     (owner_valid
@@ -517,7 +512,7 @@ mod tests {
         assert!(progress(&event));
         let mut token = event.clone();
         token["wait"] = serde_json::json!({"upstream":"token_grant", "key":"request:7"});
-        assert!(progress(&token));
+        assert!(!progress(&token));
         for change in [
             serde_json::json!({"upstream":"prismabuild", "key":"invalid"}),
             serde_json::json!({"upstream":"token_grant", "key":""}),
@@ -532,7 +527,7 @@ mod tests {
         assert!(!progress(&invalid));
         let mut checkpoint = event;
         checkpoint["checkpoint"] = serde_json::json!("7 tests");
-        assert!(progress(&checkpoint));
+        assert!(!progress(&checkpoint));
     }
 
     #[test]
