@@ -1642,9 +1642,7 @@ fn observation_upstream(
         }) => None,
         Observation::GitHubComment { .. }
         | Observation::LinkedRequest { .. }
-        | Observation::PullRequest { .. } => {
-            Some(Upstream::GitHub)
-        }
+        | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
         | Observation::WorkerReply { .. }
         | Observation::Plan { .. }
@@ -1666,12 +1664,13 @@ fn observation_upstream(
                 s.delivery.node() == *node
                     && s.delivery.generation == *generation
                     && match s.delivery.output {
-                        DeliveryOutput::Effect { kind, .. } => snapshot::decode(snapshot).is_ok_and(|world| {
-                            world
-                                .nodes
-                                .get(node.0 as usize)
-                                .is_some_and(|n| n.operation_pending(kind, *generation))
-                        }),
+                        DeliveryOutput::Effect { kind, .. } => snapshot::decode(snapshot)
+                            .is_ok_and(|world| {
+                                world
+                                    .nodes
+                                    .get(node.0 as usize)
+                                    .is_some_and(|n| n.operation_pending(kind, *generation))
+                            }),
                         DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                     }
             })

@@ -338,11 +338,12 @@ impl WorkerOutputSource {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
-        let recorded = store
+        let prior = store
             .worker_progress(Some(&delivery.node().0.to_string()))?
             .into_iter()
-            .find(|row| row.key == delivery.key && row.attempt == *number)
-            .map_or(0, |row| row.output_offset as u64);
+            .find(|row| row.key == delivery.key && row.attempt == *number);
+        let recorded = prior.as_ref().map_or(0, |row| row.output_offset as u64);
+        let mut previous_wait = prior.and_then(|row| row.external_wait);
         if let Some(file) = stdout {
             let mut reader = BufReader::new(file);
             reader.seek(SeekFrom::Start(run.offset))?;
@@ -357,6 +358,8 @@ impl WorkerOutputSource {
                     && progress(&value)
                     && run.offset > recorded
                 {
+                    let wait = external_wait(&value);
+                    let changed = previous_wait != wait;
                     store.record_worker_progress(
                         &delivery.key,
                         *number,
@@ -364,15 +367,18 @@ impl WorkerOutputSource {
                             .try_into()
                             .map_err(|_| Error::Invalid("worker output offset overflow"))?,
                         value["unit"].as_str().unwrap(),
-                        external_wait(&value).as_ref(),
+                        wait.as_ref(),
                     )?;
+                    previous_wait = wait.clone();
                     // Reattachments declare liveness, not new agent work.
-                    if external_wait(&value).is_some() {
-                        sender
-                            .send(Input::Look {
-                                key: delivery.key.clone(),
-                            })
-                            .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                    if wait.is_some() {
+                        if changed {
+                            sender
+                                .send(Input::Look {
+                                    key: delivery.key.clone(),
+                                })
+                                .map_err(|_| Error::Invalid("worker ingress receiver closed"))?;
+                        }
                         continue;
                     }
                     sender
