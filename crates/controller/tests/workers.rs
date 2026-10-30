@@ -891,7 +891,7 @@ fn fake_stop(settings: &tl3_config::Store) {
     run.output = Out::Effect {
         node: NodeId(0),
         seq: 1,
-        kind: EffectKind::StartRun(Role::Make | Role::Plan),
+        kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
     supervisor.execute(&run).unwrap();

@@ -139,9 +139,9 @@ belongs in `Err`, and a reconciliation transport problem can also stay Pending.
 Adapters report evidence and never choose request phases, credit charges or
 retry policy.
 
-The worker supervisor runs real ingest, audit and maker processes through protocol v1
+The worker supervisor runs real ingest, audit, planner and maker processes through protocol v1
 from `workers/README.md`. It validates role schemas and accepts replies only
-after a recorded exit zero. Plan and review use the worker fake. Python comes from
+after a recorded exit zero. Review uses the worker fake. Python comes from
 a configured, pre-synced venv. A durable Python supervisor owns waitpid and
 publishes exit records even while the controller is dead.
 
