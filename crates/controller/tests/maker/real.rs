@@ -343,6 +343,46 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
     while flow.controller.drive_once().unwrap() {}
 }
 
+pub(super) fn reproducing_fix(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start_mode(settings, root.path(), "review-fix", false);
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "goals".into(), id: "0".into(),
+        value: json!([{"id":"greeting", "description":"Return hello.", "verification":"test"}]),
+    });
+    store.commit(&commit).unwrap();
+    let reviewed = flow.record()["head"].as_str().unwrap().to_owned();
+    flow.until(|phase| phase == Phase::Making);
+    let feedback = store.worker_document("0", "maker_findings").unwrap().unwrap();
+    assert_eq!(feedback.as_array().unwrap().len(), 2, "each blocking finding needs its own mapping");
+    for finding in feedback.as_array().unwrap() {
+        assert!(finding["id"].is_string(), "review findings need stable ids");
+        assert_eq!(finding["reviewed_sha"], reviewed);
+    }
+    flow.until(|phase| phase == Phase::Checking);
+    let fixed = flow.record()["head"].as_str().unwrap().to_owned();
+    let snapshot = flow.controller.snapshot().unwrap();
+    let run = snapshot.rows.iter().find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}")).unwrap();
+    assert_eq!(run.value["reviewed_sha"], reviewed);
+    let checks = run.value["plan"].as_array().unwrap();
+    assert_eq!(checks.len(), 2, "the original plan and reproducer both run");
+    assert_eq!(checks[1]["kind"], "reproducing");
+    assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
+    flow.until(|phase| phase.is_closed());
+    let reviews = fs::read_dir(flow.config.workers.runs.join("reviewer-requests")).unwrap()
+        .map(|entry| serde_json::from_slice::<Value>(&fs::read(entry.unwrap().path()).unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    let next = reviews.iter().find(|request| request["inputs"]["head_sha"] == fixed).unwrap();
+    assert_eq!(next["inputs"]["review_fixes"]["reviewed_sha"], reviewed);
+    let fixes = next["inputs"]["review_fixes"]["findings"].as_array().unwrap();
+    assert_eq!(fixes[0]["tests"], json!(["test_greeting.py::test_empty"]));
+    assert_eq!(fixes[1]["reason"], "This is a documentation correction.");
+    assert!(fixes[1]["report"].as_str().unwrap().contains("Explain the greeting"));
+    assert_eq!(flow.controller.world().unwrap().nodes[0].phase, Phase::Closed(tl3_kernel::Outcome::Merged));
+}
+
 struct HeldQueue;
 impl Executor for HeldQueue {
     fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {

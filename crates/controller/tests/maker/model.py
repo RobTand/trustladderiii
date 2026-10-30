@@ -17,7 +17,7 @@ mode = sys.argv[1]
 class Model(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         from tl3_workers.roles import ROLES
-        assert {tool.name: tool.description for tool in tools} == dict(ROLES['maker'].tools)
+        assert {tool.name: tool.description for tool in tools} in [dict(ROLES[role].tools) for role in ('maker', 'reviewer')]
         return self
 
 
@@ -27,6 +27,17 @@ def call(name, args):
 
 def create_model(request):
     inputs = request['inputs']
+    if request['role'] == 'reviewer':
+        record = Path(request['worktree']).parents[1] / 'reviewer-requests' / f"request-{request['operation']['generation']}.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(request))
+        reply = ({'verdict': 'approve', 'head_sha': inputs['head_sha'], 'blocking_findings': [], 'findings': []}
+                 if 'review_fixes' in inputs else {
+                     'verdict': 'changes', 'blocking_findings': [
+                         {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Empty names fail.', 'evidence': 'greet has no empty-name coverage.'},
+                         {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Explain the greeting.', 'evidence': 'The documentation omits the greeting.'},
+                     ], 'findings': []})
+        return Model(responses=[AIMessage(content=json.dumps(reply))])
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
@@ -68,10 +79,19 @@ def create_model(request):
     if mode == 'rebase-edits':
         content += f"# visit {request['operation']['generation']}\n"
     reply = {'kind': 'done', 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
+    reproducing_turns = []
+    if mode == 'review-fix' and inputs['round'] == 1:
+        findings = [finding for finding in inputs['feedback'] if finding.get('reviewed_sha') == inputs.get('reviewed_sha')]
+        reply['reproductions'] = [
+            {'finding_id': findings[0]['id'], 'tests': ['test_greeting.py::test_empty']},
+            {'finding_id': findings[1]['id'], 'reason': 'This is a documentation correction.'},
+        ]
+        reproducing_turns = [call('write', {'path': 'test_greeting.py', 'content': "def test_hello():\n    from greeting import greet\n    assert greet() == 'hello'\ndef test_empty():\n    from greeting import greet\n    assert greet() == 'hello'\n"})]
     if mode == 'unmet':
         reply['self_check'][0] = {'goal_id': inputs['goals'][0]['id'], 'status': 'not_met', 'why': 'The interface is unresolved.'}
     return Model(responses=[
         call('recall', {'query': 'greeting decisions'}),
+        *reproducing_turns,
         call('write', {'path': path, 'content': content}),
         call('run_tests', {'tests': ['test_greeting.py::test_hello']}),
         AIMessage(content=json.dumps(reply)),

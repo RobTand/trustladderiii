@@ -233,3 +233,37 @@ def test_failure_messages_are_bounded_without_changing_verdicts():
     legacy = judge(Check('legacy', Kind.REGRESSION, (test,)),
                    {test: Outcome.PASSED}, {test: Outcome.ASSERTION})
     assert 'head assertion' in legacy.tests[0].message
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("test_demonstrates", Verdict.PASS),
+    ("test_does_not_demonstrate", Verdict.FAIL),
+    ("test_setup", Verdict.FAIL),
+    ("test_runtime_error", Verdict.FAIL),
+    ("test_new_name", Verdict.PASS),
+    ("test_skipped", Verdict.FAIL),
+    ("test_xfailed", Verdict.FAIL),
+    ("uncollected", Verdict.FAIL),
+    ("test_absent_name", Verdict.FAIL),
+])
+def test_reproducing_verdicts(trees, name, expected):
+    kind = next((kind for kind in Kind if kind.value == "reproducing"), None)
+    assert kind is not None, "the harness must judge reproducing checks"
+    reviewed, fixed, reproducing = trees
+    tests, before = run(reproducing, [name], added_names(reviewed, fixed, ["tests/*.py"]))
+    _, after = run(fixed, [name])
+    result = judge(Check(name, kind, tests), before, after)
+    assert result.verdict == expected, asdict(result)
+    assert not result.tests[0].pre_existing
+
+
+@pytest.mark.parametrize("before,after", [
+    (Outcome.MISSING, Outcome.PASSED), (Outcome.PASSED, Outcome.MISSING),
+    (Outcome.ASSERTION, Outcome.ASSERTION), (Outcome.ASSERTION, Outcome.SKIPPED),
+    (Outcome.ASSERTION, Outcome.UNCOLLECTED), (Outcome.ERROR, Outcome.PASSED),
+])
+def test_reproducing_requires_available_tests_and_a_passing_fix(before, after):
+    kind = next((kind for kind in Kind if kind.value == "reproducing"), None)
+    assert kind is not None, "reproducing checks must reject unavailable or broken tests"
+    test = "tests/test_product.py::test_demonstrates"
+    assert judge(Check("fix", kind, (test,)), {test: before}, {test: after}).verdict == Verdict.FAIL

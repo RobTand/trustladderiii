@@ -111,6 +111,7 @@ fn fixture(
 struct Workers {
     real: Supervisor,
     fake: adapters::workers::Fake,
+    review: bool,
 }
 impl Workers {
     fn plan(completion: &mut Completion) {
@@ -126,7 +127,7 @@ impl Executor for Workers {
         self.real.retire(store)
     }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        if matches!(
+        if (self.review && matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(Role::Review), .. })) || matches!(
             delivery.output,
             Out::Effect {
                 kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
@@ -141,7 +142,7 @@ impl Executor for Workers {
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if matches!(
+        if (self.review && matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(Role::Review), .. })) || matches!(
             delivery.output,
             Out::Effect {
                 kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
@@ -172,6 +173,7 @@ fn registry(
         Workers {
             real,
             fake: adapters::workers::Fake::new(root),
+            review: config.workers.command.get(1).is_some_and(|mode| mode == "review-fix"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(
@@ -824,6 +826,8 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    real::reproducing_fix(&database.create("maker_reproducing_fix"));
+    println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
     legacy_session(&database.create("maker_legacy_session"));
     println!("test maker_legacy_session_fails_closed ... ok");
     real::outside_paths_bounded(&database.create("maker_outside_bounds"));

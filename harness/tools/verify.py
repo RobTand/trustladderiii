@@ -35,6 +35,8 @@ def main():
              "--workdir=/source", "--entrypoint=python3", container.image,
              "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_harness.py"]
     subprocess.run(suite, check=True)
+    from verify_reproducing import verify
+    verify(container)
     fixtures = source / "tests/fixtures"
     with tempfile.TemporaryDirectory(prefix="tl3-fixture-") as directory:
         repo = Path(directory)
