@@ -7,6 +7,8 @@ mod prismabuild_fixture;
 mod retirement_review;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
+#[path = "fixtures/waits/mod.rs"]
+mod waits;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -306,6 +308,17 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|s| s == "--maker-wait") {
+        maker::declared_wait(&database.create("maker_declared_wait"));
+        println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--r3") {
+        external_wait_survives_restart(&database.create("workers_r3_wait"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--linked-materials") {
         for wrapped in [false, true] {
             linked_materials(
@@ -347,6 +360,17 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--review-feedback") {
+        maker::review_trial(&database.create("review_feedback"));
+        database.stop();
+        return;
+    }
+    quota_resumes_same_operation(&database.create("workers_quota"));
+    println!("test announced_quota_resumes_same_operation_without_failure ... ok");
+    clock_stops_stalled_worker(&database.create("workers_stall"));
+    println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
+    external_wait_survives_restart(&database.create("workers_external_wait"));
+    println!("test external_wait_persists_across_source_and_controller_restart ... ok");
     for wrapped in [false, true] {
         linked_materials(
             &database.create(&format!("linked_materials_{wrapped}")),
@@ -446,7 +470,7 @@ fn worker_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Review),
                     ..
                 }
             ) || (self.2
@@ -467,7 +491,7 @@ fn worker_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make),
+                    kind: EffectKind::StartRun(Role::Make | Role::Review),
                     ..
                 }
             ) || (self.2
@@ -910,14 +934,21 @@ fn never_started(settings: &tl3_config::Store) {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
+    let messages: Vec<_> = rx.try_iter().collect();
     assert!(matches!(
-        rx.try_recv().unwrap(),
+        messages.last().unwrap(),
         Input::Observation {
             observation: Observation::WorkerReply { .. },
             ..
         }
     ));
-    assert!(rx.try_recv().is_err());
+    assert!(messages[..messages.len() - 1].iter().all(|input| matches!(
+        input,
+        Input::Observation {
+            observation: Observation::Progress { .. },
+            ..
+        }
+    )));
     assert_eq!(attempts(&run_root), 2);
     fs::write(
         run_root.join("attempt-00000001/stdout.jsonl"),
@@ -1033,18 +1064,19 @@ fn killed_supervisor(settings: &tl3_config::Store) {
 
 fn fake_stop(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "normal");
+    let config = config(settings, root.path(), "blocked");
     let fakes = root.path().join("fakes");
     let mut supervisor = Supervisor::new(&config, &fakes).unwrap();
+    materials(&mut Store::open(settings).unwrap());
     let mut run = delivery();
-    run.output = Out::Effect {
-        node: NodeId(0),
-        seq: 1,
-        kind: EffectKind::StartRun(Role::Review),
-        head: None,
-    };
-    run.head_sha = Some("a".repeat(40));
     supervisor.execute(&run).unwrap();
+    wait(|| root.path().join("entered").exists());
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    let process: Value =
+        serde_json::from_slice(&fs::read(attempt.join("process.json")).unwrap()).unwrap();
+    let pid = rustix::process::Pid::from_raw(process["pid"].as_i64().unwrap().try_into().unwrap())
+        .unwrap();
+    let fd = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
     // An unrelated historical record cannot be read by stop_node.
     let history = config.workers.runs.join("old-history");
     fs::create_dir(&history).unwrap();
@@ -1061,6 +1093,21 @@ fn fake_stop(settings: &tl3_config::Store) {
         head: None,
     };
     supervisor.execute(&run).unwrap();
+    let mut descriptors = [rustix::event::PollFd::new(
+        &fd,
+        rustix::event::PollFlags::IN,
+    )];
+    assert_eq!(
+        rustix::event::poll(
+            &mut descriptors,
+            Some(&rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 0
+            })
+        )
+        .unwrap(),
+        1
+    );
     assert_eq!(adapters::delivery_counts(&fakes).unwrap()[&run.key], 1);
     assert!(matches!(
         supervisor.reconcile(&run).unwrap(),
@@ -1085,17 +1132,25 @@ fn event_source(settings: &tl3_config::Store) {
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
     let reader = thread::spawn(move || {
-        let mut line = String::new();
-        BufReader::new(stdout).read_line(&mut line).unwrap();
-        tx.send(line).unwrap();
+        let mut events = Vec::new();
+        for line in BufReader::new(stdout).lines() {
+            let event: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            let progress = event["observation"].get("Progress").is_some();
+            events.push(event);
+            if !progress {
+                tx.send(events).unwrap();
+                break;
+            }
+        }
     });
     let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     supervisor.execute(&delivery()).unwrap();
-    let line = rx.recv_timeout(Duration::from_secs(90));
+    let events = rx.recv_timeout(Duration::from_secs(90));
     child.kill().unwrap();
     child.wait().unwrap();
     reader.join().unwrap();
-    let event: Value = serde_json::from_str(&line.unwrap()).unwrap();
+    let events = events.unwrap();
+    let event = events.last().unwrap();
     assert_eq!(event["observation"]["WorkerReply"]["role"], "ingest");
 }
 
@@ -1119,6 +1174,13 @@ fn partial_crash(settings: &tl3_config::Store) {
     assert_eq!(
         store.worker_progress(None).unwrap()[0].output_offset,
         complete as i64
+    );
+    assert!(matches!(rx.try_recv().unwrap(), Input::Observation {
+        observation: Observation::Progress { checkpoint, .. }, ..
+    } if checkpoint == format!("0:{complete}")));
+    assert!(
+        rx.try_recv().is_err(),
+        "a partial reply cannot finish the run"
     );
     let progress = store.worker_progress(None).unwrap();
     assert!(
@@ -1156,6 +1218,191 @@ fn partial_crash(settings: &tl3_config::Store) {
             }),
             ..
         }
+    ));
+}
+
+fn clock_stops_stalled_worker(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "blocked");
+    materials(&mut Store::open(settings).unwrap());
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        supervisor.clone(),
+    );
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut allowances = config.allowances.clone();
+    allowances.agent_worker.silence_secs = 1;
+    allowances.agent_worker.no_progress_secs = 3;
+    controller.set_allowances(allowances);
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let snapshot = controller.snapshot().unwrap();
+    let original: Delivery = serde_json::from_value(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches")
+            .unwrap()
+            .value
+            .clone(),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    clock.0.set(4000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.run_failures, 1);
+    assert!(node.generation > original.generation);
+    assert!(
+        !matches!(
+            supervisor.reconcile(&original).unwrap(),
+            Reconciliation::Pending
+        ),
+        "retry must start only after the original process ended"
+    );
+    controller.look_now().unwrap();
+    clock.0.set(7000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(controller.world().unwrap().nodes[0].waiting_incident);
+    clock.0.set(8000);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(
+        !controller.world().unwrap().nodes[0].waiting_incident,
+        "a passing worker runtime probe clears the first incident"
+    );
+    controller
+        .observe(
+            "stop-after-stall",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
+    ));
+}
+
+fn quota_resumes_same_operation(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "quota-once");
+    materials(&mut Store::open(settings).unwrap());
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::Workers,
+        supervisor.clone(),
+    );
+    let initial = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(initial)));
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    while controller.drive_once().unwrap() {}
+    let snapshot = controller.snapshot().unwrap();
+    let original: Delivery = serde_json::from_value(
+        snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "watches")
+            .unwrap()
+            .value
+            .clone(),
+    )
+    .unwrap();
+    let completion = terminal(&mut supervisor, &original);
+    let reset = match completion.observations.as_slice() {
+        [Observation::Quota { reset_ms, .. }] => *reset_ms,
+        other => panic!("expected quota ending: {other:?}"),
+    };
+    while controller.drive_once().unwrap() {}
+    clock.0.set(reset - 1);
+    controller.look_due().unwrap();
+    while controller.drive_once().unwrap() {}
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .worker_progress(None)
+            .unwrap()[0]
+            .attempt,
+        0
+    );
+    clock.0.set(reset);
+    controller.look_due().unwrap();
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.run_failures, 0);
+    assert_eq!(node.generation, original.generation);
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .worker_progress(None)
+            .unwrap()[0]
+            .attempt,
+        1
+    );
+    wait(|| {
+        for iteration in 0..200 {
+            if !controller.drive_once().unwrap() {
+                break;
+            }
+            assert!(iteration < 199, "quota result replay did not settle");
+        }
+        controller.world().unwrap().nodes[0].phase != Phase::Ingesting
+    });
+    assert_eq!(controller.world().unwrap().nodes[0].run_failures, 0);
+    controller
+        .observe(
+            "stop-after-quota",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: tl3_kernel::Command::Stop,
+            }),
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    assert!(matches!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
     ));
 }
 
@@ -1660,9 +1907,179 @@ fn overflow(settings: &tl3_config::Store) {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
+    let events: Vec<_> = rx.try_iter().collect();
     assert_eq!(
-        rx.try_iter().count(),
+        events
+            .iter()
+            .filter(|input| matches!(
+                input,
+                Input::Observation {
+                    observation: Observation::WorkerReply { .. },
+                    ..
+                }
+            ))
+            .count(),
         2,
-        "ingress survives the overflow and emits each reply once"
+        "overflow recovery emits each reply once"
     );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|input| matches!(
+                input,
+                Input::Observation {
+                    observation: Observation::Progress { .. },
+                    ..
+                }
+            ))
+            .count(),
+        2,
+        "each run retains its progress observation"
+    );
+    let keys: std::collections::BTreeSet<_> = events
+        .iter()
+        .filter_map(|input| match input {
+            Input::Observation { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        keys.len(),
+        events.len(),
+        "overflow recovery never replays an event"
+    );
+}
+
+fn external_wait_survives_restart(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "external-wait");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let mut source = supervisor.source();
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let open = || {
+        let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+        registry.register(
+            tl3_controller::executor::Upstream::Workers,
+            supervisor.clone(),
+        );
+        registry.register(
+            tl3_controller::executor::Upstream::PrismaBuild,
+            waits::adapter(root.path()),
+        );
+        let mut c = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+            clock.clone(),
+        )
+        .unwrap();
+        let mut allowances = config.allowances.clone();
+        allowances.agent_worker.silence_secs = 1;
+        allowances.agent_worker.no_progress_secs = 3;
+        c.set_allowances(allowances);
+        c
+    };
+    let mut c = open();
+    waits::record(root.path(), "claimed");
+    c.intake(labelled()).unwrap();
+    while c.drive_once().unwrap() {}
+    wait(|| root.path().join("entered").exists());
+    let (tx, rx) = mpsc::channel();
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        store
+            .worker_progress(None)
+            .unwrap()
+            .iter()
+            .any(|r| r.external_wait.is_some())
+    });
+    assert!(
+        rx.try_iter()
+            .all(|input| matches!(input, Input::Look { .. })),
+        "a declaration requests a look without claiming agent progress"
+    );
+    let mut before = store.worker_progress(None).unwrap();
+    let run = &before[0];
+    let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
+    let record_path = root
+        .path()
+        .join(format!("queue/claimed/{}.json", waits::key()));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["checkout_snapshot"]["parent"] = json!(waits::bind(
+        root.path(),
+        &config.workers.runs.join(&encoded).join("worktree")
+    ));
+    fs::write(record_path, record.to_string()).unwrap();
+    c.look_now().unwrap();
+    let before_repeat = c.snapshot().unwrap();
+    fs::write(root.path().join("entered.repeat"), "repeat").unwrap();
+    wait(|| {
+        source.poll_once(&mut store, &tx).unwrap();
+        store.worker_progress(None).unwrap()[0].output_offset > before[0].output_offset
+    });
+    assert!(
+        rx.try_recv().is_err(),
+        "reattaching the same wait must not request another PrismaBuild look"
+    );
+    assert_eq!(
+        c.snapshot().unwrap(),
+        before_repeat,
+        "reattachment does not commit allowance state"
+    );
+    before = store.worker_progress(None).unwrap();
+    c.look_now().unwrap();
+    drop(c);
+    drop(source);
+    let mut source = supervisor.source();
+    let mut c = open();
+    source.poll_once(&mut store, &tx).unwrap();
+    assert_eq!(store.worker_progress(None).unwrap(), before);
+    assert!(rx.try_recv().is_err(), "replaying a wait is not progress");
+    clock.0.set(1_000_000);
+    c.look_due().unwrap();
+    while c.drive_once().unwrap() {}
+    assert_eq!(
+        c.world().unwrap().nodes[0].run_failures,
+        0,
+        "claimed action survives after driving RunFailed"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.value["stopping"] == true),
+        "claimed action never enters stop_stalled"
+    );
+    let attempt = config
+        .workers
+        .runs
+        .join(&encoded)
+        .join(format!("attempt-{:08}", before[0].attempt));
+    let claim: serde_json::Value =
+        serde_json::from_slice(&fs::read(attempt.join("claim.json")).unwrap()).unwrap();
+    assert_ne!(
+        claim["cancelled"], true,
+        "claimed action has no cancellation"
+    );
+    assert!(
+        !attempt.join("exit.json").exists(),
+        "claimed action has not been stopped"
+    );
+    waits::record(root.path(), "done");
+    c.look_now().unwrap();
+    clock.0.set(1_003_000);
+    c.look_due().unwrap();
+    assert!(c.drive_once().unwrap());
+    assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
 }

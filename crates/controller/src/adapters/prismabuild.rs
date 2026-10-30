@@ -97,6 +97,68 @@ pub struct Adapter {
 fn adapter_error(error: tl3_prismabuild::Error) -> crate::Error {
     crate::Error::Adapter(Box::new(error))
 }
+
+fn read_wait(
+    client: &PrismaBuild,
+    runtime: &tokio::runtime::Runtime,
+    key: &str,
+    checkout: &Path,
+) -> Result<crate::executor::WaitRecord> {
+    use crate::executor::WaitRecord;
+    let Ok(key) = key.parse() else {
+        return Ok(WaitRecord::Ended);
+    };
+    let Some(record) = runtime.block_on(client.read(&key)).map_err(adapter_error)? else {
+        return Ok(WaitRecord::Ended);
+    };
+    if !matches!(record.state, ActionState::Queued | ActionState::Claimed) {
+        return Ok(WaitRecord::Ended);
+    }
+    // PB v2 snapshots retain the submitted HEAD even when the original checkout is gone.
+    let Some(parent) = record
+        .snapshot_parent
+        .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
+    else {
+        return Ok(WaitRecord::Ended);
+    };
+    let status = std::process::Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(checkout)
+        .args(["merge-base", "--is-ancestor", &parent, "HEAD"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    Ok(if status.success() {
+        WaitRecord::Alive
+    } else {
+        WaitRecord::Ended
+    })
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WaitSubscription {
+    delivery: Delivery,
+    wait: tl3_store::ExternalWait,
+}
+
+fn wait_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![];
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == "wait") {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
 fn encoded(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
 }
@@ -275,6 +337,21 @@ impl Adapter {
     pub fn retire_node(&mut self, node: NodeId) -> Result<()> {
         let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
         let root = node_root(&self.settings.records, node);
+        for path in node_job_paths(&root, false)? {
+            // Corrupt bindings and failed upstream reads cannot establish termination.
+            let job: Job = serde_json::from_slice(&fs::read(path)?)?;
+            let record = self
+                .runtime
+                .block_on(self.client.read(&job.action))
+                .map_err(adapter_error)?;
+            if record.is_some_and(|record| {
+                matches!(record.state, ActionState::Queued | ActionState::Claimed)
+            }) {
+                return Err(crate::Error::Invalid(
+                    "cannot retire an active PrismaBuild job",
+                ));
+            }
+        }
         // Remove bindings durably before their completions, including after partial retirement.
         for path in node_job_paths(&root, false)?
             .into_iter()
@@ -415,6 +492,113 @@ impl Adapter {
 }
 
 impl Executor for Adapter {
+    fn watch_wait(
+        &mut self,
+        delivery: &Delivery,
+        wait: Option<&tl3_store::ExternalWait>,
+    ) -> Result<()> {
+        let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
+        let path = record_path(&self.settings.records, delivery, "wait");
+        let changed = if let Some(wait) = wait {
+            if wait.upstream != "prismabuild" {
+                return Ok(());
+            }
+            let _: ActionKey = wait.key.parse().map_err(adapter_error)?;
+            let subscription = WaitSubscription {
+                delivery: delivery.clone(),
+                wait: wait.clone(),
+            };
+            let bytes = serde_json::to_vec(&subscription)?;
+            if fs::read(&path).ok().as_ref() == Some(&bytes) {
+                false
+            } else {
+                fs::create_dir_all(path.parent().unwrap())?;
+                write(&path, &subscription)?;
+                File::open(&self.settings.records)?.sync_all()?;
+                true
+            }
+        } else {
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    File::open(path.parent().unwrap())?.sync_all()?;
+                    true
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        if changed {
+            let _ = self.keys.send(delivery.node());
+        }
+        Ok(())
+    }
+    fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<crate::executor::WaitRecord> {
+        read_wait(&self.client, &self.runtime, key, checkout)
+    }
+    fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        let snapshot = store.load()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        let pending = snapshot
+            .pending_effects
+            .iter()
+            .filter(|effect| effect.kind == "PrismaBuild")
+            .map(|effect| serde_json::from_value::<Delivery>(effect.payload.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let watches = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "watches")
+            .map(|row| serde_json::from_value::<Delivery>(row.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut first_error = None;
+        // Only retained adapter directories are candidates. Closed history costs no scan.
+        for entry in fs::read_dir(&self.settings.records)? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
+            };
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => {}
+                Ok(_) => continue,
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                    continue;
+                }
+            }
+            let Some(node) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(NodeId)
+            else {
+                continue;
+            };
+            if !world
+                .nodes
+                .get(node.0 as usize)
+                .is_some_and(|n| n.phase.is_closed())
+            {
+                continue;
+            }
+            if pending.iter().any(|d| d.node() == node)
+                || watches.iter().any(|d| {
+                    d.node() == node
+                        && crate::executor::upstream(d.output)
+                            == crate::executor::Upstream::PrismaBuild
+                })
+            {
+                continue;
+            }
+            if let Err(error) = self.retire_node(node) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery.epoch)?;
         match delivery.output {

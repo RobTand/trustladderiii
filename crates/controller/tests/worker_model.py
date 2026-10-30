@@ -36,6 +36,12 @@ def create_model(request):
         output.write(json.dumps({"pid": os.getpid(), "request": request}) + "\n")
     if mode != "plan-blocked" or request["role"] == "planner":
         publish_marker(marker, str(os.getpid()))
+    if mode == "quota-once" and not marker.with_suffix(".quota").exists():
+        import httpx
+        from openai import RateLimitError
+        marker.with_suffix(".quota").write_text("announced")
+        response = httpx.Response(429, headers={"retry-after": "600"}, request=httpx.Request("POST", "http://model.invalid/v1"))
+        raise RateLimitError("private provider text", response=response, body=None)
     if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
@@ -97,6 +103,21 @@ def create_model(request):
         ])
     return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
 
+
+if mode == "external-wait":
+    json.load(sys.stdin)
+    print(json.dumps({"event": "progress", "unit": "external_wait",
+                      "wait": {"upstream": "prismabuild", "key": "a" * 64}}), flush=True)
+    marker.write_text(str(os.getpid()))
+    repeated = False
+    while not marker.with_suffix(".release").exists():
+        if marker.with_suffix(".repeat").exists() and not repeated:
+            print(json.dumps({"event": "progress", "unit": "external_wait",
+                              "wait": {"upstream": "prismabuild", "key": "a" * 64}}), flush=True)
+            marker.with_suffix(".repeated").write_text("declared")
+            repeated = True
+        time.sleep(0.01)
+    sys.exit(1)
 
 if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate", "duplicate-key", "wrong-role", "malformed", "partial", "partial-crash", "oversized-size", "forged-fit", "forged-context", "forged-overhead", "forged-files"}:
     request = json.load(sys.stdin)

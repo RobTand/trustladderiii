@@ -63,11 +63,15 @@ elif name == "id": print("1000")
         self.assertIn(f"labels[]={label}", registration)
         container = next(c for c in commands if c[:2] == ["podman", "run"])
         self.assertEqual(container[container.index("--name") + 1], f"{prefix}-1")
-        for option in ("--cpus=2", "--memory=6g", "--memory-swap=6g",
+        for option in ("--cpus=4", "--memory=6g", "--memory-swap=6g", "--sdnotify=ignore",
                        "--cap-drop=all", "--security-opt=no-new-privileges"):
             self.assertIn(option, container)
         self.assertFalse(any(c.startswith(("--volume", "--mount", "--env")) for c in container))
         self.assertNotIn(JIT, " ".join(container))
+        self.assertEqual(container[container.index("--cpuset-cpus") + 1], "40-79")
+        notification = ["systemd-notify", "RESTART_RESET=1"]
+        self.assertIn(notification, commands)
+        self.assertLess(commands.index(notification), commands.index(container))
 
     def test_slot_units_keep_restarting_with_backoff(self):
         for profile, prefix in (("tl3", "tl3-ci-runner"),
@@ -105,6 +109,57 @@ elif name == "id": print("1000")
     def test_sandbox_slot_registers_only_for_sandbox(self):
         self.assert_slot("tl3-ci-runner-sandbox", "tl3-sandbox", "tl3-sandbox-fleet",
                          "tl3-ci-runner-sandbox")
+
+    def test_both_profiles_reset_backoff_after_ten_quick_exits(self):
+        for profile in ("tl3-ci-runner", "tl3-ci-runner-sandbox"):
+            with self.subTest(profile=profile):
+                self.calls.unlink(missing_ok=True)
+                for _ in range(10):
+                    result = self.run_script("runner-slot.sh", "1", profile)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                commands = self.commands()
+                self.assertEqual(len(commands), 30)
+                for i in range(10):
+                    self.assertEqual(commands[i * 3][0], "gh")
+                    self.assertEqual(commands[i * 3 + 1], ["systemd-notify", "RESTART_RESET=1"])
+                    self.assertEqual(commands[i * 3 + 2][:2], ["podman", "run"])
+
+    def test_both_profiles_record_only_registration_exit_status(self):
+        (self.bin / "gh").write_text("#!/bin/bash\necho sensitive-response >&2\nexit 42\n")
+        for profile in ("tl3-ci-runner", "tl3-ci-runner-sandbox"):
+            with self.subTest(profile=profile):
+                result = self.run_script("runner-slot.sh", "1", profile)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("gh exit 42", result.stderr)
+                self.assertNotIn("sensitive-response", result.stdout + result.stderr)
+                self.assertFalse(self.calls.exists(), "failed registration must retain backoff")
+
+    def test_both_profiles_preserve_explicit_cpu_placement(self):
+        for profile in ("tl3-ci-runner", "tl3-ci-runner-sandbox"):
+            with self.subTest(profile=profile):
+                self.calls.unlink(missing_ok=True)
+                self.env["CI_RUNNER_CPUSET"] = "44-47"
+                result = self.run_script("runner-slot.sh", "1", profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                container = next(c for c in self.commands() if c[:2] == ["podman", "run"])
+                self.assertEqual(container[container.index("--cpuset-cpus") + 1], "44-47")
+
+    def test_install_defaults_match_each_live_unit(self):
+        for profile, prefix, filename in (("tl3", "tl3-ci-runner", "runner.env"),
+                                          ("sandbox", "tl3-ci-runner-sandbox",
+                                           "tl3-ci-runner-sandbox.env")):
+            with self.subTest(profile=profile):
+                result = self.run_script("install.sh", "0", profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                config = self.home / f".config/tl3-ci-runners/{filename}"
+                self.assertEqual(config.read_text(), f"CI_RUNNER_IMAGE={IMAGE}\nCI_RUNNER_CPUSET=40-79\n")
+                unit = configparser.ConfigParser(interpolation=None)
+                unit.read(self.home / f".config/systemd/user/{prefix}@.service")
+                self.assertEqual(unit["Service"]["EnvironmentFile"],
+                                 f"%h/.config/tl3-ci-runners/{filename}")
+                expected_args = "%i %p" if profile == "sandbox" else "%i"
+                self.assertEqual(unit["Service"]["ExecStart"],
+                                 f"%h/.local/lib/tl3-ci-runners/runner-slot.sh {expected_args}")
 
     def test_sandbox_rejects_third_slot_before_registration(self):
         result = self.run_script("runner-slot.sh", "3", "tl3-ci-runner-sandbox")

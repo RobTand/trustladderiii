@@ -17,7 +17,8 @@ mode = sys.argv[1]
 class Model(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         from tl3_workers.roles import ROLES
-        assert {tool.name: tool.description for tool in tools} == dict(ROLES['maker'].tools)
+        role = 'reviewer' if mode == 'review-feedback' and all(tool.name != 'write' for tool in tools) else 'maker'
+        assert {tool.name: tool.description for tool in tools} == dict(ROLES[role].tools)
         return self
 
 
@@ -27,6 +28,20 @@ def call(name, args):
 
 def create_model(request):
     inputs = request['inputs']
+    if request['role'] == 'reviewer':
+        blockers = [
+            {'citation': {'kind': 'goal', 'id': 'greeting'},
+             'problem': 'The greeting lacks context.', 'evidence': 'greeting.py returns only hello.'},
+            {'citation': {'kind': 'standing_rule', 'id': 'test-report-integrity'},
+             'problem': 'The report stream is overwritten.', 'evidence': 'The reporter replaces stdout.'},
+        ]
+        blockers.extend({'citation': {'kind': 'goal', 'id': 'greeting'},
+                         'problem': f'Problem {i} ' + 'é' * 2000,
+                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(30))
+        return Model(responses=[AIMessage(content=json.dumps({
+            'verdict': 'changes', 'blocking_findings': blockers,
+            'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],
+        }))])
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
@@ -87,6 +102,11 @@ def fake_recall(endpoint, bank, query):
 def recorded_tests(worktree):
     def run_tests(tests: list[str] | None = None) -> dict:
         assert tests == ['test_greeting.py::test_hello']
+        if mode == 'external-wait':
+            import threading
+            worktree.progress_emit({'event': 'progress', 'unit': 'external_wait',
+                                    'wait': {'upstream': 'prismabuild', 'key': 'a' * 64}})
+            threading.Event().wait()
         return {'status': 'completed', 'passed': 1, 'failed': 0, 'skipped': 0,
                 'action_key': 'a' * 64, 'custody': 'recorded-fixture'}
     return run_tests
@@ -101,11 +121,12 @@ run_worker = runtime.run
 
 def run_with_mismatch(request, emit):
     def emit_reply(event):
-        marker = Path(request['session_file']).parent / 'mismatch-injected'
-        if mode == 'self-check-mismatch' and event['event'] == 'reply' and not marker.exists():
-            # Corrupt a schema-valid reply after the real worker has committed.
-            event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
-            marker.touch()
+        if mode == 'self-check-mismatch' and event['event'] == 'reply':
+            marker = Path(request['session_file']).parent / 'mismatch-injected'
+            if not marker.exists():
+                # Corrupt a schema-valid reply after the real worker has committed.
+                event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
+                marker.touch()
         emit(event)
     return run_worker(request, emit_reply)
 

@@ -1,17 +1,15 @@
+#[path = "fixtures/bell/mod.rs"]
+mod bell;
+use bell::Bell;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
     collections::BTreeSet,
     fs,
     io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -197,11 +195,19 @@ fn bounded_failure_details() {
     match &result.observations[0] {
         Observation::Checks {
             failed_tests,
+            results,
             report,
             pass,
             ..
         } => {
             assert!(*report && !*pass);
+            assert!(
+                results
+                    .iter()
+                    .flat_map(|result| result["tests"].as_array().unwrap())
+                    .all(|test| test["message"] == "é".repeat(1000)),
+                "reviewer check messages must be clipped"
+            );
             assert_eq!(failed_tests.len(), 20);
             assert_eq!(failed_tests[0].test, "test_value.py::test_0");
             assert!(
@@ -401,86 +407,6 @@ fn crash_reuses_seal() {
     }
 }
 
-struct BellRequest {
-    line: String,
-    response: mpsc::SyncSender<serde_json::Value>,
-}
-impl BellRequest {
-    fn reply(self, seq: u64, events: serde_json::Value) {
-        self.response
-            .send(serde_json::json!({
-                "epoch": "0123456789abcdef0123456789abcdef", "seq": seq, "events": events
-            }))
-            .unwrap();
-    }
-}
-struct Bell {
-    url: String,
-    address: std::net::SocketAddr,
-    requests: Option<mpsc::Receiver<BellRequest>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-impl Bell {
-    fn new() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = stop.clone();
-        let (sender, requests) = mpsc::channel();
-        let thread = thread::spawn(move || {
-            let mut handlers = vec![];
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
-                if stopping.load(Ordering::Relaxed) {
-                    break;
-                }
-                let sender = sender.clone();
-                handlers.push(thread::spawn(move || {
-                    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-                    let mut reader = BufReader::new(&stream);
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 { return; }
-                    loop {
-                        let mut header = String::new();
-                        if reader.read_line(&mut header).unwrap_or(0) == 0 { return; }
-                        if header == "\r\n" { break; }
-                    }
-                    let (response, receiver) = mpsc::sync_channel(0);
-                    if sender.send(BellRequest { line, response }).is_err() { return; }
-                    let Ok(response) = receiver.recv() else { return; };
-                    let body = response.to_string();
-                    let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                }));
-            }
-            for handler in handlers {
-                handler.join().unwrap();
-            }
-        });
-        Self {
-            url: format!("http://{address}/"),
-            address,
-            requests: Some(requests),
-            stop,
-            thread: Some(thread),
-        }
-    }
-    fn request(&self) -> BellRequest {
-        self.requests
-            .as_ref()
-            .unwrap()
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap()
-    }
-}
-impl Drop for Bell {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        self.requests.take();
-        let _ = TcpStream::connect(self.address);
-        self.thread.take().unwrap().join().unwrap();
-    }
-}
 fn source_thread_delivers_once_and_restarts_idle() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1087,6 +1013,33 @@ fn completed_records_retire_only_when_superseded() {
     assert!(adapter.action_key(&other).unwrap().is_some());
 }
 
+fn retirement_refuses_active_or_unreadable_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    let queue = root.path().join("queue");
+    fs::rename(
+        queue.join(format!("ready/{key}.json")),
+        queue.join(format!("claimed/{key}.json")),
+    )
+    .unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(adapter.action_key(&delivery).unwrap().is_some());
+    let path = record_path(root.path(), &delivery.key, "job");
+    let binding = fs::read(&path).unwrap();
+    fs::write(&path, "invalid binding").unwrap();
+    assert!(adapter.retire_node(delivery.node()).is_err());
+    assert!(path.exists());
+    fs::write(&path, binding).unwrap();
+    fs::remove_file(queue.join(format!("claimed/{key}.json"))).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    adapter.retire_node(delivery.node()).unwrap();
+    assert!(!root.path().join("records/0").exists());
+}
+
 fn retirement_forgets_an_active_source() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -1296,6 +1249,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
         tl3_store::Store::open(settings).unwrap(),
         registry,
         Bootstrap {
+            operations: None,
             repos: vec![repository()],
             rob: 1,
             slots: 1,
@@ -1464,7 +1418,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             );
             return;
         }
-        controller.retry_held_effects();
+        controller.retry_held_effects(Upstream::PrismaBuild);
         controller
             .observe(
                 "recovered-tool",
@@ -1551,8 +1505,87 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     }
     drop(running);
 }
+fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        Bootstrap {
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+            operations: None,
+        },
+    )
+    .unwrap();
+    for node in 0..3 {
+        controller
+            .intake(LabelledIssue {
+                delivery: format!("retirement-{node}"),
+                owner: "RobTand".into(),
+                repo: "tl3-sandbox".into(),
+                installation: 1,
+                number: 42 + node,
+                title: "Retirement fixture".into(),
+                actor: 1,
+                label: "tl3".into(),
+            })
+            .unwrap();
+        while controller.drive_once().unwrap() {}
+    }
+    assert!(
+        controller
+            .world()
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|n| n.phase.is_closed())
+    );
+    let mut adapter = fixture(root.path(), "done");
+    let records = root.path().join("records");
+    for node in 0..3 {
+        fs::create_dir_all(records.join(node.to_string())).unwrap();
+    }
+    // Corrupt the first candidate regardless of filesystem directory ordering.
+    let bad = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.is_dir())
+        .unwrap();
+    fs::write(bad.join("corrupt.job"), "not JSON").unwrap();
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    assert!(
+        adapter.retire(&mut store).is_err(),
+        "retirement must still report the corrupt job"
+    );
+    assert!(bad.exists(), "unreadable evidence must remain for recovery");
+    let remaining: Vec<_> = fs::read_dir(&records)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![bad],
+        "one corrupt node must not block other retirements"
+    );
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
+        source_skips_bad_waits();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--r4-bell") {
+        live_waits_do_not_look_on_bell_reset();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--r3") {
+        declared_wait_uses_bell();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--kill-child") {
         let root = Path::new(&args[2]);
         let delivery: Delivery =
@@ -1565,8 +1598,28 @@ fn main() {
             std::thread::park();
         }
     }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--retirement-regression")
+    {
+        let mut database = support::Database::start();
+        retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+        database.stop();
+        println!("test retirement_continues_after_corrupt_node ... ok");
+        return;
+    }
     for (name, test) in [
+        ("source_skips_bad_waits", source_skips_bad_waits as fn()),
+        (
+            "live_waits_do_not_look_on_bell_reset",
+            live_waits_do_not_look_on_bell_reset,
+        ),
+        ("declared_wait_uses_bell", declared_wait_uses_bell as fn()),
         ("recorded_endings", recorded_endings as fn()),
+        (
+            "retirement_refuses_active_or_unreadable_jobs",
+            retirement_refuses_active_or_unreadable_jobs,
+        ),
         ("bounded_failure_details", bounded_failure_details),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
@@ -1613,6 +1666,8 @@ fn main() {
         println!("test {name} ... ok");
     }
     let mut database = support::Database::start();
+    retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+    println!("test retirement_continues_after_corrupt_node ... ok");
     through_controller(&database.create("pb_pass"), false, false, false);
     println!("test recorded_records_reach_kernel ... ok");
     through_controller(&database.create("pb_footprint"), true, false, false);
@@ -1624,5 +1679,181 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("23 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("26 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+}
+
+fn declared_wait_uses_bell() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    let key: tl3_prismabuild::ActionKey = "a".repeat(64).parse().unwrap();
+    let wait = tl3_store::ExternalWait {
+        upstream: "prismabuild".into(),
+        key: key.to_string(),
+    };
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender);
+    adapter.watch_wait(&delivery, Some(&wait)).unwrap();
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    assert!(
+        waiting.line.contains(key.as_str()),
+        "the declared key is in the bell's awaited set"
+    );
+    while receiver.try_recv().is_ok() {}
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        serde_json::json!({
+            "schema":"prismaquant.prismabuild.pool_outcome.v1", "action_key":key,
+            "published_unix":100, "status":"executed", "detail":{"returncode":0}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    waiting.reply(1, serde_json::json!([{"seq":1, "dir":"done", "key":key}]));
+    assert!(
+        receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "one ending wakes its declaring allowance"
+    );
+    assert!(receiver.try_recv().is_err(), "one event causes one look");
+    adapter.watch_wait(&delivery, None).unwrap();
+    drop(running);
+}
+
+fn source_skips_bad_waits() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    let mut source = adapter.source();
+    let wait = tl3_store::ExternalWait {
+        upstream: "prismabuild".into(),
+        key: "a".repeat(64),
+    };
+    adapter.watch_wait(&delivery, Some(&wait)).unwrap();
+    let directory = root.path().join("records/0");
+    fs::write(directory.join("broken.wait"), "broken JSON").unwrap();
+    let valid = fs::read(record_path(root.path(), &delivery.key, "wait")).unwrap();
+    let mut invalid: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+    invalid["wait"]["key"] = serde_json::json!("invalid-key");
+    fs::write(directory.join("invalid-key.wait"), invalid.to_string()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    assert!(
+        runtime
+            .block_on(source.poll(&tx, Duration::from_secs(10)))
+            .is_ok(),
+        "rebuild skips bad wait subscriptions"
+    );
+    adapter.watch_wait(&delivery, None).unwrap();
+    assert!(
+        runtime
+            .block_on(source.poll(&tx, Duration::from_secs(10)))
+            .is_ok(),
+        "registration skips bad wait subscriptions"
+    );
+    adapter.execute(&delivery).unwrap();
+    assert!(
+        runtime
+            .block_on(source.poll(&tx, Duration::from_secs(10)))
+            .is_ok()
+    );
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    finish(root.path(), key.as_str(), "done");
+    assert_eq!(
+        runtime
+            .block_on(source.poll(&tx, Duration::from_secs(10)))
+            .unwrap(),
+        1,
+        "a bad wait cannot stop an unrelated job completion"
+    );
+    assert_passing_input(rx.recv_timeout(Duration::from_secs(10)).unwrap());
+}
+
+fn live_waits_do_not_look_on_bell_reset() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    let key = "a".repeat(64);
+    adapter
+        .watch_wait(
+            &delivery,
+            Some(&tl3_store::ExternalWait {
+                upstream: "prismabuild".into(),
+                key: key.clone(),
+            }),
+        )
+        .unwrap();
+    let mut source = adapter.source();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
+    let mut poll = |response: serde_json::Value| {
+        thread::scope(|scope| {
+            let bell = &mut bell;
+            scope.spawn(move || bell.request().response.send(response).unwrap());
+            runtime
+                .block_on(source.poll(&tx, Duration::from_secs(10)))
+                .unwrap()
+        })
+    };
+    for state in ["ready", "claimed"] {
+        let path = root.path().join(format!("queue/{state}/{key}.json"));
+        fs::write(&path, serde_json::json!({"schema":"prismaquant.prismabuild.pool_item.v1", "action_key":key, "published_unix":100}).to_string()).unwrap();
+        for response in [reset.clone(), serde_json::json!({}), serde_json::json!({})] {
+            assert_eq!(
+                poll(response),
+                0,
+                "a live {state} record on reset or bell outage needs no look"
+            );
+            assert!(
+                rx.try_recv().is_err(),
+                "bell retries do not wake a live wait"
+            );
+        }
+        fs::remove_file(path).unwrap();
+    }
+    assert_eq!(
+        poll(reset.clone()),
+        1,
+        "a missing record on reset wakes its wait"
+    );
+    assert!(
+        matches!(rx.try_recv().unwrap(), tl3_controller::cli::Input::Look { key } if key == delivery.key)
+    );
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        serde_json::json!({"schema":"prismaquant.prismabuild.pool_outcome.v1", "action_key":key, "published_unix":100, "status":"executed", "detail":{"returncode":0}}).to_string(),
+    ).unwrap();
+    assert_eq!(
+        poll(reset.clone()),
+        1,
+        "an ended record on reset wakes its wait"
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        tl3_controller::cli::Input::Look { .. }
+    ));
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        "broken JSON",
+    )
+    .unwrap();
+    assert_eq!(
+        poll(reset),
+        1,
+        "an unreadable record on reset wakes its wait"
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        tl3_controller::cli::Input::Look { .. }
+    ));
+    assert!(rx.try_recv().is_err());
 }

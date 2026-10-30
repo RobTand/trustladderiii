@@ -45,7 +45,7 @@
         "properties": {
           "kind": {"enum": ["failed_check", "review_finding"]},
           "report": {"$ref": "#/$defs/text", "maxLength": 16000},
-          "goal_ids": {"$ref": "#/$defs/strings"},
+          "goal_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
           "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
           "outside_paths": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/text", "maxLength": 4096}},
           "outside_paths_total": {"type": "integer", "minimum": 0},

@@ -432,18 +432,30 @@ impl Served {
                 } else {
                     return Ok(None);
                 };
-                observations.push(match result {
-                    RebaseResult::Clean { head, .. } => Observation::Rebased {
-                        node: record.delivery.node(),
-                        generation: record.delivery.generation,
-                        sha: head.as_str().into(),
-                    },
-                    RebaseResult::Conflicted { .. } => Observation::Kernel(Event::Reply {
-                        node: record.delivery.node(),
-                        generation: record.delivery.generation,
-                        reply: Reply::RebaseNeedsChanges,
-                    }),
-                });
+                match result {
+                    RebaseResult::Clean { base, head } => {
+                        if let Some(mut run) = record.delivery.checks.clone() {
+                            run.base_sha = base.as_str().into();
+                            observations.push(Observation::CheckPlan {
+                                node: record.delivery.node(),
+                                sha: head.as_str().into(),
+                                run,
+                            });
+                        }
+                        observations.push(Observation::Rebased {
+                            node: record.delivery.node(),
+                            generation: record.delivery.generation,
+                            sha: head.as_str().into(),
+                        });
+                    }
+                    RebaseResult::Conflicted { .. } => {
+                        observations.push(Observation::Kernel(Event::Reply {
+                            node: record.delivery.node(),
+                            generation: record.delivery.generation,
+                            reply: Reply::RebaseNeedsChanges,
+                        }))
+                    }
+                }
             }
             Intent::Remove {
                 expected,
