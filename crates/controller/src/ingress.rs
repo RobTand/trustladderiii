@@ -397,7 +397,7 @@ impl Source for Webhooks {
                 request.respond(Response::empty(404))?;
                 continue;
             }
-            let header = |name: &str| {
+            let header = |name: &'static str| {
                 request
                     .headers()
                     .iter()
