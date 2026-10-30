@@ -423,6 +423,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool) {
             repo: "tl3-sandbox".into(),
             installation: 1,
             number: 42,
+            title: "PrismaBuild fixture".into(),
             actor: 1,
             label: "tl3".into(),
         })
