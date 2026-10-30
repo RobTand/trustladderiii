@@ -153,7 +153,8 @@ impl Supervisor {
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] =
                 json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
-            inputs["hindsight"] = json!({"endpoint": self.hindsight.endpoint});
+            inputs["hindsight"] =
+                json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
             let encoded = |name: &str| {
                 name.to_ascii_lowercase()
                     .bytes()
@@ -218,11 +219,17 @@ impl Supervisor {
                     .runs
                     .join("sessions")
                     .join(&node)
+                    .join(format!("plan-{}", u8::from(delivery.replanned)))
                     .join(format!("attempt-{}.json", delivery.attempt))
             );
-            let needs_files = store
-                .worker_document(&node, "maker_replies")?
-                .is_some_and(|reply| reply["kind"] == "needs_files" && reply["fits"] == true);
+            let needs_files =
+                store
+                    .worker_document(&node, "maker_session")?
+                    .is_some_and(|session| {
+                        session["needs_files"] == true
+                            && session["attempt"] == delivery.attempt
+                            && session["replanned"] == delivery.replanned
+                    });
             request["resume_session"] = json!(delivery.round == 1 || needs_files);
         }
         Ok(request)
@@ -334,6 +341,52 @@ impl Executor for Supervisor {
         let name = root.file_name().unwrap().to_string_lossy();
         write(&self.settings.runs.join(format!(".ready-{name}")), delivery)?;
         Ok(Completion::confirmed(vec![]))
+    }
+
+    fn retire(&mut self, store: &mut Store) -> Result<()> {
+        let snapshot = store.load()?;
+        if snapshot.rows.iter().any(|row| row.table == "inbox") {
+            return Ok(());
+        }
+        let world = crate::snapshot::decode(&snapshot)?;
+        let mut retained = BTreeSet::new();
+        for effect in &snapshot.pending_effects {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+            retained.insert(delivery.node().0);
+        }
+        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+            let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+            retained.insert(delivery.node().0);
+        }
+        let sessions = self.settings.runs.join("sessions");
+        let entries = match fs::read_dir(&sessions) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(node) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            if !retained.contains(&node)
+                && world
+                    .nodes
+                    .get(node as usize)
+                    .is_some_and(|n| n.phase.is_closed())
+            {
+                fs::remove_dir_all(entry.path())?;
+                File::open(&sessions)?.sync_all()?;
+            }
+        }
+        Ok(())
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {

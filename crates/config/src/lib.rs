@@ -258,6 +258,7 @@ pub struct PrismaBuild {
 #[serde(deny_unknown_fields)]
 pub struct Hindsight {
     pub endpoint: Url,
+    pub bank: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -417,6 +418,9 @@ impl Config {
         }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;
+        if self.hindsight.bank.trim().is_empty() {
+            return Err(invalid("hindsight.bank", "must not be empty"));
+        }
         for (role, ladder) in [
             ("ingest", self.models.ingest.as_slice()),
             ("audit", &self.models.audit),

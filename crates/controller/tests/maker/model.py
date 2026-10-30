@@ -26,7 +26,7 @@ def call(name, args):
 
 def create_model(request):
     inputs = request['inputs']
-    record = Path(request['session_file']).parent / f"request-{request['operation']['generation']}.json"
+    record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
     if mode == 'bad-schema':
@@ -42,7 +42,7 @@ def create_model(request):
     if mode == 'needs-files' and 'helper.py' not in inputs['plan']['files']:
         return Model(responses=[AIMessage(content=json.dumps({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'The shared greeting is here.'}]}))])
     path = 'outside.py' if mode == 'outside' else 'greeting.py'
-    content = f"def greet(): return 'hello'\n# attempt {inputs['attempt']} round {inputs['round']}\n"
+    content = f"def greet(): return 'hello'\n# {mode} attempt {inputs['attempt']} round {inputs['round']}\n"
     reply = {'kind': 'done', 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
     if mode == 'unmet':
         reply['self_check'][0] = {'goal_id': inputs['goals'][0]['id'], 'status': 'not_met', 'why': 'The interface is unresolved.'}
@@ -54,7 +54,8 @@ def create_model(request):
     ])
 
 
-def fake_recall(endpoint, query):
+def fake_recall(endpoint, bank, query):
+    assert bank == 'tl3'
     assert endpoint == 'http://127.0.0.1:8890/' and query == 'greeting decisions'
     return {'results': [{'id': 'fixture-memory', 'text': 'Keep the greet interface.'}]}
 

@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod findings;
+
 pub mod adapters;
 pub mod cli;
 pub mod executor;
@@ -403,6 +405,7 @@ impl Controller {
             self.store.commit(&commit)?;
             return Ok(true);
         }
+        self.adapters.retire(&mut self.store)?;
         Ok(progressed)
     }
 
@@ -648,6 +651,7 @@ impl Controller {
                 paths,
                 attempt: n.attempt,
                 round: n.round,
+                replanned: n.replanned,
                 note: None,
                 question_context,
             };
@@ -719,6 +723,10 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
+        let ci_checks = match &observation {
+            Observation::CiFailed { checks, .. } => checks.clone(),
+            _ => Vec::new(),
+        };
         let event = match observation {
             Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
                 return Err(Error::Invalid(
@@ -726,6 +734,10 @@ impl Controller {
                 ));
             }
             Observation::Kernel(event) => event,
+            Observation::CiFailed { node, infra, .. } => Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra },
+            },
             Observation::WorkerReply {
                 node,
                 generation,
@@ -786,22 +798,37 @@ impl Controller {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf { fits, .. }) = mapped {
+                    if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                        fits,
+                        ..
+                    }) = mapped
+                    {
                         let paths = reply["files"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .map(|p| p.as_str().unwrap().to_owned())
                             .collect::<Vec<_>>();
-                        mapped = adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
-                            footprint: self.footprint(snapshot, world, node, &paths)?,
-                            fits,
-                        });
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                                footprint: self.footprint(snapshot, world, node, &paths)?,
+                                fits,
+                            });
                     }
                 }
                 commit
                     .rows
                     .push(put(document, node.0.to_string(), reply.clone()));
+                if role == "maker" {
+                    commit.rows.push(put(
+                        "maker_session",
+                        node.0.to_string(),
+                        json!({
+                            "attempt": n.attempt, "replanned": n.replanned,
+                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
+                        }),
+                    ));
+                }
                 if role == "ingest" {
                     commit.rows.push(put(
                         "goals",
@@ -929,63 +956,82 @@ impl Controller {
                 return Ok(None);
             }
         };
-        if let Event::Reply {
-            node,
-            generation,
-            reply,
-        } = event
-            && let Some(n) = world.nodes.get(node.0 as usize)
-            && (n.run == Some(generation) || n.job == Some(generation))
-            && n.generation == generation
-        {
-            let finding = match (n.phase, reply) {
-                (
-                    tl3_kernel::Phase::Checking,
-                    Reply::ChecksDone {
-                        report,
-                        pass,
-                        in_footprint,
-                    },
-                ) if !report || !pass || !in_footprint => Some((
-                    "failed_check",
-                    format!(
-                        "Attempt {}, round {}: checks reported report={report}, pass={pass}, in_footprint={in_footprint}.",
-                        n.attempt, n.round
-                    ),
-                )),
-                (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
-                    "review_finding",
-                    "The independent reviewer requested changes. See the supplied findings.".into(),
-                )),
-                (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
-                    "review_finding",
-                    commit
-                        .rows
-                        .iter()
-                        .find_map(|row| match row {
-                            RowChange::Put { table, value, .. } if table == "maker_replies" => {
-                                Some(value.to_string())
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| "The maker could not meet the goals.".into()),
-                )),
-                _ => None,
-            };
-            if let Some((kind, report)) = finding
-                && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+        let finding = match event {
+            Event::Reply {
+                node,
+                generation,
+                reply,
+            } if world.nodes.get(node.0 as usize).is_some_and(|n| {
+                (n.run == Some(generation) || n.job == Some(generation))
+                    && n.generation == generation
+            }) =>
             {
-                let inputs = materials.get("maker").unwrap_or(&materials);
-                if let Some(goals) = inputs["goals"].as_array() {
-                    let mut findings = self
-                        .store
-                        .worker_document(&node.0.to_string(), "maker_findings")?
-                        .unwrap_or(json!([]));
-                    findings.as_array_mut().ok_or(Error::Invalid("invalid maker findings"))?.push(json!({"kind": kind, "report": report, "goal_ids": goals.iter().map(|goal| goal["id"].clone()).collect::<Vec<_>>()}));
-                    commit
-                        .rows
-                        .push(put("maker_findings", node.0.to_string(), findings));
-                }
+                let n = &world.nodes[node.0 as usize];
+                let report = match (n.phase, reply) {
+                    (tl3_kernel::Phase::Checking, Reply::ChecksDone { report: true, pass, in_footprint })
+                        if !pass || !in_footprint => Some((findings::Kind::FailedCheck, match (pass, in_footprint) {
+                            (false, false) => "Tests failed and the change includes files outside the plan. The upstream supplied no test messages or changed paths.",
+                            (false, true) => "Tests failed. The upstream supplied no test names or failure messages.",
+                            _ => "The change includes files outside the plan. The upstream supplied no changed paths.",
+                        }.to_owned())),
+                    (tl3_kernel::Phase::Reviewing, Reply::ChangesRequested) => Some((
+                        findings::Kind::ReviewFinding,
+                        "The independent reviewer requested changes. No detailed review report was supplied.".into(),
+                    )),
+                    (tl3_kernel::Phase::Making, Reply::MakerCantMeet) => Some((
+                        findings::Kind::ReviewFinding,
+                        commit.rows.iter().find_map(|row| match row {
+                            RowChange::Put { table, value, .. } if table == "maker_replies" => Some(value.to_string()),
+                            _ => None,
+                        }).unwrap_or_else(|| "The maker could not meet the goals.".into()),
+                    )),
+                    _ => None,
+                };
+                report.map(|(kind, report)| (node, kind, report))
+            }
+            Event::Fact {
+                node,
+                fact: Fact::CiFailed { infra: false },
+            } if world
+                .nodes
+                .get(node.0 as usize)
+                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
+            {
+                Some((
+                    node,
+                    findings::Kind::FailedCheck,
+                    findings::ci_report(&ci_checks),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((node, kind, report)) = finding
+            && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
+        {
+            let inputs = materials.get("maker").unwrap_or(&materials);
+            if let Some(goals) = inputs["goals"].as_array() {
+                let mut findings = self
+                    .store
+                    .worker_document(&node.0.to_string(), "maker_findings")?
+                    .unwrap_or(json!([]));
+                let finding = findings::Finding {
+                    kind,
+                    report,
+                    goal_ids: goals
+                        .iter()
+                        .map(|goal| goal["id"].as_str().unwrap().to_owned())
+                        .collect(),
+                    failed_tests: Vec::new(),
+                    outside_paths: Vec::new(),
+                    ci_checks,
+                };
+                findings
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid maker findings"))?
+                    .push(serde_json::to_value(finding)?);
+                commit
+                    .rows
+                    .push(put("maker_findings", node.0.to_string(), findings));
             }
         }
         Ok(Some(event))

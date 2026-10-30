@@ -45,7 +45,10 @@
         "properties": {
           "kind": {"enum": ["failed_check", "review_finding"]},
           "report": {"$ref": "#/$defs/text"},
-          "goal_ids": {"$ref": "#/$defs/strings"}
+          "goal_ids": {"$ref": "#/$defs/strings"},
+          "failed_tests": {"type": "array", "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text"}}, "required": ["test", "message"], "additionalProperties": false}},
+          "outside_paths": {"$ref": "#/$defs/strings"},
+          "ci_checks": {"type": "array", "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text"}, "url": {"type": ["string", "null"]}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
         },
         "required": ["kind", "report", "goal_ids"], "additionalProperties": false
       }
@@ -63,8 +66,8 @@
     },
     "hindsight": {
       "type": "object",
-      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}},
-      "required": ["endpoint"], "additionalProperties": false
+      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}, "bank": {"$ref": "#/$defs/text"}},
+      "required": ["endpoint", "bank"], "additionalProperties": false
     },
     "fit_tokens": {"type": "integer", "minimum": 1},
     "context_size": {"type": "integer", "minimum": 1}

@@ -646,3 +646,67 @@ def test_missing_fix_session_fails_without_starting_fresh(tmp_path, maker_reques
     assert result.exit_code == 1
     assert all(event['event'] != 'reply' for event in result.events)
     assert git(root, 'rev-parse', 'HEAD') == before
+
+
+def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, monkeypatch, tmp_path):
+    root = Path(maker_request['worktree'])
+    base = git(root, 'rev-parse', 'HEAD')
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    model = ToolModel(responses=[AIMessage(**write_turn()), AIMessage(**turn(DONE))])
+    monkeypatch.setattr(runtime, 'create_model', lambda request: model)
+    commit = maker._commit
+
+    def crash_after_commit(*args):
+        commit(*args)
+        raise RuntimeError('crash after commit, before successful exit')
+
+    monkeypatch.setattr(maker, '_commit', crash_after_commit)
+    with pytest.raises(RuntimeError, match='crash after commit'):
+        runtime.run(maker_request, lambda event: None)
+    head = git(root, 'rev-parse', 'HEAD')
+    assert head != base
+    assert not session.exists(), 'a raised run must not save its history'
+    monkeypatch.setattr(maker, '_commit', commit)
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**turn(DONE))]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply'] == {**DONE, 'head': head}
+    assert git(root, 'rev-parse', 'HEAD^') == base
+    assert git(root, 'rev-parse', 'HEAD') == head
+    assert session.exists()
+
+
+@pytest.mark.parametrize('failure', ['schema', 'stream'])
+def test_failed_run_preserves_the_last_clean_session(maker_request, monkeypatch, tmp_path, failure):
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    reply = {'kind': 'cant_meet', 'report': 'Need another approach.'}
+    monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(**turn(reply))]))
+    runtime.run(maker_request, lambda event: None)
+    clean = session.read_bytes()
+    maker_request['resume_session'] = True
+    if failure == 'schema':
+        monkeypatch.setattr(runtime, 'create_model', lambda request: ToolModel(responses=[AIMessage(content='invalid json')]))
+    else:
+        class BrokenAgent:
+            def stream(self, *args, **kwargs):
+                yield {'model': {'messages': [AIMessage(content='partial history')]}}
+                raise ValueError('stream failed')
+        monkeypatch.setattr(runtime, 'build_agent', lambda *args, **kwargs: BrokenAgent())
+    with pytest.raises(ValueError):
+        runtime.run(maker_request, lambda event: None)
+    assert session.read_bytes() == clean
+    assert not session.with_suffix('.tmp').exists()
+
+
+def test_actionable_check_feedback_matches_the_input_contract(maker_request):
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{
+        'kind': 'failed_check', 'report': 'The greeting assertion failed and secret.py is outside the plan.',
+        'goal_ids': ['greeting'],
+        'failed_tests': [{'test': 'test_greeting.py::test_hello', 'message': "assert 'goodbye' == 'hello'"}],
+        'outside_paths': ['secret.py'],
+        'ci_checks': [{'name': 'greeting', 'summary': 'Greeting assertion failed.', 'url': 'https://example.invalid/check/1'}],
+    }]
+    validate('maker-input', maker_request['inputs'])

@@ -355,3 +355,9 @@ Planner replies also append code-generated `violations`. Leaf and split rule
 violations are successful evidence reports, so the controller can preserve the
 reason for the kernel's next planner run. Transport errors, malformed replies
 and unsafe file reads still fail the process. Models cannot supply `violations`.
+
+Maker recall uses `[hindsight].endpoint` and `[hindsight].bank` from controller
+config. The model supplies only a query. One 30-second deadline covers connection,
+headers and the entire response. Recall accepts at most 64 KiB of decoded response
+bytes, then returns at most 20 memories, 4,096 characters per memory, and
+15,000 JSON bytes across the returned memories.

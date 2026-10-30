@@ -18,6 +18,8 @@ pub struct Delivery {
     pub attempt: u8,
     pub round: u8,
     #[serde(default)]
+    pub replanned: bool,
+    #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
     pub question_context: Option<serde_json::Value>,
@@ -41,6 +43,11 @@ pub enum Observation {
         reply: serde_json::Value,
     },
     Kernel(Event),
+    CiFailed {
+        node: NodeId,
+        infra: bool,
+        checks: Vec<crate::findings::CiFailure>,
+    },
     Plan {
         node: NodeId,
         generation: u64,
@@ -102,6 +109,10 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    /// Reclaim evidence only after the controller has drained durable work.
+    fn retire(&mut self, _store: &mut tl3_store::Store) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -131,6 +142,12 @@ pub fn upstream(output: Out) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
+    pub(crate) fn retire(&mut self, store: &mut tl3_store::Store) -> Result<()> {
+        for adapter in self.0.values_mut() {
+            adapter.retire(store)?;
+        }
+        Ok(())
+    }
     pub fn register(&mut self, upstream: Upstream, executor: impl Executor + 'static) {
         self.0.insert(upstream, Box::new(executor));
     }

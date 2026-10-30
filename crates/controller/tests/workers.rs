@@ -118,6 +118,7 @@ fn delivery() -> Delivery {
         paths: vec![],
         attempt: 1,
         round: 0,
+        replanned: false,
         note: None,
         question_context: None,
     }
@@ -260,7 +261,15 @@ fn ingest_audit_simulation(
     root: &Path,
     config: &tl3_config::Config,
 ) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
-    struct IngestAudit(Supervisor, adapters::workers::Fake);
+    worker_simulation(root, config, true)
+}
+
+fn worker_simulation(
+    root: &Path,
+    config: &tl3_config::Config,
+    fake_planning: bool,
+) -> tl3_controller::Result<(tl3_controller::executor::Registry, WorkerOutputSource)> {
+    struct IngestAudit(Supervisor, adapters::workers::Fake, bool);
     impl Executor for IngestAudit {
         fn execute(
             &mut self,
@@ -269,10 +278,18 @@ fn ingest_audit_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make | Role::Plan),
+                    kind: EffectKind::StartRun(Role::Make),
                     ..
                 }
-            ) {
+            ) || (self.2
+                && matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::StartRun(Role::Plan),
+                        ..
+                    }
+                ))
+            {
                 self.1.execute(delivery)
             } else {
                 self.0.execute(delivery)
@@ -282,10 +299,18 @@ fn ingest_audit_simulation(
             if matches!(
                 delivery.output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make | Role::Plan),
+                    kind: EffectKind::StartRun(Role::Make),
                     ..
                 }
-            ) {
+            ) || (self.2
+                && matches!(
+                    delivery.output,
+                    Out::Effect {
+                        kind: EffectKind::StartRun(Role::Plan),
+                        ..
+                    }
+                ))
+            {
                 self.1.reconcile(delivery)
             } else {
                 self.0.reconcile(delivery)
@@ -297,7 +322,11 @@ fn ingest_audit_simulation(
     let source = supervisor.source();
     registry.register(
         tl3_controller::executor::Upstream::Workers,
-        IngestAudit(supervisor, adapters::workers::Fake::new(root)),
+        IngestAudit(
+            supervisor,
+            adapters::workers::Fake::new(root),
+            fake_planning,
+        ),
     );
     Ok((registry, source))
 }

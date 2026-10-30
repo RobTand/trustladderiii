@@ -106,7 +106,7 @@ same transaction as the kernel reply. The supervisor adds these to supplied
 findings on every subsequent attempt. Ingress supplies the brief slice and
 detailed findings; the supervisor supplies authoritative `plan.files`,
 `attempt`, `round`, context and fit limits, PrismaBuild settings, and Hindsight
-endpoint from the delivery and config. Other roles can also use named objects
+endpoint and bank from the delivery and config. Other roles can also use named objects
 in the materials record; the flat ingest/audit format still works.
 
 The maker uses `worktrees_root/HEX_OWNER/HEX_REPO/issue-ISSUE-node-NODE`, matching
@@ -115,7 +115,18 @@ It never uses an empty per-run directory as a checkout.
 Until #61 merges, the maker acceptance fixture creates that git worktree itself.
 Attempt N selects `models.maker[N - 1]` for both rounds. The kernel alone
 advances attempts. Each attempt has a conversation outside the worktree under
-`workers.runs/sessions`; round 1 resumes it, while a new attempt starts fresh.
+`workers.runs/sessions/NODE/plan-REPLANNED/attempt-N.json`. Round 1 resumes
+it. A fitting `needs_files` resumes at round 0 within the same attempt and plan.
+The resume decision checks the stored reply against the delivery attempt and
+re-plan flag, so a restart at attempt 1 after a re-plan starts fresh.
+A separate round checkpoint records the starting commit before the model runs.
+A retry counts commits since that checkpoint, including a commit left by a crash.
+Only clean completions save conversation history.
+
+After durable work drains, the supervisor deletes a closed node's session
+directory only when no pending effect or retained watch can reconcile that node.
+Open requests keep their sessions. The directory itself survives a crash as
+the cleanup queue, and the next drain repeats deletion. No clock triggers cleanup.
 Worker code commits a completed change and computes a conservative fit bound
 for additional files. The controller interns returned heads and requested paths
 before delivering kernel replies. It stores the latest reply as `maker_replies`.
@@ -126,10 +137,39 @@ The worktree and PrismaBuild adapters stay fake until #61 and #62 merge.
 Scenarios cover success, failed checks through both rounds of all three attempts
 and one re-plan, an actual commit outside the footprint, requested files,
 context exhaustion, unmet goals, invalid output, recovery, and stop.
+Feedback items have `kind`, `report` and `goal_ids`. Actionable evidence adds
+`failed_tests` with `test` and `message`, `outside_paths`, and `ci_checks` with
+`name`, `summary` and optional `url`. The report describes the failure in plain
+language. `Observation::CiFailed` persists named CI evidence in the same
+transaction as its kernel fact. A bare non-infrastructure CI fact still records
+feedback, explicitly stating when the upstream supplied no check details.
+Infrastructure failures and stale replies do not add maker findings.
+
+Production integration still requires:
+
+1. The controller's production material assembler must write the `maker` object
+   with `Store::put_worker_materials` before dispatch. There is no production
+   caller today. Live tracer #20 must connect the accepted brief, stable goal IDs,
+   and planner check plan to this store API. The supervisor supplies kernel fields
+   and deployment settings; it does not invent a brief or checks.
+2. Mergify #63, PR #69, must emit `Observation::CiFailed` with the failed check's
+   name and link or summary. Its current bare fact is supported but lacks details.
+3. PrismaBuild #62, PR #67, must map its parsed harness report into `failed_tests`
+   and the finding report, and compare `changed_paths` with the footprint to fill
+   `outside_paths`. The current fake reports only verdict booleans; it cannot
+   supply missing test messages or offending paths.
+4. Replace the acceptance worktree setup with #61's real adapter, PR #68, and the
+   check fake with #62's real adapter and result source, PR #67. Keep recorded
+   terminal records and CAS receipts in tests. Then run a real maker change
+   through the real harness on PrismaBuild and record one live trial from the
+   implementation session. Admitted tests consume records and never submit a
+   second PrismaBuild action.
+
 Generate all-host verification with
 `python3 crates/controller/tools/worker_review_manifest.py maker`, then submit
-the manifest with `pbcampaign.py --detach`. This also runs the Python worker and
-harness suites on each host. These tests use fixtures and never submit nested jobs.
+the manifest with `pbcampaign.py --detach`. The three pinned actions run maker, worker and supervisor scenarios.
+A separate portable action runs the Python worker and harness suites and
+`tools/verify.sh`. These tests use fixtures and never submit nested jobs.
 
 Run `WorkerOutputSource::run(sender)` on its own ingress thread. It emits
 `cli::Input::Observation` and writes progress to a separate store table. Until

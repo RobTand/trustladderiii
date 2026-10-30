@@ -96,6 +96,9 @@ impl Workers {
     }
 }
 impl Executor for Workers {
+    fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
+        self.real.retire(store)
+    }
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         if matches!(
             delivery.output,
@@ -201,7 +204,7 @@ fn registry(
 }
 
 fn requests(config: &tl3_config::Config) -> Vec<Value> {
-    let directory = config.workers.runs.join("sessions/0");
+    let directory = config.workers.runs.join("maker-requests");
     let mut result = fs::read_dir(directory)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -218,13 +221,59 @@ fn requests(config: &tl3_config::Config) -> Vec<Value> {
     result
 }
 
+struct CiFailureOnce {
+    fake: adapters::mergify::Fake,
+    failed: bool,
+    details: bool,
+}
+impl Executor for CiFailureOnce {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if !self.failed {
+            self.failed = true;
+            let observation = if self.details {
+                Observation::CiFailed {
+                    node: delivery.node(),
+                    infra: false,
+                    checks: vec![tl3_controller::findings::CiFailure {
+                        name: "greeting".into(),
+                        summary: "test_hello: expected hello, got goodbye".into(),
+                        url: Some("https://example.invalid/checks/42".into()),
+                    }],
+                }
+            } else {
+                Observation::Kernel(Event::Fact {
+                    node: delivery.node(),
+                    fact: tl3_kernel::Fact::CiFailed { infra: false },
+                })
+            };
+            Ok(Completion::confirmed(vec![observation]))
+        } else {
+            self.fake.execute(delivery)
+        }
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(delivery)
+    }
+}
+
 fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
     let root = tempfile::tempdir().unwrap();
     let (config, worktree, base) = fixture(settings, root.path(), mode);
-    let (registry, source) = registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+    let (mut adapters, source) =
+        registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+    if mode.starts_with("ci-") {
+        adapters.register(
+            Upstream::Mergify,
+            CiFailureOnce {
+                fake: adapters::mergify::Fake::new(&root.path().join("fakes")),
+                failed: false,
+                details: mode == "ci-failure",
+            },
+        );
+    }
     let mut controller = Controller::open(
         Store::open(settings).unwrap(),
-        registry,
+        adapters,
         Bootstrap::from_config(&config).unwrap(),
     )
     .unwrap();
@@ -264,6 +313,32 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         }
     }
     let world = controller.world().unwrap();
+    if world.nodes[0].phase.is_closed() {
+        while controller.drive_once().unwrap() {}
+        assert!(
+            !config.workers.runs.join("sessions/0").exists(),
+            "closed, drained requests must remove every saved conversation"
+        );
+        // A crash can leave deletion unfinished. Reopening repeats the same safe cleanup.
+        let leftover = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
+        fs::create_dir_all(leftover.parent().unwrap()).unwrap();
+        fs::write(&leftover, "old conversation").unwrap();
+        drop(controller);
+        let (registry, _) = registry(&config, &root.path().join("fakes"), &worktree, &base, fail);
+        controller = Controller::open(
+            Store::open(settings).unwrap(),
+            registry,
+            Bootstrap::from_config(&config).unwrap(),
+        )
+        .unwrap();
+        while controller.drive_once().unwrap() {}
+        assert!(!leftover.exists());
+    } else {
+        assert!(
+            config.workers.runs.join("sessions/0").exists(),
+            "an open request retains its conversations"
+        );
+    }
     let runs = requests(&config);
     if fail || mode == "outside" {
         assert!(world.nodes[0].replanned);
@@ -296,7 +371,7 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
             );
         }
         let session: Value = serde_json::from_slice(
-            &fs::read(config.workers.runs.join("sessions/0/attempt-3.json")).unwrap(),
+            &fs::read(config.workers.runs.join("sessions/0/plan-0/attempt-3.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -334,6 +409,27 @@ fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 .unwrap()
                 .contains("'hello'")
         );
+        if mode.starts_with("ci-") {
+            assert_eq!(runs.len(), 2);
+            assert_eq!(runs[1]["inputs"]["round"], 1);
+            let finding = &runs[1]["inputs"]["feedback"][0];
+            assert!(finding["report"].as_str().unwrap().contains("CI"));
+            if mode == "ci-failure" {
+                assert!(
+                    finding["report"]
+                        .as_str()
+                        .unwrap()
+                        .contains("test_hello: expected hello")
+                );
+                assert!(
+                    finding["report"]
+                        .as_str()
+                        .unwrap()
+                        .contains("https://example.invalid/checks/42")
+                );
+                assert_eq!(finding["ci_checks"][0]["name"], "greeting");
+            }
+        }
         if mode == "needs-files" {
             assert_eq!(runs.len(), 2);
             assert_eq!(runs[1]["resume_session"], true);
@@ -423,7 +519,72 @@ fn process_contract(settings: &tl3_config::Store) {
     ));
 }
 
+fn restart_after_replan(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (mut config, worktree, _) = fixture(settings, root.path(), "needs-files");
+    let mut delivery = super::delivery();
+    delivery.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Make),
+        head: None,
+    };
+    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    let completion = terminal(&mut supervisor, &delivery);
+    assert!(
+        matches!(completion.observations.as_slice(), [Observation::WorkerReply { reply, .. }] if reply["kind"] == "needs_files")
+    );
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("old-maker-session", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "maker_session".into(),
+        id: "0".into(),
+        value: json!({"attempt": 1, "replanned": false, "needs_files": true}),
+    });
+    store.commit(&commit).unwrap();
+    drop(supervisor);
+    delivery.key = "maker-after-replan".into();
+    delivery.generation += 1;
+    delivery.replanned = true;
+    config.workers.command[1] = "replanned".into();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    let completion = terminal(&mut supervisor, &delivery);
+    assert!(!failed(&completion));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(request["inputs"]["attempt"], 1);
+    assert_eq!(request["inputs"]["round"], 0);
+    assert_eq!(
+        request["resume_session"], false,
+        "a fitting needs_files from the previous plan cannot resume here"
+    );
+    let history: Value = serde_json::from_slice(
+        &fs::read(config.workers.runs.join("sessions/0/plan-1/attempt-1.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        history
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["type"] == "human")
+            .count(),
+        1
+    );
+    assert!(history.to_string().contains("replanned attempt"));
+    assert!(!history.to_string().contains("shared greeting is here"));
+    assert!(git(&worktree, &["show", "HEAD:greeting.py"]).contains("replanned attempt"));
+}
+
 pub(super) fn run(database: &mut Database) {
+    restart_after_replan(&database.create("maker_replan_restart"));
+    println!("test maker_restart_at_attempt_one_after_replan_starts_fresh ... ok");
     process_contract(&database.create("maker_process"));
     println!("test maker_recovery_invalid_output_and_stop ... ok");
     for (mode, fail) in [
@@ -434,6 +595,8 @@ pub(super) fn run(database: &mut Database) {
         ("unmet", false),
         ("out-of-room", false),
         ("needs-files", false),
+        ("ci-failure", false),
+        ("ci-fact", false),
     ] {
         let name = format!("maker_{}_{}", mode.replace('-', "_"), fail);
         scenario(&database.create(&name), mode, fail);
