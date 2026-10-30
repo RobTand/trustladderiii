@@ -164,6 +164,11 @@ pub(crate) struct Request {
     pub(crate) body: Vec<u8>,
 }
 impl Request {
+    #[cfg(all(test, loom))]
+    pub(crate) fn for_model(body: Vec<u8>, headers: Vec<(String, String)>) -> Self {
+        Self { method: "POST".into(), path: "/github/events".into(), body, headers }
+    }
+
     pub(crate) fn header(&self, name: &str) -> &str {
         self.headers
             .iter()

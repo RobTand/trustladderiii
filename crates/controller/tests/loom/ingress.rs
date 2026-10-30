@@ -152,14 +152,11 @@ impl Source for DurableDelivery {
         let secret = b"loom-fixture-secret";
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret).unwrap();
         mac.update(&body);
-        let request = http::Request {
-            method: "POST".into(), path: "/github/events".into(), body,
-            headers: vec![
+        let request = http::Request::for_model(body, vec![
                 ("X-GitHub-Delivery".into(), format!("durable-{}", self.number)),
                 ("X-GitHub-Event".into(), "issues".into()),
                 ("X-Hub-Signature-256".into(), format!("sha256={}", hex::encode(mac.finalize().into_bytes()))),
-            ],
-        };
+            ]);
         for duplicate in [false, true] {
             let (reply, response) = std::sync::mpsc::sync_channel(1);
             assert_eq!(receive_request(&mut self.store, secret, &request, &sender, reply), (202, false));
