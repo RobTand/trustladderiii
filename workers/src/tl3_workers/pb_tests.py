@@ -80,16 +80,16 @@ def _stage(worktree, root):
            "GIT_AUTHOR_NAME": "TL3", "GIT_AUTHOR_EMAIL": "tl3@example.invalid",
            "GIT_COMMITTER_NAME": "TL3", "GIT_COMMITTER_EMAIL": "tl3@example.invalid"}
     commands = [("init", "--quiet", "--template=")]
-    checkout = getattr(worktree, "test_checkout", None)
-    if checkout is not None:
+    maker_checkout = getattr(worktree, "test_checkout", None)
+    if maker_checkout is not None:
         # PB's snapshot parent proves this action belongs to the maker's checkout.
         # Keep the private harness input dirty so PB seals it above that parent.
         commands.extend([
-            ("fetch", "--no-tags", "--no-recurse-submodules", "--", str(checkout), "HEAD"),
+            ("fetch", "--no-tags", "--no-recurse-submodules", "--", str(maker_checkout), "HEAD"),
             ("update-ref", "HEAD", "FETCH_HEAD"),
         ])
     commands.append(("add", "--force", "--all"))
-    if checkout is None:
+    if maker_checkout is None:
         commands.append(("commit", "--quiet", "-m", "Freeze test input"))
     for args in commands:
         subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],

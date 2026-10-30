@@ -106,7 +106,10 @@ remain outages.
 Maker looks use the served checkout, including after recovery or a `RunFailed`
 retry. The private `run_tests` input retains that checkout's HEAD as its parent.
 PrismaBuild seals the staged files above that parent without changing the maker's
-HEAD, index or files.
+HEAD, index or files. The staged input fetches the checkout's full history,
+because PrismaBuild's snapshot needs it, so every `run_tests` copies that
+history. Its Git commands run with a fixed environment that inherits nothing
+from the worker's, so no `GIT_*` setting or hook can change what gets staged.
 
 Queued or claimed actions keep the agent alive. The controller registers their
 keys with PrismaBuild's bell source and disarms the agent's allowance timer.
