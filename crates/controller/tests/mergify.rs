@@ -1190,6 +1190,7 @@ fn retirement_does_not_block(settings: &tl3_config::Store, missing_upstream: boo
         old.output = Out::Effect {
             node: NodeId(0),
             seq: 1,
+            head: None,
             kind: EffectKind::SubmitChecks,
         };
     }
