@@ -36,6 +36,13 @@ const POINTS: &[&str] = &[
     "AfterDispatch",
     "BeforeReconcile",
     "AfterReconcile",
+    "ReceiveIngressBeforeCommit",
+    "ReceiveIngressAfterCommit",
+    "ConsumeIngressBeforeCommit",
+    "ConsumeIngressAfterCommit",
+    "ReceiveCatchUpBeforeCommit",
+    "ReceiveCatchUpAfterCommit",
+    "IngressApplied",
 ];
 const SCENARIOS: &[&str] = &[
     "merge",
@@ -149,7 +156,49 @@ fn child(args: &[String]) {
         clock.clone(),
     )
     .unwrap();
-    controller.intake(issue(seed)).unwrap();
+    let mut ingress = hooked_store(&settings, selected);
+    if ingress.ingress_cursor("crash-fixture").unwrap().is_none() {
+        let mut payload: Value = serde_json::from_str(include_str!(
+            "../../github/tests/fixtures/issues-labeled.json"
+        ))
+        .unwrap();
+        let issue = issue(seed);
+        payload["repository"]["owner"]["login"] = json!(issue.owner);
+        payload["repository"]["name"] = json!(issue.repo);
+        payload["installation"]["id"] = json!(issue.installation);
+        payload["sender"]["id"] = json!(issue.actor);
+        payload["issue"]["number"] = json!(issue.number);
+        payload["issue"]["title"] = json!(issue.title);
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        ingress
+            .receive_ingress("github-webhook", &issue.delivery, "issues", &bytes)
+            .unwrap();
+        let changes = serde_json::from_value(json!({
+            "repository":format!("{}/{}", issue.owner, issue.repo),
+            "issues":[payload["issue"]], "comments":[], "pull_requests":[],
+            "check_runs":[], "check_suites":[],
+            "labels":[[issue.number, {"id":7, "event":"labeled", "actor":payload["sender"],
+                "label":payload["label"], "created_at":"2026-10-30T01:00:00Z"}]]
+        }))
+        .unwrap();
+        let caught_up = tl3_controller::ingress::GitHubDelivery::CatchUp {
+            repository: bootstrap().repos[0].clone(),
+            changes: Box::new(changes),
+        };
+        ingress
+            .receive_catch_up(
+                "crash-fixture",
+                &[("catch-up".into(), serde_json::to_vec(&caught_up).unwrap())],
+                &json!({"through":1}),
+            )
+            .unwrap();
+    }
+    tl3_controller::ingress::drain(&mut controller).unwrap();
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        1,
+        "ingress lost or doubled request"
+    );
     for turn in 0..500 {
         clock.0.set(seed % 1_000_000_000 + turn * 86400);
         assert_eq!(controller.now(), clock.now());
@@ -239,6 +288,7 @@ struct Durable {
     snapshot: tl3_store::Snapshot,
     effects: Vec<tl3_store::Effect>,
     events: Vec<tl3_store::EventRecord>,
+    ingress: Value,
 }
 fn durable(settings: &tl3_config::Store) -> Durable {
     let mut store = Reader::open(settings).unwrap();
@@ -246,6 +296,7 @@ fn durable(settings: &tl3_config::Store) -> Durable {
         snapshot: store.load().unwrap(),
         effects: store.effects().unwrap(),
         events: store.events_after(Revision::ZERO, u32::MAX).unwrap(),
+        ingress: raw(settings).query_one("SELECT jsonb_build_object('deliveries', (SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY sequence), '[]') FROM tl3_ingress i), 'cursors', (SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY source), '[]') FROM tl3_ingress_cursors c), 'consumers', (SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY name), '[]') FROM tl3_ingress_consumers c))", &[]).unwrap().get(0),
     }
 }
 fn wait_for_disconnect(settings: &tl3_config::Store) {
@@ -331,6 +382,10 @@ fn run(
                         | "AfterDispatch"
                         | "BeforeReconcile"
                         | "AfterReconcile"
+                        | "ReceiveIngressAfterCommit"
+                        | "ConsumeIngressAfterCommit"
+                        | "ReceiveCatchUpAfterCommit"
+                        | "IngressApplied"
                 ) {
                     assert!(raw(settings).query_one("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state = 'idle in transaction')", &[]).unwrap().get::<_, bool>(0));
                 }
@@ -446,6 +501,35 @@ fn verify_cuts(
                 event.key
             );
         }
+    } else if selected.starts_with("ReceiveIngress")
+        || selected.starts_with("ConsumeIngress")
+        || selected.starts_with("ReceiveCatchUp")
+        || selected == "IngressApplied"
+    {
+        assert!(
+            Store::open(settings)
+                .unwrap()
+                .pending_ingress()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            Store::open(settings)
+                .unwrap()
+                .ingress_cursor("crash-fixture")
+                .unwrap(),
+            Some(json!({"through":1}))
+        );
+        let expected = if selected.starts_with("Receive") {
+            1
+        } else {
+            2
+        };
+        assert_eq!(
+            killed.len(),
+            expected,
+            "{selected}: ingress operations escaped injection"
+        );
     } else if selected.starts_with("Intern") {
         for entry in store.load().unwrap().interned {
             let kind = match entry.kind {

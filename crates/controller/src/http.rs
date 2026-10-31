@@ -1,12 +1,9 @@
+use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::{Error, Result};
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc,
-    },
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -27,10 +24,20 @@ pub(crate) struct Server {
 pub(crate) struct Control {
     address: SocketAddr,
     stopped: Arc<AtomicBool>,
+    #[cfg(all(test, loom))]
+    model_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl Control {
     pub(crate) fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.wake();
+    }
+    fn wake(&self) {
+        #[cfg(all(test, loom))]
+        if let Some(wake) = &self.model_wake {
+            wake();
+            return;
+        }
         // Wake blocking accept without polling when an owner shuts the server down.
         let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
     }
@@ -42,6 +49,8 @@ impl Server {
             control: Control {
                 address: listener.local_addr()?,
                 stopped: Arc::new(AtomicBool::new(false)),
+                #[cfg(all(test, loom))]
+                model_wake: None,
             },
             listener,
         })
@@ -107,12 +116,13 @@ fn accept_connections(
                 continue;
             }
         };
-        if open
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                (count < MAX_CONNECTIONS).then_some(count + 1)
-            })
-            .is_err()
-        {
+        let reserve = |count| (count < MAX_CONNECTIONS).then_some(count + 1);
+        #[cfg(not(loom))]
+        let reserved = open.try_update(Ordering::Relaxed, Ordering::Relaxed, reserve);
+        // Loom 0.7 still exposes the old name for this operation.
+        #[cfg(loom)]
+        let reserved = open.fetch_update(Ordering::Relaxed, Ordering::Relaxed, reserve);
+        if reserved.is_err() {
             drop(stream);
             continue;
         }
@@ -159,6 +169,16 @@ pub(crate) struct Request {
     pub(crate) body: Vec<u8>,
 }
 impl Request {
+    #[cfg(all(test, loom))]
+    pub(crate) fn for_model(body: Vec<u8>, headers: Vec<(String, String)>) -> Self {
+        Self {
+            method: "POST".into(),
+            path: "/github/events".into(),
+            body,
+            headers,
+        }
+    }
+
     pub(crate) fn header(&self, name: &str) -> &str {
         self.headers
             .iter()
@@ -459,3 +479,7 @@ mod tests {
         writer.join().unwrap();
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/http.rs"]
+mod loom_tests;

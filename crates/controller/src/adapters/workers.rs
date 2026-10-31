@@ -1,4 +1,5 @@
 use crate::executor::Output as Out;
+use crate::sync::{Arc, Mutex};
 use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
@@ -27,7 +28,6 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
 };
 use tl3_kernel::{EffectKind, Event, Reply};
 use tl3_store::{Snapshot, Store};

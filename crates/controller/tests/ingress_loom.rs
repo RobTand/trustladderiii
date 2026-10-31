@@ -1,5 +1,5 @@
-// Placeholder only: this runs no controller or production source code.
-// Ticket #71 covers the real ingress and worker source after #64 and #60 merge.
+// This channel model uses fixture sources; production-code models live in
+// tests/loom and run with verify-loom.sh.
 use loom::{
     sync::{
         Arc,

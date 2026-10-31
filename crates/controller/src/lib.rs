@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+#[cfg(all(loom, not(test)))]
+compile_error!("the loom feature is only supported for library unit tests");
+
+#[cfg(all(test, loom))]
+extern crate self as tl3_controller;
+
 pub mod adoption;
 pub mod findings;
 
@@ -11,6 +17,9 @@ mod goals;
 mod http;
 pub mod ingress;
 pub mod looks;
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/mod.rs"]
+mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
@@ -19,6 +28,7 @@ mod snapshot;
 pub mod status;
 pub mod status_web;
 pub mod steering;
+mod sync;
 
 use executor::{
     Completion, Delivery, Observation, Output as DeliveryOutput, Reconciliation, Registry,

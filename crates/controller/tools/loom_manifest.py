@@ -1,0 +1,46 @@
+"""Print the bounded loom, three-host crash, and workspace verification actions.
+
+Run from a clean final commit. Submit this output with the published pbcampaign.
+"""
+import json
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[3]
+env = {
+    "PATH": "/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin",
+    "RUSTUP_HOME": "/home/rob/.rustup",
+    "CARGO_HOME": "/home/rob/.cargo",
+    "KANI_HOME": "/home/rob/.kani",
+    "CARGO_BUILD_JOBS": "2",
+    "RUST_TEST_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "RAYON_NUM_THREADS": "1",
+    "TMPDIR": "/home/rob/tmp",
+    "TL3_SIM_SEED": "1450022",
+}
+rows = []
+for host in ["dl380g10", "sparky", "sparklina"]:
+    command = "cargo test -p tl3-prismabuild --lib --locked lookup_ && cargo test -p tl3-controller --test looks --locked -- --r5 && cargo test -p tl3-controller --test prismabuild --locked -- --r5 && bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
+    if host == "dl380g10":
+        command += " && for iteration in {1..50}; do TL3_LOOM_BOUND=2 cargo test -p tl3-controller --features loom --lib --locked loom_bell_ -- --test-threads=1 || exit; done"
+    rows.append({
+        "cwd": str(root), "tags": [host], "cpus": 2,
+        "demand": {"mem_gb": 6}, "env": env,
+        "priority": -10, "timeout_s": 3600,
+        "argv": ["bash", "-c", command],
+    })
+rows.append({
+    "cwd": str(root), "anywhere": True, "cpus": 2,
+    "demand": {"mem_gb": 6}, "env": env,
+    "priority": -10, "timeout_s": 3600,
+    "argv": ["bash", "-c", "bash crates/controller/tools/verify.sh && cargo tree -p tl3-controller --edges normal --prefix none > production-dependencies.txt && command -v grep >/dev/null && if grep '^loom v' production-dependencies.txt; then exit 1; fi"],
+})
+rows.append({
+    "cwd": str(root), "anywhere": True, "cpus": 2,
+    "demand": {"mem_gb": 6}, "env": env,
+    "priority": -10, "timeout_s": 3600,
+    "argv": ["/usr/bin/python3.14", "-c", "import subprocess\nfor mutant in 'ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage'.split():\n    subprocess.run(['/usr/bin/python3.14', 'crates/controller/tools/loom_mutants.py', mutant], check=True)\nsubprocess.run(['/usr/bin/python3.14', 'crates/prismabuild/tools/lookup_mutants.py'], check=True)"],
+})
+print(json.dumps(rows, indent=2))

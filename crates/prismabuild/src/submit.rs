@@ -1,4 +1,4 @@
-use crate::{ActionKey, ActionState, Error, PrismaBuild};
+use crate::{ActionKey, ActionState, Error, PrismaBuild, RecordRead};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -366,13 +366,16 @@ impl PrismaBuild {
     }
 
     async fn withdrawal_confirmation(&self, key: &ActionKey) -> Result<Option<Withdrawal>, Error> {
-        let state = match self.read(key).await?.map(|record| record.state) {
-            None => None,
-            Some(ActionState::Queued | ActionState::Claimed) => return Ok(None),
-            Some(ActionState::Finished { .. }) => Some("finished"),
-            Some(ActionState::Failed { .. }) => Some("failed"),
-            Some(ActionState::LeaseLost) => Some("lease_lost"),
-            Some(ActionState::Withdrawn) => Some("withdrawn"),
+        let state = match self.read(key).await? {
+            RecordRead::Absent => None,
+            RecordRead::Moving => return Ok(None),
+            RecordRead::Present(record) => match record.state {
+                ActionState::Queued | ActionState::Claimed => return Ok(None),
+                ActionState::Finished { .. } => Some("finished"),
+                ActionState::Failed { .. } => Some("failed"),
+                ActionState::LeaseLost => Some("lease_lost"),
+                ActionState::Withdrawn => Some("withdrawn"),
+            },
         };
         Ok(Some(Withdrawal {
             key: key.clone(),
