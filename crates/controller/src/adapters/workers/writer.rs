@@ -255,7 +255,7 @@ pub fn checked_draft(
                 };
                 message::check_prose(&written, policy).map(|_| text.text.clone())
             }
-            _ => Err(vec![Violation::MissingRequest]),
+            _ => Err(vec![Violation::WrongReplyShape]),
         };
         match checked {
             Ok(mut text) => {
@@ -325,6 +325,9 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                     )
                 });
             let problem = match violation {
+                Violation::WrongReplyShape => {
+                    "has the wrong reply shape for the requested message kind"
+                }
                 Violation::Mention(token) => {
                     return format!("Remove the user or team mention '{token}'.");
                 }
