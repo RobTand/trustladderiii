@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -55,22 +56,30 @@ class HostedTests(unittest.TestCase):
             hosted.aggregate({})
 
     def test_sharded_rust_still_enforces_budget_and_rejects_skips(self):
-        binaries = [{'name': 'first', 'custom': False, 'command': []},
-                    {'name': 'second', 'custom': False, 'command': []}]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            fixture = root / 'native.py'
+            original = ('print(\'{"type":"test","event":"ok","name":"one","exec_time":2}\')\n'
+                        'print(\'{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0}\')\n')
+            fixture.write_text(original)
+            binaries = [{'name': name, 'custom': False, 'command': [sys.executable, str(fixture)]}
+                        for name in ['first', 'second']]
             policy = root / rust_gate.POLICY
             policy.parent.mkdir(parents=True)
             policy.write_text(json.dumps({'seconds': 1, 'slow': {}}))
             with patch.object(rust_gate, 'ROOT', root), \
                  patch.object(rust_gate, 'baseline_policy', return_value={'seconds': 1, 'slow': {}}), \
-                 patch.object(rust_gate, 'collect_binaries', return_value=binaries), \
-                 patch.object(rust_gate, 'execute_binaries', return_value={'first::test': 2}) as execute:
+                 patch.object(rust_gate, 'collect_binaries', return_value=binaries):
                 with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
                     rust_gate.test_workspace(Path('Cargo.toml'), shard=(0, 2))
-                self.assertEqual(len(execute.call_args.args[0]), 1)
-                self.assertEqual(execute.call_args.args[0][0]['name'], 'first')
-                execute.side_effect = RuntimeError('failed or skipped')
+                fixture.write_text(original.replace('"exec_time":2', '"exec_time":0.25'))
+                reports = [rust_gate.test_workspace(Path('Cargo.toml'), shard=(index, 2))
+                           for index in range(2)]
+                self.assertEqual([set(report['tests']) for report in reports],
+                                 [{'first::one'}, {'second::one'}])
+                fixture.write_text(
+                    'print(\'{"type":"test","event":"ignored","name":"one"}\')\n'
+                    'print(\'{"type":"suite","event":"ok","passed":0,"ignored":1}\')\n')
                 with self.assertRaisesRegex(RuntimeError, 'skipped'):
                     rust_gate.test_workspace(Path('Cargo.toml'), shard=(0, 2))
 
