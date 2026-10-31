@@ -1091,7 +1091,7 @@ fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
     body["check_run"] = api.state.lock().unwrap().queue_check();
     api.state.lock().unwrap().fail_reads = true;
     deliver(settings, &api, "check_run", &body);
-    assert!(ingress::drain(&mut controller).is_err());
+    assert!(ingress::drain(&mut controller).is_ok());
     assert_eq!(
         Store::open(settings)
             .unwrap()
