@@ -537,9 +537,19 @@ fn main() {
         database.stop();
         return;
     }
-    notice_incidents::run(&mut database);
-    operations_and_delivery_log(&database.create("operations"));
-    println!("test operations_messages_and_missed_delivery_recovery ... ok");
+    let group = args
+        .get(1)
+        .and_then(|arg| arg.strip_prefix("--gate-group="));
+    assert!(group.is_none_or(|group| matches!(group, "notices" | "flow")));
+    if group != Some("flow") {
+        notice_incidents::run(&mut database);
+        operations_and_delivery_log(&database.create("operations"));
+        println!("test operations_messages_and_missed_delivery_recovery ... ok");
+    }
+    if group == Some("notices") {
+        database.stop();
+        return;
+    }
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
         match scenario {
             "quote" => steering::dropped_change_quote(),

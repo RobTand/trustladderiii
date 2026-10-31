@@ -116,10 +116,16 @@ def collect_binaries(manifest):
         custom = any(test.get('harness') is False and test['name'] == target['name']
                      for test in config.get('test', []))
         package = config['package']['name']
-        binaries.append({'name': f"{package}/{target['name']}",
-                         'command': [artifact['executable']], 'custom': custom})
+        if package == 'tl3-controller' and target['name'] == 'github':
+            for group in ['flow', 'notices']:
+                binaries.append({'name': f'{package}/github-{group}',
+                                 'command': [artifact['executable'], f'--gate-group={group}'],
+                                 'custom': custom})
+        else:
+            binaries.append({'name': f"{package}/{target['name']}",
+                             'command': [artifact['executable']], 'custom': custom})
     # Start the longest binaries first to avoid a serial tail at the end of the gate.
-    order = {'workers': 0, 'github': 1, 'publishing': 2, 'crash_safety': 3}
+    order = {'workers': 0, 'github-flow': 1, 'github-notices': 2, 'publishing': 3, 'crash_safety': 4}
     return sorted(binaries, key=lambda binary: (order.get(binary['name'].split('/')[-1], 4), binary['name']))
 
 
