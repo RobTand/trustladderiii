@@ -106,7 +106,7 @@ impl Worktrees {
                 let target = if removed.is_empty() {
                     source.clone()
                 } else {
-                    self.trim_commit(&journal, &base, &source, &removed)?
+                    self.trim_commit(&path, &journal, &base, &source, &removed)?
                 };
                 let record = TrimRecord {
                     path: path.as_os_str().as_encoded_bytes().to_vec(),
@@ -122,6 +122,10 @@ impl Worktrees {
                     complete: false,
                 };
                 // Pin the immutable target before the intent can authorize checkout changes.
+                self.clear_trim_lock(
+                    &self.repo,
+                    &format!("refs/tl3/scope/{}.lock", name.as_str()),
+                )?;
                 self.run(
                     &self.repo,
                     "pin scope trim",
@@ -158,25 +162,8 @@ impl Worktrees {
         hook(TrimBoundary::Recorded)?;
         // The durable clean preflight owns these files until completion. A killed Git
         // child may have left index.lock or only part of the target tree installed.
-        let lock = path_line(
-            &self
-                .run(
-                    &path,
-                    "trim index lock",
-                    [
-                        "rev-parse",
-                        "--path-format=absolute",
-                        "--git-path",
-                        "index.lock",
-                    ],
-                )?
-                .stdout,
-        )?;
-        match fs::remove_file(lock) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(Error::Io),
-        }
+        self.clear_trim_lock(&path, "index.lock")?;
+        self.clear_trim_lock(&self.repo, &format!("{}.lock", name.reference()))?;
         self.run(
             &path,
             "restore scoped checkout",
@@ -200,8 +187,26 @@ impl Worktrees {
         Ok(result)
     }
 
+    fn clear_trim_lock(&self, path: &Path, name: &str) -> Result<(), Error> {
+        let lock = path_line(
+            &self
+                .run(
+                    path,
+                    "trim recovery lock",
+                    ["rev-parse", "--path-format=absolute", "--git-path", name],
+                )?
+                .stdout,
+        )?;
+        match fs::remove_file(lock) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(Error::Io),
+        }
+    }
+
     fn trim_commit(
         &self,
+        checkout: &Path,
         journal: &Path,
         base: &CommitId,
         source: &CommitId,
@@ -212,7 +217,7 @@ impl Worktrees {
         let run = |args: &[&str], input: Option<&[u8]>| {
             success(
                 "build scoped tree",
-                self.execute_index(&self.repo, args, None, input, Some(&index))?,
+                self.execute_index(checkout, args, None, input, Some(&index))?,
             )
         };
         run(&["read-tree", source.as_str()], None)?;
