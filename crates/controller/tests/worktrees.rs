@@ -1212,6 +1212,17 @@ fn scratch_housekeeping_does_not_block_prepare(kind: &str) {
     );
     assert!(f.adapter().checkout(&prepare).join("shared.txt").exists());
     assert_eq!(git(&f.repo, &["rev-parse", reference]), head);
+    if kind == "locked" {
+        fs::remove_file(f.repo.join("refs/tl3/scratch/bad.lock")).unwrap();
+        let next = f.delivery(EffectKind::PrepareWorktree, 2);
+        kill(&f, &next, "after");
+        assert!(git(&f.repo, &["for-each-ref", "--format=%(refname)", reference]).is_empty());
+        let completion = found(f.adapter().reconcile(&next).unwrap());
+        assert!(completion.observations.iter().any(|observation|
+            serde_json::to_value(observation).unwrap()["ScratchPruned"]["reference"] == reference),
+            "a crash after ref deletion must retain metadata cleanup evidence");
+        same(&completion, &f.adapter().execute(&next).unwrap());
+    }
     println!("test scratch_housekeeping_{kind}_does_not_block_prepare ... ok");
 }
 
