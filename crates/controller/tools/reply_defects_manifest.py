@@ -17,16 +17,25 @@ env = {
     "TL3_TEST_UV": "/home/rob/.local/bin/uv",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env}
+def shell(command):
+    # The shared fleet TMPDIR has a small quota. Keep each action's scratch private
+    # and its path short enough for Unix sockets in the process scenarios.
+    return ["bash", "-ec", """
+tl3_test_tmp=$(mktemp -d /home/rob/tmp/tl3-reply.XXXXXX)
+trap 'rm -rf "$tl3_test_tmp"' EXIT
+export TMPDIR="$tl3_test_tmp"
+""" + command]
+
+
 rows = []
 if args.suite in {"hosts", "all"}:
     # The workers target includes every maker scenario. Steering lives in github.
-    rows.extend({**common, "tags": [host], "argv": [
-        "cargo", "test", "--locked", "-p", "tl3-controller", "--lib",
-        "--test", "workers", "--test", "publishing", "--test", "github",
-        "--test", "reproducing_rebase",
-    ]} for host in ("dl380g10", "sparky", "sparklina"))
+    rows.extend({**common, "tags": [host], "argv": shell(
+        "cargo test --locked -p tl3-controller --lib --test workers "
+        "--test publishing --test github --test reproducing_rebase"
+    )} for host in ("dl380g10", "sparky", "sparklina"))
 if args.suite in {"python", "all"}:
-    rows.append({**common, "anywhere": True, "argv": ["bash", "-ec", """
+    rows.append({**common, "anywhere": True, "argv": shell("""
 cargo build --locked -p tl3-controller --example tl3-deploy
 export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"
 if [ -x /usr/bin/python3.14 ]; then
@@ -35,16 +44,16 @@ else
     tl3_python=$(/home/rob/.local/bin/uv python find 3.14+gil)
 fi
 "$tl3_python" tools/ci/check.py python
-"""]})
+""")})
 if args.suite in {"workspace", "all"}:
     rows.append({**common, "anywhere": True,
-                 "argv": ["bash", "crates/controller/tools/verify.sh"]})
+                 "argv": shell("bash crates/controller/tools/verify.sh")})
 if args.suite == "red":
-    rows.append({**common, "anywhere": True, "argv": ["bash", "-c", """
+    rows.append({**common, "anywhere": True, "argv": shell("""
 status=0
 cargo test --locked -p tl3-controller --lib defects -- --nocapture || status=1
 /home/rob/.local/bin/uv run --locked --project workers --python 3.14+gil pytest -c workers/pyproject.toml workers/tests/test_planner.py workers/tests/test_maker.py harness/tests/test_node_id_vectors.py -q -k 'exact_node_ids or controller_selection' || status=1
 cargo test --locked -p tl3-controller --test workers || status=1
 exit "$status"
-"""]})
+""")})
 print(json.dumps(rows, indent=2))
