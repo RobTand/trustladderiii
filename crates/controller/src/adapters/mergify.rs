@@ -440,6 +440,22 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let (number, _) = enqueue(delivery)?;
+        let github = self
+            .clients
+            .get(&delivery.repository.installation)
+            .ok_or(Error::Invalid("missing Mergify installation client"))?;
+        self.runtime
+            .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        Ok(true)
+    }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        enqueue(delivery)?;
+        // Dispatch is synchronous and has ended. Stop the admission watch;
+        // ClosePr removes the label and closes the PR even if a write succeeded.
+        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+    }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
         for extension in ["intent", "applied", "reruns", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {

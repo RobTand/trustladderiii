@@ -74,6 +74,23 @@ pub(crate) struct Incident {
     pub post_key: Option<String>,
 }
 
+pub(crate) fn resolve_effect_incidents(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    resolved: impl Fn(&Incident) -> bool,
+) -> Result<()> {
+    for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
+        let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+        if incident.open && incident.effect.is_some() && resolved(&incident) {
+            incident.open = false;
+            commit
+                .rows
+                .push(put("incidents", row.id.clone(), json!(incident)));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "StoredSignature")]
 pub(crate) struct IncidentSignature {
@@ -1140,6 +1157,13 @@ impl Controller {
             json!({"retire_allowances":true}),
             snapshot,
         );
+        // Repair snapshots from before closed requests retired recovery incidents.
+        resolve_effect_incidents(snapshot, &mut commit, |incident| {
+            matches!(
+                world.nodes[incident.node.0 as usize].phase,
+                tl3_kernel::Phase::Closed(_)
+            )
+        })?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
             let state: AllowanceState = serde_json::from_value(row.value.clone())?;
             let incident_open = state.incident.as_ref().is_some_and(|id| {

@@ -325,6 +325,10 @@ pub trait Executor {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;
+    /// End a cancelled attempt. Confirmed leaves undoing any write to teardown.
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        self.reconcile(delivery)
+    }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         Ok(match self.reconcile(delivery)? {
             Reconciliation::Found(completion) => Look::Found(completion),
