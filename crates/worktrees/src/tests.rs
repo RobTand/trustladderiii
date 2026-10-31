@@ -1028,11 +1028,22 @@ fn scratch_refs_expire_only_after_thirty_days() {
         .trim()
         .parse::<u64>()
         .unwrap();
-    f.manager
-        .prune_scratch(saved + 30 * 24 * 60 * 60 - 1)
-        .unwrap();
+    assert!(
+        f.manager
+            .expired_scratch(saved + 30 * 24 * 60 * 60 - 1)
+            .unwrap()
+            .is_empty()
+    );
     assert!(f.manager.resolve_optional(&reference).unwrap().is_some());
-    f.manager.prune_scratch(saved + 30 * 24 * 60 * 60).unwrap();
+    let expired = f
+        .manager
+        .expired_scratch(saved + 30 * 24 * 60 * 60)
+        .unwrap();
+    assert_eq!(expired.len(), 1);
+    let (expired_ref, expected) = &expired[0];
+    assert_eq!(expired_ref, &reference);
+    f.manager.prune_scratch(expired_ref, expected).unwrap();
+    f.manager.prune_scratch(expired_ref, expected).unwrap();
     assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
     assert!(f.manager.branch_state(&f.name).unwrap().is_some());
 }

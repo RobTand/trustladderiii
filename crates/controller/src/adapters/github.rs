@@ -672,9 +672,19 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
                         })
                 })
                 .ok_or(Error::Invalid("incident id missing"))?;
-            Ok(Some(format!(
-                "Reply with \"clear incident {id}\" on https://github.com/{}/{}/issues/{} or on the request's issue after fixing the cause.",
+            let destination = format!(
+                "https://github.com/{}/{}/issues/{}",
                 delivery.repository.owner, delivery.repository.name, delivery.issue
+            );
+            let request = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["request"].as_str())
+                .and_then(|request| request.rsplit_once('('))
+                .and_then(|(_, url)| url.strip_suffix(')'))
+                .unwrap_or(&destination);
+            Ok(Some(format!(
+                "Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
             )))
         }
         Out::Notice {
