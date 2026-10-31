@@ -132,7 +132,7 @@ def run(model, request, worktree, emit):
     history = []
     session = Path(request["session_file"]) if "session_file" in request else None
     starting_head = _starting_head(request, session)
-    if session and request.get("resume_session"):
+    if session and session.exists() and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
     for completion in range(2):

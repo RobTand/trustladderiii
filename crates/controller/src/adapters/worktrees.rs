@@ -576,6 +576,11 @@ impl Served {
                             .map_err(adapter)?;
                     }
                     self.git.delete_local_branch(branch).map_err(adapter)?;
+                    if let Some(proposed) = &record.delivery.proposed {
+                        self.git
+                            .delete_pull_head(proposed.number)
+                            .map_err(adapter)?;
+                    }
                     reproducing::remove(self.git.common_directory(), branch)?;
                 }
                 if self.git.branch_state(branch).map_err(adapter)?.is_some()
@@ -588,6 +593,11 @@ impl Served {
                         .remote_head(branch, &self.remote, token.as_ref())
                         .map_err(adapter)?
                         .is_some()
+                {
+                    return Ok(None);
+                }
+                if let Some(proposed) = &record.delivery.proposed
+                    && self.git.has_pull_head(proposed.number).map_err(adapter)?
                 {
                     return Ok(None);
                 }

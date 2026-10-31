@@ -322,6 +322,12 @@ impl Controller {
     fn queue_adoption_question(&mut self, question: adoption::Clarification) -> Result<()> {
         let snapshot = self.store.load()?;
         let key = question.key();
+        if self
+            .store
+            .event_matches(&[format!("{key}:sent")], &json!({"question_sent":key}))?
+        {
+            return Ok(());
+        }
         if snapshot
             .rows
             .iter()
@@ -544,8 +550,21 @@ impl Controller {
         for row in snapshot
             .rows
             .iter()
-            .filter(|r| r.table == "adoption_questions" && r.value["done"] == false)
+            .filter(|r| r.table == "adoption_questions")
         {
+            if row.value["done"] == true {
+                let mut commit = Commit::new(
+                    format!("{}:retired", row.id),
+                    json!({"question_retired":row.id}),
+                    &snapshot,
+                );
+                commit.rows.push(RowChange::Delete {
+                    table: "adoption_questions".into(),
+                    id: row.id.clone(),
+                });
+                self.store.commit(&commit)?;
+                return Ok(true);
+            }
             let question = serde_json::from_value(row.value["question"].clone())?;
             hook(Boundary::BeforeDispatch, &row.id);
             let result = self
@@ -560,11 +579,10 @@ impl Controller {
                         json!({"question_sent":row.id}),
                         &snapshot,
                     );
-                    let mut value = row.value.clone();
-                    value["done"] = json!(true);
-                    commit
-                        .rows
-                        .push(put("adoption_questions", row.id.clone(), value));
+                    commit.rows.push(RowChange::Delete {
+                        table: "adoption_questions".into(),
+                        id: row.id.clone(),
+                    });
                     self.store.commit(&commit)?;
                     return Ok(true);
                 }

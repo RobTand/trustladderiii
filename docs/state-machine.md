@@ -530,10 +530,13 @@ maker credit. Failed checks and review findings use the existing fix rounds on
 TL3's branch, retaining the author's commits. Scope trimming is #145; splitting
 adopted work into leaves is #147.
 
-The PRD's remaining choices are **coordinator defaults, for Rob to check**:
-local closing keywords identify the linked issue; zero or several linked issues
-get one clarification; the head is pinned at label time and later pushes are
-ignored; the existing rebase machinery keeps up with main; protected paths count
+The two PRD **coordinator defaults, for Rob to check**, used by #143 are:
+
+- The closing keyword must identify exactly one issue. Zero or several linked issues get one clarification.
+- The proposed head never changes. It is pinned at label time and later pushes are ignored.
+
+The PRD's other choices are also **coordinator defaults, for Rob to check**:
+the existing rebase machinery keeps up with main; protected paths count
 as out of scope; and an author closing the original does not cancel the request.
 The PRD also proposes noting later pushes in the summary and relabelling to adopt
 again. These defaults do not expand #143 beyond its ticket. This tracer retains

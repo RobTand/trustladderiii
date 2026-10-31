@@ -1470,10 +1470,6 @@ pub enum Broken {
 }
 
 // proof map start
-pub const ADOPTION_PROOFS: [&str; 2] = [
-    "apply_adoption_at_most_once",
-    "apply_adoption_has_no_maker_credit",
-];
 /// The Kani proof that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.

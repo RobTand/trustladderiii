@@ -639,8 +639,21 @@ impl Worktrees {
         Ok(true)
     }
 
-    pub fn delete_pull_head(&self, _number: u64) -> Result<(), Error> {
-        todo!()
+    pub fn has_pull_head(&self, number: u64) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        Ok(self
+            .resolve_optional(&format!("refs/tl3/pulls/{number}"))?
+            .is_some())
+    }
+
+    pub fn delete_pull_head(&self, number: u64) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.run(
+            &self.repo,
+            "release pull head",
+            ["update-ref", "-d", &format!("refs/tl3/pulls/{number}")],
+        )?;
+        Ok(())
     }
 
     /// Fetch the base repository's pull ref and retain the label-time commit.
