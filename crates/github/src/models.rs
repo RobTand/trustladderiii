@@ -87,6 +87,8 @@ pub struct CheckRun {
     pub external_id: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
     pub app: Option<CheckApp>,
     pub output: Option<CheckOutput>,
 }

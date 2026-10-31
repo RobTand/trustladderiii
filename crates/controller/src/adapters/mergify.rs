@@ -80,11 +80,15 @@ pub enum Evidence {
     },
     CiFailed {
         check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
         head: String,
         infra: bool,
     },
     Conflict {
         check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
         head: String,
     },
     DequeuedByPerson {
@@ -122,7 +126,7 @@ impl QueueFact {
         )
     }
     pub(crate) fn identity(&self) -> String {
-        let evidence = match &self.evidence {
+        let mut evidence = match &self.evidence {
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed { check, .. } => format!("ci:{check}"),
             Evidence::Conflict { check, .. } => format!("conflict:{check}"),
@@ -130,6 +134,19 @@ impl QueueFact {
             Evidence::ClosedByPerson { event } => format!("closed:{event}"),
             Evidence::PushByOther { head } => format!("push:{head}"),
         };
+        // Mergify can reuse one check ID across successive queue attempts.
+        if let Evidence::CiFailed {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::Conflict {
+            completed_at: Some(time),
+            ..
+        } = &self.evidence
+        {
+            evidence.push(':');
+            evidence.push_str(time);
+        }
         format!(
             "{}/{}/{}/{}/{evidence}",
             self.repository.owner.to_ascii_lowercase(),
@@ -528,16 +545,19 @@ async fn queue_facts(
             }
             QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
                 check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                 head: pull.head.sha.clone(),
                 infra: tl3_mergify::ci_is_infrastructure(check),
             }),
             QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
                 check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                 head: pull.head.sha.clone(),
                 infra: true,
             }),
             QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
                 check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                 head: pull.head.sha.clone(),
             }),
             _ => None,
