@@ -214,6 +214,38 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
     }
 }
 
+#[test]
+fn generic_dequeue_on_a_dirty_pull_is_conflict() {
+    for (mergeable, mergeable_state) in [
+        (json!(false), json!("dirty")),
+        (Value::Null, json!("dirty")),
+        (json!(false), json!("unknown")),
+    ] {
+        let mut pr = fixture("failed", "pull");
+        pr["mergeable"] = mergeable;
+        pr["mergeable_state"] = mergeable_state;
+        let pr: PullRequest = serde_json::from_value(pr).unwrap();
+        let checks: Vec<CheckRun> = serde_json::from_value(fixture("dequeued", "checks")).unwrap();
+        assert_eq!(
+            observe(pr.clone(), &checks, &pr.head.sha).state,
+            QueueState::Conflict
+        );
+    }
+}
+
+#[test]
+fn generic_dequeue_on_a_clean_pull_retains_the_dequeue() {
+    let mut pr = fixture("failed", "pull");
+    pr["mergeable"] = json!(true);
+    pr["mergeable_state"] = json!("clean");
+    let pr: PullRequest = serde_json::from_value(pr).unwrap();
+    let checks: Vec<CheckRun> = serde_json::from_value(fixture("dequeued", "checks")).unwrap();
+    assert_eq!(
+        observe(pr.clone(), &checks, &pr.head.sha).state,
+        QueueState::Dequeued
+    );
+}
+
 async fn client(server: &MockServer) -> Mergify {
     Mock::given(method("POST"))
         .and(path("/app/installations/3/access_tokens"))

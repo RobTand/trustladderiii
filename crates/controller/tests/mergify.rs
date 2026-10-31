@@ -581,6 +581,90 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(api.state.lock().unwrap().pull["head"]["sha"], head);
 }
+fn generic_dequeue(settings: &tl3_config::Store, dirty: bool, lazy: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("dequeued", "checks");
+        state.pull["mergeable"] = if lazy { Value::Null } else { json!(!dirty) };
+        state.pull["mergeable_state"] = json!(if lazy {
+            "unknown"
+        } else if dirty {
+            "dirty"
+        } else {
+            "clean"
+        });
+    }
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    let event = parsed("check_run", body);
+    let translator = Translator::new(api.clients()).unwrap();
+    if lazy {
+        let reads = api.state.lock().unwrap().pull_reads;
+        assert!(
+            translator
+                .webhook(&event, &controller.snapshot().unwrap(), &bootstrap().repos)
+                .is_err(),
+            "unknown mergeability must defer the observation until the next look"
+        );
+        assert_eq!(
+            api.state.lock().unwrap().pull_reads - reads,
+            2,
+            "no polling for mergeability"
+        );
+        let mut state = api.state.lock().unwrap();
+        state.pull["mergeable"] = json!(!dirty);
+        state.pull["mergeable_state"] = json!(if dirty { "dirty" } else { "clean" });
+    }
+    let inputs = translator
+        .webhook(&event, &controller.snapshot().unwrap(), &bootstrap().repos)
+        .unwrap();
+    assert_eq!(
+        inputs.len(),
+        1,
+        "every resolved dequeue must report evidence"
+    );
+    for input in inputs {
+        ingress::apply(&mut controller, input).unwrap();
+    }
+    assert!(controller.drive_once().unwrap());
+    let facts = queue_facts(&mut controller);
+    assert_eq!(facts.len(), 1);
+    assert_kernel_facts(settings, 1);
+    if dirty {
+        assert!(facts[0]["evidence"].get("Conflict").is_some());
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Rebasing);
+    } else {
+        assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], true);
+        drain(&mut controller);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            2,
+            "retry once through the kernel"
+        );
+        {
+            let mut state = api.state.lock().unwrap();
+            state.checks = fixture("dequeued", "checks");
+            state.queue_check_mut()["id"] = json!(123697861572_u64);
+        }
+        drain(&mut controller);
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents"),
+            "a repeated generic dequeue must raise the usual incident"
+        );
+    }
+    println!("test generic_dequeue_dirty_{dirty}_lazy_{lazy} ... ok");
+}
+
 fn person_actions(settings: &tl3_config::Store, action: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -1699,6 +1783,20 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
 }
 
 fn main() {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .filter(|arg| arg.starts_with("--generic-dequeue-"))
+    {
+        let mut database = support::Database::start();
+        generic_dequeue(
+            &database.create("generic_dequeue"),
+            mode != "--generic-dequeue-clean",
+            mode == "--generic-dequeue-lazy",
+        );
+        database.stop();
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--permanent-github-read") {
         let mut database = support::Database::start();
         for (status, class) in [
@@ -1780,6 +1878,13 @@ fn main() {
     terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
     println!("test merged, catch-up, restart and unapproved head ... ok");
     database.restart();
+    for (dirty, lazy) in [(true, false), (false, false), (true, true)] {
+        generic_dequeue(
+            &database.create(&format!("generic_{dirty}_{lazy}")),
+            dirty,
+            lazy,
+        );
+    }
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
     queue_failure(&database.create("conflict"), true, false);
@@ -1791,5 +1896,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("45 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("48 Mergify scenarios passed; no skips; no live upstream calls");
 }

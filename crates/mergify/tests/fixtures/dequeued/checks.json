@@ -1,0 +1,19 @@
+[
+  {
+    "id": 123697861571,
+    "name": "Mergify Merge Queue",
+    "head_sha": "4a57d273120a83951bcf0a2bc4174878fb3b97ce",
+    "external_id": "queue:62987",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Dequeued",
+      "summary": "Queue conditions are not satisfied\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6ImRlcXVldWVkIiwiZGVxdWV1ZV9yZWFzb24iOnsiY29kZSI6IlBSX0RFUVVFVUVEIn19\"></span>",
+      "text": null
+    }
+  }
+]
