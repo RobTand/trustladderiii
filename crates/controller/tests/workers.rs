@@ -220,6 +220,11 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
     assert_eq!(
+        request["trace"],
+        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0}),
+        "worker metadata must identify its request without changing role inputs"
+    );
+    assert_eq!(
         request["inputs"]["issue"]["body"],
         "Repair the delivered result."
     );

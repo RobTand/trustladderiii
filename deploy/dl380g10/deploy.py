@@ -362,11 +362,48 @@ def start(home):
     print("Postgres and status enabled. tl3d is gated until production startup and model setup are ready.")
 
 
+def mlflow_health(home):
+    try:
+        data = tomllib.loads((home / ".config/tl3/mlflow.toml").read_text())["mlflow"]
+        from urllib.parse import urlsplit
+        address = urlsplit(data["tracking_uri"])
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=3)
+        try:
+            connection.request("GET", "/health")
+            ok = connection.getresponse().status == 200
+        finally:
+            connection.close()
+    except (OSError, KeyError, ValueError):
+        ok = False
+    print(f"{'OK' if ok else 'MISSING'} MLflow HTTP")
+    return ok
+
+
+def install_mlflow(home):
+    root, config, _ = paths(home)
+    private_dir(root / "mlflow")
+    private_dir(root / "mlflow/artifacts")
+    for name in ("pyproject.toml", "uv.lock"):
+        write_file(root / "mlflow" / name, (HERE / "mlflow" / name).read_bytes())
+    run([home / ".local/bin/uv", "sync", "--locked", "--no-dev", "--project", root / "mlflow"])
+    write_file(root / "deploy/mlflow-server.py", (HERE / "mlflow-server.py").read_bytes())
+    destination = config / "mlflow.toml"
+    if not destination.exists():
+        write_file(destination, b'[mlflow]\ntracking_uri = "http://192.168.1.107:5033"\nexperiment = "tl3"\n')
+    unit_dir = home / ".config/systemd/user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(HERE / "units/tl3-mlflow.service", unit_dir / "tl3-mlflow.service")
+    write_file(unit_dir / "tl3d.service.d/mlflow.conf",
+               b'[Service]\nEnvironment=TL3_MLFLOW_CONFIG=%h/.config/tl3/mlflow.toml\n')
+    run(["systemctl", "--user", "daemon-reload"])
+    print("MLflow 3.17.2 installed. Controller tracing takes effect on its next start.")
+
+
 def check(home):
     root, config, _ = paths(home)
-    missing = 0
+    missing = int(not mlflow_health(home))
     managed = (root / "deploy/managed-tunnel").exists()
-    units = ["tl3-postgres", "tl3d", "tl3-status"]
+    units = ["tl3-postgres", "tl3d", "tl3-status", "tl3-mlflow"]
     if managed:
         units.append("tl3-cloudflared")
     else:
@@ -429,7 +466,7 @@ def check(home):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults"])
+    parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults", "install-mlflow"])
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
@@ -443,6 +480,8 @@ def main():
         return check(args.home)
     if args.command == "service":
         service(args.home, args.service)
+    elif args.command == "install-mlflow":
+        install_mlflow(args.home)
     elif args.command == "model-defaults":
         model_defaults(args.home)
     elif args.command == "install":

@@ -337,6 +337,11 @@ impl Supervisor {
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
             "hindsight_key_file": self.hindsight.api_key_file,
+            "trace": {
+                "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+                "issue": delivery.issue, "request": node,
+                "attempt": delivery.attempt, "round": delivery.round,
+            },
         });
         if role == "maker" {
             request["session_file"] = json!(

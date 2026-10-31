@@ -101,18 +101,21 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
 
 
 def run(request, emit: Callable[[dict], None]):
-    summary = Summary(request)
-    token = current.set(summary)
-    summary.save()
-    reply, error = None, None
-    try:
-        reply = _run(request, emit)
-    except BaseException as exc:
-        error = exc
-        raise
-    finally:
-        summary.finish(reply, error)
-        current.reset(token)
+    from tl3_workers.tracing import observe
+
+    with observe(request):
+        summary = Summary(request)
+        token = current.set(summary)
+        summary.save()
+        reply, error = None, None
+        try:
+            reply = _run(request, emit)
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            summary.finish(reply, error)
+            current.reset(token)
 
 
 def _run(request, emit):

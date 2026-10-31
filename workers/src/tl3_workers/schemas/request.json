@@ -3,6 +3,8 @@
   "$id": "https://trustladderiii.invalid/workers/protocol-1/request.json",
   "type": "object",
   "properties": {
+    "mlflow": {"type": ["object", "null"]},
+    "trace": {"type": "object"},
     "protocol": {
       "const": 1,
       "type": "integer"

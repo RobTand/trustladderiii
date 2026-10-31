@@ -409,3 +409,31 @@ config. The model supplies only a query. One 30-second deadline covers connectio
 headers and the entire response. Recall accepts at most 64 KiB of decoded response
 bytes, then returns at most 20 memories, 4,096 characters per memory, and
 15,000 JSON bytes across the returned memories.
+
+## MLflow traces
+
+Set `TL3_MLFLOW_CONFIG` to an absolute TOML path containing an `[mlflow]`
+section with `tracking_uri` and `experiment`. Deployment uses
+`~/.config/tl3/mlflow.toml`. This worker-only file lets tracing be configured
+without changing controller state or making server availability a startup gate.
+The request envelope can also supply `mlflow` settings and `trace` correlation
+metadata. Neither enters role inputs or prompts. The supervisor supplies repo,
+issue, request, attempt and round. The runtime adds node, generation, role,
+model, effort, outcome and input, output and total token counts.
+
+MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
+A pinned SDK adapter replaces its network exporter with in-memory capture.
+Only span IDs, parent IDs, times, types, status codes, numeric token counts and
+explicit correlation tags reach the export child. Prompts, model replies,
+tool inputs and outputs, exception messages, resource attributes and provider
+metadata are omitted. This also excludes echoed secrets and request headers.
+
+One child exports the sanitized protobuf to the configured experiment. It uses
+no retries, one-second HTTP timeouts and a five-second process alarm. The worker
+never waits for that child. Export failures and initialization failures log a
+fixed diagnostic to stderr, without exception details, and preserve the role's
+result. Traces can be lost during an outage or if the supervisor kills a run.
+There is no retry backlog. Runs exceeding 4,096 spans drop their trace and log
+that same diagnostic. Deep Agents remains the engine. Stored traces aren't
+pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
+space.
