@@ -57,7 +57,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             .expect("missing Actions write must raise a setup incident");
         assert!(incident.value.to_string().contains("Actions: Read and write"), "{incident:?}");
         assert_eq!(api.state.lock().unwrap().posts, 1);
-        assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingRob(_)));
+        assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingRob));
         return;
     }
     if matches!(mode, "otherhead" | "optional") {
@@ -74,6 +74,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         drain(&mut controller);
     }
     assert_eq!(api.state.lock().unwrap().reruns, 1, "rerun the cancelled head workflow once");
+    assert!(!api.state.lock().unwrap().queued_before_rerun, "rerun must precede the next queue label write");
     assert_eq!(api.state.lock().unwrap().posts, 2, "re-enqueue after rerun acceptance");
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     {

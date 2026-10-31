@@ -94,6 +94,7 @@ struct State {
     rerun_status: u16,
     rerun_lost_response: bool,
     required: bool,
+    queued_before_rerun: bool,
 }
 impl State {
     fn new() -> Self {
@@ -126,6 +127,7 @@ impl State {
             rerun_status: 201,
             rerun_lost_response: false,
             required: true,
+            queued_before_rerun: false,
         }
     }
     fn checks(&self) -> Value {
@@ -241,7 +243,7 @@ impl Respond for Api {
             ("POST", "/repos/owner/sandbox/issues/100/labels") => {
                 assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap(), json!({"labels":["tl3-queue"]}));
                 if state.workflow.as_ref().is_some_and(|run| run["head_sha"] == state.pull["head"]["sha"]) && !state.head_checks.is_empty() && state.required {
-                    assert_eq!(state.reruns, 1, "rerun must precede the next queue label write");
+                    state.queued_before_rerun |= state.reruns == 0;
                 }
                 state.posts += 1;
                 let changed = !state.label;
