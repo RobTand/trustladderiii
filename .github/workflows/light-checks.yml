@@ -23,7 +23,11 @@ env:
 
 jobs:
   rust:
-    name: Rust
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' ||
+           startsWith(github.head_ref, 'mergify/merge-queue/') ||
+           contains(github.event.pull_request.labels.*.name, 'ci')) &&
+           'Rust' || 'Rust (not requested)' }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
@@ -70,7 +74,11 @@ jobs:
         run: python tools/ci/check.py rust
 
   python:
-    name: Python
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' ||
+           startsWith(github.head_ref, 'mergify/merge-queue/') ||
+           contains(github.event.pull_request.labels.*.name, 'ci')) &&
+           'Python' || 'Python (not requested)' }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&

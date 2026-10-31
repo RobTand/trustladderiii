@@ -40,8 +40,9 @@ Sources, accessed 2026-10-31:
 
 Queue drafts always run both jobs. Ordinary PRs allocate no runners by default.
 GitHub still creates a workflow record with skipped jobs because its PR event
-filters cannot select a head-branch prefix. Skipped ordinary-PR checks are not
-evidence for a batch. A `ci` label opts a PR into checks on subsequent pushes;
+filters cannot select a head-branch prefix. Skipped jobs have names ending in
+`(not requested)`, so they cannot satisfy the required `Rust`/`Python` checks.
+A `ci` label opts a PR into checks on subsequent pushes;
 adding it starts checks immediately. `workflow_dispatch` runs both jobs at
 the selected ref. Remove `ci` after optional debugging.
 
