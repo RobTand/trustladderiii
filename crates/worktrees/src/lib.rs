@@ -1391,5 +1391,9 @@ struct Invocation {
     stderr: Vec<u8>,
 }
 
+fn recovery_error(_error: Error) -> Error {
+    todo!("preserve transient recovery failures")
+}
+
 #[cfg(test)]
 mod tests;
