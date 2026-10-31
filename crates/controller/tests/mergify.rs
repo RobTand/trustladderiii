@@ -393,6 +393,69 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
+fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    let id = api.state.lock().unwrap().queue_check()["id"].clone();
+    for episode in 1..=2 {
+        {
+            let mut state = api.state.lock().unwrap();
+            state.checks = fixture(if generic { "dequeued" } else { "interrupted" }, "checks");
+            state.queue_check_mut()["id"] = id.clone();
+            state.queue_check_mut()["completed_at"] =
+                json!(format!("2026-10-31T16:31:0{episode}Z"));
+            state.pull["mergeable"] = json!(true);
+            state.pull["mergeable_state"] = json!("clean");
+        }
+        drain(&mut controller);
+        if episode == 1 {
+            assert_eq!(
+                api.state.lock().unwrap().posts,
+                2,
+                "the first dequeue retries once"
+            );
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            {
+                let mut state = api.state.lock().unwrap();
+                state.queue_check_mut()["id"] = id.clone();
+            }
+            let fact = serde_json::from_value(queue_facts(&mut controller)[0].clone()).unwrap();
+            controller
+                .observe(
+                    "dequeue-redelivery",
+                    tl3_controller::executor::Observation::Queue(fact),
+                )
+                .unwrap();
+            drain(&mut controller);
+            assert!(
+                !controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "incidents"),
+                "redelivery must not count as a second dequeue"
+            );
+        }
+    }
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "a second dequeue must not retry again"
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"),
+        "a second dequeue on a reused check ID must raise the usual incident"
+    );
+    println!("test reused_check_dequeues_twice_generic_{generic} ... ok");
+}
+
 fn observation_race(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -1901,6 +1964,14 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--reused-check") {
+        let mut database = support::Database::start();
+        let generic = std::env::args().nth(2).as_deref() == Some("generic");
+        reused_check_dequeues_twice(&database.create("reused_check"), generic);
+        database.stop();
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--observation-race") {
         let mut database = support::Database::start();
         let mode = std::env::args().nth(2).unwrap();
@@ -2064,5 +2135,8 @@ fn main() {
     ] {
         observation_race(&database.create(&format!("race_{mode}")), mode);
     }
-    println!("62 Mergify scenarios passed; no skips; no live upstream calls");
+    for generic in [false, true] {
+        reused_check_dequeues_twice(&database.create(&format!("reused_{generic}")), generic);
+    }
+    println!("64 Mergify scenarios passed; no skips; no live upstream calls");
 }
