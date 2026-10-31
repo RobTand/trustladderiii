@@ -9,6 +9,6 @@ args=(--rm --pull=never --name "circleci-fleet-$slot" --cpus=4 --memory=6g --mem
       --pids-limit=1024 --security-opt=no-new-privileges --cap-drop=all
       --cap-add=chown --cap-add=setuid --cap-add=setgid --cap-add=dac_override
       --volume "$config:/run/circleci/runner.yaml:ro"
-      --volume "circleci-fleet-cache-$slot:/home/runner/.cache:U")
+      --volume "circleci-fleet-cache-$slot:/home/runner/.cache")
 if [[ -n ${CIRCLECI_CPUSET:-} ]]; then args+=(--cpuset-cpus "$CIRCLECI_CPUSET"); fi
 exec podman run "${args[@]}" "$CIRCLECI_IMAGE"
