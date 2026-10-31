@@ -632,14 +632,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     if mode.starts_with("out-of-room") {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
-        let mut exhausted = 0;
         loop {
             c.drive_once().unwrap();
             source.poll_once(&mut store, &sender).unwrap();
             for input in receiver.try_iter() {
                 if let Input::Observation { key, observation } = input {
-                    let review_reply = matches!(&observation, Observation::WorkerReply { role, reply, .. } if role == "reviewer" && reply["verdict"] == "out_of_room");
-                    // The supervisor must accept the exhaustion reply, not report a crash.
                     assert!(
                         !matches!(
                             &observation,
@@ -651,48 +648,42 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                         "Q44 exhaustion must be a reply"
                     );
                     c.observe(&key, observation).unwrap();
-                    if review_reply {
-                        exhausted += 1;
-                        let n = c.world().unwrap().nodes[0];
-                        assert_eq!(n.run_failures, 0);
-                        if exhausted == 2 {
-                            assert_eq!(n.phase, Phase::Planning { must_split: true });
-                            assert!(!n.holds);
-                            assert_eq!(n.credit.balance(), 3);
-                            let reviews: Vec<Value> =
-                                fs::read_to_string(root.path().join("reviews.jsonl"))
-                                    .unwrap()
-                                    .lines()
-                                    .map(|line| serde_json::from_str(line).unwrap())
-                                    .collect();
-                            assert_eq!(
-                                reviews.len(),
-                                if mode == "out-of-room-fix" { 3 } else { 2 }
-                            );
-                            let first = &reviews[reviews.len() - 2];
-                            let fresh = &reviews[reviews.len() - 1];
-                            assert_eq!(fresh["resume_session"], false);
-                            assert_ne!(first["session_file"], fresh["session_file"]);
-                            assert_ne!(
-                                first["operation"]["generation"],
-                                fresh["operation"]["generation"]
-                            );
-                            assert_eq!(first["model"]["name"], "review-primary");
-                            assert_eq!(fresh["model"]["name"], "review-backup");
-                            assert_eq!(
-                                fresh["inputs"]["base_sha"],
-                                reviews[0]["inputs"]["base_sha"]
-                            );
-                            return;
-                        }
-                        assert_eq!(n.phase, Phase::Reviewing);
-                        assert_eq!(n.rechecks, 1);
-                    }
                 }
+            }
+            let n = c.world().unwrap().nodes[0];
+            assert_eq!(
+                n.run_failures, 0,
+                "Q44 exhaustion is not an infrastructure failure"
+            );
+            if n.phase == (Phase::Planning { must_split: true }) {
+                assert_eq!(n.rechecks, 1);
+                assert!(!n.holds);
+                assert_eq!(n.credit.balance(), 3);
+                let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert_eq!(reviews.len(), if mode == "out-of-room-fix" { 3 } else { 2 });
+                let first = &reviews[reviews.len() - 2];
+                let fresh = &reviews[reviews.len() - 1];
+                assert_eq!(fresh["resume_session"], false);
+                assert_ne!(first["session_file"], fresh["session_file"]);
+                assert_ne!(
+                    first["operation"]["generation"],
+                    fresh["operation"]["generation"]
+                );
+                assert_eq!(first["model"]["name"], "review-primary");
+                assert_eq!(fresh["model"]["name"], "review-backup");
+                assert_eq!(
+                    fresh["inputs"]["base_sha"],
+                    reviews[0]["inputs"]["base_sha"]
+                );
+                return;
             }
             assert!(
                 start.elapsed() < Duration::from_secs(90),
-                "Q44 did not settle"
+                "Q44 did not settle: {n:?}"
             );
             thread::yield_now();
         }

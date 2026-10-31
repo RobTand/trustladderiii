@@ -789,3 +789,22 @@ fn q44_second_exhaustion_without_credit_keeps_the_split_continuation() {
     assert_eq!(run.phase(), Phase::Planning { must_split: true });
     assert_eq!(run.credit(), 0);
 }
+
+#[test]
+fn q44_fix_round_keeps_the_fresh_reviewer_and_a_new_attempt_resets_it() {
+    let mut run = q44_review();
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::ChangesRequested);
+    run.reply(Reply::MakerDone { head: HeadId(2) });
+    run.reply(CHECKS_PASS);
+    assert!(run.node().review_restarted);
+    run.reply(Reply::ChangesRequested);
+    assert_eq!(run.node().attempt, 2);
+    assert!(!run.node().review_restarted);
+    run.reply(Reply::MakerDone { head: HeadId(3) });
+    run.reply(CHECKS_PASS);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::Reviewing);
+    assert!(run.node().review_restarted);
+    assert_eq!(run.node().rechecks, 2);
+}
