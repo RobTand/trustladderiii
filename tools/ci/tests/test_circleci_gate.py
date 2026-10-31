@@ -67,6 +67,7 @@ class SharedGate(unittest.TestCase):
                 return '{"rust-suites":{"fixture":{}}}'
             if args[:3] == ("cargo", "nextest", "run"):
                 return ""
+            kwargs.setdefault("cwd", self.root)
             return original_run(*args, **kwargs)
 
         self.stack.enter_context(patch.object(ci.check, "run", side_effect=discovery))
