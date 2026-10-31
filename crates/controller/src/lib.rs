@@ -1389,13 +1389,23 @@ impl Controller {
             }
         }
         for row in &snapshot.rows {
-            if row.table == "check_reports"
+            let discard_rebase_context = row.table == "rebase_conflicts"
                 && row
                     .id
-                    .split(':')
-                    .next()
-                    .and_then(|id| id.parse::<u64>().ok())
-                    .is_some_and(|id| closed.contains(&NodeId(id)))
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|id| world.nodes.get(id))
+                    .is_some_and(|node| {
+                        node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    });
+            if discard_rebase_context
+                || row.table == "check_reports"
+                    && row
+                        .id
+                        .split(':')
+                        .next()
+                        .and_then(|id| id.parse::<u64>().ok())
+                        .is_some_and(|id| closed.contains(&NodeId(id)))
             {
                 commit.rows.push(RowChange::Delete {
                     table: row.table.clone(),
