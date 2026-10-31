@@ -1888,7 +1888,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
             .into(),
     );
     delivery.note = Some(format!(
-        "{} Request: https://github.com/owner/sandbox/issues/12",
+        "{} Request: `https://github.com/owner/sandbox/issues/12`",
         delivery.note.unwrap()
     ));
     assert!(
@@ -1924,7 +1924,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     let text = body["body"].as_str().unwrap();
     for expected in [
         "Fix a greeting",
-        "https://github.com/owner/sandbox/issues/12",
+        "`https://github.com/owner/sandbox/issues/12`",
         "GitHub",
         "refused access",
     ] {
