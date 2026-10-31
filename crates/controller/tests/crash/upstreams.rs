@@ -157,6 +157,7 @@ impl Executor for Fake {
         });
         let mut completion = if failed && matches!(self.scenario.as_str(), "retry" | "permanent") {
             Completion {
+                failure_class: None,
                 progress: None,
                 ack: if self.scenario == "retry" {
                     Ack::Retryable
@@ -388,6 +389,7 @@ pub fn verify_contracts() {
             replanned: false,
             checks: None,
             job_generation: None,
+            marker_key: None,
             note: None,
             question: None,
             question_context: None,

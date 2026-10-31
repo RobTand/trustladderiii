@@ -110,6 +110,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         attempt: 1,
         round: 0,
         replanned: false,
+        marker_key: None,
         note: None,
         steering: None,
         request_text: None,
