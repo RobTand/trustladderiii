@@ -21,8 +21,8 @@ tool adapter as well as a different bell endpoint.
   threads within the declared demand. Native library threads default to one.
   Caller environment keys starting with `PRISMABUILD_ACTION_PROGRESS_` are
   rejected because PB owns the progress channel.
-- `read(&ActionKey)` returns the current queue snapshot or `None` for an absent
-  key. It maps ready, claimed, done, failed, lease-lost and withdrawn records.
+- `read(&ActionKey)` returns `RecordRead::Present` with the current queue snapshot,
+  `Moving` for a captured record, or `Absent` for an absent key. It maps ready, claimed, done, failed, lease-lost and withdrawn records.
   A failed job keeps its PB status and action return code. `action_returncode`
   takes precedence over the launcher's `returncode`. An unknown terminal
   status in `done` is an error. A cache-hit record in `done` finishes with zero.
@@ -72,6 +72,11 @@ Records and attempts retain only the return code, termination reason, the last
 starts at a character boundary. Broker argv, tokens, nonces, resource telemetry
 and unknown progress fields are discarded. Lease progress uses the same typed
 observation. These objects never retain the raw detail JSON.
+
+Claim tombstones, late-finish sidecars and `ready-transitions/` captures return
+`RecordRead::Moving` before terminal reads. A moving record keeps waits alive,
+produces no bell news, and stays pending in reconciliation. The client revisits
+live slots after terminal reads to cover a claim returning to ready.
 
 Unreadable or malformed evidence returns an error. A missing queue directory
 also returns an error. An absent key is not a failed action or permission to

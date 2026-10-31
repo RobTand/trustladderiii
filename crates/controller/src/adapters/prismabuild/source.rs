@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tl3_kernel::NodeId;
-use tl3_prismabuild::{ActionKey, ActionState, PrismaBuild, Watcher};
+use tl3_prismabuild::{ActionKey, PrismaBuild, Watcher};
 use tokio::sync::{broadcast, oneshot};
 
 pub struct Source {
@@ -209,11 +209,7 @@ impl Source {
         };
         let mut count = 0;
         for (key, record) in changes.records {
-            let ended = record.as_ref().is_ok_and(|record| {
-                record.as_ref().is_none_or(|record| {
-                    !matches!(record.state, ActionState::Queued | ActionState::Claimed)
-                })
-            });
+            let ended = record.as_ref().is_ok_and(|record| !record.is_live());
             if ended || record.is_err() {
                 for wait in self
                     .waits
@@ -234,11 +230,7 @@ impl Source {
                 continue; // A newer completion in this batch retired the job.
             };
             match record {
-                Ok(record)
-                    if record.as_ref().is_none_or(|record| {
-                        !matches!(record.state, ActionState::Queued | ActionState::Claimed)
-                    }) =>
-                {
+                Ok(record) if !record.is_live() => {
                     // Bell transport backoff is not news about a failed result tool.
                     if self.tool_errors.contains(&key) && !changes.bell_available {
                         continue;

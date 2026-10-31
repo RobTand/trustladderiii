@@ -151,7 +151,7 @@ and webhook control models normally use bound one. HTTP stop uses bound two. The
 a 10,000-branch limit that fails rather than skips an unfinished execution. The model body and I/O actors
 use 8 MiB stacks because Loom's default coroutine stack cannot run these library
 calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
-HTTP, Tokio scheduling, and socket deadlines remain external operations. A sixth
+HTTP, Tokio scheduling, and socket deadlines remain external operations. A seventh
 model checks that the channel shim rejects sends after receiver drop. Loom 0.7
 does not model the timed-look branch: Loom 0.7.2's `recv_timeout` is
 `unimplemented!`. The models keep the controller out of that branch. Loom also

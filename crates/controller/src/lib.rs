@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(all(loom, not(test)))]
+compile_error!("the loom feature is only supported for library unit tests");
+
 #[cfg(all(test, loom))]
 extern crate self as tl3_controller;
 

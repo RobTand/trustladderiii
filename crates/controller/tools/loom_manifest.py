@@ -21,7 +21,7 @@ env = {
 }
 rows = []
 for host in ["dl380g10", "sparky", "sparklina"]:
-    command = "cargo test -p tl3-prismabuild --lib --locked lookup_ && bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
+    command = "cargo test -p tl3-prismabuild --lib --locked lookup_ && cargo test -p tl3-controller --test looks --locked -- --r5 && cargo test -p tl3-controller --test prismabuild --locked -- --r5 && bash crates/controller/tools/verify-loom.sh && cargo test -p tl3-controller --test crash_safety --locked"
     if host == "dl380g10":
         command += " && for iteration in {1..50}; do TL3_LOOM_BOUND=2 cargo test -p tl3-controller --features loom --lib --locked loom_bell_ -- --test-threads=1 || exit; done"
     rows.append({
@@ -34,7 +34,7 @@ rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
     "demand": {"mem_gb": 6}, "env": env,
     "priority": -10, "timeout_s": 3600,
-    "argv": ["bash", "-c", "bash crates/controller/tools/verify.sh && cargo tree -p tl3-controller --edges normal --prefix none > production-dependencies.txt && if rg '^loom v' production-dependencies.txt; then exit 1; fi"],
+    "argv": ["bash", "-c", "bash crates/controller/tools/verify.sh && cargo tree -p tl3-controller --edges normal --prefix none > production-dependencies.txt && command -v grep >/dev/null && if grep '^loom v' production-dependencies.txt; then exit 1; fi"],
 })
 rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,

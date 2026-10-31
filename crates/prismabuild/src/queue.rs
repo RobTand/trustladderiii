@@ -38,6 +38,27 @@ pub struct ActionRecord {
     pub progress_observation: Option<ProgressObservation>,
 }
 
+/// A transition owns the record until its destination is published.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RecordRead {
+    Absent,
+    Moving,
+    Present(Box<ActionRecord>),
+}
+
+impl RecordRead {
+    /// Moving records retain their waits and cannot establish termination.
+    pub fn is_live(&self) -> bool {
+        match self {
+            Self::Moving => true,
+            Self::Present(record) => {
+                matches!(record.state, ActionState::Queued | ActionState::Claimed)
+            }
+            Self::Absent => false,
+        }
+    }
+}
+
 /// Maximum retained stderr suffix, in UTF-8 bytes.
 pub const MAX_STDERR_TAIL_BYTES: usize = 8192;
 
@@ -64,7 +85,7 @@ pub struct AcceptedProgress {
 }
 
 /// Results are independent: one unreadable key does not hide other observations.
-pub type Observations = BTreeMap<ActionKey, Result<Option<ActionRecord>, Error>>;
+pub type Observations = BTreeMap<ActionKey, Result<RecordRead, Error>>;
 
 #[derive(Default, Deserialize)]
 struct Detail {
@@ -188,8 +209,8 @@ async fn document<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<
 }
 
 impl PrismaBuild {
-    /// Missing records return None. Unreadable records remain errors, never evidence of loss.
-    pub async fn read(&self, key: &ActionKey) -> Result<Option<ActionRecord>, Error> {
+    /// Moving records are present evidence. Unreadable records remain errors, never evidence of loss.
+    pub async fn read(&self, key: &ActionKey) -> Result<RecordRead, Error> {
         self.read_with(key, |_| {}).await
     }
 
@@ -197,36 +218,49 @@ impl PrismaBuild {
         &self,
         key: &ActionKey,
         mut after_read: impl FnMut(&str),
-    ) -> Result<Option<ActionRecord>, Error> {
+    ) -> Result<RecordRead, Error> {
         let root = &self.options.queue_root;
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
         // Claims can return to ready. Revisit live slots after the terminal scan
         // so a link-ready/unlink-claimed handoff cannot look like an ending.
         for (index, state) in STATES.iter().chain(["ready", "claimed"].iter()).enumerate() {
-            // PrismaBuild entombs claims before publishing retries or endings.
-            // Check sidecars before live rereads: retiring one publishes ready first.
-            if index == STATES.len() && chosen.as_ref().is_none_or(|(rank, _, _)| *rank >= 2) {
-                let claimed = root.join("claimed");
-                let mut entries =
-                    tokio::fs::read_dir(&claimed)
-                        .await
-                        .map_err(|source| Error::Io {
-                            path: claimed.clone(),
+            // PrismaBuild captures claims and ready items before publishing their destinations.
+            // Scan before terminals, so publishing an ending and retiring its marker cannot hide both.
+            if index == 2 && chosen.is_none() {
+                for state in ["claimed", "ready-transitions"] {
+                    let directory = root.join(state);
+                    let mut entries = match tokio::fs::read_dir(&directory).await {
+                        Ok(entries) => entries,
+                        Err(error)
+                            if state == "ready-transitions"
+                                && error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            continue;
+                        }
+                        Err(source) => {
+                            return Err(Error::Io {
+                                path: directory,
+                                source,
+                            });
+                        }
+                    };
+                    while let Some(entry) =
+                        entries.next_entry().await.map_err(|source| Error::Io {
+                            path: directory.clone(),
                             source,
-                        })?;
-                while let Some(entry) = entries.next_entry().await.map_err(|source| Error::Io {
-                    path: claimed.clone(),
-                    source,
-                })? {
-                    let name = entry.file_name();
-                    let name = name.to_string_lossy();
-                    if name.starts_with(&format!("{key}."))
-                        && (name.ends_with(".tombstone") || name.ends_with(".late-finish"))
+                        })?
                     {
-                        return Err(invalid(
-                            &entry.path(),
-                            "queue record is moving; reconcile again",
-                        ));
+                        let name = entry.file_name();
+                        let name = name.to_string_lossy();
+                        if name.starts_with(&format!("{key}."))
+                            && (if state == "claimed" {
+                                name.ends_with(".tombstone") || name.ends_with(".late-finish")
+                            } else {
+                                name.ends_with(".json")
+                            })
+                        {
+                            return Ok(RecordRead::Moving);
+                        }
                     }
                 }
             }
@@ -269,7 +303,7 @@ impl PrismaBuild {
             }
         }
         let Some((rank, path, record)) = chosen else {
-            return Ok(None);
+            return Ok(RecordRead::Absent);
         };
         let status = record.status.as_deref();
         let returncode = record.detail.returncode();
@@ -371,7 +405,7 @@ impl PrismaBuild {
         } else {
             None
         };
-        Ok(Some(ActionRecord {
+        Ok(RecordRead::Present(Box::new(ActionRecord {
             key: key.clone(),
             snapshot_parent: record.checkout_snapshot.map(|s| s.parent),
             state,
@@ -382,7 +416,7 @@ impl PrismaBuild {
             termination_reason: record.detail.termination_reason,
             stderr_tail: record.detail.stderr_tail,
             progress_observation: record.detail.progress_observation,
-        }))
+        })))
     }
 
     pub async fn reconcile(&self, awaited: &BTreeSet<ActionKey>) -> Observations {
@@ -443,10 +477,8 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            record.is_some_and(|record| matches!(
-                record.state,
-                ActionState::Queued | ActionState::Claimed
-            )),
+            matches!(record, RecordRead::Present(record)
+            if matches!(record.state, ActionState::Queued | ActionState::Claimed)),
             "live requeue read as absent"
         );
     }
@@ -461,7 +493,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            client.read(&key).await.is_ok_and(|record| record.is_some()),
+            matches!(client.read(&key).await, Ok(RecordRead::Moving)),
             "in-flight handoff must be present moving evidence, not an error"
         );
     }
@@ -488,7 +520,7 @@ mod tests {
             })
             .await;
         assert!(
-            !matches!(record, Ok(None)),
+            record.is_ok_and(|record| record.is_live()),
             "retiring retry marker read as absent"
         );
     }
@@ -516,7 +548,7 @@ mod tests {
             })
             .await;
         assert!(
-            record.is_ok_and(|record| record.is_some()),
+            matches!(record, Ok(RecordRead::Moving | RecordRead::Present(_))),
             "finished record read as absent or error"
         );
     }
@@ -534,7 +566,7 @@ mod tests {
             .unwrap();
             let record = client.read(&key).await;
             assert!(
-                record.is_ok_and(|record| record.is_some()),
+                matches!(record, Ok(RecordRead::Moving)),
                 "ready capture {kind} read as absent or error"
             );
         }

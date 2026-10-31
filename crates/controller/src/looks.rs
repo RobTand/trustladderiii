@@ -234,6 +234,10 @@ impl Controller {
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
+            if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending))
+            {
+                state.read_failures = 0;
+            }
             if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
                 self.adapters
                     .get(Upstream::PrismaBuild)?
@@ -347,6 +351,9 @@ impl Controller {
                     } else {
                         Ok(crate::executor::WaitRecord::Ended)
                     };
+                    if record.is_ok() {
+                        state.read_failures = 0;
+                    }
                     match record {
                         Ok(crate::executor::WaitRecord::Alive) => {
                             self.adapters
