@@ -169,6 +169,7 @@ struct State {
     comments: Vec<Value>,
     operations_comments: Vec<Value>,
     labels: bool,
+    conflicting_enqueue: bool,
     closed: bool,
     fail_reads: bool,
     not_found: Option<&'static str>,
@@ -188,6 +189,7 @@ impl Default for State {
             comments: vec![],
             operations_comments: vec![],
             labels: false,
+            conflicting_enqueue: false,
             closed: false,
             fail_reads: false,
             not_found: None,
@@ -405,10 +407,7 @@ impl Respond for Api {
                         .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
                         .output()
                         .unwrap();
-                    assert!(
-                        merge.status.success(),
-                        "a conflicting checked head must rebase before enqueue"
-                    );
+                    s.conflicting_enqueue = !merge.status.success();
                     s.operations.push("enqueue".into());
                     s.labels = true;
                     json!([{"name":"tl3-queue"}])
@@ -730,6 +729,19 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             let mut state = server.api.state.lock().unwrap();
             state.pull.as_mut().unwrap()["mergeable"] = json!(false);
             state.pull.as_mut().unwrap()["mergeable_state"] = json!("dirty");
+        }
+        if mode == "q46-enqueue" {
+            for _ in 0..100 {
+                assert!(c.drive_once().unwrap());
+                assert!(
+                    !server.api.state.lock().unwrap().conflicting_enqueue,
+                    "a conflicting checked head must rebase before enqueue"
+                );
+                if c.world().unwrap().nodes[0].phase == Phase::Rebasing {
+                    break;
+                }
+            }
+            assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         }
     }
     if mode == "before-enqueue" {
