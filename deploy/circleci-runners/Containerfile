@@ -15,5 +15,5 @@ RUN chmod 755 /usr/local/bin/circleci-* /usr/local/bin/cargo-nextest \
 USER runner
 RUN uv python install 3.14
 USER root
-WORKDIR /work
+WORKDIR /
 ENTRYPOINT ["/usr/local/bin/circleci-entrypoint"]

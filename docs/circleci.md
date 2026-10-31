@@ -32,6 +32,9 @@ root. Its task prefix drops to the unprivileged `runner` user, with privilege
 escalation disabled. Its resource token is a read-only, root-only config file,
 stored mode 600 on the host. Jobs mount no owner home, host socket, or fleet
 storage. Each runner exits after one task and systemd starts a fresh container.
+The listener starts at `/`, outside its disposable `/work/jobs` directory.
+Starting it inside the job directory caused `getwd: no such file or directory`
+on the first pipeline because CircleCI removes that directory during cleanup.
 Only the slot's cache survives. GitHub fork builds and fork secret access are
 disabled for both projects.
 
@@ -84,12 +87,13 @@ The new command is `circleci testsuite run` with `.circleci/test-suites.yml`.
 Impact analysis and dynamic splitting count discovered test atoms. Monthly
 allowances are 1,000 on Free, 10,000 on Performance, and 100,000 on Scale.
 Overage costs 3,000 credits per 100,000 atoms, rounded up. These charged features
-remain off until the plan and a hard spending limit are verified. Do not start
+remain off at the coordinator's direction. Do not start
 a trial or upgrade a plan to enable them.
 
-The token's plan endpoints returned 404. The actual account entitlement remains
-unverified. [Public pricing](https://circleci.com/pricing/) lists five concurrent
-self-hosted tasks on Free, shared across machine and container runners. Installed
+The coordinator confirmed the Free plan's five-task limit on 2026-10-31.
+It is shared by TL3 and PB across machine and container runners. The token's
+plan endpoints returned 404; [public pricing](https://circleci.com/pricing/)
+describes the same five-task allowance. Installed
 listeners do not establish the permitted concurrency. Network egress can also
 consume credits beyond the account allowance. The platform uses local cache
 volumes and uploads only test results, avoiding remote build-cache transfers.
@@ -110,7 +114,11 @@ python3 tools/ci/compare_shadow.py --output /tmp/tl3-circleci-shadow.json
 
 It joins CircleCI pipelines with Light checks on the exact queue head SHA,
 compares Rust and Python separately, and records URLs, conclusions, and wall
-seconds. Canceled, missing, and unfinished checks are not agreement. A rerun of
+seconds. During the next three batches, also record each CircleCI job's
+`executor.resource_class`, `queued_at`, and `started_at` from the v2 job API.
+Report queue-to-start seconds separately from execution time. Correlate waits
+with running tasks across both TL3 and PB before attributing them to the
+five-task limit. A queue delay alone does not prove that limit was the cause. Canceled, missing, and unfinished checks are not agreement. A rerun of
 one SHA does not count as another batch. Review at least three distinct batches,
 including any disagreements, before preparing the cutover.
 

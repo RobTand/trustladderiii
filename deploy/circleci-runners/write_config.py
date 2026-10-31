@@ -13,7 +13,7 @@ config = f'''api:
 runner:
   name: {socket.gethostname()}-circleci-{slot}
   mode: single-task
-  working_directory: /work
+  working_directory: /work/jobs
   cleanup_working_directory: true
   task_agent_directory: /opt/circleci
   command_prefix: ["/usr/local/bin/circleci-task"]
