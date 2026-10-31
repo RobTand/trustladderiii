@@ -38,6 +38,7 @@ Public operations:
 | `post_comment`, `edit_comment`, `reconcile_comments`, `delete_comment` | Post, edit and deduplicate comments |
 | `close_issue` | Close with `Completed` or `NotPlanned` |
 | `create_request_issue`, `reconcile_issue` | File a labelled request and find it by its effect marker |
+| `required_status_checks`, `check_annotations`, `workflow_runs`, `workflow_run`, `rerun_workflow_run` | Read ruleset requirements and Actions evidence; rerun a workflow with Actions write permission |
 | `create_check_run`, `check_runs`, `check_suites` | Create a check with a head and external id; read all check pages |
 | `open_pull_request`, `reopen_pull_request`, `pull_request`, `pull_requests_for_branch`, `close_pull_request` | Open, inspect, reconcile and close PRs |
 | `branch`, `delete_branch` | Read or delete a branch, including names containing slashes |

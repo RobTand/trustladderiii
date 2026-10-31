@@ -60,6 +60,8 @@ pub enum Error {
     WorktreeOccupied,
     #[error("worktree has uncommitted or untracked files")]
     DirtyWorktree,
+    #[error("refusing to publish a checked head that conflicts with current main")]
+    UnrebasedHead,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
 }
@@ -78,6 +80,7 @@ impl Error {
             Self::WorktreeOccupied => Some("worktree_occupied"),
             Self::DirtyWorktree => Some("dirty_worktree"),
             Self::Recovery => Some("worktree_recovery"),
+            Self::UnrebasedHead => Some("unrebased_head"),
             // A Git exit alone cannot distinguish a lock or network failure.
             Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
         }
@@ -332,6 +335,67 @@ impl Worktrees {
                 self.execute_index(&path, ["read-tree", "HEAD"], None, None, Some(&index))?,
             )?;
         }
+        // A scratch tree cannot contain index stages. Preserve stage zero and the
+        // leaf side of each conflict in the private index; never change the live index.
+        let unmerged = success(
+            "scratch conflicts",
+            self.execute_index(
+                &path,
+                ["ls-files", "--unmerged", "-z"],
+                None,
+                None,
+                Some(&index),
+            )?,
+        )?;
+        let mut entries = HashMap::<Vec<u8>, Option<Vec<u8>>>::new();
+        for entry in unmerged
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+        {
+            let tab = entry
+                .iter()
+                .position(|byte| *byte == b'\t')
+                .ok_or(Error::Response)?;
+            let metadata = &entry[..tab];
+            let path = entry[tab + 1..].to_vec();
+            let side = entries.entry(path).or_default();
+            if metadata.ends_with(b" 2") {
+                *side = Some(metadata[..metadata.len() - 2].to_vec());
+            }
+        }
+        if !entries.is_empty() {
+            let mut instructions = Vec::new();
+            for (path, side) in entries {
+                instructions.extend_from_slice(
+                    format!("0 {}\t", "0".repeat(head.as_str().len())).as_bytes(),
+                );
+                instructions.extend_from_slice(&path);
+                instructions.push(0);
+                if let Some(side) = side {
+                    instructions.extend_from_slice(&side);
+                    instructions.push(b'\t');
+                    instructions.extend_from_slice(&path);
+                    instructions.push(0);
+                }
+            }
+            success(
+                "save conflicted index",
+                self.execute_index(
+                    &path,
+                    ["update-index", "-z", "--index-info"],
+                    None,
+                    Some(&instructions),
+                    Some(&index),
+                )?,
+            )?;
+        }
+        let merge = self.execute(&path, ["rev-parse", "--verify", "MERGE_HEAD"], None, None)?;
+        let merge = if merge.status.success() {
+            Some(commit_line(&merge.stdout)?)
+        } else {
+            None
+        };
         let staged_tree = self.scratch_git(&path, &index, ["write-tree"])?;
         let staged = self.scratch_git(
             &path,
@@ -340,7 +404,7 @@ impl Worktrees {
                 "commit-tree",
                 staged_tree.as_str(),
                 "-p",
-                head.as_str(),
+                merge.as_ref().unwrap_or(&head).as_str(),
                 "-m",
                 "Saved maker index",
             ],
@@ -866,6 +930,103 @@ impl Worktrees {
             ],
             token,
         )?;
+        Ok(())
+    }
+
+    /// Replace an unfinished merge when a newer rebase effect records another main.
+    pub fn merge_resolution(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+        writable: bool,
+    ) -> Result<Option<Vec<PathBuf>>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_repository(path)?;
+        self.merge_resolution_locked(name, path, target, writable)
+    }
+
+    fn merge_resolution_locked(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+        writable: bool,
+    ) -> Result<Option<Vec<PathBuf>>, Error> {
+        let output = self.run(
+            path,
+            "merge state path",
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "MERGE_HEAD",
+            ],
+        )?;
+        let marker = path_line(&output.stdout)?;
+        let head = match fs::read_to_string(marker) {
+            Ok(head) => head,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(Error::Io),
+        };
+        self.verify_checkout(path, name)?;
+        if head.trim() != target.as_str() {
+            if writable {
+                self.run(path, "abort superseded merge", ["merge", "--abort"])?;
+            }
+            return Ok(None);
+        }
+        let output = self.run(
+            path,
+            "merge conflicts",
+            ["diff", "--name-only", "--diff-filter=U", "-z", "--"],
+        )?;
+        Ok(Some(paths(&output.stdout)))
+    }
+
+    /// Leave both sides in the index and conflict markers in the maker's checkout.
+    /// The maker's merge commit, rather than a commit on the old base, completes integration.
+    pub fn prepare_merge_resolution(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_checkout(path, name)?;
+        if self
+            .merge_resolution_locked(name, path, target, true)?
+            .is_none()
+        {
+            self.require_clean(path)?;
+            let output = self.execute(
+                path,
+                [
+                    "merge",
+                    "--no-commit",
+                    "--no-ff",
+                    "--no-autostash",
+                    target.as_str(),
+                ],
+                None,
+                None,
+            )?;
+            if self
+                .merge_resolution_locked(name, path, target, true)?
+                .is_none()
+            {
+                return Err(git_error("prepare conflict resolution", &output));
+            }
+        }
+        let base = self.create_branch_locked(name)?.base;
+        if base != *target {
+            self.update_refs(&format!(
+                "update {} {} {}\n",
+                name.base_ref(),
+                target.as_str(),
+                base.as_str()
+            ))?;
+        }
         Ok(())
     }
 

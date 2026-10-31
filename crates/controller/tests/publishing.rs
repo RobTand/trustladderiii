@@ -90,8 +90,10 @@ fn workers(
     real: impl Executor + 'static,
     fake: impl Executor + 'static,
     fixture: Arc<Fixture>,
-    add_add: bool,
+    mode: String,
 ) -> impl Executor {
+    let add_add = mode == "add-add";
+    let d5 = mode.starts_with("d5-");
     support::workers::Workers::new(
         Some(Box::new(real)),
         fake,
@@ -107,11 +109,37 @@ fn workers(
                     }
                     Observation::Made { sha, .. } => {
                         let checkout = fixture.adapter().checkout(d);
-                        if add_add {
+                        if d5 && fixture.source.join("main-moved.txt").exists() {
+                            let target = git(&fixture.remote, &["rev-parse", "main"]);
+                            let merge_head = Command::new("git")
+                                .current_dir(&checkout)
+                                .args(["rev-parse", "--verify", "MERGE_HEAD"])
+                                .output()
+                                .unwrap();
+                            assert!(
+                                merge_head.status.success(),
+                                "the conflict maker must receive a merge onto current main, not the old clean tree"
+                            );
+                            assert_eq!(
+                                String::from_utf8(merge_head.stdout).unwrap().trim(),
+                                target
+                            );
+                            let conflict = fs::read_to_string(checkout.join("value.py")).unwrap();
+                            assert!(
+                                conflict.contains("<<<<<<<")
+                                    && conflict.contains("return 2")
+                                    && conflict.contains("return 3"),
+                                "the maker must receive the conflicted file and both sides"
+                            );
+                            *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                            assert_eq!(
+                                git(&checkout, &["merge-base", sha, &target]),
+                                target,
+                                "the resolved maker head must contain main"
+                            );
+                        } else if add_add {
                             fs::create_dir_all(checkout.join("pkg")).unwrap();
                             if fixture.source.join("pkg/new.py").exists() {
-                                let target = git(&fixture.remote, &["rev-parse", "main"]);
-                                git(&checkout, &["rebase", "-X", "theirs", &target]);
                                 *sha = commit(&checkout, "pkg/new.py", "def leaf(): return 2\n");
                             } else {
                                 fs::write(checkout.join("pkg/new.py"), "def leaf(): return 1\n")
@@ -624,7 +652,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             supervisor,
             adapters::workers::Fake::new(&root.path().join("fakes")),
             f.clone(),
-            mode == "add-add",
+            mode.into(),
         ),
     );
     registry.register(Upstream::Worktrees, f.adapter());
@@ -769,6 +797,81 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             );
         }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
+    } else if mode.starts_with("d5-") {
+        let checkout = f.adapter().checkout(&d);
+        if mode == "d5-conflict" {
+            commit(&f.source, "value.py", "def value(): return 3\n");
+        }
+        let target = commit(&f.source, "main-moved.txt", "main moved while queued\n");
+        git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.queue_fixture = "dequeued";
+            let pull = state.pull.as_mut().unwrap();
+            pull["mergeable"] = json!(false);
+            pull["mergeable_state"] = json!("dirty");
+        }
+        for _ in 0..10 {
+            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+                break;
+            }
+            assert!(c.drive_once().unwrap());
+        }
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
+        for _ in 0..100 {
+            assert!(c.drive_once().unwrap());
+            if c.world().unwrap().nodes[0].phase == Phase::Checking {
+                break;
+            }
+        }
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Checking);
+        let head = f.head(&d);
+        assert_eq!(
+            git(&checkout, &["merge-base", &head, &target]),
+            target,
+            "the checked head must contain current main"
+        );
+        assert_eq!(
+            base(&f, &d),
+            target,
+            "checks must compare with the rebased base"
+        );
+        assert_eq!(
+            c.world().unwrap().nodes[0].credit.balance(),
+            credit - if mode == "d5-conflict" { 1 } else { 0 }
+        );
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.queue_fixture = "running";
+            let pull = state.pull.as_mut().unwrap();
+            pull["mergeable"] = json!(true);
+            pull["mergeable_state"] = json!("clean");
+        }
+        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        let published = git(
+            &f.remote,
+            &["rev-parse", Real::branch(&d).unwrap().as_str()],
+        );
+        assert_eq!(published, head);
+        assert_eq!(
+            git(&checkout, &["merge-base", &published, &target]),
+            target,
+            "the published head must contain current main"
+        );
+        let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(reviews.len(), 2, "the resolved head needs a fresh review");
+        assert_eq!(reviews[1]["inputs"]["head_sha"], head);
+        assert_eq!(reviews[1]["inputs"]["check_base_sha"], target);
+        assert!(
+            !reviews[1]["inputs"]["checks"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     } else if mode == "add-add" {
         let checkout = f.adapter().checkout(&d);
         assert_eq!(
@@ -913,7 +1016,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             3
         } else if matches!(
             mode,
-            "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest" | "add-add"
+            "push"
+                | "rebase"
+                | "changes"
+                | "before-enqueue"
+                | "reports-latest"
+                | "add-add"
+                | "d5-clean"
+                | "d5-conflict"
         ) {
             2
         } else {
@@ -1372,7 +1482,7 @@ fn main() {
             support::executor_probe::Probe,
             support::executor_probe::Probe,
             Arc::new(Fixture::create(root.path())),
-            false,
+            "merged".into(),
         );
         support::executor_probe::assert_retire_delivery(&mut router);
         if std::env::args().len() > 1 {
@@ -1405,6 +1515,8 @@ fn main() {
         "rebase",
         "round-one-rebase",
         "add-add",
+        "d5-clean",
+        "d5-conflict",
         "unapproved",
         "changes",
         "new-attempt",

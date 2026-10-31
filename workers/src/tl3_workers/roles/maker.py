@@ -72,7 +72,12 @@ def _git(request, *args, check=True):
     )
 
 
-def _starting_head(request, session):
+def _merge_head(request):
+    merge = _git(request, "rev-parse", "--verify", "MERGE_HEAD", check=False)
+    return merge.stdout.strip() if merge.returncode == 0 else None
+
+
+def _starting_state(request, session):
     root = _git(request, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(root).resolve() != Path(request["worktree"]).resolve():
         raise ValueError("maker requires the worktree root")
@@ -81,25 +86,48 @@ def _starting_head(request, session):
     if checkpoint and checkpoint.exists():
         saved = read_json(checkpoint.read_text())
         if is_unaccepted_session(request, saved):
-            return saved['head']
+            return saved['head'], saved.get('merge_target', _merge_head(request))
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
+    merge = _merge_head(request)
     if checkpoint:
         # Replace the previous visit so retries cannot grow an open attempt's files.
-        save(checkpoint, {"generation": generation, "head": head})
-    return head
+        saved = {"generation": generation, "head": head}
+        if merge:
+            saved['merge_target'] = merge
+        save(checkpoint, saved)
+    return head, merge
 
 
-def _commit(request, starting_head):
+class UnresolvedMerge(ValueError):
+    pass
+
+
+def _commit(request, starting_head, merge_target=None):
     _git(request, "merge-base", "--is-ancestor", starting_head, "HEAD")
+    merge = _merge_head(request)
+    merge_target = merge_target or merge
+    if merge_target:
+        if merge and merge != merge_target:
+            raise UnresolvedMerge("The pending merge target changed during resolution.")
+        if not merge and _git(request, "merge-base", "--is-ancestor", merge_target, "HEAD", check=False).returncode:
+            raise UnresolvedMerge("The merge was aborted; HEAD does not contain the required main.")
+        markers = _git(request, "grep", "--untracked", "--exclude-standard", "-I", "-n", "-E",
+                       r"^([<]{7,}|[>]{7,}|[|]{7,})( |$)|^[=]{7,}$", "--", ".", check=False)
+        if markers.returncode == 0:
+            raise UnresolvedMerge("The merge still has conflict markers; resolve them before reporting done.")
+        if markers.returncode != 1:
+            raise ValueError("could not inspect merge resolution")
     _git(request, "add", "--all", "--", ".")
     diff = _git(request, "diff", "--cached", "--quiet", "--no-ext-diff", "HEAD", "--", check=False)
     if diff.returncode not in (0, 1):
         raise ValueError("could not inspect staged changes")
-    if diff.returncode == 1:
+    if diff.returncode == 1 or merge:
         inputs = request["inputs"]
         _git(request, "commit", "--quiet", "--no-gpg-sign", "-m",
              f"TL3 maker attempt {inputs['attempt']}, round {inputs['round']}")
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
+    if merge_target and _git(request, "merge-base", "--is-ancestor", merge_target, head, check=False).returncode:
+        raise UnresolvedMerge("The resolved head does not contain the required merge target.")
     return head if head != starting_head else None
 
 
@@ -131,7 +159,7 @@ def run(model, request, worktree, emit):
     last_message = None
     history = []
     session = Path(request["session_file"]) if "session_file" in request else None
-    starting_head = _starting_head(request, session)
+    starting_head, merge_target = _starting_state(request, session)
     if session and session.exists() and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
@@ -176,7 +204,11 @@ def run(model, request, worktree, emit):
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if reply["kind"] != "done":
             break
-        head = _commit(request, starting_head)
+        try:
+            head = _commit(request, starting_head, merge_target)
+        except UnresolvedMerge as error:
+            reply = {"kind": "cant_meet", "report": str(error)}
+            break
         if head is not None:
             reply["head"] = head
             break

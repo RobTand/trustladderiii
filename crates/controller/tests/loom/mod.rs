@@ -44,6 +44,7 @@ pub(crate) fn delivery() -> Delivery {
         round: 0,
         replanned: false,
         note: None,
+        scope_removals: None,
         marker_key: None,
         checks: None,
         job_generation: None,
