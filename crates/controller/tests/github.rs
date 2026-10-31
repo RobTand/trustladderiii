@@ -541,6 +541,7 @@ fn main() {
     message_reconciliation();
     println!("test message_reconciliation ... ok");
     real_writer::all();
+    real_writer::classifier_contract();
     writer_checks();
     println!("test writer_checks ... ok");
     receiver_limits(&database.create("receiver_limits"));
@@ -2039,7 +2040,11 @@ fn worker_daemon_config(
             "command = [\"-m\", \"tl3_workers\", \"run\"]",
             &format!(
                 "command = [{:?}, {mode:?}, {marker:?}]",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(if mode.starts_with("steering") {
+                    "tests/worker_transport.py"
+                } else {
+                    "tests/worker_model.py"
+                })
             ),
         );
     let config_path = root.join("config.toml");
