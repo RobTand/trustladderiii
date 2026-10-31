@@ -1935,7 +1935,11 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     let root = tempfile::tempdir().unwrap();
     let mut controller = open(settings, root.path());
     controller.intake(labelled()).unwrap();
-    let phase = if stopped { Phase::Making } else { Phase::Queued };
+    let phase = if stopped {
+        Phase::Making
+    } else {
+        Phase::Queued
+    };
     for _ in 0..100 {
         if controller.world().unwrap().nodes[0].phase == phase {
             break;
@@ -1945,7 +1949,11 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     let world = controller.world().unwrap();
     assert_eq!(world.nodes[0].phase, phase);
     let mut store = Store::open(settings).unwrap();
-    let mut saved = Commit::new("rebase-context-before-close", json!({}), &store.load().unwrap());
+    let mut saved = Commit::new(
+        "rebase-context-before-close",
+        json!({}),
+        &store.load().unwrap(),
+    );
     saved.rows.push(RowChange::Put {
         table: "rebase_conflicts".into(),
         id: "0".into(),
