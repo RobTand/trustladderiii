@@ -2065,11 +2065,13 @@ fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
                 let mut issue = labelled();
                 issue.delivery = format!("duplicate-webhook-{index}");
                 c.intake(issue).unwrap();
+                tl3_controller::ingress::apply(&mut c, tl3_controller::cli::Input::GitHubWake)
+                    .unwrap();
                 drain(&mut c);
                 assert_eq!(
                     calls.get(),
                     1,
-                    "webhooks must not release a held 404 before its look"
+                    "webhooks and GitHub wakes must not release a held 404 before its look"
                 );
             }
         }

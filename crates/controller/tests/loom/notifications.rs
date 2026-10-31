@@ -10,7 +10,7 @@ fn loom_webhook_notifications_register_without_losing_or_doubling_wake() {
         }
         let (sender, receiver) = mpsc::channel();
         pending.register(sender);
-        assert!(matches!(receiver.recv().unwrap(), Input::Wake));
+        assert!(matches!(receiver.recv().unwrap(), Input::GitHubWake));
         assert!(
             receiver.try_recv().is_err(),
             "pending wakes were not coalesced"
@@ -23,7 +23,7 @@ fn loom_webhook_notifications_register_without_losing_or_doubling_wake() {
         notifications.register(sender);
         wake.join().unwrap();
         assert!(
-            matches!(receiver.recv().unwrap(), Input::Wake),
+            matches!(receiver.recv().unwrap(), Input::GitHubWake),
             "wake lost during registration"
         );
         assert!(receiver.try_recv().is_err(), "registration doubled wake");

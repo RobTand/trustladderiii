@@ -53,6 +53,12 @@ pub enum Error {
     RateLimited { retry_after: Duration },
     #[error("GitHub response did not match its schema")]
     Response,
+    #[error("GET {endpoint}: {source}")]
+    CatchUp {
+        endpoint: String,
+        #[source]
+        source: Box<Error>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,8 +78,16 @@ impl FailureClass {
 }
 
 impl Error {
+    fn at(self, endpoint: String) -> Self {
+        Self::CatchUp {
+            endpoint,
+            source: Box::new(self),
+        }
+    }
+
     pub fn failure_class(&self) -> FailureClass {
         match self {
+            Self::CatchUp { source, .. } => source.failure_class(),
             Self::RateLimited { .. } => FailureClass::Quota,
             Self::Http { status: 401 | 403 } => FailureClass::Permanent("permission"),
             Self::Http { status: 404 | 410 } => FailureClass::Permanent("not_found"),
@@ -827,10 +841,12 @@ impl GitHub {
             issues_query.push(("state".into(), "all".into()));
             let issues: Vec<Issue> = self
                 .list(format!("{path}/issues"), issues_query, None)
-                .await?;
+                .await
+                .map_err(|error| error.at(format!("{path}/issues")))?;
             let comments = self
                 .list(format!("{path}/issues/comments"), query, None)
-                .await?;
+                .await
+                .map_err(|error| error.at(format!("{path}/issues/comments")))?;
             let mut labels = Vec::new();
             let mut closed = Vec::new();
             let mut pull_requests = Vec::new();
@@ -848,7 +864,8 @@ impl GitHub {
                         ],
                         None,
                     )
-                    .await?;
+                    .await
+                    .map_err(|error| error.at(format!("{path}/pulls")))?;
                 let done = pulls.len() < 100 || pulls.iter().any(|pull| pull.updated_at < since);
                 pull_requests.extend(
                     pulls
@@ -875,7 +892,8 @@ impl GitHub {
                         ],
                         None,
                     )
-                    .await?;
+                    .await
+                    .map_err(|error| error.at(format!("{path}/issues/events")))?;
                 let short_page = events.len() < 100;
                 let mut all_older = true;
                 for event in events {
@@ -930,8 +948,27 @@ impl GitHub {
             let mut check_suites = Vec::new();
             // Check completions do not necessarily update an issue's updated_at.
             for head in heads {
-                check_runs.extend(self.check_runs(&repo.full_name, &head).await?);
-                check_suites.extend(self.check_suites(&repo.full_name, &head).await?);
+                // Makers can intern local commits before GitHub knows the SHA.
+                let runs = match self.check_runs(&repo.full_name, &head).await {
+                    Ok(runs) => runs,
+                    Err(Error::Http { status: 404 | 422 }) => continue,
+                    Err(error) => {
+                        return Err(
+                            error.at(format!("{path}/commits/{}/check-runs", segment(&head)?))
+                        );
+                    }
+                };
+                let suites = match self.check_suites(&repo.full_name, &head).await {
+                    Ok(suites) => suites,
+                    Err(Error::Http { status: 404 | 422 }) => continue,
+                    Err(error) => {
+                        return Err(
+                            error.at(format!("{path}/commits/{}/check-suites", segment(&head)?))
+                        );
+                    }
+                };
+                check_runs.extend(runs);
+                check_suites.extend(suites);
             }
             repositories.push(RepoChanges {
                 repository: repo.full_name.clone(),

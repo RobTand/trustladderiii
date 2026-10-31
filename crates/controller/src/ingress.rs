@@ -119,6 +119,10 @@ impl Source for Stdin {
 pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
     match input {
         Input::Wake => {}
+        Input::GitHubWake => {
+            controller.retry_held_effects(crate::executor::Upstream::GitHub);
+            controller.retry_held_effects(crate::executor::Upstream::Mergify);
+        }
         Input::Look { key } => controller.look_key(&key)?,
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
@@ -445,22 +449,31 @@ impl CatchUp {
                 })
                 .map(|entry| entry.value.clone())
                 .collect();
-            let result = runtime.block_on(client.catch_up(
-                &[ServedRepo {
-                    full_name: name.clone(),
-                    tracked_heads,
-                }],
-                since,
-            ))?;
+            let result = runtime
+                .block_on(client.catch_up(
+                    &[ServedRepo {
+                        full_name: name.clone(),
+                        tracked_heads,
+                    }],
+                    since,
+                ))
+                .map_err(|error| Error::Adapter(Box::new(error)))?;
             cursor = Some(cursor.map_or(result.next_cursor, |old: DateTime<Utc>| {
                 old.min(result.next_cursor)
             }));
             for mut changes in result.repositories {
                 for (number, _) in &changes.labels {
                     if !changes.issues.iter().any(|issue| issue.number == *number) {
-                        changes
-                            .issues
-                            .push(runtime.block_on(client.issue(&name, *number))?);
+                        changes.issues.push(
+                            runtime
+                                .block_on(client.issue(&name, *number))
+                                .map_err(|error| {
+                                    Error::Adapter(Box::new(tl3_github::Error::CatchUp {
+                                        endpoint: format!("repos/{name}/issues/{number}"),
+                                        source: Box::new(error),
+                                    }))
+                                })?,
+                        );
                     }
                 }
                 for comment in &changes.comments {
@@ -489,7 +502,7 @@ impl CatchUpBatch {
         if let Some(cursor) = self.cursor {
             store.receive_catch_up("github-catch-up", &self.deliveries, &json!(cursor))?;
         }
-        Ok(self.deliveries.iter().map(|_| Input::Wake).collect())
+        Ok(self.deliveries.iter().map(|_| Input::GitHubWake).collect())
     }
 }
 
@@ -699,13 +712,11 @@ impl WebhookReceiver {
                         let previous = std::mem::replace(&mut state, webhooks::FetchState::Idle);
                         let wanted = matches!(&previous, webhooks::FetchState::Wanted(Some(_)));
                         previous.join()?;
-                        match result.and_then(|batch| batch.persist(&mut store)) {
-                            Ok(_) => notifications.wake(),
-                            Err(error) => {
-                                eprintln!("GitHub catch-up failed: {error}");
-                                state = webhooks::FetchState::Wanted(None);
-                            }
+                        if let Err(error) = result.and_then(|batch| batch.persist(&mut store)) {
+                            eprintln!("GitHub catch-up failed: {error}");
+                            state = webhooks::FetchState::Wanted(None);
                         }
+                        notifications.wake();
                         if wanted && let Some(catch_up) = &catch_up {
                             state.request(|| {
                                 webhooks::fetch_catch_up(
