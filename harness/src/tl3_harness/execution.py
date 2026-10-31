@@ -190,7 +190,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             result = judge(check, comparisons[check.kind], after, messages=messages)
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
                 protected = tuple(replace(test, passed=False, message=(
-                    f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check."))
+                    f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])
                     if test.test in changed else test for test in result.tests)
                 if any(test.test in changed for test in result.tests):
                     result = replace(result, verdict=Verdict.FAIL, tests=protected)

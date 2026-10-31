@@ -23,7 +23,8 @@ if args.suite == 'red':
         'argv': ['/home/rob/.local/bin/uv', 'run', '--locked', '--project', 'workers',
                  '--python', '3.14+gil', 'pytest', '-c', 'workers/pyproject.toml',
                  'harness/tests/test_parametrized_checks.py', 'workers/tests/test_planner.py',
-                 '-q', '-k', 'parametrized_bare or existing_named or checks_base_test']})
+                 'workers/tests/test_maker.py', 'workers/tests/test_tracing.py',
+                 '-q', '-k', 'parametrized_bare or existing_named or checks_base_test or new_unique or no_change_done or failed_worker_trace or done_without']})
 if args.suite in {'python', 'all'}:
     rows.append({**common, 'tags': ['dl380g10'], 'cpus': 4, 'demand': {'mem_gb': 8},
         'argv': ['bash', '-ec', '''

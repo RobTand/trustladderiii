@@ -45,7 +45,9 @@ Return one JSON object:
 
 Do not include a head field or try to commit. After validating done, worker
 code commits the worktree with the fixed TL3 identity and adds the real head
-SHA. Done with no changes fails. Worker code checks usage metadata after every
+SHA. If done has no code changes, worker code asks once for a repair or a
+cant_meet report naming the failing checks. A second done without changes
+becomes cant_meet. Worker code checks usage metadata after every
 model turn and stops at 85% of context_size, before any further tool call.
 Missing or zero usage falls back to the conversation's character count divided
 by three, rounded up.
