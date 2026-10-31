@@ -33,6 +33,7 @@ let files = repo.changed_files(&base, &head)?;
 | `save_scratch`, `clean_saved_scratch` | Save teardown edits on a durable ref before cleaning |
 | `expired_scratch`, `prune_scratch` | Journal expiry candidates, then remove their refs on a worktree event |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
+| `trim_scope` | Restore changes outside declared files or matching protected globs; return the head and removed paths |
 | `head`, `verify_commit`, `merge_base`, `is_ancestor` | Typed commit and ancestry queries |
 | `diff`, `changed_paths_since_merge_base`, `list_tree`, `blob` | Committed review and check evidence |
 | `clone_checkout`, `bundle_check_input`, `commit_check_input` | Private committed snapshots for review and PrismaBuild |
@@ -89,6 +90,35 @@ unfinished intent reconciles after a newer Prepare. The next maker run sees
 leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
+
+### Trim a proposed head
+
+`trim_scope(branch, checkout, footprint, protected_paths)` runs once per leaf
+branch. It reads `refs/tl3/bases/<branch>`, compares both committed trees without
+rename detection, and restores paths outside the declared files. Protected globs
+use Git's `:(top,glob)` pathspec syntax and always override the footprint.
+The result is a new TL3 commit with the proposed head as its parent. A trim with
+no removed paths keeps its original head.
+
+The first call requires a clean checkout. It builds the target in a separate
+index, pins it under `refs/tl3/scope/<branch>`, and fsyncs a `tl3-scope` receipt
+before touching the checkout. Recovery restores that target, advances the branch
+with an expected-head check, then marks the receipt complete. The durable base
+never changes. A completed replay returns the saved result and preserves later
+maker commits, edits, and untracked files, even after checkout removal.
+The receipt's head is the original trim result. Callers must re-read the current
+branch head after a replay. The next trim removes abandoned private `.tmp` index
+directories and receipt files from `tl3-scope` while holding repository ownership.
+Target trees remove affected index entries before restoring the base's entries,
+so file/directory swaps work in both directions.
+
+Keep the receipt with the common Git directory. The owning controller and all
+its Git children must have ended before a replacement resumes an unfinished trim.
+Only an unfinished receipt authorizes checkout restoration and removal of that
+checkout's stale index lock and the branch's stale ref lock. The private scope
+pin's stale lock can be cleared before recording an intent. Other ref locks stay
+untouched. Prepare's initializing-lock repair rule is unchanged.
+`trim_scope_with` exposes durable boundaries for crash tests.
 
 ### Clear a half-registered add
 

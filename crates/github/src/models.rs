@@ -60,6 +60,10 @@ pub struct PullRequest {
     pub merged_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub merge_commit_sha: Option<String>,
+    #[serde(default)]
+    pub mergeable: Option<bool>,
+    #[serde(default)]
+    pub mergeable_state: Option<String>,
     pub head: PullHead,
     pub base: PullHead,
     pub updated_at: DateTime<Utc>,
@@ -83,6 +87,8 @@ pub struct CheckRun {
     pub external_id: Option<String>,
     pub status: String,
     pub conclusion: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
     pub app: Option<CheckApp>,
     pub output: Option<CheckOutput>,
 }

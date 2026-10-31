@@ -81,6 +81,7 @@ fn fixture(root: &Path) -> Delivery {
         replanned: false,
         marker_key: None,
         note: None,
+        scope_removals: None,
         steering: None,
         request_text: None,
         question_context: None,

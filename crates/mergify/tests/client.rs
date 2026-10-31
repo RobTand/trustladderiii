@@ -214,6 +214,96 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
     }
 }
 
+#[test]
+fn generic_dequeue_on_a_dirty_pull_is_conflict() {
+    for (mergeable, mergeable_state) in [
+        (json!(false), json!("dirty")),
+        (Value::Null, json!("dirty")),
+        (json!(false), json!("unknown")),
+    ] {
+        let mut pr = fixture("failed", "pull");
+        pr["mergeable"] = mergeable;
+        pr["mergeable_state"] = mergeable_state;
+        let pr: PullRequest = serde_json::from_value(pr).unwrap();
+        let checks: Vec<CheckRun> = serde_json::from_value(fixture("dequeued", "checks")).unwrap();
+        assert_eq!(
+            observe(pr.clone(), &checks, &pr.head.sha).state,
+            QueueState::Conflict
+        );
+    }
+}
+
+#[test]
+fn generic_dequeue_on_a_clean_pull_retains_the_dequeue() {
+    let mut pr = fixture("failed", "pull");
+    pr["mergeable"] = json!(true);
+    pr["mergeable_state"] = json!("clean");
+    let pr: PullRequest = serde_json::from_value(pr).unwrap();
+    let checks: Vec<CheckRun> = serde_json::from_value(fixture("dequeued", "checks")).unwrap();
+    assert_eq!(
+        observe(pr.clone(), &checks, &pr.head.sha).state,
+        QueueState::Dequeued
+    );
+}
+
+#[test]
+fn recorded_live_dequeue_without_machine_metadata_is_conflict() {
+    let mut pr = fixture("failed", "pull");
+    let checks: Vec<CheckRun> = serde_json::from_value(fixture("live-dequeued", "checks")).unwrap();
+    pr["head"]["sha"] = json!(checks[0].head_sha);
+    pr["mergeable"] = json!(false);
+    pr["mergeable_state"] = json!("dirty");
+    let pr: PullRequest = serde_json::from_value(pr).unwrap();
+    assert_eq!(
+        observe(pr.clone(), &checks, &pr.head.sha).state,
+        QueueState::Conflict
+    );
+}
+
+#[test]
+fn dequeue_titles_report_terminal_state_without_machine_metadata() {
+    let (pr, _) = recorded("running");
+    let mut check: CheckRun =
+        serde_json::from_value(fixture("live-dequeued", "checks")[0].clone()).unwrap();
+    check.head_sha = pr.head.sha.clone();
+    check.output.as_mut().unwrap().summary = None;
+    for (title, expected, infra) in [
+        ("Dequeued — checks interrupted", QueueState::FailedCi, true),
+        ("Dequeued — checks timeout", QueueState::FailedCi, true),
+        (
+            "Dequeued — conflict with another pull request",
+            QueueState::Conflict,
+            false,
+        ),
+        ("Dequeued — a future reason", QueueState::Dequeued, false),
+    ] {
+        check.output.as_mut().unwrap().title = Some(title.into());
+        assert_eq!(
+            observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
+            expected,
+            "{title}"
+        );
+        assert_eq!(tl3_mergify::ci_is_infrastructure(&check), infra, "{title}");
+    }
+}
+
+#[test]
+fn recorded_live_queued_stub_confirms_queue_membership() {
+    let (pr, mut checks) = recorded("running");
+    let check = checks
+        .iter_mut()
+        .find(|check| check.name == tl3_mergify::QUEUE_CHECK)
+        .unwrap();
+    check.status = "completed".into();
+    check.conclusion = Some("neutral".into());
+    check.output.as_mut().unwrap().title = Some("The pull request #75 is queued".into());
+    check.output.as_mut().unwrap().summary = Some("The pull request #75 is queued, this summary will be updated once the queue checks have started.".into());
+    assert_eq!(
+        observe(pr.clone(), &checks, &pr.head.sha).state,
+        QueueState::Queued
+    );
+}
+
 async fn client(server: &MockServer) -> Mergify {
     Mock::given(method("POST"))
         .and(path("/app/installations/3/access_tokens"))
@@ -441,9 +531,6 @@ fn future_encoding_and_unrecorded_titles_stay_unknown() {
     );
     check.output.as_mut().unwrap().summary = None;
     for title in [
-        "Dequeued — checks timeout",
-        "Dequeued — conflict with another pull request",
-        "Dequeued — a future reason",
         "Waiting for queue conditions",
         "Waiting for queue conditions to match",
         "A future queue state",
@@ -472,4 +559,32 @@ fn a_timed_out_queue_check_is_an_infrastructure_failure_without_a_known_title() 
     assert!(tl3_mergify::ci_is_infrastructure(
         state.check.as_ref().unwrap()
     ));
+}
+
+#[test]
+fn documented_manual_dequeue_is_not_a_retry_or_conflict() {
+    let (mut pr, _) = recorded("running");
+    pr.mergeable = Some(false);
+    pr.mergeable_state = Some("dirty".into());
+    let mut check: CheckRun =
+        serde_json::from_value(fixture("manual", "checks")[0].clone()).unwrap();
+    check.head_sha = pr.head.sha.clone();
+    for title_only in [false, true] {
+        if title_only {
+            let output = check.output.as_mut().unwrap();
+            output.summary = None;
+            output.title = Some("Dequeued — pull request manually dequeued".into());
+        }
+        let state = observe(pr.clone(), &[check.clone()], &pr.head.sha).state;
+        assert!(
+            !matches!(
+                state,
+                QueueState::Dequeued
+                    | QueueState::FailedCi
+                    | QueueState::Conflict
+                    | QueueState::Unknown
+            ),
+            "a documented manual dequeue must report a person stop, even on a dirty PR"
+        );
+    }
 }

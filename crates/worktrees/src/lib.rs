@@ -248,6 +248,19 @@ struct Checkout {
     branch: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopeTrim {
+    pub head: CommitId,
+    pub removed_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrimBoundary {
+    Recorded,
+    CheckoutRestored,
+    HeadUpdated,
+}
+
 impl Worktrees {
     pub fn create_worktree(
         &self,
@@ -1680,6 +1693,7 @@ struct Invocation {
     stderr: Vec<u8>,
 }
 
+mod scope;
 fn recovery_error(error: Error) -> Error {
     match error {
         Error::Git { .. } | Error::DirtyWorktree => Error::Recovery,

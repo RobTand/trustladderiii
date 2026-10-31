@@ -15,6 +15,7 @@ pub enum QueueState {
     ChecksRunning,
     Merged,
     Dequeued,
+    DequeuedByPerson,
     FailedCi,
     Conflict,
     Unknown,
@@ -38,6 +39,8 @@ pub enum Error {
     PullRequestClosed,
     #[error("pull request changed during observation; read it again")]
     ChangedDuringRead,
+    #[error("GitHub has not computed mergeability; read it on the next look")]
+    MergeabilityPending,
 }
 
 #[derive(Clone)]
@@ -79,7 +82,17 @@ impl Mergify {
         if before != after {
             return Err(Error::ChangedDuringRead);
         }
-        Ok(observe(after, &checks, approved_head))
+        let observation = observe(after, &checks, approved_head);
+        if observation.state == QueueState::Dequeued
+            && observation.pull_request.mergeable != Some(true)
+            && matches!(
+                observation.pull_request.mergeable_state.as_deref(),
+                None | Some("unknown")
+            )
+        {
+            return Err(Error::MergeabilityPending);
+        }
+        Ok(observation)
     }
 }
 
@@ -113,6 +126,11 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
         // GitHub's merge record wins over a queue report, including a delayed one.
         if reported == QueueState::Merged {
             QueueState::Unknown
+        } else if reported == QueueState::Dequeued
+            && (pull_request.mergeable == Some(false)
+                || pull_request.mergeable_state.as_deref() == Some("dirty"))
+        {
+            QueueState::Conflict
         } else {
             reported
         }
@@ -159,8 +177,28 @@ fn check_state(check: &CheckRun) -> QueueState {
         Some("In merge queue") => QueueState::Queued,
         Some("Running merge queue checks") => QueueState::ChecksRunning,
         Some("Merged via merge queue") => QueueState::Merged,
-        Some("Dequeued — checks failed") => QueueState::FailedCi,
-        Some("Dequeued — conflict with base branch") => QueueState::Conflict,
+        Some(
+            "Dequeued — checks failed"
+            | "Dequeued — checks timeout"
+            | "Dequeued — checks interrupted",
+        ) => QueueState::FailedCi,
+        Some(
+            "Dequeued — conflict with base branch"
+            | "Dequeued — conflict with another pull request",
+        ) => QueueState::Conflict,
+        Some(
+            "Dequeued — pull request manually dequeued"
+            | "Dequeued — pull request manually removed from the queue",
+        ) => QueueState::DequeuedByPerson,
+        Some(title) if title.starts_with("Dequeued — ") => QueueState::Dequeued,
+        Some(title)
+            if title
+                .strip_prefix("The pull request #")
+                .and_then(|number| number.strip_suffix(" is queued"))
+                .is_some_and(|number| number.parse::<u64>().is_ok()) =>
+        {
+            QueueState::Queued
+        }
         Some("Merge queue is ready") => QueueState::Waiting,
         _ => QueueState::Unknown,
     }
@@ -201,6 +239,8 @@ fn payload_state(json: &str) -> Option<QueueState> {
             .as_ref()
             .map(|reason| reason.code.as_str())
         {
+            // https://docs.mergify.com/api/statistics/ names the manual-command reason.
+            Some("PR_MANUALLY_DEQUEUED") => QueueState::DequeuedByPerson,
             Some("CHECKS_FAILED" | "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED") => QueueState::FailedCi,
             Some("CONFLICT_WITH_BASE_BRANCH" | "CONFLICT_WITH_ANOTHER_PR") => QueueState::Conflict,
             _ => QueueState::Dequeued,
@@ -217,23 +257,30 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
     ) {
         return true;
     }
-    check
+    let payload = check
         .output
         .as_ref()
         .and_then(|output| output.summary.as_ref())
         .and_then(|summary| summary.split_once("<span itemprop=\"mergify.v1."))
         .and_then(|(_, encoded)| encoded.split_once('"'))
         .and_then(|(encoded, _)| STANDARD.decode(encoded).ok())
-        .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok())
-        .is_some_and(|payload| {
-            payload.version == 1
-                && payload.dequeue_reason.is_some_and(|reason| {
-                    matches!(
-                        reason.code.as_str(),
-                        "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED"
-                    )
-                })
-        })
+        .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok());
+    if let Some(payload) = payload {
+        return payload.version == 1
+            && payload.dequeue_reason.is_some_and(|reason| {
+                matches!(
+                    reason.code.as_str(),
+                    "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED"
+                )
+            });
+    }
+    matches!(
+        check
+            .output
+            .as_ref()
+            .and_then(|output| output.title.as_deref()),
+        Some("Dequeued — checks timeout" | "Dequeued — checks interrupted")
+    )
 }
 
 /// The selected check belongs to Mergify on the original PR head.

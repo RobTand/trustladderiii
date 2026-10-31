@@ -22,6 +22,7 @@ mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
+mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -1226,6 +1227,7 @@ impl Controller {
                 question: n.question,
                 marker_key: None,
                 note: None,
+                scope_removals: None,
                 question_context,
                 steering: None,
                 request_text: request.source,
@@ -1237,6 +1239,7 @@ impl Controller {
                     ..
                 }
             ) {
+                delivery.scope_removals = scope::summary(snapshot, node)?;
                 let mut references = std::collections::BTreeSet::new();
                 for value in snapshot
                     .rows
@@ -1589,8 +1592,9 @@ impl Controller {
                     return Ok(None);
                 }
                 let value = json!(&fact);
-                if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =
-                    &fact.evidence
+                if let Evidence::CiFailed { head, .. }
+                | Evidence::Conflict { head, .. }
+                | Evidence::DequeuedByCommand { head, .. } = &fact.evidence
                 {
                     let observed = self.head(node, head)?;
                     if world.nodes[node.0 as usize].head != Some(observed) {
@@ -1608,7 +1612,9 @@ impl Controller {
                     },
                     Evidence::CiFailed { infra, .. } => Fact::CiFailed { infra },
                     Evidence::Conflict { .. } => Fact::Conflict,
-                    Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
+                    Evidence::DequeuedByPerson { .. } | Evidence::DequeuedByCommand { .. } => {
+                        Fact::PrDequeuedByPerson
+                    }
                     Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
                     Evidence::PushByOther { head } => {
                         let previous_sha = current.head.and_then(|head| {

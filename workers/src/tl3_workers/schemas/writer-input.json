@@ -60,6 +60,7 @@
             "issue_title": {"$ref": "writer-reply.json#/$defs/text"},
             "request": {"$ref": "writer-reply.json#/$defs/text"},
             "outcome": {"$ref": "writer-reply.json#/$defs/text"},
+            "removed_changes": {"$ref": "writer-reply.json#/$defs/text"},
             "unmet_goals": {
               "type": "array",
               "items": {"$ref": "writer-reply.json#/$defs/text"}

@@ -82,6 +82,7 @@ struct State {
     deletes: usize,
     remove_after_post: bool,
     pull_reads: usize,
+    changing_reads: usize,
     reads: usize,
 }
 impl State {
@@ -107,6 +108,7 @@ impl State {
             deletes: 0,
             remove_after_post: false,
             pull_reads: 0,
+            changing_reads: 0,
             reads: 0,
         }
     }
@@ -189,6 +191,12 @@ impl Respond for Api {
         match (method, path) {
             ("GET", "/repos/owner/sandbox/pulls/100") => {
                 state.pull_reads += 1;
+                if state.changing_reads > 0 {
+                    state.changing_reads -= 1;
+                    state.pull["updated_at"] = json!(format!(
+                        "2026-10-31T16:51:{:02}Z", state.pull_reads % 60
+                    ));
+                }
                 ResponseTemplate::new(200).set_body_json(state.pull.clone())
             },
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
@@ -385,6 +393,179 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
+fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    let id = api.state.lock().unwrap().queue_check()["id"].clone();
+    for episode in 1..=2 {
+        {
+            let mut state = api.state.lock().unwrap();
+            state.checks = fixture(if generic { "dequeued" } else { "interrupted" }, "checks");
+            state.queue_check_mut()["id"] = id.clone();
+            state.queue_check_mut()["completed_at"] =
+                json!(format!("2026-10-31T16:31:0{episode}Z"));
+            state.pull["mergeable"] = json!(true);
+            state.pull["mergeable_state"] = json!("clean");
+        }
+        drain(&mut controller);
+        if episode == 1 {
+            assert_eq!(
+                api.state.lock().unwrap().posts,
+                2,
+                "the first dequeue retries once"
+            );
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            {
+                let mut state = api.state.lock().unwrap();
+                state.queue_check_mut()["id"] = id.clone();
+            }
+            let fact = serde_json::from_value(queue_facts(&mut controller)[0].clone()).unwrap();
+            controller
+                .observe(
+                    "dequeue-redelivery",
+                    tl3_controller::executor::Observation::Queue(fact),
+                )
+                .unwrap();
+            drain(&mut controller);
+            assert!(
+                !controller
+                    .snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "incidents"),
+                "redelivery must not count as a second dequeue"
+            );
+        }
+    }
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "a second dequeue must not retry again"
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"),
+        "a second dequeue on a reused check ID must raise the usual incident"
+    );
+    println!("test reused_check_dequeues_twice_generic_{generic} ... ok");
+}
+
+fn observation_race(settings: &tl3_config::Store, mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    let reads = api.state.lock().unwrap().pull_reads;
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("interrupted", "checks");
+        match mode {
+            "settles" => state.changing_reads = 2,
+            "churn" | "reconcile" => state.changing_reads = usize::MAX,
+            "transport" => state.fail_reads = true,
+            "permanent" => state.http_failure = Some(403),
+            "quota" => state.rate_limit = Some(429),
+            _ => unreachable!(),
+        }
+    }
+    if mode == "reconcile" {
+        assert!(
+            controller.drive_once().is_ok(),
+            "reconcile failure must not exit the controller"
+        );
+    } else {
+        let mut body = webhook_fixture();
+        body["action"] = json!("completed");
+        body["check_run"] = api.state.lock().unwrap().queue_check();
+        deliver(settings, &api, "check_run", &body);
+        assert!(
+            ingress::drain(&mut controller).is_ok(),
+            "observation failure must not exit the controller"
+        );
+    }
+    if matches!(mode, "churn" | "reconcile") {
+        assert_eq!(
+            api.state.lock().unwrap().pull_reads - reads,
+            6,
+            "at most three immediate observation samples"
+        );
+    }
+    if mode != "settles" {
+        assert!(
+            queue_facts(&mut controller).is_empty(),
+            "failed reads are not facts"
+        );
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    }
+    {
+        let mut state = api.state.lock().unwrap();
+        state.changing_reads = 0;
+        state.fail_reads = false;
+        state.http_failure = None;
+        state.rate_limit = None;
+    }
+    drain(&mut controller);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "the later stable observation must re-enqueue"
+    );
+    assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    println!("test observation_race_{mode} ... ok");
+}
+
+fn terminal_without_enqueue_ack(
+    settings: &tl3_config::Store,
+    generic: bool,
+    via_look: bool,
+    titles: bool,
+) {
+    let api = Server::new();
+    api.state.lock().unwrap().lag = true;
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), false);
+    let id = api.state.lock().unwrap().queue_check()["id"].clone();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture(if generic { "dequeued" } else { "interrupted" }, "checks");
+        state.queue_check_mut()["id"] = id.clone();
+        if titles {
+            state.queue_check_mut()["output"] = if generic {
+                fixture("live-dequeued", "checks")[0]["output"].clone()
+            } else {
+                json!({"title":"Dequeued — checks interrupted", "summary":"The queue checks were interrupted.", "text":null})
+            };
+        }
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+        state.lag = false;
+    }
+    if via_look {
+        controller.look_now().unwrap();
+    }
+    drain(&mut controller);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "terminal evidence on the same check ID must release the held enqueue and re-enqueue once without another event"
+    );
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let facts = queue_facts(&mut controller);
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0]["evidence"]["CiFailed"]["check"], id);
+    assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], true);
+    assert_kernel_facts(settings, 1);
+    println!(
+        "test terminal_without_enqueue_ack_generic_{generic}_look_{via_look}_titles_{titles} ... ok"
+    );
+}
+
 fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
     let api = Server::new();
     api.state.lock().unwrap().lag = true;
@@ -581,6 +762,90 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(api.state.lock().unwrap().pull["head"]["sha"], head);
 }
+fn generic_dequeue(settings: &tl3_config::Store, dirty: bool, lazy: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("dequeued", "checks");
+        state.pull["mergeable"] = if lazy { Value::Null } else { json!(!dirty) };
+        state.pull["mergeable_state"] = json!(if lazy {
+            "unknown"
+        } else if dirty {
+            "dirty"
+        } else {
+            "clean"
+        });
+    }
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    let event = parsed("check_run", body);
+    let translator = Translator::new(api.clients()).unwrap();
+    if lazy {
+        let reads = api.state.lock().unwrap().pull_reads;
+        assert!(
+            translator
+                .webhook(&event, &controller.snapshot().unwrap(), &bootstrap().repos)
+                .is_err(),
+            "unknown mergeability must defer the observation until the next look"
+        );
+        assert_eq!(
+            api.state.lock().unwrap().pull_reads - reads,
+            2,
+            "no polling for mergeability"
+        );
+        let mut state = api.state.lock().unwrap();
+        state.pull["mergeable"] = json!(!dirty);
+        state.pull["mergeable_state"] = json!(if dirty { "dirty" } else { "clean" });
+    }
+    let inputs = translator
+        .webhook(&event, &controller.snapshot().unwrap(), &bootstrap().repos)
+        .unwrap();
+    assert_eq!(
+        inputs.len(),
+        1,
+        "every resolved dequeue must report evidence"
+    );
+    for input in inputs {
+        ingress::apply(&mut controller, input).unwrap();
+    }
+    assert!(controller.drive_once().unwrap());
+    let facts = queue_facts(&mut controller);
+    assert_eq!(facts.len(), 1);
+    assert_kernel_facts(settings, 1);
+    if dirty {
+        assert!(facts[0]["evidence"].get("Conflict").is_some());
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Rebasing);
+    } else {
+        assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], true);
+        drain(&mut controller);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            2,
+            "retry once through the kernel"
+        );
+        {
+            let mut state = api.state.lock().unwrap();
+            state.checks = fixture("dequeued", "checks");
+            state.queue_check_mut()["id"] = json!(123697861572_u64);
+        }
+        drain(&mut controller);
+        assert!(
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents"),
+            "a repeated generic dequeue must raise the usual incident"
+        );
+    }
+    println!("test generic_dequeue_dirty_{dirty}_lazy_{lazy} ... ok");
+}
+
 fn person_actions(settings: &tl3_config::Store, action: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -889,7 +1154,7 @@ fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
     body["check_run"] = api.state.lock().unwrap().queue_check();
     api.state.lock().unwrap().fail_reads = true;
     deliver(settings, &api, "check_run", &body);
-    assert!(ingress::drain(&mut controller).is_err());
+    assert!(ingress::drain(&mut controller).is_ok());
     assert_eq!(
         Store::open(settings)
             .unwrap()
@@ -950,6 +1215,7 @@ fn delivery() -> Delivery {
         question: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
         question_context: None,
         checks: None,
         job_generation: None,
@@ -1850,7 +2116,269 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
     println!("test failed_catch_up_retries_held_enqueue ... ok");
 }
 
+struct AwaitTranslation(mpsc::Receiver<()>);
+impl Source for AwaitTranslation {
+    fn run(self, _sender: mpsc::Sender<tl3_controller::cli::Input>) -> tl3_controller::Result<()> {
+        self.0.recv_timeout(Duration::from_secs(10)).map_err(|_| {
+            tl3_controller::Error::Invalid("deferred delivery never retried without new input")
+        })
+    }
+}
+struct ReviewTranslator {
+    inner: Translator,
+    state: Arc<Mutex<State>>,
+    retry: Option<(bool, mpsc::Sender<()>)>,
+}
+impl ingress::GitHubTranslator for ReviewTranslator {
+    fn translate(
+        &mut self,
+        delivery: &ingress::GitHubDelivery,
+        snapshot: &tl3_store::Snapshot,
+    ) -> tl3_controller::Result<Vec<tl3_controller::cli::Input>> {
+        if let ingress::GitHubDelivery::Webhook(webhook) = delivery {
+            if webhook.id == "poison" {
+                return Err(tl3_github::Error::Http { status: 403 }.into());
+            }
+            if let Some((lazy, done)) = &self.retry
+                && webhook.id == "deferred"
+            {
+                if self.state.lock().unwrap().checks == fixture("running", "checks") {
+                    self.state.lock().unwrap().checks = fixture("waiting", "checks");
+                    return Err(tl3_controller::Error::Adapter(Box::new(if *lazy {
+                        tl3_mergify::Error::MergeabilityPending
+                    } else {
+                        tl3_mergify::Error::ChangedDuringRead
+                    })));
+                }
+                self.state.lock().unwrap().checks = fixture("interrupted", "checks");
+                let result =
+                    ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot);
+                if result.is_ok() {
+                    let _ = done.send(());
+                }
+                return result;
+            }
+        }
+        ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot)
+    }
+}
+fn review_controller(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    retry: Option<(bool, mpsc::Sender<()>)>,
+) -> Controller {
+    let mut registry = adapters::simulation(root).unwrap();
+    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    c.register_github_translator(
+        "mergify",
+        ReviewTranslator {
+            inner: Translator::new(api.clients()).unwrap(),
+            state: api.state.clone(),
+            retry,
+        },
+    );
+    c
+}
+fn store_review_event(settings: &tl3_config::Store, api: &Server, id: &str, number: u64) {
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    body["check_run"]["pull_requests"] = json!([{ "number": number }]);
+    Store::open(settings)
+        .unwrap()
+        .receive_ingress(
+            "github-webhook",
+            id,
+            "check_run",
+            &serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+}
+fn deferred_source_loop(settings: &tl3_config::Store, lazy: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    drop(queued(settings, &api, root.path(), true));
+    let (done, received) = mpsc::channel();
+    let mut c = review_controller(settings, &api, root.path(), Some((lazy, done)));
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.github_mergify.silence_secs = 1;
+    c.set_allowances(allowances);
+    store_review_event(settings, &api, "deferred", 100);
+    let mut sources = ingress::Sources::default();
+    sources.register(AwaitTranslation(received));
+    assert!(
+        sources.run(&mut c).is_ok(),
+        "Sources::run must retry a deferred delivery without another event"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    assert_eq!(api.state.lock().unwrap().posts, 2);
+    println!("test deferred_source_loop_lazy_{lazy} ... ok");
+}
+fn permanent_delivery_does_not_block(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    drop(queued(settings, &api, root.path(), true));
+    let mut c = review_controller(settings, &api, root.path(), None);
+    api.state.lock().unwrap().checks = fixture("interrupted", "checks");
+    store_review_event(settings, &api, "poison", 101);
+    store_review_event(settings, &api, "healthy", 100);
+    ingress::drain(&mut c).unwrap();
+    while c.drive_once().unwrap() {}
+    let mut store = Store::open(settings).unwrap();
+    let cursor = store
+        .translator_cursor("github-translator:mergify")
+        .unwrap();
+    assert!(
+        store.ingress_after(cursor).unwrap().is_empty(),
+        "a permanent error on PR 101 must not pin later PR 100 at the translator cursor"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    println!("test permanent_delivery_does_not_block ... ok");
+}
+fn command_dequeue_pauses(settings: &tl3_config::Store, title: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut c = queued(settings, &api, root.path(), true);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.queue_check_mut()["output"] = if title {
+            json!({"title":"Dequeued — pull request manually dequeued", "summary":null, "text":null})
+        } else {
+            fixture("manual", "checks")[0]["output"].clone()
+        };
+        state.queue_check_mut()["status"] = json!("completed");
+        state.queue_check_mut()["conclusion"] = json!("neutral");
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+    }
+    drain(&mut c);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        1,
+        "a manual dequeue must not re-enqueue even with the queue label present"
+    );
+    assert!(
+        c.world().unwrap().nodes[0].paused,
+        "manual dequeue pauses through the existing person-dequeue rule"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    println!("test command_dequeue_pauses_title_{title} ... ok");
+}
+fn legacy_intent_ignores_completed_at() {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let d = delivery();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.pull["head"]["sha"] = json!(d.head_sha);
+        state.checks = fixture("interrupted", "checks");
+        state.queue_check_mut()["completed_at"] = json!("2026-10-31T16:31:59Z");
+        state.label = true;
+    }
+    let mut before = api.state.lock().unwrap().queue_check();
+    before.as_object_mut().unwrap().remove("completed_at");
+    let intent = root
+        .path()
+        .join(format!("{}.intent", hex::encode(d.key.as_bytes())));
+    std::fs::write(
+        intent,
+        serde_json::to_vec(&json!({"before":before,"last_event":0})).unwrap(),
+    )
+    .unwrap();
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(
+        matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending),
+        "completed_at added after deploy must not confirm a stale terminal check"
+    );
+    api.state.lock().unwrap().queue_check_mut()["output"]["title"] =
+        json!("Dequeued — checks interrupted");
+    assert!(
+        matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Found(_)),
+        "a real output transition still confirms the enqueue"
+    );
+    println!("test legacy_intent_ignores_completed_at ... ok");
+}
+
 fn main() {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--review-").map(str::to_owned))
+    {
+        if mode == "legacy" {
+            legacy_intent_ignores_completed_at();
+            return;
+        }
+        let mut database = support::Database::start();
+        match mode.as_str() {
+            "race" | "lazy" => {
+                deferred_source_loop(&database.create("source_loop"), mode == "lazy")
+            }
+            "permanent" => {
+                permanent_delivery_does_not_block(&database.create("permanent_delivery"))
+            }
+            "manual" | "manual-title" => {
+                command_dequeue_pauses(&database.create("manual_dequeue"), mode == "manual-title")
+            }
+            _ => panic!("unknown review regression"),
+        }
+        database.stop();
+        return;
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("--reused-check") {
+        let mut database = support::Database::start();
+        let generic = std::env::args().nth(2).as_deref() == Some("generic");
+        reused_check_dequeues_twice(&database.create("reused_check"), generic);
+        database.stop();
+        return;
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("--observation-race") {
+        let mut database = support::Database::start();
+        let mode = std::env::args().nth(2).unwrap();
+        observation_race(&database.create(&format!("race_{mode}")), &mode);
+        database.stop();
+        return;
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("--terminal-without-ack") {
+        let mut database = support::Database::start();
+        for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
+            if std::env::args()
+                .nth(2)
+                .is_some_and(|mode| generic != (mode == "generic"))
+            {
+                continue;
+            }
+            for titles in [false, true] {
+                terminal_without_enqueue_ack(
+                    &database.create(&format!("terminal_{generic}_{via_look}_{titles}")),
+                    generic,
+                    via_look,
+                    titles,
+                );
+            }
+        }
+        database.stop();
+        return;
+    }
+
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .filter(|arg| arg.starts_with("--generic-dequeue-"))
+    {
+        let mut database = support::Database::start();
+        generic_dequeue(
+            &database.create("generic_dequeue"),
+            mode != "--generic-dequeue-clean",
+            mode == "--generic-dequeue-lazy",
+        );
+        database.stop();
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--failed-catchup-wake") {
         let mut database = support::Database::start();
         failed_catch_up_retries_held_enqueue(&database.create("failed_catchup_wake"));
@@ -1868,6 +2396,7 @@ fn main() {
         database.stop();
         return;
     }
+
     if std::env::args().nth(1).as_deref() == Some("--permanent-github-read") {
         let mut database = support::Database::start();
         for (status, class) in [
@@ -1956,8 +2485,25 @@ fn main() {
     merged(&database.create("missing_merge_ci"), false, true, false);
     watched_merge(&database.create("watched"));
     terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
+    for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
+        for titles in [false, true] {
+            terminal_without_enqueue_ack(
+                &database.create(&format!("terminal_{generic}_{via_look}_{titles}")),
+                generic,
+                via_look,
+                titles,
+            );
+        }
+    }
     println!("test merged, catch-up, restart and unapproved head ... ok");
     database.restart();
+    for (dirty, lazy) in [(true, false), (false, false), (true, true)] {
+        generic_dequeue(
+            &database.create(&format!("generic_{dirty}_{lazy}")),
+            dirty,
+            lazy,
+        );
+    }
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
     queue_failure(&database.create("conflict"), true, false);
@@ -1968,6 +2514,27 @@ fn main() {
     println!("test person actions ... ok");
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
+    for mode in [
+        "settles",
+        "churn",
+        "reconcile",
+        "transport",
+        "permanent",
+        "quota",
+    ] {
+        observation_race(&database.create(&format!("race_{mode}")), mode);
+    }
+    for generic in [false, true] {
+        reused_check_dequeues_twice(&database.create(&format!("reused_{generic}")), generic);
+    }
+    for lazy in [false, true] {
+        deferred_source_loop(&database.create(&format!("source_loop_{lazy}")), lazy);
+    }
+    permanent_delivery_does_not_block(&database.create("permanent_delivery"));
+    for title in [false, true] {
+        command_dequeue_pauses(&database.create(&format!("manual_dequeue_{title}")), title);
+    }
+    legacy_intent_ignores_completed_at();
     database.stop();
-    println!("47 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("72 Mergify scenarios passed; no skips; no live upstream calls");
 }

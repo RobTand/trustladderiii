@@ -1,0 +1,1188 @@
+{
+  "recorded_at": "2026-10-31T18:02:01.743486+00:00",
+  "runtime_snapshot_at": "2026-10-31T16:51:02.045661+00:00",
+  "host": "celestia",
+  "requested_slots": 6,
+  "runtime_snapshot": {
+    "host": "celestia",
+    "architecture": "x86_64",
+    "podman_version": "5.7.0",
+    "rootless": true,
+    "cgroups": "v2",
+    "containers": [
+      {
+        "name": "tl3-ci-runner-1",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-2",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-4",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-6",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-5",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-3",
+        "image": "2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "pasta",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      }
+    ],
+    "listener_nice_values": [
+      "5",
+      "5",
+      "5",
+      "5",
+      "5",
+      "5"
+    ],
+    "unit_properties": [
+      "ActiveState=active",
+      "CPUWeight=50",
+      "Nice=5"
+    ],
+    "installed_sha256": {
+      ".local/lib/tl3-ci-runners/runner-slot.sh": "c5224d79c810628a479bd742188ec23bcf222701f72fd7ce68a52fdcc9bb24c2",
+      ".local/lib/tl3-ci-runners/runner-platform.sh": "08c5c224caa50d618488c395689325381dff0fb7cdc08f66117116cb4d209c62",
+      ".config/systemd/user/tl3-ci-runner@.service": "c4aa9db40396f12ad288bc27a821f4f8ed59223d7c190751e0df48b4ec96e324"
+    },
+    "user_manager_delegation": "DelegateControllers=cpu memory pids",
+    "lingering": "Linger=yes",
+    "installed_image": {
+      "id": "sha256:2d9eb765be9a672346c73ac7f74477109dbdf3be6c7ccb7904645910a1d74b21",
+      "architecture": "amd64"
+    }
+  },
+  "github_runner_access": {
+    "account": "RobTand",
+    "admin": true,
+    "authentication": "existing host login; gh auth status checked; no credentials copied"
+  },
+  "current_runners": [
+    {
+      "name": "tl3-celestia-slot-1-1793469403-3264",
+      "status": "online",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    },
+    {
+      "name": "tl3-celestia-slot-2-1793464900-23537",
+      "status": "online",
+      "busy": true,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    },
+    {
+      "name": "tl3-celestia-slot-3-1793465085-21722",
+      "status": "online",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    },
+    {
+      "name": "tl3-celestia-slot-4-1793468970-18969",
+      "status": "online",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    },
+    {
+      "name": "tl3-celestia-slot-5-1793467040-2895",
+      "status": "online",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    },
+    {
+      "name": "tl3-celestia-slot-6-1793466393-148",
+      "status": "online",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-fleet",
+        "tl3-host-celestia",
+        "tl3-fast"
+      ]
+    }
+  ],
+  "canary": {
+    "id": 41221383547,
+    "url": "https://github.com/RobTand/trustladderiii/actions/runs/41221383547",
+    "head_sha": "1bc998e78dabf18fbf4f9bfe0891328b0ac44171",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "id": 124596484157,
+        "name": "Rust",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221383547/job/124596484157",
+        "runner_name": "tl3-celestia-slot-4-1793464900-15512",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-host-celestia"
+        ],
+        "started_at": "2026-10-31T16:47:42Z",
+        "completed_at": "2026-10-31T16:58:10Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T16:47:43Z",
+            "completed_at": "2026-10-31T16:47:44Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:44Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:45Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T16:47:45Z",
+            "completed_at": "2026-10-31T16:47:49Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T16:47:49Z",
+            "completed_at": "2026-10-31T16:47:50Z"
+          },
+          {
+            "name": "Sync worker environment",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T16:47:50Z",
+            "completed_at": "2026-10-31T16:47:51Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T16:47:51Z",
+            "completed_at": "2026-10-31T16:47:51Z"
+          },
+          {
+            "name": "Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T16:47:51Z",
+            "completed_at": "2026-10-31T16:48:02Z"
+          },
+          {
+            "name": "Format, lint, and test every Rust project",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-31T16:48:02Z",
+            "completed_at": "2026-10-31T16:58:07Z"
+          },
+          {
+            "name": "Post Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-31T16:58:07Z",
+            "completed_at": "2026-10-31T16:58:08Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-31T16:58:08Z",
+            "completed_at": "2026-10-31T16:58:08Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-31T16:58:08Z",
+            "completed_at": "2026-10-31T16:58:08Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T16:58:08Z",
+            "completed_at": "2026-10-31T16:58:08Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T16:58:08Z",
+            "completed_at": "2026-10-31T16:58:08Z"
+          }
+        ],
+        "elapsed_seconds": 628,
+        "jit_scrub_step_passed": true
+      },
+      {
+        "id": 124596484386,
+        "name": "Python",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221383547/job/124596484386",
+        "runner_name": "tl3-celestia-slot-5-1793465085-4319",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-host-celestia"
+        ],
+        "started_at": "2026-10-31T16:47:42Z",
+        "completed_at": "2026-10-31T16:50:29Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T16:47:43Z",
+            "completed_at": "2026-10-31T16:47:44Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:44Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:44Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:49Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T16:47:49Z",
+            "completed_at": "2026-10-31T16:47:50Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T16:47:50Z",
+            "completed_at": "2026-10-31T16:47:50Z"
+          },
+          {
+            "name": "Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T16:47:50Z",
+            "completed_at": "2026-10-31T16:48:03Z"
+          },
+          {
+            "name": "Build deployment test helper",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T16:48:03Z",
+            "completed_at": "2026-10-31T16:48:09Z"
+          },
+          {
+            "name": "Lint and test every Python project",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-31T16:48:09Z",
+            "completed_at": "2026-10-31T16:50:27Z"
+          },
+          {
+            "name": "Post Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-31T16:50:27Z",
+            "completed_at": "2026-10-31T16:50:27Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-31T16:50:27Z",
+            "completed_at": "2026-10-31T16:50:27Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-31T16:50:27Z",
+            "completed_at": "2026-10-31T16:50:27Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T16:50:27Z",
+            "completed_at": "2026-10-31T16:50:28Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T16:50:28Z",
+            "completed_at": "2026-10-31T16:50:28Z"
+          }
+        ],
+        "elapsed_seconds": 167,
+        "jit_scrub_step_passed": true
+      }
+    ]
+  },
+  "first_attempt_jobs": [
+    {
+      "id": 124596484157,
+      "name": "Rust",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221383547/job/124596484157",
+      "runner_name": "tl3-celestia-slot-4-1793464900-15512",
+      "labels": [
+        "self-hosted",
+        "tl3-fleet",
+        "tl3-host-celestia"
+      ],
+      "started_at": "2026-10-31T16:47:42Z",
+      "completed_at": "2026-10-31T16:58:10Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-31T16:47:43Z",
+          "completed_at": "2026-10-31T16:47:44Z"
+        },
+        {
+          "name": "Verify runner input is scrubbed",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:44Z"
+        },
+        {
+          "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:45Z"
+        },
+        {
+          "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-31T16:47:45Z",
+          "completed_at": "2026-10-31T16:47:49Z"
+        },
+        {
+          "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-31T16:47:49Z",
+          "completed_at": "2026-10-31T16:47:50Z"
+        },
+        {
+          "name": "Sync worker environment",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-31T16:47:50Z",
+          "completed_at": "2026-10-31T16:47:51Z"
+        },
+        {
+          "name": "Install Rust",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-31T16:47:51Z",
+          "completed_at": "2026-10-31T16:47:51Z"
+        },
+        {
+          "name": "Cache Rust dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-31T16:47:51Z",
+          "completed_at": "2026-10-31T16:48:02Z"
+        },
+        {
+          "name": "Format, lint, and test every Rust project",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-31T16:48:02Z",
+          "completed_at": "2026-10-31T16:58:07Z"
+        },
+        {
+          "name": "Post Cache Rust dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-31T16:58:07Z",
+          "completed_at": "2026-10-31T16:58:08Z"
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-31T16:58:08Z",
+          "completed_at": "2026-10-31T16:58:08Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-31T16:58:08Z",
+          "completed_at": "2026-10-31T16:58:08Z"
+        },
+        {
+          "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-31T16:58:08Z",
+          "completed_at": "2026-10-31T16:58:08Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-31T16:58:08Z",
+          "completed_at": "2026-10-31T16:58:08Z"
+        }
+      ],
+      "elapsed_seconds": 628,
+      "jit_scrub_step_passed": true
+    },
+    {
+      "id": 124596484386,
+      "name": "Python",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221383547/job/124596484386",
+      "runner_name": "tl3-celestia-slot-5-1793465085-4319",
+      "labels": [
+        "self-hosted",
+        "tl3-fleet",
+        "tl3-host-celestia"
+      ],
+      "started_at": "2026-10-31T16:47:42Z",
+      "completed_at": "2026-10-31T16:50:29Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-31T16:47:43Z",
+          "completed_at": "2026-10-31T16:47:44Z"
+        },
+        {
+          "name": "Verify runner input is scrubbed",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:44Z"
+        },
+        {
+          "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:44Z"
+        },
+        {
+          "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:49Z"
+        },
+        {
+          "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-31T16:47:49Z",
+          "completed_at": "2026-10-31T16:47:50Z"
+        },
+        {
+          "name": "Install Rust",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-31T16:47:50Z",
+          "completed_at": "2026-10-31T16:47:50Z"
+        },
+        {
+          "name": "Cache deployment helper dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-31T16:47:50Z",
+          "completed_at": "2026-10-31T16:48:03Z"
+        },
+        {
+          "name": "Build deployment test helper",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-31T16:48:03Z",
+          "completed_at": "2026-10-31T16:48:09Z"
+        },
+        {
+          "name": "Lint and test every Python project",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-31T16:48:09Z",
+          "completed_at": "2026-10-31T16:50:27Z"
+        },
+        {
+          "name": "Post Cache deployment helper dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-31T16:50:27Z",
+          "completed_at": "2026-10-31T16:50:27Z"
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-31T16:50:27Z",
+          "completed_at": "2026-10-31T16:50:27Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-31T16:50:27Z",
+          "completed_at": "2026-10-31T16:50:27Z"
+        },
+        {
+          "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-31T16:50:27Z",
+          "completed_at": "2026-10-31T16:50:28Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-31T16:50:28Z",
+          "completed_at": "2026-10-31T16:50:28Z"
+        }
+      ],
+      "elapsed_seconds": 167,
+      "jit_scrub_step_passed": true
+    }
+  ],
+  "current_service_state": {
+    "recorded_at": "2026-10-31T18:02:01.160780+00:00",
+    "units": [
+      {
+        "Id": "tl3-ci-runner@1.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      },
+      {
+        "Id": "tl3-ci-runner@2.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      },
+      {
+        "Id": "tl3-ci-runner@3.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      },
+      {
+        "Id": "tl3-ci-runner@4.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      },
+      {
+        "Id": "tl3-ci-runner@5.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      },
+      {
+        "Id": "tl3-ci-runner@6.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled"
+      }
+    ],
+    "status": "active",
+    "installed_slot_script_sha256": "df936dfc8de4a85db23f00da97a6b7a6bcb5f48b086a503d50bb3361385015a3"
+  },
+  "installed_slot_script_sha256_current": "df936dfc8de4a85db23f00da97a6b7a6bcb5f48b086a503d50bb3361385015a3",
+  "rust_routing": {
+    "required_labels": [
+      "self-hosted",
+      "tl3-fleet",
+      "tl3-fast"
+    ],
+    "enabled": true,
+    "warm_cache_hosts": [
+      "celestia"
+    ],
+    "celestia_total_ci_slot_cap": 6,
+    "scope": "Verified PR branch; main workflow changes after coordinator merge"
+  },
+  "runtime_snapshot_notes": "Initial no-mount runtime inspection precedes the fast-label script update; current service state and current slot-script hash are recorded separately.",
+  "fast_routing_canary": {
+    "id": 41226136570,
+    "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41226136570",
+    "head_sha": "7dfa06bd89c2fce94818e0d5c045c6ca0df0121b",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "id": 124610558005,
+        "name": "Python",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41226136570/job/124610558005",
+        "runner_name": "tl3-celestia-slot-4-1793466830-6619",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-host-celestia"
+        ],
+        "started_at": "2026-10-31T17:46:23Z",
+        "completed_at": "2026-10-31T17:49:00Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T17:46:24Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:30Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T17:46:30Z",
+            "completed_at": "2026-10-31T17:46:31Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T17:46:31Z",
+            "completed_at": "2026-10-31T17:46:31Z"
+          },
+          {
+            "name": "Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T17:46:31Z",
+            "completed_at": "2026-10-31T17:46:46Z"
+          },
+          {
+            "name": "Build deployment test helper",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T17:46:46Z",
+            "completed_at": "2026-10-31T17:46:51Z"
+          },
+          {
+            "name": "Lint and test every Python project",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-31T17:46:51Z",
+            "completed_at": "2026-10-31T17:48:57Z"
+          },
+          {
+            "name": "Post Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-31T17:48:57Z",
+            "completed_at": "2026-10-31T17:48:57Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-31T17:48:57Z",
+            "completed_at": "2026-10-31T17:48:57Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-31T17:48:57Z",
+            "completed_at": "2026-10-31T17:48:58Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T17:48:58Z",
+            "completed_at": "2026-10-31T17:48:58Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T17:48:58Z",
+            "completed_at": "2026-10-31T17:48:58Z"
+          }
+        ],
+        "elapsed_seconds": 157,
+        "jit_scrub_step_passed": true
+      },
+      {
+        "id": 124610558415,
+        "name": "Rust",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41226136570/job/124610558415",
+        "runner_name": "tl3-celestia-slot-1-1793464899-6504",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-fast",
+          "tl3-host-celestia"
+        ],
+        "started_at": "2026-10-31T17:46:23Z",
+        "completed_at": "2026-10-31T17:56:12Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T17:46:24Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:25Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T17:46:25Z",
+            "completed_at": "2026-10-31T17:46:30Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T17:46:30Z",
+            "completed_at": "2026-10-31T17:46:31Z"
+          },
+          {
+            "name": "Sync worker environment",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T17:46:31Z",
+            "completed_at": "2026-10-31T17:46:32Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T17:46:32Z",
+            "completed_at": "2026-10-31T17:46:32Z"
+          },
+          {
+            "name": "Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T17:46:32Z",
+            "completed_at": "2026-10-31T17:46:43Z"
+          },
+          {
+            "name": "Format, lint, and test every Rust project",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-31T17:46:43Z",
+            "completed_at": "2026-10-31T17:56:10Z"
+          },
+          {
+            "name": "Post Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-31T17:56:10Z",
+            "completed_at": "2026-10-31T17:56:10Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-31T17:56:10Z",
+            "completed_at": "2026-10-31T17:56:10Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-31T17:56:10Z",
+            "completed_at": "2026-10-31T17:56:11Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T17:56:11Z",
+            "completed_at": "2026-10-31T17:56:11Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T17:56:11Z",
+            "completed_at": "2026-10-31T17:56:11Z"
+          }
+        ],
+        "elapsed_seconds": 589,
+        "jit_scrub_step_passed": true
+      }
+    ]
+  }
+}

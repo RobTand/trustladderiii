@@ -2989,6 +2989,8 @@ dependencies = [
 name = "tl3-worktrees"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "base64 0.22.1",
  "serde",
  "tempfile",
