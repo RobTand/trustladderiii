@@ -573,6 +573,17 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
+    if mode.starts_with("out-of-room") {
+        let mut primary = config.models.maker[2].clone();
+        primary.name = "review-primary".into();
+        let mut backup = config.models.maker[0].clone();
+        backup.name = "review-backup".into();
+        config.models.reviewer = if mode == "out-of-room-wrap" {
+            vec![backup, primary]
+        } else {
+            vec![primary, backup]
+        };
+    }
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![
@@ -662,6 +673,74 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             1,
             "enqueue must report the outside push so the new head gets checked"
         );
+    }
+    if mode.starts_with("out-of-room") {
+        let (sender, receiver) = mpsc::channel();
+        let start = Instant::now();
+        let mut exhausted = 0;
+        loop {
+            c.drive_once().unwrap();
+            source.poll_once(&mut store, &sender).unwrap();
+            for input in receiver.try_iter() {
+                if let Input::Observation { key, observation } = input {
+                    let review_reply = matches!(&observation, Observation::WorkerReply { role, reply, .. } if role == "reviewer" && reply["verdict"] == "out_of_room");
+                    // The supervisor must accept the exhaustion reply, not report a crash.
+                    assert!(
+                        !matches!(
+                            &observation,
+                            Observation::Kernel(tl3_kernel::Event::Reply {
+                                reply: tl3_kernel::Reply::RunFailed,
+                                ..
+                            })
+                        ),
+                        "Q44 exhaustion must be a reply"
+                    );
+                    c.observe(&key, observation).unwrap();
+                    if review_reply {
+                        exhausted += 1;
+                        let n = c.world().unwrap().nodes[0];
+                        assert_eq!(n.run_failures, 0);
+                        if exhausted == 2 {
+                            assert_eq!(n.phase, Phase::Planning { must_split: true });
+                            assert!(!n.holds);
+                            assert_eq!(n.credit.balance(), 3);
+                            let reviews: Vec<Value> =
+                                fs::read_to_string(root.path().join("reviews.jsonl"))
+                                    .unwrap()
+                                    .lines()
+                                    .map(|line| serde_json::from_str(line).unwrap())
+                                    .collect();
+                            assert_eq!(
+                                reviews.len(),
+                                if mode == "out-of-room-fix" { 3 } else { 2 }
+                            );
+                            let first = &reviews[reviews.len() - 2];
+                            let fresh = &reviews[reviews.len() - 1];
+                            assert_eq!(fresh["resume_session"], false);
+                            assert_ne!(first["session_file"], fresh["session_file"]);
+                            assert_ne!(
+                                first["operation"]["generation"],
+                                fresh["operation"]["generation"]
+                            );
+                            assert_eq!(first["model"]["name"], "review-primary");
+                            assert_eq!(fresh["model"]["name"], "review-backup");
+                            assert_eq!(
+                                fresh["inputs"]["base_sha"],
+                                reviews[0]["inputs"]["base_sha"]
+                            );
+                            return;
+                        }
+                        assert_eq!(n.phase, Phase::Reviewing);
+                        assert_eq!(n.rechecks, 1);
+                    }
+                }
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(90),
+                "Q44 did not settle"
+            );
+            thread::yield_now();
+        }
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
@@ -1071,6 +1150,9 @@ fn main() {
         "changes",
         "new-attempt",
         "review-retry",
+        "out-of-room",
+        "out-of-room-fix",
+        "out-of-room-wrap",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -1083,5 +1165,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("12 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("15 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

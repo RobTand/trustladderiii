@@ -584,6 +584,7 @@ pub enum Reply {
         head: HeadId,
     },
     ChangesRequested,
+    ReviewerOutOfRoom,
     RebaseClean {
         head: HeadId,
     },
@@ -1475,6 +1476,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Reply::ChecksDone { .. } => "apply_checks_done",
             Reply::Approved { .. } => "apply_approved",
             Reply::ChangesRequested => "apply_changes_requested",
+            Reply::ReviewerOutOfRoom => "apply_reviewer_out_of_room",
             Reply::RebaseClean { .. } => "apply_rebase_clean",
             Reply::RebaseNeedsChanges => "apply_rebase_needs_changes",
             Reply::RunFailed => "apply_run_failed",
@@ -1870,6 +1872,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             set_phase(m, Phase::Publishing);
         }
         Reply::ChangesRequested => failed_round(w, i, out),
+        Reply::ReviewerOutOfRoom => todo!("Q44 fresh start, then split"),
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
             m.head = Some(head);

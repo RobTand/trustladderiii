@@ -340,12 +340,11 @@ def test_reviewer_stops_before_context_exhaustion(review_request, session_model,
         review_request["session_file"] = str(tmp_path / "reviewer.json")
     responses[:] = [AIMessage(content=json.dumps(APPROVE), usage_metadata=usage)]
     events = []
-    with pytest.raises(ValueError, match="reviewer out of room"):
-        runtime.run(review_request, events.append)
-    assert not any(event["event"] == "reply" for event in events)
+    runtime.run(review_request, events.append)
+    assert events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}]
     if with_session:
-        with pytest.raises(ValueError, match="reviewer out of room"):
-            runtime.run(review_request, events.append)
+        runtime.run(review_request, events.append)
+        assert events[-1] == events[0]
         assert len(observed) == 1, "retry must not repeat an exhausted model turn"
 
 
@@ -369,9 +368,8 @@ def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, sessi
         "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}])]
     events = []
     for _ in range(2):
-        with pytest.raises(ValueError, match="reviewer out of room"):
-            runtime.run(review_request, events.append)
-    assert not events
+        runtime.run(review_request, events.append)
+    assert events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}] * 2
     assert len(observed) == 1
 
 
@@ -424,3 +422,10 @@ def test_reviewer_reply_is_validated_exactly_once(
     assert events[-1]['reply'] == APPROVE
     assert schema_checks == ['reviewer-reply']
     assert evidence_checks == [APPROVE]
+
+
+def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, review_request):
+    review_request["inputs"]["context_size"] = 1_000
+    result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}]

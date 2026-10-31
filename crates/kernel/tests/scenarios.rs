@@ -711,3 +711,81 @@ fn queue_stalls_raise_incidents_and_later_incidents_need_rob() {
     run.fact(Fact::IncidentCleared { by_rob: true });
     assert!(!run.node().waiting_incident);
 }
+
+fn q44_review() -> Run {
+    let mut run = Run::new();
+    run.start_making();
+    run.reply(Reply::MakerDone { head: HeadId(1) });
+    run.reply(CHECKS_PASS);
+    assert_eq!(run.phase(), Phase::Reviewing);
+    run
+}
+
+#[test]
+fn q44_first_exhaustion_starts_a_free_fresh_review() {
+    let mut run = q44_review();
+    let before = run.node();
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::Reviewing);
+    assert_eq!(run.node().run_failures, 0, "exhaustion is not a crash");
+    assert_eq!(run.node().rechecks, 1);
+    assert_eq!(run.node().credit, before.credit);
+    assert!(run.node().generation > before.generation);
+    assert_eq!(run.node().checked, before.checked);
+    assert!(run.node().holds);
+    run.reply(Reply::Approved { head: HeadId(1) });
+    assert_eq!(run.phase(), Phase::Queued);
+}
+
+#[test]
+fn q44_fresh_review_shares_the_rebase_recheck_allowance() {
+    for credit in [0, 1] {
+        let mut run = q44_review();
+        run.w.nodes[0].rechecks = FREE_RECHECKS;
+        run.w.nodes[0].credit.spent = run.w.nodes[0].credit.start - credit;
+        run.reply(Reply::ReviewerOutOfRoom);
+        assert_eq!(run.node().rechecks, FREE_RECHECKS + 1);
+        if credit == 0 {
+            assert_eq!(run.phase(), Phase::AwaitingRob);
+            let question = run.node().question.unwrap();
+            assert_eq!(question.kind, QKind::OutOfCredit);
+            assert_eq!(question.cont, Cont::Ready(Resume::Reviewing));
+            assert!(!run.node().holds);
+            run.answer(Answer::AddCredit(1));
+        }
+        assert_eq!(run.phase(), Phase::Reviewing);
+        assert_eq!(run.credit(), 0);
+        run.reply(Reply::Approved { head: HeadId(1) });
+        assert_eq!(run.phase(), Phase::Queued);
+    }
+}
+
+#[test]
+fn q44_second_exhaustion_requires_a_split() {
+    let mut run = q44_review();
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::Planning { must_split: true });
+    assert_eq!(run.credit(), 3);
+    assert!(!run.node().holds);
+    run.plan([FileId(0)]);
+    assert_eq!(run.phase(), Phase::Planning { must_split: true });
+    run.reply(Reply::PlanSplit);
+    assert_eq!(run.node().question.unwrap().kind, QKind::NeedsSplitting);
+}
+
+#[test]
+fn q44_second_exhaustion_without_credit_keeps_the_split_continuation() {
+    let mut run = q44_review();
+    run.w.nodes[0].credit.spent = run.w.nodes[0].credit.start;
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::AwaitingRob);
+    let question = run.node().question.unwrap();
+    assert_eq!(question.kind, QKind::OutOfCredit);
+    assert_eq!(question.cont, Cont::Planning { must_split: true });
+    assert!(!run.node().holds);
+    run.answer(Answer::AddCredit(1));
+    assert_eq!(run.phase(), Phase::Planning { must_split: true });
+    assert_eq!(run.credit(), 0);
+}
