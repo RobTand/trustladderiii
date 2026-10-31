@@ -4,5 +4,8 @@
     "message": "Reference update failed",
     "documentation_url": "https://docs.github.com/rest/git/refs#create-a-reference",
     "status": "422"
-  }
+  },
+  "branch": "tl3/issue-17-node-999",
+  "actor_recorded": false,
+  "repeat_evidence": "post-recovery/human-branch-denied.json"
 }

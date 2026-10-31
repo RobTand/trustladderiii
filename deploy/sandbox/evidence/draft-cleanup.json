@@ -6,7 +6,11 @@
     "head": "3fff5c3ee9bbf57d37fcc4633927b13118a3a49b",
     "branch": "mergify/merge-queue/5ee88b77ff",
     "author": "mergify[bot]",
-    "branch_deleted": true
+    "branch_deleted": true,
+    "closed_by": "mergify[bot]",
+    "closed_event_id": 34696807438,
+    "closed_at": "2026-10-30T13:54:54Z",
+    "closed_event_source": "post-recovery/draft-18-events.json"
   },
   {
     "number": 19,

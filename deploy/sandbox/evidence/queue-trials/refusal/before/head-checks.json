@@ -1,0 +1,70 @@
+[
+  {
+    "id": 124324782150,
+    "name": "Sandbox tests",
+    "head_sha": "50b8650d7ed02e93dda3a9c787805ce94221a2f1",
+    "external_id": "8ab87327-d2c3-5d56-8848-1b3afbe41e77",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 15368,
+      "slug": "github-actions"
+    },
+    "output": {
+      "title": null,
+      "summary": null,
+      "text": null
+    }
+  },
+  {
+    "id": 124324781836,
+    "name": "Mergify Merge Queue",
+    "head_sha": "50b8650d7ed02e93dda3a9c787805ce94221a2f1",
+    "external_id": "engine:31",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "Waiting for queue conditions to match",
+      "summary": "### Queue entry conditions\n\n- [ ] any of [\ud83d\udd00 queue conditions]:\n  - [ ] all of [\ud83d\udccc queue conditions of queue rule `default`]:\n    - [ ] `check-success = @tl3-robtand/TL3 approval`\n    - [ ] `label = tl3-queue`\n    - [X] `base = main`\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] any of [\ud83d\udccc queue -> configuration change requirements]:\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of [\ud83d\udccc queue requirement]:\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n\n---\nYou can queue this pull request now with `@Mergifyio queue`: it will enter the merge queue once these conditions match.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJhbGwgb2YiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEB0bDMtcm9idGFuZC9UTDMgYXBwcm92YWwiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoibGFiZWwgPSB0bDMtcXVldWUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiYmFzZSA9IG1haW4iLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSBjb25kaXRpb25zIG9mIHF1ZXVlIHJ1bGUgYGRlZmF1bHRgIn1dLCJub3RlIjoiXHVkODNkXHVkZDAwIHF1ZXVlIGNvbmRpdGlvbnMifSx7ImRlc2NyaXB0aW9uIjoiLWNsb3NlZCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiItY29uZmxpY3QiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiLWRyYWZ0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1tZXJnaWZ5LWNvbmZpZ3VyYXRpb24tY2hhbmdlZCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9Db25maWd1cmF0aW9uIGNoYW5nZWQiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEBtZXJnaWZ5L0NvbmZpZ3VyYXRpb24gaGFzIGJlZW4gZGVsZXRlZCIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSAtPiBjb25maWd1cmF0aW9uIGNoYW5nZSByZXF1aXJlbWVudHMifSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stbmV1dHJhbCA9IEBtZXJnaWZ5L01lcmdpZnkgTWVyZ2UgUHJvdGVjdGlvbnMiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1za2lwcGVkID0gQG1lcmdpZnkvTWVyZ2lmeSBNZXJnZSBQcm90ZWN0aW9ucyIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvTWVyZ2lmeSBNZXJnZSBQcm90ZWN0aW9ucyIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9XX0\"></span>",
+      "text": null
+    }
+  },
+  {
+    "id": 124324778255,
+    "name": "Mergify Merge Protections",
+    "head_sha": "50b8650d7ed02e93dda3a9c787805ce94221a2f1",
+    "external_id": "31",
+    "status": "completed",
+    "conclusion": "neutral",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "No merge protections matched",
+      "summary": "This pull request does not match any conditions of the merge protections.",
+      "text": null
+    }
+  },
+  {
+    "id": 124324774394,
+    "name": "Summary",
+    "head_sha": "50b8650d7ed02e93dda3a9c787805ce94221a2f1",
+    "external_id": "31",
+    "status": "completed",
+    "conclusion": "success",
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "output": {
+      "title": "1 potential rule",
+      "summary": "### Rule: Queue TL3\\-approved PRs (queue)\n- [ ] `check-success = @tl3-robtand/TL3 approval`\n- [ ] `label = tl3-queue`\n- [ ] any of: [\ud83d\udd00 queue conditions]\n  - [ ] all of: [\ud83d\udccc queue conditions of queue rule `default`]\n    - [ ] `check-success = @tl3-robtand/TL3 approval`\n    - [ ] `label = tl3-queue`\n    - [X] `base = main`\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] `base = main`\n- [X] any of: [\ud83d\udccc queue -> configuration change requirements]\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of: [\ud83d\udccc queue requirement]\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n\n<hr />\n\n<details>\n<summary>Mergify commands and options</summary>\n\n<br />\n\nMore conditions and actions can be found in the [documentation](https://docs.mergify.com/).\n\nYou can also trigger Mergify actions by commenting on this pull request:\n\n- `@Mergifyio refresh` will re-evaluate the rules\n- `@Mergifyio rebase` will rebase this PR on its base branch\n- `@Mergifyio update` will merge the base branch into this PR\n- `@Mergifyio backport <destination>` will backport this PR on `<destination>` branch\n\nAdditionally, on Mergify [dashboard](https://dashboard.mergify.com) you can:\n\n- look at your merge queues\n- generate the Mergify configuration with the config editor.\n\nFinally, you can contact us on https://mergify.com\n</details>\n",
+      "text": null
+    }
+  }
+]
