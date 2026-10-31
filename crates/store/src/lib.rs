@@ -510,6 +510,7 @@ impl Store {
                 | "maker_findings"
                 | "review_fixes"
                 | "maker_session"
+                | "reviewer_session"
                 | "plans"
                 | "findings"
         ) {

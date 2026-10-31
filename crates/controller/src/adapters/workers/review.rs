@@ -20,6 +20,14 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
+    Ok(store
+        .worker_document(&delivery.node().0.to_string(), "reviewer_session")?
+        .filter(|session| {
+            session["attempt"] == delivery.attempt && session["replanned"] == delivery.replanned
+        }))
+}
+
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
@@ -33,8 +41,21 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    let base = if delivery.round == 1 {
-        run.reviewed_sha.as_deref().unwrap_or(&run.base_sha)
+    let session = session(delivery, store)?;
+    // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
+    let mut base = if delivery.round == 1 {
+        match run.reviewed_sha.as_deref() {
+            Some(reviewed) => reviewed,
+            None => session
+                .as_ref()
+                .map(|s| {
+                    s["head_sha"]
+                        .as_str()
+                        .ok_or(Error::Invalid("reviewer session has no reviewed head"))
+                })
+                .transpose()?
+                .unwrap_or(&run.base_sha),
+        }
     } else {
         &run.base_sha
     };
@@ -45,6 +66,13 @@ pub(super) fn inputs(
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err(Error::Invalid("invalid review commit"));
+        }
+    }
+    if base != run.base_sha {
+        let common = git(&run.repository, &["merge-base", base, &run.base_sha])?;
+        if common.trim_ascii() != run.base_sha.as_bytes() {
+            // Rebasing moves the check base beyond the previously reviewed history.
+            base = &run.base_sha;
         }
     }
     let node = delivery.node().0.to_string();

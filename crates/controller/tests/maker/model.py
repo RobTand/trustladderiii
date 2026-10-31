@@ -51,7 +51,7 @@ def create_model(request):
         return Model(responses=[AIMessage(content=json.dumps({
             'verdict': 'changes', 'blocking_findings': blockers,
             'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],
-        }))])
+        }, ensure_ascii=False))])
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))

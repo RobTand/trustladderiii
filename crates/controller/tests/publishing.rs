@@ -19,7 +19,10 @@ use tl3_controller::{
         self,
         github::APPROVAL_CHECK,
         prismabuild::{Check, CheckRun, Kind},
-        workers::{Supervisor, WorkerOutputSource, writer::FakeWriter},
+        workers::{
+            Supervisor, WorkerOutputSource,
+            writer::{FakeWriter, TextDraft, WriteRequest, Writer, WriterReply},
+        },
         worktrees::Real,
     },
     cli::Input,
@@ -35,13 +38,21 @@ use worktree_fixture::{Fixture, commit, git};
 fn repo() -> Repository {
     worktree_fixture::identity()
 }
+fn operations() -> tl3_config::OperationsIssue {
+    tl3_config::OperationsIssue {
+        owner: repo().owner,
+        name: "operations".into(),
+        installation_id: repo().installation,
+        number: 81,
+    }
+}
 fn bootstrap() -> Bootstrap {
     Bootstrap {
         repos: vec![repo()],
         rob: 1,
         slots: 1,
         pool: 1,
-        operations: None,
+        operations: Some(operations()),
     }
 }
 fn check_plan(f: &Fixture, base: String) -> CheckRun {
@@ -99,8 +110,7 @@ impl Executor for Workers {
                     if fs::read_to_string(checkout.join("value.py")).unwrap()
                         == "def value(): return 2\n"
                     {
-                        git(&checkout, &["commit", "--allow-empty", "-m", "fix round"]);
-                        *sha = git(&checkout, &["rev-parse", "HEAD"]);
+                        *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
                     } else {
                         *sha = commit(&checkout, "value.py", "def value(): return 2\n");
                     }
@@ -136,6 +146,7 @@ struct State {
     pull: Option<Value>,
     checks: Vec<Value>,
     comments: Vec<Value>,
+    operations_comments: Vec<Value>,
     labels: bool,
     closed: bool,
     fail_reads: bool,
@@ -152,6 +163,7 @@ impl Default for State {
             pull: None,
             checks: vec![],
             comments: vec![],
+            operations_comments: vec![],
             labels: false,
             closed: false,
             fail_reads: false,
@@ -185,6 +197,27 @@ struct Api {
     state: Arc<Mutex<State>>,
     fixture: Arc<Fixture>,
 }
+struct PublishingWriter;
+impl Writer for PublishingWriter {
+    fn draft(&mut self, key: &str, input: &WriteRequest) -> tl3_controller::Result<WriterReply> {
+        if input.facts["change"]
+            .as_str()
+            .is_some_and(|change| change.contains("clear incident "))
+        {
+            assert_eq!(input.facts["issue_title"], "Fix the value");
+            assert!(
+                input.facts["request"]
+                    .as_str()
+                    .unwrap()
+                    .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
+            );
+            return Ok(WriterReply::Text(TextDraft {
+                text: "You asked for \"Fix the value\".\n\nThe change merged without the required approval. Please check the change.".into(),
+            }));
+        }
+        FakeWriter.draft(key, input)
+    }
+}
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
         let mut s = self.state.lock().unwrap();
@@ -196,6 +229,18 @@ impl Respond for Api {
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if path == "/repos/RobTand/operations/issues/81/comments" {
+            return match method {
+                "GET" => ResponseTemplate::new(200).set_body_json(json!(s.operations_comments)),
+                "POST" => {
+                    let body: Value = serde_json::from_slice(&r.body).unwrap();
+                    let comment = json!({"id":s.operations_comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/operations/issues/81"});
+                    s.operations_comments.push(comment.clone());
+                    ResponseTemplate::new(201).set_body_json(comment)
+                }
+                _ => panic!("unexpected operations request: {method} {path}"),
+            };
         }
         let prefix = "/repos/RobTand/tl3-sandbox";
         let path = path.strip_prefix(prefix).unwrap_or(path);
@@ -360,16 +405,11 @@ impl Server {
     fn adapter(&self, root: &Path, epoch: i64) -> adapters::github::Adapter {
         adapters::github::Adapter::new(
             self.clients(),
-            FakeWriter,
+            PublishingWriter,
             epoch,
             Policy::default(),
             root,
-            Some(tl3_config::OperationsIssue {
-                owner: repo().owner,
-                name: "operations".into(),
-                installation_id: repo().installation,
-                number: 81,
-            }),
+            Some(operations()),
         )
         .unwrap()
     }
@@ -508,6 +548,13 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
         tl3_controller::ingress::apply(c, input).unwrap();
     }
 }
+fn patch_lines(diff: &Value) -> Vec<&str> {
+    diff.as_str()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("index "))
+        .collect()
+}
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
@@ -640,7 +687,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-    } else if mode == "rebase" {
+    } else if matches!(mode, "rebase" | "round-one-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
         let new_target = git(&f.remote, &["rev-parse", "main"]);
@@ -671,7 +718,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .collect();
     assert_eq!(
         reviews.len(),
-        if matches!(
+        if matches!(mode, "new-attempt" | "review-retry" | "round-one-rebase") {
+            3
+        } else if matches!(
             mode,
             "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest"
         ) {
@@ -680,7 +729,77 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             1
         }
     );
-    for review in &reviews {
+    if mode == "round-one-rebase" {
+        assert_eq!(c.world().unwrap().nodes[0].round, 1);
+        assert_eq!(reviews[2]["resume_session"], true);
+        assert_eq!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(
+            reviews[2]["inputs"]["base_sha"], reviews[2]["inputs"]["check_base_sha"],
+            "a rebased review must start at the leaf's new check base"
+        );
+        assert_eq!(
+            patch_lines(&reviews[2]["inputs"]["diff"]),
+            [
+                "diff --git a/value.py b/value.py",
+                "--- a/value.py",
+                "+++ b/value.py",
+                "@@ -1 +1,2 @@",
+                "-def value(): return 1",
+                "+def value():",
+                "+    return 2",
+            ],
+            "rebased round 1 must contain only the leaf's own change"
+        );
+    }
+    if matches!(
+        mode,
+        "changes" | "new-attempt" | "review-retry" | "round-one-rebase"
+    ) {
+        assert_eq!(reviews[0]["resume_session"], false);
+        assert_eq!(reviews[1]["resume_session"], true);
+        assert_eq!(reviews[0]["session_file"], reviews[1]["session_file"]);
+        assert_eq!(
+            reviews[1]["inputs"]["base_sha"],
+            reviews[0]["inputs"]["head_sha"]
+        );
+        assert_eq!(
+            patch_lines(&reviews[1]["inputs"]["diff"]),
+            [
+                "diff --git a/value.py b/value.py",
+                "--- a/value.py",
+                "+++ b/value.py",
+                "@@ -1 +1,2 @@",
+                "-def value(): return 2",
+                "+def value():",
+                "+    return 2",
+            ],
+            "round 1 must contain exactly the maker's fix"
+        );
+        assert!(Path::new(reviews[0]["session_file"].as_str().unwrap()).is_file());
+    }
+    if mode == "new-attempt" {
+        assert_eq!(reviews[2]["resume_session"], false);
+        assert_ne!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(c.world().unwrap().nodes[0].attempt, 2);
+    }
+    if mode == "review-retry" {
+        assert_eq!(reviews[1]["session_file"], reviews[2]["session_file"]);
+        assert_eq!(reviews[1]["inputs"], reviews[2]["inputs"]);
+        assert_ne!(
+            reviews[1]["operation"]["generation"],
+            reviews[2]["operation"]["generation"]
+        );
+    }
+    for (index, review) in reviews.iter().enumerate() {
+        assert_eq!(
+            review["inputs"]["check_base_sha"],
+            if review["resume_session"] == true && !(mode == "round-one-rebase" && index == 2) {
+                reviews[0]["inputs"]["base_sha"].clone()
+            } else {
+                review["inputs"]["base_sha"].clone()
+            },
+            "check outcomes must name their own comparison base"
+        );
         assert_ne!(review["model"]["name"], config.models.maker[0].name);
         assert!(
             review["inputs"]["standing_rules"][1]["description"]
@@ -691,7 +810,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     if matches!(
         mode,
-        "push" | "rebase" | "before-enqueue" | "reports-latest"
+        "push" | "rebase" | "round-one-rebase" | "before-enqueue" | "reports-latest"
     ) {
         assert_ne!(
             reviews[0]["inputs"]["head_sha"],
@@ -713,6 +832,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "two heads must leave one check report per node"
         );
         assert_eq!(reports[0].value["results"], reviews[1]["inputs"]["checks"]);
+        assert!(
+            !snapshot.rows.iter().any(|r| r.table == "review_reports"),
+            "unused review reports must not accumulate"
+        );
     }
     let mut state = server.api.state.lock().unwrap();
     if mode == "unapproved" {
@@ -740,6 +863,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "a closed node must leave no check reports"
         );
     }
+    assert!(
+        !config.workers.runs.join("sessions/0").exists(),
+        "closed node must retire maker and reviewer sessions"
+    );
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
     assert!(!root.path().join("pb-records/0").exists());
@@ -749,7 +876,13 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert_eq!(state.opens, 1);
     assert_eq!(
         state.checks.len(),
-        if mode == "changes" { 1 } else { reviews.len() }
+        if mode == "round-one-rebase" {
+            2
+        } else if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+            1
+        } else {
+            reviews.len()
+        }
     );
     let at = |name: &str| state.operations.iter().position(|op| op == name).unwrap();
     assert!(at("approve") < at("open") && at("open") < at("enqueue"));
@@ -759,7 +892,18 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .unwrap()
             .contains("Your change was merged.")
     }));
+    assert_eq!(
+        state.operations_comments.len(),
+        usize::from(mode == "unapproved"),
+        "only an unapproved merge must post an operations incident"
+    );
     if mode == "unapproved" {
+        assert!(
+            state.operations_comments[0]["body"]
+                .as_str()
+                .unwrap()
+                .contains("without the required approval")
+        );
         assert!(state.comments.iter().any(|c| {
             c["body"]
                 .as_str()
@@ -767,15 +911,22 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 .contains("without the required approval")
         }));
         assert!(store.effects().unwrap().iter().any(|e| {
-            serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
-                matches!(
-                    d.output,
-                    Out::Notice {
-                        notice: tl3_kernel::Notice::Incident { .. },
-                        ..
-                    }
-                )
-            })
+            e.state == tl3_store::EffectState::Confirmed
+                && serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
+                    d.repository.name == operations().name
+                        && d.issue == operations().number
+                        && d.note
+                            .as_deref()
+                            .unwrap()
+                            .contains("https://github.com/RobTand/tl3-sandbox/issues/42")
+                        && matches!(
+                            d.output,
+                            Out::Notice {
+                                notice: tl3_kernel::Notice::Incident { .. },
+                                ..
+                            }
+                        )
+                })
         }));
     }
     let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
@@ -784,7 +935,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .lines()
             .filter(|line| line.contains("--seal-only"))
             .count(),
-        reviews.len()
+        if mode == "review-retry" {
+            2
+        } else {
+            reviews.len()
+        }
     );
     drop(state);
     drop(c);
@@ -911,8 +1066,11 @@ fn main() {
         "merged",
         "push",
         "rebase",
+        "round-one-rebase",
         "unapproved",
         "changes",
+        "new-attempt",
+        "review-retry",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -925,5 +1083,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("9 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("12 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
