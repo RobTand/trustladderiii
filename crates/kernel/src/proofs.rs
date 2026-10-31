@@ -536,7 +536,18 @@ proof!(
     apply_ci_failed,
     check_apply(fact(Fact::CiFailed { infra: kani::any() }))
 );
-proof!(apply_conflict, check_apply(fact(Fact::Conflict)));
+fn check_conflict() {
+    let before = check_apply(fact(Fact::Conflict));
+    kani::cover!(
+        before.nodes[0].phase == Phase::Publishing,
+        "Q46 conflict before the queue"
+    );
+    kani::cover!(
+        before.nodes[0].phase == Phase::Queued,
+        "conflict after enqueue"
+    );
+}
+proof!(apply_conflict, check_conflict());
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
