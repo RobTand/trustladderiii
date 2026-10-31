@@ -167,6 +167,50 @@ impl Controller {
         self.allowances = allowances;
     }
 
+    pub(crate) fn retry_queue_observation_looks(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("deferred-queue-look:{}", snapshot.revision.get()),
+            json!({"retry_deferred_queue_observation":true}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            if !matches!(
+                state.delivery.output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            ) || (!snapshot
+                .pending_effects
+                .iter()
+                .any(|effect| effect.key == row.id)
+                && !snapshot
+                    .rows
+                    .iter()
+                    .any(|watch| watch.table == "watches" && watch.id == row.id))
+            {
+                continue;
+            }
+            // Reuse the enqueue allowance. A deferred read creates no new polling timer.
+            let due = self
+                .now_ms()
+                .saturating_add(u64::from(self.allowance(&state.delivery).silence_secs) * 1000)
+                .max(state.quota_ms.unwrap_or(0));
+            if state.due_ms.is_none_or(|old| old > due) {
+                state.due_ms = Some(due);
+                commit
+                    .rows
+                    .push(put("allowances", row.id.clone(), json!(state)));
+            }
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn now_ms(&self) -> u64 {
         self.now()
             .duration_since(UNIX_EPOCH)

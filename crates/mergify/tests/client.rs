@@ -569,22 +569,80 @@ fn documented_manual_dequeue_is_not_a_retry_or_conflict() {
     let mut check: CheckRun =
         serde_json::from_value(fixture("manual", "checks")[0].clone()).unwrap();
     check.head_sha = pr.head.sha.clone();
-    for title_only in [false, true] {
-        if title_only {
-            let output = check.output.as_mut().unwrap();
-            output.summary = None;
-            output.title = Some("Dequeued — pull request manually dequeued".into());
+    let state = observe(pr.clone(), &[check.clone()], &pr.head.sha).state;
+    assert_eq!(
+        state,
+        QueueState::DequeuedByPerson,
+        "the documented code is authoritative even on a dirty PR"
+    );
+}
+
+#[test]
+fn unverified_manual_titles_remain_generic_dequeues() {
+    let (mut pr, mut checks) = recorded("running");
+    pr.mergeable = Some(true);
+    pr.mergeable_state = Some("clean".into());
+    let check = checks
+        .iter_mut()
+        .find(|check| check.name == tl3_mergify::QUEUE_CHECK)
+        .unwrap();
+    check.status = "completed".into();
+    check.conclusion = Some("neutral".into());
+    check.output.as_mut().unwrap().summary = None;
+    for title in [
+        "Dequeued — pull request manually dequeued",
+        "Dequeued — pull request manually removed from the queue",
+    ] {
+        check.output.as_mut().unwrap().title = Some(title.into());
+        assert_eq!(
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha).state,
+            QueueState::Dequeued,
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn unknown_dequeue_reasons_are_logged_every_time() {
+    const FLAG: &str = "TL3_TEST_DEQUEUE_DIAGNOSTICS";
+    const TITLE: &str = "Dequeued — future fixture reason 174";
+    const CODE: &str = "FUTURE_FIXTURE_CODE_174";
+    if std::env::var_os(FLAG).is_some() {
+        let (pr, mut checks) = recorded("running");
+        let check = checks
+            .iter_mut()
+            .find(|check| check.name == tl3_mergify::QUEUE_CHECK)
+            .unwrap();
+        check.status = "completed".into();
+        check.conclusion = Some("neutral".into());
+        for _ in 0..2 {
+            check.output.as_mut().unwrap().title = Some(TITLE.into());
+            check.output.as_mut().unwrap().summary = None;
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha);
+            let payload = json!({"version":1,"state":"dequeued","dequeue_reason":{"code":CODE}});
+            check.output.as_mut().unwrap().summary = Some(format!(
+                "<span itemprop=\"mergify.v1.{}\"></span>",
+                STANDARD.encode(payload.to_string())
+            ));
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha);
         }
-        let state = observe(pr.clone(), &[check.clone()], &pr.head.sha).state;
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unknown_dequeue_reasons_are_logged_every_time",
+            "--nocapture",
+        ])
+        .env(FLAG, "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    for raw in [TITLE, CODE] {
         assert!(
-            !matches!(
-                state,
-                QueueState::Dequeued
-                    | QueueState::FailedCi
-                    | QueueState::Conflict
-                    | QueueState::Unknown
-            ),
-            "a documented manual dequeue must report a person stop, even on a dirty PR"
+            diagnostic.matches(raw).count() >= 2,
+            "raw dequeue reason must be logged on every observation: {raw}, got {diagnostic:?}"
         );
     }
 }

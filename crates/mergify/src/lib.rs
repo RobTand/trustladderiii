@@ -186,11 +186,10 @@ fn check_state(check: &CheckRun) -> QueueState {
             "Dequeued — conflict with base branch"
             | "Dequeued — conflict with another pull request",
         ) => QueueState::Conflict,
-        Some(
-            "Dequeued — pull request manually dequeued"
-            | "Dequeued — pull request manually removed from the queue",
-        ) => QueueState::DequeuedByPerson,
-        Some(title) if title.starts_with("Dequeued — ") => QueueState::Dequeued,
+        Some(title) if title.starts_with("Dequeued — ") => {
+            eprintln!("unrecognized Mergify dequeue title: {title:?}");
+            QueueState::Dequeued
+        }
         Some(title)
             if title
                 .strip_prefix("The pull request #")
@@ -243,7 +242,10 @@ fn payload_state(json: &str) -> Option<QueueState> {
             Some("PR_MANUALLY_DEQUEUED") => QueueState::DequeuedByPerson,
             Some("CHECKS_FAILED" | "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED") => QueueState::FailedCi,
             Some("CONFLICT_WITH_BASE_BRANCH" | "CONFLICT_WITH_ANOTHER_PR") => QueueState::Conflict,
-            _ => QueueState::Dequeued,
+            code => {
+                eprintln!("unrecognized Mergify dequeue code: {code:?}");
+                QueueState::Dequeued
+            }
         },
         _ => QueueState::Unknown,
     })
