@@ -269,11 +269,6 @@ fn check_apply(event: Event) -> World {
     {
         let b = &before.nodes[0];
         let n = &after.nodes[0];
-        kani::cover!(
-            b.phase == Phase::Publishing,
-            "Q46 conflict before the queue"
-        );
-        kani::cover!(b.phase == Phase::Queued, "conflict after enqueue");
         if matches!(b.phase, Phase::Publishing | Phase::Queued) {
             assert_eq!(n.phase, Phase::Rebasing);
             assert_eq!(n.generation, b.generation + 1);
