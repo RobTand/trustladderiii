@@ -142,7 +142,7 @@ pub(crate) fn incident_note(
     summary: &str,
 ) -> String {
     format!(
-        "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+        "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
         repository.owner, repository.name, issue
     )
 }
