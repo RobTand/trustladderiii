@@ -60,7 +60,10 @@ fn fixture() -> (Database, PathBuf) {
         .connect(NoTls)
         .unwrap();
     let data: String = client.query_one("SHOW data_directory", &[]).unwrap().get(0);
-    assert_eq!(client.query_one("SELECT 42", &[]).unwrap().get::<_, i32>(0), 42);
+    assert_eq!(
+        client.query_one("SELECT 42", &[]).unwrap().get::<_, i32>(0),
+        42
+    );
     let root = PathBuf::from(data).parent().unwrap().to_owned();
     let (logical, allocated) = bytes(&root);
     println!(
@@ -109,7 +112,10 @@ fn leftover(name: &str, pid: &str) -> PathBuf {
 fn lifecycle() {
     let (database, root) = fixture();
     drop(database);
-    assert!(!root.exists(), "normal fixture drop left its scratch folder");
+    assert!(
+        !root.exists(),
+        "normal fixture drop left its scratch folder"
+    );
     let stale = leftover("tl3-store-pg-killed", &format!("{}\n", dead_pid()));
     let (database, root) = fixture();
     drop(database);
@@ -128,16 +134,29 @@ fn concurrent() {
                 let duplicated_binaries = root.join("binaries").exists();
                 drop(database);
                 assert!(!root.exists());
-                assert!(!duplicated_binaries, "fixture still carries its own binary install");
+                assert!(
+                    !duplicated_binaries,
+                    "fixture still carries its own binary install"
+                );
             })
         })
         .collect();
     let outcomes: Vec<_> = threads.into_iter().map(|t| t.join()).collect();
-    assert!(outcomes.into_iter().all(|r| r.is_ok()), "concurrent fixture failed");
-    let cache = PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap())
-        .join("tl3-test-postgres");
-    let installs: Vec<_> = fs::read_dir(&cache).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert_eq!(installs, ["17.4.0"], "expected exactly one complete install");
+    assert!(
+        outcomes.into_iter().all(|r| r.is_ok()),
+        "concurrent fixture failed"
+    );
+    let cache =
+        PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).join("tl3-test-postgres");
+    let installs: Vec<_> = fs::read_dir(&cache)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        installs,
+        ["17.4.0"],
+        "expected exactly one complete install"
+    );
     assert!(cache.join("17.4.0/bin/postgres").is_file());
     let (database, root) = fixture();
     drop(database);
@@ -153,7 +172,10 @@ fn safety() {
     let missing = leftover("tl3-store-pg-unknown", "");
     fs::remove_file(missing.join("data/postmaster.pid")).unwrap();
     let recent = leftover("tl3-store-pg-recent", &format!("{}\n", dead_pid()));
-    File::open(&recent).unwrap().set_times(FileTimes::new().set_modified(SystemTime::now())).unwrap();
+    File::open(&recent)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(SystemTime::now()))
+        .unwrap();
     let unrelated = leftover("another-project-pg", &format!("{}\n", dead_pid()));
     let link = std::env::temp_dir().join("tl3-store-pg-symlink");
     symlink(&unrelated, &link).unwrap();
@@ -164,7 +186,17 @@ fn safety() {
     let (database, root) = fixture();
     drop(database);
     assert!(!root.exists());
-    for path in [&live, &malformed, &zero, &negative, &missing, &recent, &unrelated, &link, &linked_data] {
+    for path in [
+        &live,
+        &malformed,
+        &zero,
+        &negative,
+        &missing,
+        &recent,
+        &unrelated,
+        &link,
+        &linked_data,
+    ] {
         assert!(path.exists(), "unsafe reaping of {}", path.display());
     }
     drop(live_database);
