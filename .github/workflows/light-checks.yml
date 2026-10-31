@@ -39,7 +39,7 @@ jobs:
       (github.event_name == 'pull_request' &&
        (startsWith(github.head_ref, 'mergify/merge-queue/') ||
         contains(github.event.pull_request.labels.*.name, 'ci')))
-    runs-on: ${{ inputs.runner_host && inputs.runner_host != 'fleet' && fromJSON(format('["self-hosted","tl3-fleet","tl3-host-{0}"]', inputs.runner_host)) || fromJSON('["self-hosted","tl3-fleet"]') }}
+    runs-on: ${{ inputs.runner_host && inputs.runner_host != 'fleet' && fromJSON(format('["self-hosted","tl3-fleet","tl3-fast","tl3-host-{0}"]', inputs.runner_host)) || fromJSON('["self-hosted","tl3-fleet","tl3-fast"]') }}
     timeout-minutes: 40
     steps:
       - name: Verify runner input is scrubbed

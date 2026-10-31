@@ -41,13 +41,19 @@ if [[ -n "$cpuset" ]]; then
     options+=(--cpuset-cpus "$cpuset")
 fi
 
+labels=()
+case "$prefix:$runner_host" in
+    tl3-ci-runner:celestia|tl3-ci-runner:sparky|tl3-ci-runner:sparklina)
+        labels=(-f 'labels[]=tl3-fast') ;;
+esac
+
 # Only this host process uses gh's login. Never trace or persist the JIT response.
 jit_config=$(gh api --method POST \
     "repos/$repository/actions/runners/generate-jitconfig" \
     -f "name=$runner" -F runner_group_id=1 -f work_folder=_work \
     -f 'labels[]=self-hosted' -f 'labels[]=linux' -f "labels[]=$runner_arch" \
     -f "labels[]=$label" -f "labels[]=tl3-host-$runner_host" \
-    --jq .encoded_jit_config 2>/dev/null) || {
+    "${labels[@]}" --jq .encoded_jit_config 2>/dev/null) || {
     status=$?
     echo "JIT registration failed for slot $slot (gh exit $status); systemd will back off" >&2
     exit 1

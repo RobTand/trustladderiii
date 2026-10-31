@@ -33,7 +33,9 @@ registration. Labels are `self-hosted`, `linux`, `tl3-fleet`, and
 `tl3-host-HOST`, plus `x64` on x86_64 or `ARM64` on aarch64. The optional
 `runner_host` workflow-dispatch input targets a host for rollout checks. Its
 concurrency group includes that host so concurrent canaries cannot cancel each
-other. PR and Mergify jobs keep selecting `[self-hosted, tl3-fleet]`.
+other. Rust PR and Mergify jobs select `[self-hosted, tl3-fleet, tl3-fast]`.
+Python keeps `[self-hosted, tl3-fleet]`. Only TL3 slots on celestia and the
+Sparks receive `tl3-fast`; dl380g10 and sandbox slots do not.
 GitHub's JIT configuration makes the runner ephemeral. The listener exits after
 one job, Podman deletes the container, and systemd restarts the slot with a new
 registration. There is no status-polling loop. Start limiting is disabled, so
@@ -152,6 +154,27 @@ Repeat with `sparky` and `sparklina`. Inspect the jobs API for successful
 full batch-equivalent jobs, including the JIT input scrub assertion. Runtime
 state and timings are recorded under [evidence](evidence/). No sandbox slots
 are installed on ARM hosts; both installer and slot script reject that profile.
+
+Rust currently runs on celestia alone because the Spark slots remain disabled.
+The warm-cache workflow has one matrix entry per enabled Rust host, currently
+`celestia`. Add each Spark only after its full Rust canary passes. Cache warming
+uses the same six celestia slots as Rust and Python, so all CI jobs together
+stay within Rob's six-job cap. No separate cache-warming runner is installed.
+
+The initial rollout passed both checks on celestia in run
+[41221383547](https://github.com/RobTand/trustladderiii/actions/runs/41221383547).
+Its Rust job took 10m28s; a successful dl380g10 batch at the same Rust source
+base took 27m08s. Cache state and host load were not controlled.
+
+Both Spark canaries passed Python but failed Rust twice at
+`crates/controller/tests/maker/real.rs:435`, where a reproducing-check rebase
+had no `reviewed_sha`. Their four slots per host are installed but disabled
+after checking the runners were idle. Keep them disabled until full Rust CI
+passes. The boundary suites passed on both hosts. Native PrismaBuild controls,
+including the image's Git version, also passed the failing worker scenario.
+The full rootless CI failure remains unresolved; no application assertions
+were weakened. See the per-host and diagnostic evidence for the failed
+attempts and controls.
 
 Systemd 255 on the Sparks supports restart steps, but does not implement
 [`RESTART_RESET=1`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html#RESTART_RESET=1),
