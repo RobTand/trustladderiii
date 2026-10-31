@@ -143,7 +143,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
 }
 
 #[derive(Clone)]
-struct Clock(std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
+pub(super) struct Clock(pub(super) std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
 impl tl3_controller::clock::Clock for Clock {
     fn now(&self) -> std::time::SystemTime {
         self.0.get()
