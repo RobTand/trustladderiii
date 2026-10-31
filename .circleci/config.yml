@@ -75,3 +75,15 @@ workflows:
           name: CircleCI Rust
       - python:
           name: CircleCI Python
+  nightly:
+    triggers:
+      - schedule:
+          cron: '15 3 * * *'
+          filters:
+            branches:
+              only: main
+    jobs:
+      - rust:
+          name: CircleCI Rust
+      - python:
+          name: CircleCI Python

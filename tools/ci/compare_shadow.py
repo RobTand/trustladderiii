@@ -24,7 +24,22 @@ def seconds(start, stop):
 
 
 def compare(pipeline, run, workflows, jobs, circle_jobs):
-    return {"agreement": True, "github_seconds": 0, "circleci_workflows": []}
+    expected = {"Rust", "Python"}
+    old = {j["name"]: j["conclusion"] for j in jobs if j["name"] in expected}
+    new = {j["name"].removeprefix("CircleCI "): j["status"] for j in circle_jobs if j["name"] in {"CircleCI Rust", "CircleCI Python"}}
+    finished = set(new) == expected and all(v in {"success", "failed"} for v in new.values())
+    old_finished = set(old) == expected and all(v in {"success", "failure"} for v in old.values())
+    agreement = None
+    if finished and old_finished:
+        agreement = all((old[name] == "success") == (new[name] == "success") for name in expected)
+    return {
+        "sha": run["head_sha"], "branch": run["head_branch"],
+        "github_url": run["html_url"], "github_checks": old, "circleci_checks": new,
+        "github_seconds": seconds(run["run_started_at"], run["updated_at"]) if old_finished and run["status"] == "completed" else None,
+        "circleci_url": f'https://app.circleci.com/pipelines/github/{REPO}/{pipeline["number"]}',
+        "circleci_workflows": [{"id": w["id"], "status": w["status"], "seconds": seconds(w["created_at"], w["stopped_at"]) if w.get("stopped_at") else None} for w in workflows],
+        "agreement": agreement,
+    }
 
 
 def main():

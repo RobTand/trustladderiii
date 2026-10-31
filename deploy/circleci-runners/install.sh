@@ -1,6 +1,7 @@
 #!/bin/bash
 set +x
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
 # Install files only. Starting a slot is a separate capacity decision.
 source_dir=$(cd "$(dirname "$0")" && pwd)
 [[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]]
@@ -19,14 +20,14 @@ case $(uname -m) in
     arch=arm64 ;;
   *) echo 'Unsupported runner architecture' >&2; exit 2 ;;
 esac
-curl -fsSL "https://circleci-binary-releases.s3.amazonaws.com/circleci-runner/3.1.14-10146-3ce7306/circleci-runner_linux_$arch.tar.gz" -o "$build_dir/runner.tar.gz"
+curl -fsSL "https://circleci-binary-releases.s3.amazonaws.com/circleci-runner/current/circleci-runner_linux_$arch.tar.gz" -o "$build_dir/runner.tar.gz"
 printf '%s  %s\n' "$runner_sha" "$build_dir/runner.tar.gz" | sha256sum -c -
 gh api "repos/nextest-rs/nextest/releases/assets/$nextest_asset" -H 'Accept: application/octet-stream' > "$build_dir/nextest.tar.gz"
 printf '%s  %s\n' "$nextest_sha" "$build_dir/nextest.tar.gz" | sha256sum -c -
 tar -xzf "$build_dir/runner.tar.gz" -C "$build_dir" circleci-runner
 tar -xzf "$build_dir/nextest.tar.gz" -C "$build_dir" cargo-nextest
 cp "$source_dir/Containerfile" "$source_dir/task.sh" "$source_dir/entrypoint.sh" "$build_dir/"
-podman build --cpus=2 --memory=6g --memory-swap=6g -t localhost/circleci-fleet:20261031 "$build_dir"
+podman build --cpu-period=100000 --cpu-quota=200000 --memory=6g --memory-swap=6g -t localhost/circleci-fleet:20261031 "$build_dir"
 install -d -m 700 "$HOME/.config/circleci-fleet"
 install -d "$HOME/.local/libexec/circleci-fleet" "$HOME/.config/systemd/user"
 install -m 755 "$source_dir/slot.sh" "$HOME/.local/libexec/circleci-fleet/slot.sh"
