@@ -1,0 +1,78 @@
+[
+  {
+    "node_id": "test_a.py::test_a",
+    "valid": true
+  },
+  {
+    "node_id": "tests/test_a.py::TestA::test_a[x]",
+    "valid": true
+  },
+  {
+    "node_id": "./test_a.py::test_a",
+    "valid": true
+  },
+  {
+    "node_id": "tests//test_a.py::test_a",
+    "valid": true
+  },
+  {
+    "node_id": ".git/test_a.py::test_a",
+    "valid": true
+  },
+  {
+    "node_id": "test_a.py::test_a[back\\slash]",
+    "valid": true
+  },
+  {
+    "node_id": ".py::x",
+    "valid": true
+  },
+  {
+    "node_id": "test_a.py",
+    "valid": false
+  },
+  {
+    "node_id": "test_a.py::",
+    "valid": false
+  },
+  {
+    "node_id": "test_a.py::::x",
+    "valid": false
+  },
+  {
+    "node_id": "/test_a.py::x",
+    "valid": false
+  },
+  {
+    "node_id": "-test_a.py::x",
+    "valid": false
+  },
+  {
+    "node_id": "../test_a.py::x",
+    "valid": false
+  },
+  {
+    "node_id": "tests/../test_a.py::x",
+    "valid": false
+  },
+  {
+    "node_id": "tests\\test_a.py::x",
+    "valid": false
+  },
+  {
+    "node_id": "test_a.py::x\u0000",
+    "valid": false
+  },
+  {
+    "node_id": "test_a.txt::x",
+    "valid": false
+  },
+  {
+    "node_id": "::x",
+    "valid": false
+  },
+  {
+    "node_id": "",
+    "valid": false
+  }
+]

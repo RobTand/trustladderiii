@@ -10,16 +10,11 @@ pub(crate) struct Fixes {
     pub evidence: Value,
 }
 
-pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> Result<Fixes> {
-    let findings = feedback
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|finding| {
-            reviewed.is_some_and(|sha| finding["reviewed_sha"] == sha)
-                && finding["kind"] == "review_finding"
-        })
-        .collect::<Vec<_>>();
+pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) -> Result<Fixes> {
+    let crate::findings::CurrentReview {
+        head: reviewed,
+        findings,
+    } = current;
     let mappings = reply["reproductions"]
         .as_array()
         .cloned()
@@ -51,16 +46,7 @@ pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> 
                     let test = test
                         .as_str()
                         .ok_or(Error::Invalid("invalid reproducing test"))?;
-                    let mut parts = test.split("::");
-                    let path = parts.next().unwrap();
-                    let names = parts.collect::<Vec<_>>();
-                    if !super::protocol::relative_file(path)
-                        || test.contains('\0')
-                        || path.starts_with('-')
-                        || !path.ends_with(".py")
-                        || names.is_empty()
-                        || names.iter().any(|name| name.is_empty())
-                    {
+                    if !exact_pytest_node_id(test) {
                         return Err(Error::Invalid("expected an exact pytest node id"));
                     }
                     Ok(test.to_owned())
@@ -84,4 +70,43 @@ pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> 
         checks,
         evidence: json!({"reviewed_sha": reviewed, "findings": evidence}),
     })
+}
+
+fn exact_pytest_node_id(test: &str) -> bool {
+    let mut parts = test.split("::");
+    let path = parts.next().unwrap_or_default();
+    let names = parts.collect::<Vec<_>>();
+    !names.is_empty()
+        && names.iter().all(|name| !name.is_empty())
+        && path.ends_with(".py")
+        && !path.starts_with(['/', '-'])
+        && !path.split('/').any(|part| part == "..")
+        && !path.contains('\\')
+        && !test.contains('\0')
+}
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    #[test]
+    fn exact_node_ids_agree_with_harness_vectors() {
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../../../harness/test-vectors/pytest-node-ids.json"
+        ))
+        .unwrap();
+        let feedback =
+            json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
+        let mut mismatches = Vec::new();
+        for vector in vectors.as_array().unwrap() {
+            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]]}]});
+            let current = crate::findings::current_review(&feedback, 1, Some("head"));
+            if check(&reply, current).is_ok() != vector["valid"].as_bool().unwrap() {
+                mismatches.push(vector.clone());
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "node-id disagreements: {mismatches:?}"
+        );
+    }
 }

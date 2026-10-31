@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+from pathlib import Path
 
 import pytest
 import tiktoken
@@ -283,7 +284,6 @@ def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, plan
     ({"checks": [{**LEAF["checks"][0], "node_ids": []}]}, True),
     ({"checks": [{**LEAF["checks"][0], "kind": "guess"}]}, False),
     ({"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]}, True),
-    ({"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]}, False),
     ({"files": []}, True),
     ({"files": ["greeting.py", "greeting.py"]}, False),
     ({"no_design_questions": False}, True),
@@ -295,6 +295,14 @@ def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_req
         assert_rule_report(result)
     else:
         assert_rejected(result)
+
+
+def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
+    proposal = copy.deepcopy(LEAF)
+    proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert_rule_report(result)
+    assert result.events[-1]["reply"]["violations"] == ["Checks must name exact pytest node IDs."]
 
 
 @pytest.mark.parametrize("path", [
@@ -439,6 +447,22 @@ def test_one_verified_tokenizer_per_check(monkeypatch, planner_request, proposal
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
     with pytest.raises(ValueError, match="must be preloaded"):
         check_reply(planner_request["inputs"], copy.deepcopy(proposal))
+
+
+@pytest.mark.parametrize("vector", json.loads((Path(__file__).resolve().parents[2] / "harness/test-vectors/pytest-node-ids.json").read_text()), ids=lambda v: repr(v["node_id"]))
+def test_planner_exact_node_ids_agree_with_harness(vector, planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+    from tl3_workers.forecast import Forecaster
+    monkeypatch.setattr(Forecaster, "measure", lambda *a: {"fits": True})
+    reply = copy.deepcopy(LEAF)
+    for check in reply["checks"]:
+        check["node_ids"] = [vector["node_id"]]
+    try:
+        planner.check_reply(planner_request["inputs"], reply)
+        valid = "Checks must name exact pytest node IDs." not in reply["violations"]
+    except ValueError:
+        valid = False
+    assert valid == vector["valid"]
 
 
 @pytest.mark.parametrize('proposal', [LEAF, SPLIT, CANT_MEET])

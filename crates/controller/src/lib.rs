@@ -6,6 +6,7 @@ pub mod adapters;
 pub mod cli;
 pub mod clock;
 pub mod executor;
+mod goals;
 mod http;
 pub mod ingress;
 pub mod looks;
@@ -1715,7 +1716,8 @@ impl Controller {
                     }
                 };
                 if role == "reviewer" {
-                    let mut criteria = adapters::workers::review::criteria(&mut self.store, node)?;
+                    let mut criteria =
+                        adapters::workers::review::criteria(&mut self.store, snapshot, node)?;
                     criteria["head_sha"] = json!(n.head.and_then(|head| {
                         snapshot
                             .interned
@@ -1725,13 +1727,17 @@ impl Controller {
                             })
                             .map(|i| i.value.clone())
                     }));
-                    if adapters::workers::review::validate_reply(&reply, &criteria).is_err() {
-                        return Ok(Some(Event::Reply {
-                            node,
-                            generation,
-                            reply: Reply::RunFailed,
-                        }));
-                    }
+                    let blockers =
+                        match adapters::workers::review::validate_reply(&reply, &criteria) {
+                            Ok(blockers) => blockers,
+                            Err(_) => {
+                                return Ok(Some(Event::Reply {
+                                    node,
+                                    generation,
+                                    reply: Reply::RunFailed,
+                                }));
+                            }
+                        };
                     if reply["verdict"] == "approve" {
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::Approved {
@@ -1747,31 +1753,25 @@ impl Controller {
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
                         let mut remaining = findings::MAX_REPORT_CHARS;
-                        for (index, finding) in reply["blocking_findings"]
-                            .as_array()
-                            .unwrap()
+                        for (index, finding) in blockers
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
                             .enumerate()
                         {
                             let report = format!(
                                 "{}: {}",
-                                findings::clipped(
-                                    finding["problem"].as_str().unwrap(),
-                                    findings::MAX_MESSAGE_CHARS
-                                ),
-                                findings::clipped(
-                                    finding["evidence"].as_str().unwrap(),
-                                    findings::MAX_MESSAGE_CHARS
-                                ),
+                                findings::clipped(&finding.problem, findings::MAX_MESSAGE_CHARS),
+                                findings::clipped(&finding.evidence, findings::MAX_MESSAGE_CHARS),
                             );
                             let length = report.chars().count();
                             if length > remaining {
                                 break;
                             }
                             remaining -= length;
-                            let goal_ids = if finding["citation"]["kind"] == "goal" {
-                                vec![finding["citation"]["id"].as_str().unwrap().to_owned()]
+                            let goal_ids = if finding.citation.kind
+                                == adapters::workers::review::CitationKind::Goal
+                            {
+                                vec![finding.citation.id.clone()]
                             } else {
                                 Vec::new()
                             };
@@ -1801,18 +1801,13 @@ impl Controller {
                     }
                 }
                 let document = match role.as_str() {
-                    "ingest" => "briefs",
-                    "audit" => "audits",
-                    "reviewer" => "reviews",
-                    "maker" => "maker_replies",
-                    _ => "plans",
+                    "ingest" => Some("briefs"),
+                    "audit" => Some("audits"),
+                    "reviewer" => None,
+                    "maker" => Some("maker_replies"),
+                    _ => Some("plans"),
                 };
                 if role == "planner" {
-                    commit.rows.push(put(
-                        "plan_reports",
-                        format!("{}:{generation}", node.0),
-                        reply.clone(),
-                    ));
                     let mut findings = self
                         .store
                         .worker_document(&node.0.to_string(), "findings")?
@@ -1820,9 +1815,13 @@ impl Controller {
                     let reports = findings
                         .as_array_mut()
                         .ok_or(Error::Invalid("findings must be text reports"))?;
-                    for violation in reply["violations"].as_array().unwrap() {
-                        if !reports.contains(violation) {
-                            reports.push(violation.clone());
+                    for violation in adapters::workers::protocol::reply_field::<Vec<String>>(
+                        &reply,
+                        "violations",
+                    )? {
+                        let violation = json!(violation);
+                        if !reports.contains(&violation) {
+                            reports.push(violation);
                         }
                     }
                     if let Some(report) = reply["report"].as_str() {
@@ -1836,12 +1835,9 @@ impl Controller {
                         ..
                     }) = mapped
                     {
-                        let paths = reply["files"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .map(|p| p.as_str().unwrap().to_owned())
-                            .collect::<Vec<_>>();
+                        let paths = adapters::workers::protocol::reply_field::<Vec<String>>(
+                            &reply, "files",
+                        )?;
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
                                 footprint: self.footprint(snapshot, world, node, &paths)?,
@@ -1849,14 +1845,18 @@ impl Controller {
                             });
                     }
                 }
-                commit
-                    .rows
-                    .push(put(document, node.0.to_string(), reply.clone()));
+                if let Some(document) = document {
+                    commit
+                        .rows
+                        .push(put(document, node.0.to_string(), reply.clone()));
+                }
                 if role == "ingest" {
                     commit.rows.push(put(
                         "goals",
                         node.0.to_string(),
-                        reply.get("goals").cloned().unwrap_or(json!([])),
+                        json!(crate::goals::identified(
+                            reply.get("goals").unwrap_or(&json!([]))
+                        )?),
                     ));
                 }
                 let mapped = match mapped {
@@ -1869,7 +1869,10 @@ impl Controller {
                         let goals = inputs.get("maker").unwrap_or(&inputs)["goals"]
                             .as_array()
                             .ok_or(Error::Invalid("maker goals missing"))?;
-                        let checks = reply["self_check"].as_array().unwrap();
+                        let checks = adapters::workers::protocol::reply_field::<Vec<Value>>(
+                            &reply,
+                            "self_check",
+                        )?;
                         let expected: BTreeSet<_> =
                             goals.iter().map(|g| g["id"].as_str()).collect();
                         let checked: BTreeSet<_> =
@@ -1879,9 +1882,9 @@ impl Controller {
                             .worker_document(&node.0.to_string(), "maker_findings")?
                             .unwrap_or(json!([]));
                         let previous = commit_sha(snapshot, n.head);
-                        let reviewed = if n.round == 1 { previous } else { None };
-                        let fixes =
-                            adapters::workers::reproducing::check(&reply, &feedback, reviewed);
+                        let current = findings::current_review(&feedback, n.round, previous);
+                        let reviewed = current.head;
+                        let fixes = adapters::workers::reproducing::check(&reply, current);
                         if expected != checked || checks.len() != goals.len() {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
@@ -2194,11 +2197,7 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
             ..
         }
     ) {
-        let goals = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "goals" && r.id == delivery.node().0.to_string());
-        delivery.note = goals.and_then(|r| r.value.as_array()).map(|goals| {
+        delivery.note = crate::goals::load(snapshot, delivery.node())?.map(|goals| {
             goals
                 .iter()
                 .filter_map(|g| g["description"].as_str())

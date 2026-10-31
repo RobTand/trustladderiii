@@ -1,3 +1,4 @@
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::LazyLock};
@@ -24,6 +25,11 @@ pub struct Draft {
 /// Add current internal identifiers and names, including request and operation ids.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
+    /// Only these request-local issue and PR references may appear in prose.
+    pub own_issue: Option<u64>,
+    /// Owner/repository of the request, for checking absolute GitHub links.
+    pub own_repository: Option<String>,
+    pub own_pull_request: Option<u64>,
     pub internal_terms: Vec<String>,
     /// Repo-relative files and directories from the request delivery.
     pub known_paths: BTreeSet<String>,
@@ -46,6 +52,9 @@ pub enum Violation {
     InternalNameOrId,
     FilePath,
     Log,
+    Mention(String),
+    ForeignReference(String),
+    HtmlEntity(String),
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +73,7 @@ static HEX_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b[0-9a-f]{7,
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
     // CamelCase alone also describes product names. Actual internal names belong in Policy.
     Regex::new(
-        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|\#[0-9]+|<!--)",
+        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|<!--)",
     )
     .unwrap()
 });
@@ -116,10 +125,8 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
-    let mut rendered = format!(
-        "You asked for \"{}\".\n\n{}\n",
-        draft.request_quote, draft.obstacle
-    );
+    let request_prefix = format!("You asked for \"{}\".\n\n", draft.request_quote);
+    let mut rendered = format!("{request_prefix}{}\n", draft.obstacle);
     for (i, option) in draft.options.iter().enumerate() {
         rendered.push_str(&format!(
             "\n{}. {}: {}\n",
@@ -145,6 +152,8 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         draft.how_to_answer.as_str(),
     ]);
     errors.extend(content_errors(&written.join("\n"), policy));
+    // The quoted title is exempt by design: it is the issue's text, not TL3's prose.
+    errors.extend(reference_errors(&rendered[request_prefix.len()..], policy));
     if errors.is_empty() {
         Ok(CheckedMessage(rendered))
     } else {
@@ -155,6 +164,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
 /// Notes and summaries use the same content rules without question-only fields.
 pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Violation>> {
     let mut errors = content_errors(text, policy);
+    errors.extend(reference_errors(text, policy));
     if is_blank(text) {
         errors.push(Violation::MissingObstacle);
     }
@@ -213,6 +223,117 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     }
     if LOG.is_match(&normalized) {
         errors.push(Violation::Log);
+    }
+    errors
+}
+
+static MENTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?:^|[^a-zA-Z0-9])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)",
+    )
+    .unwrap()
+});
+static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?P<repo>[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)?#(?P<number>[0-9]+)").unwrap()
+});
+
+static GH_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|(?-i:[^a-zA-Z0-9]))(?P<reference>gh\\?-(?P<number>\d+))").unwrap()
+});
+
+static REFERENCE_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:https?://)?github\.com/(?P<repo>[a-z0-9_.-]+/[a-z0-9_.-]+)/(?:issues|pull)/(?P<number>[0-9]+)\b").unwrap()
+});
+static HTML_ENTITY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[a-zA-Z][a-zA-Z0-9]*;)").unwrap()
+});
+
+/// Mask code using GFM ranges so tables, nested blocks and multi-backtick spans
+/// have the same meaning to this rule as they do to the Markdown renderer.
+fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
+    let mut prose = text.as_bytes().to_vec();
+    let mut in_code_block = false;
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_GFM;
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => {
+                in_code_block = true;
+                prose[range].fill(b' ');
+            }
+            Event::End(TagEnd::CodeBlock) => in_code_block = false,
+            Event::Code(_) => prose[range].fill(b' '),
+            _ if in_code_block => prose[range].fill(b' '),
+            _ => {}
+        }
+    }
+    // Complete UTF-8 ranges were replaced with ASCII spaces.
+    let original = String::from_utf8(prose).unwrap();
+    let prose = normalize(&original);
+    let mut errors = Vec::new();
+    // Entity syntax has its own feedback; its numeric payload is not an issue reference.
+    let prose = HTML_ENTITY.replace_all(&prose, |capture: &regex::Captures<'_>| {
+        let entity = &capture[0];
+        // Use the Markdown parser's entity names so ordinary ampersands remain prose.
+        if !entity.starts_with("&#")
+            && !Parser::new(entity)
+                .any(|event| matches!(event, Event::Text(decoded) if decoded.as_ref() != entity))
+        {
+            return entity.to_owned();
+        }
+        let violation = Violation::HtmlEntity(entity.to_owned());
+        if !errors.contains(&violation) {
+            errors.push(violation);
+        }
+        " ".to_owned()
+    });
+    // GitHub sees Unicode boundaries before normalization can turn them into ASCII
+    // letters or strip them. Keep both passes, including normalization-only matches.
+    for capture in MENTION
+        .captures_iter(&original)
+        .chain(MENTION.captures_iter(&prose))
+    {
+        let violation = Violation::Mention(capture["mention"].to_owned());
+        if !errors.contains(&violation) {
+            errors.push(violation);
+        }
+    }
+    for capture in REFERENCE
+        .captures_iter(&prose)
+        .chain(GH_REFERENCE.captures_iter(&original))
+        .chain(GH_REFERENCE.captures_iter(&prose))
+    {
+        let number = capture["number"].parse::<u64>().ok();
+        if capture.name("repo").is_some()
+            || number.is_none()
+            || ![policy.own_issue, policy.own_pull_request].contains(&number)
+        {
+            let token = capture
+                .name("reference")
+                .map_or(&capture[0], |m| m.as_str());
+            let violation = Violation::ForeignReference(token.to_owned());
+            if !errors.contains(&violation) {
+                errors.push(violation);
+            }
+        }
+    }
+    for capture in REFERENCE_URL.captures_iter(&prose) {
+        let number = capture["number"].parse::<u64>().ok();
+        if !policy
+            .own_repository
+            .as_deref()
+            .is_some_and(|repo| repo.eq_ignore_ascii_case(&capture["repo"]))
+            || number.is_none()
+            || ![policy.own_issue, policy.own_pull_request].contains(&number)
+        {
+            let violation = Violation::ForeignReference(capture[0].to_owned());
+            if !errors.contains(&violation) {
+                errors.push(violation);
+            }
+        }
     }
     errors
 }

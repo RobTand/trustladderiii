@@ -85,7 +85,7 @@ pub(super) fn inputs(
     if report["base_sha"] != run.base_sha {
         return Err(Error::Invalid("review and checks disagree on base"));
     }
-    let criteria = criteria(store, delivery.node())?;
+    let criteria = criteria(store, snapshot, delivery.node())?;
     let diff = git(
         &run.repository,
         &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
@@ -104,14 +104,13 @@ pub(super) fn inputs(
     Ok(inputs)
 }
 
-pub(crate) fn criteria(store: &mut Store, node: tl3_kernel::NodeId) -> Result<Value> {
+pub(crate) fn criteria(
+    store: &mut Store,
+    snapshot: &tl3_store::Snapshot,
+    node: tl3_kernel::NodeId,
+) -> Result<Value> {
+    let goals = crate::goals::load(snapshot, node)?.ok_or(Error::Invalid("review needs goals"))?;
     let node = node.0.to_string();
-    let goals = store
-        .worker_document(&node, "goals")?
-        .ok_or(Error::Invalid("review needs goals"))?;
-    let goals: Vec<_> = goals.as_array().ok_or(Error::Invalid("review goals must be a list"))?.iter().enumerate().map(|(index, goal)| {
-        json!({"id": goal.get("id").cloned().unwrap_or(json!(format!("goal-{}", index + 1))), "description": goal["description"], "verification": goal["verification"]})
-    }).collect();
     let materials = store
         .worker_materials(&node)?
         .ok_or(Error::Invalid("review materials missing"))?;
@@ -159,30 +158,47 @@ pub(super) fn checkout(root: &Path, delivery: &Delivery) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<()> {
+#[derive(serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CitationKind {
+    Goal,
+    StandingRule,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Citation {
+    pub kind: CitationKind,
+    pub id: String,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct BlockingFinding {
+    pub citation: Citation,
+    pub problem: String,
+    pub evidence: String,
+}
+
+pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<BlockingFinding>> {
     if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
         return Err(Error::Invalid("review approval names a different head"));
     }
-    for finding in reply["blocking_findings"]
-        .as_array()
-        .ok_or(Error::Invalid("review findings missing"))?
-    {
-        let citation = &finding["citation"];
-        let entries = if citation["kind"] == "goal" {
-            &inputs["goals"]
-        } else {
-            &inputs["standing_rules"]
+    let findings: Vec<BlockingFinding> = super::protocol::reply_field(reply, "blocking_findings")?;
+    for finding in &findings {
+        let entries = match finding.citation.kind {
+            CitationKind::Goal => &inputs["goals"],
+            CitationKind::StandingRule => &inputs["standing_rules"],
         };
-        if !entries
-            .as_array()
-            .is_some_and(|entries| entries.iter().any(|entry| entry["id"] == citation["id"]))
-        {
+        if !entries.as_array().is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry["id"] == finding.citation.id)
+        }) {
             return Err(Error::Invalid(
                 "review blocker cites an unknown goal or rule",
             ));
         }
     }
-    Ok(())
+    Ok(findings)
 }
 
 #[cfg(test)]
@@ -204,6 +220,27 @@ mod tests {
         ] {
             let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":kind,"id":id},"problem":"Problem","evidence":"Evidence"}],"findings":[]});
             assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid);
+        }
+    }
+}
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+
+    #[test]
+    fn malformed_blockers_return_invalid_before_feedback_is_built() {
+        let inputs = json!({"goals":[{"id":"g"}], "standing_rules":[]});
+        for finding in [
+            json!({"citation":{"kind":"goal","id":"g"},"evidence":"e"}),
+            json!({"citation":{"kind":"goal","id":"g"},"problem":42,"evidence":"e"}),
+            json!({"citation":{"kind":"goal","id":"g"},"problem":"p","evidence":null}),
+        ] {
+            let reply = json!({"verdict":"changes", "blocking_findings":[finding], "findings":[]});
+            assert!(
+                matches!(validate_reply(&reply, &inputs), Err(Error::Invalid(_))),
+                "{reply}"
+            );
         }
     }
 }

@@ -485,12 +485,12 @@ pub(super) fn parse_reply(
                 super::review::validate_reply(&value["reply"], inputs)?;
             }
             if role == "maker" && value["reply"]["kind"] == "done" {
-                let reviewed = if inputs["round"] == 1 {
-                    inputs["reviewed_sha"].as_str()
-                } else {
-                    None
-                };
-                super::reproducing::check(&value["reply"], &inputs["feedback"], reviewed)?;
+                let current = crate::findings::current_review(
+                    &inputs["feedback"],
+                    delivery.round,
+                    inputs["reviewed_sha"].as_str(),
+                );
+                super::reproducing::check(&value["reply"], current)?;
             }
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
