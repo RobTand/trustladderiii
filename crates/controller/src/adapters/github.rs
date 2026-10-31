@@ -191,13 +191,9 @@ impl Executor for Adapter {
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         match self.execute_delivery(delivery) {
-            Err(Error::Adapter(error)) if !matches!(delivery.output, Out::Effect { .. }) => {
-                let class = match error.downcast_ref::<tl3_github::Error>() {
-                    Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
-                    Some(tl3_github::Error::Http { status: 404 | 410 }) => "not_found",
-                    Some(tl3_github::Error::Http { status: 422 }) => "invalid_request",
-                    _ => return Err(Error::Adapter(error)),
-                };
+            Err(Error::Permanent { class, .. })
+                if !matches!(delivery.output, Out::Effect { .. }) =>
+            {
                 Ok(Completion::permanent(class))
             }
             result => result,
@@ -590,6 +586,9 @@ impl Adapter {
                 )?
             };
             let mut policy = self.policy.clone();
+            policy.own_repository = Some(repo.clone());
+            policy.own_issue = Some(delivery.issue);
+            policy.own_pull_request = delivery.pull_request;
             policy
                 .internal_terms
                 .extend([delivery.key.clone(), "TL3".into()]);

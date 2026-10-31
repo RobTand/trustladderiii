@@ -142,7 +142,7 @@ pub(crate) fn incident_note(
     summary: &str,
 ) -> String {
     format!(
-        "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+        "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
         repository.owner, repository.name, issue
     )
 }
@@ -1047,6 +1047,16 @@ impl Controller {
                 (s.delivery.generation, seq)
             });
         if let Some(mut state) = cause {
+            if let Some(value) = commit.rows.iter().rev().find_map(|row| match row {
+                RowChange::Put { table, id, value }
+                    if table == "allowances" && id == &state.delivery.key =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            }) {
+                state = serde_json::from_value(value.clone())?;
+            }
             state.incident = Some(id.into());
             state.healthy = false;
             state.due_ms = Some(
@@ -1145,23 +1155,14 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::Quota { .. } => "quota",
+        crate::Error::Permanent { class, .. } => class,
         crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-        crate::Error::Adapter(error)
-            if error
-                .downcast_ref::<tl3_worktrees::Error>()
-                .is_some_and(|error| error.permanent_class().is_some()) =>
-        {
-            "setup"
-        }
-        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_github::Error>() {
-            Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
-            Some(tl3_github::Error::Http { status: 500..=599 }) => "upstream_server",
-            Some(tl3_github::Error::Response) => "invalid_response",
-            _ => "transport",
-        },
+        crate::Error::Adapter(error) => error
+            .downcast_ref::<tl3_github::Error>()
+            .map_or("transport", |error| error.failure_class().as_str()),
         crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
@@ -1189,6 +1190,18 @@ pub(crate) fn incident_summary(
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
+        "not_found" => "could not find the requested resource",
+        "invalid_request" => "rejected the request",
+        "dirty_worktree" => "has uncommitted or untracked files",
+        "invalid_branch" => "rejected an invalid branch name",
+        "invalid_commit" => "rejected an invalid commit id",
+        "invalid_remote" => "rejected an invalid remote",
+        "invalid_worktree_path" => "rejected a path outside its configured root",
+        "invalid_token" => "rejected its installation token",
+        "missing_branch" => "could not find the branch or base",
+        "reserved_branch" => "refused to change the reserved main branch",
+        "worktree_occupied" => "found a path or branch owned by another checkout",
+        "worktree_recovery" => "needs recovery after an interrupted rebase",
         "transport" => "could not be reached",
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
@@ -1239,40 +1252,45 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
 mod git_failure_tests {
     use super::*;
     #[test]
-    fn deterministic_git_failures_are_setup_incidents() {
+    fn deterministic_git_failures_are_permanent_incidents() {
         use tl3_worktrees::Error as W;
-        for error in [
-            W::BranchName,
-            W::CommitId,
-            W::Remote,
-            W::WorktreePath,
-            W::Token,
-            W::Response,
-            W::MissingBranch,
-            W::MainBranch,
-            W::WorktreeOccupied,
-            W::DirtyWorktree,
-            W::Recovery,
+        for (error, expected) in [
+            (W::BranchName, "invalid_branch"),
+            (W::CommitId, "invalid_commit"),
+            (W::Remote, "invalid_remote"),
+            (W::WorktreePath, "invalid_worktree_path"),
+            (W::Token, "invalid_token"),
+            (W::Response, "invalid_response"),
+            (W::MissingBranch, "missing_branch"),
+            (W::MainBranch, "reserved_branch"),
+            (W::WorktreeOccupied, "worktree_occupied"),
+            (W::DirtyWorktree, "dirty_worktree"),
+            (W::Recovery, "worktree_recovery"),
         ] {
+            assert_eq!(error.permanent_class(), Some(expected));
             let error = crate::Error::from(error);
-            let crate::Error::Adapter(source) = &error else {
-                panic!("retain the typed Git error");
+            let crate::Error::Permanent { class, source } = &error else {
+                panic!("retain the permanent Git error and its class");
             };
+            assert_eq!(*class, expected);
             assert!(source.downcast_ref::<W>().is_some());
-            assert_eq!(failure_class(&error), "setup", "{error}");
-            assert!(
-                incident_summary(
-                    "request",
-                    &IncidentSignature {
-                        upstream: Upstream::Worktrees,
-                        class: failure_class(&error).into()
-                    },
-                    false
-                )
-                .contains("could not complete its setup")
-            );
+            assert_eq!(failure_class(&error), expected, "{error}");
+            if expected == "dirty_worktree" {
+                assert!(
+                    incident_summary(
+                        "request",
+                        &IncidentSignature {
+                            upstream: Upstream::Worktrees,
+                            class: failure_class(&error).into()
+                        },
+                        false
+                    )
+                    .contains("has uncommitted or untracked files")
+                );
+            }
         }
     }
+
     #[test]
     fn ambiguous_git_failures_remain_transport() {
         use tl3_worktrees::Error as W;

@@ -166,16 +166,11 @@ impl Materials {
         let issue = runtime.block_on(client.issue(&name, delivery.issue))?;
         let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
         let path = repository_path(&self.worktrees, &delivery.repository);
-        let git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
-        let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
+        let git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
+        let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
         let token =
-            tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)
-                .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
-        let base = git
-            .fetch_main(&remote, Some(&token))
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
+            tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
+        let base = git.fetch_main(&remote, Some(&token))?;
         let repo = repository_materials(&path, base.as_str())?;
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});
@@ -193,16 +188,10 @@ pub(crate) fn maker_inputs(
     if plan["kind"] != "leaf" {
         return Err(Error::Invalid("making requires an accepted leaf plan"));
     }
-    let mut goals = brief["goals"]
-        .as_array()
-        .ok_or(Error::Invalid("accepted brief needs goals"))?
-        .clone();
-    for (index, goal) in goals.iter_mut().enumerate() {
-        goal["id"] = json!(format!("goal-{}", index + 1));
-    }
+    let goals = crate::goals::identified(&brief["goals"])?;
     let checks = plan["checks"].as_array().ok_or(Error::Invalid("accepted plan needs checks"))?.iter().enumerate().map(|(index, check)| {
         let ids = check["goal_ids"].as_array().ok_or(Error::Invalid("plan check needs goal indexes"))?.iter().map(|id| {
-            id.as_u64().and_then(|id| goals.get(id as usize)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
+            id.as_u64().and_then(|id| usize::try_from(id).ok()).and_then(|id| goals.get(id)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
         }).collect::<Result<Vec<_>>>()?;
         Ok(json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids}))
     }).collect::<Result<Vec<Value>>>()?;
@@ -363,5 +352,27 @@ mod hostile_tests {
                 assert_eq!(value["file_list"], serde_json::json!(["README.md"]));
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn maker_preserves_goal_identity_used_by_review() {
+        let brief = json!({"brief":"hello", "goals":[{"id":"greeting", "description":"hello", "verification":"test"}]});
+        let plan = json!({"kind":"leaf", "files":["a.py"], "checks":[{"kind":"regression", "node_ids":["test_a.py::test_a"], "goal_ids":[0]}]});
+        let inputs = maker_inputs(&brief, &plan).unwrap();
+        assert_eq!(inputs["goals"][0]["id"], "greeting");
+        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!(["greeting"]));
+    }
+    #[test]
+    fn malformed_goal_returns_invalid_instead_of_panicking() {
+        let brief = json!({"brief":"hello", "goals":["unexpected"]});
+        assert!(matches!(
+            maker_inputs(&brief, &json!({"kind":"leaf"})),
+            Err(crate::Error::Invalid(_))
+        ));
     }
 }

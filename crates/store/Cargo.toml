@@ -12,6 +12,7 @@ thiserror = "2"
 tl3-config = { path = "../config" }
 
 [dev-dependencies]
+rustix = { version = "1", features = ["process"] }
 postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio", "zonky", "tls-rustls-ring"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt", "time", "net"] }
@@ -19,4 +20,9 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 [[test]]
 name = "postgres"
 path = "tests/postgres.rs"
+harness = false
+
+[[test]]
+name = "fixture_lifecycle"
+path = "tests/fixture_lifecycle.rs"
 harness = false

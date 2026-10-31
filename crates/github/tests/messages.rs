@@ -130,7 +130,6 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
         "b5862850-8ed7-47f7-8fdf-887a96ba872c",
         "id: 12",
         "request_id",
-        "#123",
         "<!-- hidden -->",
     ] {
         rejects(
@@ -138,6 +137,10 @@ fn blocks_ids_names_paths_and_logs_in_every_section() {
             Violation::InternalNameOrId,
         );
     }
+    rejects(
+        |d| d.options[0].outcome = "#123".into(),
+        Violation::ForeignReference("#123".into()),
+    );
     for path in [
         "/home/rob/work",
         "src/main.rs",
@@ -416,4 +419,211 @@ fn decorated_paths_and_line_suffixes_are_rejected() {
         );
     }
     assert!(check_prose("The docs and tests are ready.", &policy).is_ok());
+}
+
+#[test]
+fn references_follow_the_rendered_question_markdown() {
+    let mut d = draft();
+    d.options[0].action = "Choose another image\n\n".into();
+    d.options[0].outcome = "    Ask @octocat".into();
+    assert!(
+        check(&d, &Policy::default())
+            .expect_err("the rendered colon before the outcome prevents an indented code block")
+            .contains(&Violation::Mention("@octocat".into()))
+    );
+}
+
+#[test]
+fn table_cells_do_not_hide_references_after_a_pipe_in_backticks() {
+    let text = "| Example | Detail |\n| --- | --- |\n| `left|#1` | ready |";
+    assert!(
+        check_prose(text, &Policy::default())
+            .expect_err("GitHub splits the cell at the unescaped pipe")
+            .contains(&Violation::ForeignReference("#1".into()))
+    );
+}
+
+#[test]
+fn github_reference_urls_allow_only_the_requests_repository_and_numbers() {
+    let policy = Policy {
+        own_repository: Some("RobTand/tl3-sandbox".into()),
+        own_issue: Some(12),
+        own_pull_request: Some(34),
+        ..Policy::default()
+    };
+    for reference in [
+        "GH-1",
+        "https://github.com/octocat/hello-world/issues/5",
+        "https://github.com/octocat/hello-world/pull/5",
+        "https://github.com/other/tl3-sandbox/issues/12",
+        "https://github.com/RobTand/other/issues/12",
+        "https://github.com/RobTand/tl3-sandbox/pull/56",
+    ] {
+        for text in [
+            reference.to_owned(),
+            format!("<{reference}>"),
+            format!("[details]({reference})"),
+        ] {
+            assert!(
+                check_prose(&text, &policy)
+                    .expect_err(&text)
+                    .contains(&Violation::ForeignReference(reference.into())),
+                "{text}"
+            );
+        }
+    }
+    for reference in [
+        "GH-12",
+        "GH-34",
+        "https://github.com/RobTand/tl3-sandbox/issues/12",
+        "https://github.com/RobTand/tl3-sandbox/pull/34",
+        "https://github.com/robtand/TL3-SANDBOX/issues/12#issuecomment-42",
+    ] {
+        for text in [
+            reference.to_owned(),
+            format!("<{reference}>"),
+            format!("[details]({reference})"),
+        ] {
+            assert!(check_prose(&text, &policy).is_ok(), "{text}");
+        }
+    }
+    assert!(check_prose("item #1 of the list", &policy).is_err());
+    assert!(check_prose("item #12 of the list", &policy).is_ok());
+}
+
+#[test]
+fn entity_and_url_references_inside_code_are_inert() {
+    let tokens = "&#x40;octocat &commat;octocat &num;1 &#64;octocat GH-1 https://github.com/octocat/hello-world/issues/5";
+    for text in [
+        format!("`{tokens}`"),
+        format!("    {tokens}"),
+        format!("~~~\n{tokens}\n~~~"),
+    ] {
+        assert!(check_prose(&text, &Policy::default()).is_ok(), "{text}");
+    }
+}
+
+macro_rules! underscore_mention {
+    ($name:ident, $text:expr, $mention:expr) => {
+        #[test]
+        fn $name() {
+            assert!(
+                check_prose($text, &Policy::default())
+                    .expect_err("underscore emphasis must not hide a live mention")
+                    .contains(&Violation::Mention($mention.into())),
+                "{}",
+                $text
+            );
+        }
+    };
+}
+underscore_mention!(emphasized_user_mention, "_@octocat_", "@octocat");
+underscore_mention!(strong_user_mention, "__@octocat__", "@octocat");
+underscore_mention!(nested_user_mention, "*_@octocat_*", "@octocat");
+underscore_mention!(sentence_user_mention, "Thanks _@octocat_!", "@octocat");
+underscore_mention!(blockquote_user_mention, "> _@octocat_", "@octocat");
+underscore_mention!(
+    table_user_mention,
+    "| Name |\n| --- |\n| _@octocat_ |",
+    "@octocat"
+);
+underscore_mention!(html_user_mention, "<b>_@octocat_</b>", "@octocat");
+underscore_mention!(emphasized_team_mention, "_@org/team_", "@org/team_");
+
+macro_rules! gh_reference {
+    ($name:ident, $text:expr) => {
+        #[test]
+        fn $name() {
+            let policy = Policy {
+                own_issue: Some(12),
+                own_pull_request: Some(34),
+                ..Policy::default()
+            };
+            assert!(
+                check_prose($text, &policy)
+                    .expect_err("the foreign issue reference must be rejected")
+                    .iter()
+                    .any(|violation| matches!(violation, Violation::ForeignReference(_))),
+                "{}",
+                $text
+            );
+        }
+    };
+}
+gh_reference!(lowercase_gh_reference, "gh-1");
+gh_reference!(titlecase_gh_reference, "Gh-1");
+gh_reference!(mixedcase_gh_reference, "gH-1");
+gh_reference!(zero_padded_gh_reference, "gh-01");
+gh_reference!(escaped_gh_reference, r"gh\-1");
+gh_reference!(emphasized_gh_reference, "_GH-1_");
+gh_reference!(nested_gh_reference, "*_GH-1_*");
+gh_reference!(strong_gh_reference, "__gh-1__");
+
+#[test]
+fn unterminated_numeric_entities_get_only_entity_violations() {
+    for entity in ["&#64", "&#35", "&#x40", "&#X23"] {
+        assert_eq!(
+            check_prose(entity, &Policy::default()).unwrap_err(),
+            vec![Violation::HtmlEntity(entity.into())],
+            "{entity}"
+        );
+    }
+}
+
+#[test]
+fn ampersands_without_real_entity_names_are_plain_prose() {
+    for text in ["R&D;", "Q&A;", "AT&T;", "&notAnEntity;"] {
+        assert!(check_prose(text, &Policy::default()).is_ok(), "{text}");
+    }
+}
+
+underscore_mention!(unicode_fullwidth_mention, "ｏ@octocat", "@octocat");
+underscore_mention!(unicode_zero_width_mention, "a\u{200b}@octocat", "@octocat");
+gh_reference!(unicode_fullwidth_lowercase_gh, "ｏgh-5");
+gh_reference!(unicode_fullwidth_uppercase_gh, "ｏGH-5");
+gh_reference!(unicode_zero_width_lowercase_gh, "a\u{200b}gh-5");
+gh_reference!(unicode_zero_width_uppercase_gh, "a\u{200b}GH-5");
+
+gh_reference!(unicode_kelvin_lowercase_gh, "Kgh-5");
+gh_reference!(unicode_kelvin_uppercase_gh, "KGH-5");
+gh_reference!(unicode_long_s_lowercase_gh, "ſgh-5");
+gh_reference!(unicode_long_s_uppercase_gh, "ſGH-5");
+
+#[test]
+fn unicode_boundaries_preserve_own_numbers_code_and_unique_feedback() {
+    let policy = Policy {
+        own_issue: Some(12),
+        own_pull_request: Some(34),
+        ..Policy::default()
+    };
+    for prefix in ["ｏ", "a\u{200b}", "K", "ſ", "а", "ο", "a\u{301}"] {
+        for token in ["gh-12", "GH-34"] {
+            let text = format!("{prefix}{token}");
+            assert!(check_prose(&text, &policy).is_ok(), "{text}");
+        }
+        for token in ["@octocat", "gh-5", "GH-5"] {
+            let text = format!("{prefix}{token}");
+            let expected = if token.starts_with('@') {
+                Violation::Mention(token.into())
+            } else {
+                Violation::ForeignReference(token.into())
+            };
+            assert_eq!(check_prose(&text, &policy).unwrap_err(), vec![expected]);
+            for code in [
+                format!("`{text}`"),
+                format!("    {text}"),
+                format!("~~~\n{text}\n~~~"),
+            ] {
+                assert!(check_prose(&code, &policy).is_ok(), "{code}");
+            }
+        }
+    }
+    for (text, expected) in [
+        ("＠octocat", Violation::Mention("@octocat".into())),
+        ("ＧＨ-5", Violation::ForeignReference("GH-5".into())),
+        ("g\u{200b}h-5", Violation::ForeignReference("gh-5".into())),
+        ("а@octocat", Violation::Mention("@octocat".into())),
+    ] {
+        assert_eq!(check_prose(text, &policy).unwrap_err(), vec![expected]);
+    }
 }

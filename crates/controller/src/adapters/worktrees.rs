@@ -100,8 +100,8 @@ struct Record {
     completion: Option<Completion>,
 }
 
-fn adapter(error: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::Adapter(Box::new(error))
+fn adapter(error: impl Into<Error>) -> Error {
+    error.into()
 }
 
 impl Real {
