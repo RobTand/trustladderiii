@@ -530,7 +530,7 @@ maker credit. Failed checks and review findings use the existing fix rounds on
 TL3's branch, retaining the author's commits. Scope trimming is #145; splitting
 adopted work into leaves is #147.
 
-The two PRD **coordinator defaults, for Rob to check**, used by #143 are:
+**Confirmed by Rob, 2026-10-31:** The two PRD choices used by #143 are:
 
 - The closing keyword must identify exactly one issue. Zero or several linked issues get one clarification.
 - The proposed head never changes. It is pinned at label time and later pushes are ignored.

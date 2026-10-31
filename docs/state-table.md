@@ -274,7 +274,7 @@ A phase's effects run as a sequence. The kernel emits the first effect, then emi
 
 **A request starts** when Rob labels an issue `tl3` (Q2). Q45 also permits a
 proposed PR to seed the request. In #143, only Rob's `tl3` label on a same-repo
-PR qualifies. **Coordinator default, for Rob to check:** its closing keyword
+PR qualifies. **Confirmed by Rob, 2026-10-31:** its closing keyword
 must identify exactly one issue. The issue supplies the goals. The root starts
 in Ingesting and requests an ingest run, retaining the proposed head.
 
@@ -374,7 +374,7 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 | Maker out of room | Credit at least 1 | Planning, which must split | Spend 1; release the slot and files |
 | Maker out of room | Credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files |
 
-**Coordinator default, for Rob to check:** the proposed head never changes; it
+**Confirmed by Rob, 2026-10-31:** the proposed head never changes; it
 is pinned at label time. The adopted bit can only become true and is
 never reset, including on a re-plan. Repeated preparations cannot readopt the
 original head. Adoption holds the normal slot and footprint, uses no agent pool
