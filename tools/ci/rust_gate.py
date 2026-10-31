@@ -157,6 +157,8 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True):
     started = time.monotonic()
     results = execute_binaries(binaries, jobs)
     output = {'seconds': time.monotonic() - started, 'jobs': jobs, 'tests': results}
+    for name, seconds in sorted(results.items()):
+        print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(output, indent=2, sort_keys=True) + '\n')
