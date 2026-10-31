@@ -110,7 +110,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
                 }
             }
         }
-        _ => unreachable!(),
+        _ => return Err(Error::Invalid("unsupported worker role")),
     }))
 }
 
@@ -271,6 +271,38 @@ pub(super) fn validate_forecast_settings(reply: &Value, settings: &Value) -> Res
     Ok(())
 }
 
+fn schemas_from(schemas: Vec<(String, Value)>) -> Result<BTreeMap<String, jsonschema::Validator>> {
+    let mut registry = jsonschema::Registry::new();
+    for (name, schema) in &schemas {
+        let uri = format!("https://trustladderiii.invalid/workers/protocol-1/{name}");
+        registry = registry.add(uri, schema.clone()).map_err(|error| {
+            Error::Adapter(format!("packaged worker schema {name}: {error}").into())
+        })?;
+    }
+    let registry = registry.prepare().map_err(|error| {
+        Error::Adapter(format!("packaged worker schema registry: {error}").into())
+    })?;
+    schemas
+        .into_iter()
+        .map(|(name, schema)| {
+            let validator = jsonschema::options()
+                .with_registry(&registry)
+                .build(&schema)
+                .map_err(|error| {
+                    Error::Adapter(format!("packaged worker schema {name}: {error}").into())
+                })?;
+            Ok((name, validator))
+        })
+        .collect()
+}
+
+pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: &str) -> Result<T> {
+    let value = reply
+        .get(field)
+        .ok_or(Error::Invalid("worker reply field missing"))?;
+    serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
+}
+
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
@@ -344,31 +376,6 @@ mod classifier_tests {
     }
 }
 
-fn schemas_from(schemas: Vec<(String, Value)>) -> Result<BTreeMap<String, jsonschema::Validator>> {
-    let mut registry = jsonschema::Registry::new();
-    for (name, schema) in &schemas {
-        let uri = format!("https://trustladderiii.invalid/workers/protocol-1/{name}");
-        registry = registry.add(uri, schema.clone()).map_err(|error| {
-            Error::Adapter(format!("packaged worker schema {name}: {error}").into())
-        })?;
-    }
-    let registry = registry.prepare().map_err(|error| {
-        Error::Adapter(format!("packaged worker schema registry: {error}").into())
-    })?;
-    schemas
-        .into_iter()
-        .map(|(name, schema)| {
-            let validator = jsonschema::options()
-                .with_registry(&registry)
-                .build(&schema)
-                .map_err(|error| {
-                    Error::Adapter(format!("packaged worker schema {name}: {error}").into())
-                })?;
-            Ok((name, validator))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod reply_defects {
     use super::*;
@@ -406,13 +413,6 @@ mod reply_defects {
             assert!(schemas_from(vec![("broken.json".into(), schema)]).is_err());
         }
     }
-}
-
-pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: &str) -> Result<T> {
-    let value = reply
-        .get(field)
-        .ok_or(Error::Invalid("worker reply field missing"))?;
-    serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
 }
 
 #[cfg(test)]

@@ -69,6 +69,19 @@ pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> 
     })
 }
 
+fn exact_pytest_node_id(test: &str) -> bool {
+    let mut parts = test.split("::");
+    let path = parts.next().unwrap_or_default();
+    let names = parts.collect::<Vec<_>>();
+    !names.is_empty()
+        && names.iter().all(|name| !name.is_empty())
+        && path.ends_with(".py")
+        && !path.starts_with(['/', '-'])
+        && !path.split('/').any(|part| part == "..")
+        && !path.contains('\\')
+        && !test.contains('\0')
+}
+
 #[cfg(test)]
 mod reply_defects {
     use super::*;
@@ -93,17 +106,4 @@ mod reply_defects {
             "node-id disagreements: {mismatches:?}"
         );
     }
-}
-
-fn exact_pytest_node_id(test: &str) -> bool {
-    let mut parts = test.split("::");
-    let path = parts.next().unwrap_or_default();
-    let names = parts.collect::<Vec<_>>();
-    !names.is_empty()
-        && names.iter().all(|name| !name.is_empty())
-        && path.ends_with(".py")
-        && !path.starts_with(['/', '-'])
-        && !path.split('/').any(|part| part == "..")
-        && !path.contains('\\')
-        && !test.contains('\0')
 }

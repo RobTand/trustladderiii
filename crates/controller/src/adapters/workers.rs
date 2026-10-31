@@ -271,10 +271,12 @@ impl Supervisor {
             inputs.as_object_mut().unwrap().remove("reviewed_sha");
             let reviewed = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
             let current = crate::findings::current_review_findings(&inputs["feedback"], reviewed);
-            if !current.is_empty() {
+            let has_current = !current.is_empty();
+            let current = json!(current);
+            if has_current {
                 inputs["reviewed_sha"] = json!(reviewed);
             }
-            inputs["current_review_findings"] = json!(current);
+            inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);

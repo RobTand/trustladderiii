@@ -1045,8 +1045,8 @@ The controller retains each check's tests, outcomes and `custody: in-process` in
 `check_reports`. Each node keeps only its latest head's report, and closure deletes
 it. A review needs the matching check plan, base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
 identifiers in the accepted `goals` document when ingest did not supply IDs.
-Maker inputs and reviewer criteria share the same ID function. Optional `standing_rules` in worker
-materials supplement the controller's rules. The reserved `test-report-integrity`
+Maker inputs and reviewer criteria share the same ID function.
+Optional `standing_rules` in worker materials supplement the controller's rules. The reserved `test-report-integrity`
 rule always replaces any supplied rule with the same ID. It protects test output
 and pytest internals while permitting ordinary program output. Review blockers
 must cite a supplied goal or rule. Approvals must name the exact reviewed head.
