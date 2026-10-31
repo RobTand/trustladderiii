@@ -14,7 +14,7 @@ use std::{
 };
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
-    Bootstrap, Controller, LabelledIssue, Repository,
+    Bootstrap, Boundary, Controller, LabelledIssue, Repository,
     adapters::{
         self,
         github::APPROVAL_CHECK,
@@ -126,6 +126,8 @@ struct State {
     labels: bool,
     closed: bool,
     fail_reads: bool,
+    not_found: Option<&'static str>,
+    not_found_reads: usize,
     lose_response: Option<&'static str>,
     opens: usize,
     reopens: usize,
@@ -143,6 +145,8 @@ impl Default for State {
             labels: false,
             closed: false,
             fail_reads: false,
+            not_found: None,
+            not_found_reads: 0,
             lose_response: None,
             opens: 0,
             reopens: 0,
@@ -178,8 +182,15 @@ impl Writer for PublishingWriter {
     fn draft(&mut self, key: &str, input: &WriteRequest) -> tl3_controller::Result<WriterReply> {
         if input.facts["change"]
             .as_str()
-            .is_some_and(|change| change.contains("clear incident "))
+            .is_some_and(|change| change.starts_with("For \"Fix the value\","))
         {
+            assert!(
+                !input.facts["change"]
+                    .as_str()
+                    .unwrap()
+                    .contains("clear incident "),
+                "the writer must receive only the incident summary"
+            );
             assert_eq!(input.facts["issue_title"], "Fix the value");
             assert!(
                 input.facts["request"]
@@ -237,6 +248,13 @@ impl Respond for Api {
         let path = r.url.path();
         if let Some(response) = support::github::access_token(path, 1, "disposable") {
             return response;
+        }
+        if path.starts_with("/repos/RobTand/tl3-sandbox/")
+            && s.not_found.is_some_and(|resource| path.ends_with(resource))
+        {
+            s.not_found_reads += usize::from(method == "GET");
+            return ResponseTemplate::new(404)
+                .set_body_json(json!({"message":"fixture resource not found"}));
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
@@ -447,15 +465,23 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 break;
             }
             changed = true;
+            if expected == (Phase::Planning { must_split: true })
+                && c.world().unwrap().nodes[0].phase == expected
+            {
+                break;
+            }
         }
         source.poll_once(store, &sender).unwrap();
+        let mut observed = false;
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
                 c.observe(&key, observation).unwrap();
                 changed = true;
+                observed = true;
             }
         }
-        if !changed && c.world().unwrap().nodes[0].phase == expected {
+        let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
+        if (!changed || reached_planner) && c.world().unwrap().nodes[0].phase == expected {
             return;
         }
         assert!(
@@ -528,6 +554,17 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
+    if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
+        let mut primary = config.models.maker[2].clone();
+        primary.name = "review-primary".into();
+        let mut backup = config.models.maker[0].clone();
+        backup.name = "review-backup".into();
+        config.models.reviewer = if mode == "out-of-room-last" {
+            vec![backup, primary]
+        } else {
+            vec![primary, backup]
+        };
+    }
     config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
@@ -619,6 +656,50 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "enqueue must report the outside push so the new head gets checked"
         );
     }
+    if mode.starts_with("out-of-room") {
+        drain(
+            &mut c,
+            &mut source,
+            &mut store,
+            Phase::Planning { must_split: true },
+        );
+        let n = c.world().unwrap().nodes[0];
+        assert_eq!(
+            n.run_failures, 0,
+            "Q44 exhaustion is not an infrastructure failure"
+        );
+        assert_eq!(n.rechecks, 1);
+        assert!(!n.holds);
+        assert_eq!(n.credit.balance(), 3);
+        let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(reviews.len(), if mode == "out-of-room-fix" { 3 } else { 2 });
+        let first = &reviews[reviews.len() - 2];
+        let fresh = &reviews[reviews.len() - 1];
+        assert_eq!(fresh["resume_session"], false);
+        assert_ne!(first["session_file"], fresh["session_file"]);
+        assert_ne!(
+            first["operation"]["generation"],
+            fresh["operation"]["generation"]
+        );
+        assert_eq!(first["model"]["name"], "review-primary");
+        assert_eq!(
+            fresh["model"]["name"],
+            if mode == "out-of-room-last" {
+                "review-primary"
+            } else {
+                "review-backup"
+            }
+        );
+        assert_eq!(
+            fresh["inputs"]["base_sha"],
+            reviews[0]["inputs"]["base_sha"]
+        );
+        return;
+    }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
         .as_str()
@@ -626,7 +707,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .to_owned();
     let credit = c.world().unwrap().nodes[0].credit.balance();
     let d = f.delivery(EffectKind::Push, 100);
-    if matches!(mode, "push" | "reports-latest") {
+    if matches!(mode, "push" | "reports-latest" | "review-reset-push") {
         let checkout = f.adapter().checkout(&d);
         git(
             &checkout,
@@ -642,8 +723,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
 
         webhook(&mut c, &server, "synchronize");
+        if mode == "review-reset-push" {
+            while c.drive_once().unwrap() {}
+            assert!(
+                !c.world().unwrap().nodes[0].review_restarted,
+                "outside push starts a new review"
+            );
+        }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-    } else if matches!(mode, "rebase" | "round-one-rebase") {
+    } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
         let new_target = git(&f.remote, &["rev-parse", "main"]);
@@ -651,6 +739,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             c.drive_once().unwrap();
             let n = c.world().unwrap().nodes[0];
             if n.phase == Phase::Checking {
+                if mode == "review-reset-rebase" {
+                    assert!(!n.review_restarted, "clean rebase starts a new review");
+                }
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
                 let plan = c
@@ -672,6 +763,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    if mode.starts_with("review-reset") {
+        assert_eq!(reviews.len(), 4);
+        assert_ne!(
+            reviews[0]["inputs"]["head_sha"],
+            reviews[2]["inputs"]["head_sha"]
+        );
+        for pair in reviews.as_chunks::<2>().0 {
+            assert_eq!(pair[0]["model"]["name"], "review-primary");
+            assert_eq!(pair[1]["model"]["name"], "review-backup");
+            assert_eq!(pair[0]["resume_session"], false);
+            assert_eq!(pair[1]["resume_session"], false);
+            assert_ne!(pair[0]["session_file"], pair[1]["session_file"]);
+        }
+        assert_eq!(
+            reviews[2]["last_accepted_generation"],
+            reviews[1]["operation"]["generation"]
+        );
+        assert_eq!(
+            reviews[3]["last_accepted_generation"],
+            reviews[2]["operation"]["generation"]
+        );
+        assert_eq!(c.world().unwrap().nodes[0].rechecks, 3);
+        return;
+    }
     assert_eq!(
         reviews.len(),
         if matches!(mode, "new-attempt" | "review-retry" | "round-one-rebase") {
@@ -1008,7 +1123,129 @@ fn publication_recovery() {
     assert!(newer.execute(&approval).is_err());
 }
 
+fn publication_404_look(settings: &tl3_config::Store, case: &str) {
+    let kind = if case == "approval" {
+        EffectKind::PostApproval
+    } else {
+        EffectKind::OpenPr
+    };
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::new(Arc::new(Fixture::create(root.path())));
+    server.api.state.lock().unwrap().not_found = Some(if case == "approval" {
+        "check-runs"
+    } else {
+        "pulls"
+    });
+    let registry = || {
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(
+            Upstream::GitHub,
+            server.adapter(&root.path().join("github"), 0),
+        );
+        registry
+    };
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "publication-404".into(),
+            owner: repo().owner,
+            repo: repo().name,
+            installation: repo().installation,
+            number: 42,
+            title: "Fix the value".into(),
+            actor: 1,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    let attempts = std::cell::Cell::new(0);
+    let settle = |controller: &mut Controller| {
+        for _ in 0..300 {
+            if !controller.drive_once_with(|boundary, key| {
+                if boundary == Boundary::BeforeDispatch {
+                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                    if matches!(delivery.output, Out::Effect { kind: actual, .. } if actual == kind) {
+                        attempts.set(attempts.get() + 1);
+                    }
+                }
+            }).unwrap() {
+                return;
+            }
+        }
+        panic!("publication 404 did not settle");
+    };
+    settle(&mut controller);
+    assert_eq!(attempts.get(), 1);
+    let pending = controller
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .into_iter()
+        .find(|effect| {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            matches!(delivery.output, Out::Effect { kind: actual, .. } if actual == kind)
+        })
+        .expect("the first publication 404 must be held");
+    assert_eq!(pending.state, tl3_store::EffectState::Uncertain);
+    if kind == EffectKind::OpenPr {
+        let delivery: Delivery = serde_json::from_value(pending.payload.clone()).unwrap();
+        assert_eq!(delivery.pull_request, None);
+    }
+    if case == "open-restart" {
+        drop(controller);
+        controller =
+            Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+    }
+    let reads = server.api.state.lock().unwrap().not_found_reads;
+    controller.look_key(&pending.key).unwrap();
+    assert!(
+        server.api.state.lock().unwrap().not_found_reads > reads,
+        "the real look must read the still-missing resource"
+    );
+    assert_eq!(
+        controller.world().unwrap().nodes[0].fx_failures,
+        1,
+        "a held publication's 404 look must permit its one retry"
+    );
+    settle(&mut controller);
+    assert_eq!(
+        attempts.get(),
+        2,
+        "persistent 404 must dispatch exactly one retry"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot.rows.iter().any(|row| row.table == "incidents"
+            && row.value["signature"] == json!({"upstream":"GitHub", "class":"not_found"})),
+        "persistent publication 404 must end permanent not_found"
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
+    );
+    for _ in 0..5 {
+        assert!(
+            !controller.drive_once().unwrap(),
+            "persistent publication 404 must not loop"
+        );
+    }
+    assert_eq!(attempts.get(), 2);
+    println!("test publication_404_look_{case} ... ok");
+}
+
 fn main() {
+    if let Some(case) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        publication_404_look(&database.create("publication_404"), &case);
+        database.stop();
+        return;
+    }
     if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
         let root = tempfile::tempdir().unwrap();
         let mut router = workers(
@@ -1034,6 +1271,9 @@ fn main() {
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
+    for case in ["open", "approval", "open-restart"] {
+        publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+    }
     for mode in [
         "merged",
         "push",
@@ -1043,6 +1283,11 @@ fn main() {
         "changes",
         "new-attempt",
         "review-retry",
+        "out-of-room",
+        "out-of-room-fix",
+        "out-of-room-last",
+        "review-reset-push",
+        "review-reset-rebase",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -1055,5 +1300,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("12 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("20 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

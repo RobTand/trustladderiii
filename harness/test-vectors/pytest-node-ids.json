@@ -74,5 +74,47 @@
   {
     "node_id": "",
     "valid": false
+  },
+  {
+    "node_id": "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes",
+    "valid": true,
+    "collected": [
+      "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes[0]",
+      "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes[-1]",
+      "tests/test_sequences.py::test_chunked_rejects_non_positive_sizes_extra[0]"
+    ],
+    "selected": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "node_id": "tests/test_a.py::TestA::test_a",
+    "valid": true,
+    "collected": [
+      "tests/test_a.py::TestA::test_a[0]",
+      "tests/test_a.py::TestA::test_a[-1]",
+      "tests/test_a.py::TestB::test_a[0]"
+    ],
+    "selected": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "node_id": "tests/test_a.py::test_a[0]",
+    "valid": true,
+    "collected": [
+      "tests/test_a.py::test_a[0]",
+      "tests/test_a.py::test_a[-1]",
+      "tests/test_a.py::test_a[0][nested]"
+    ],
+    "selected": [
+      true,
+      false,
+      false
+    ]
   }
 ]

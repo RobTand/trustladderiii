@@ -118,6 +118,27 @@ def safe_span(span):
     return result
 
 
+def failure_tags(error):
+    # Only fixed diagnostics may accompany the exception class. Provider errors
+    # and validation errors can embed credentials, repository text or replies.
+    safe_messages = {
+        "done requires code changes", "could not inspect staged changes",
+        "maker requires the worktree root", "missing final maker reply",
+        "missing final model reply",
+    }
+    message = "worker run failed"
+    if isinstance(error, ValueError):
+        message = "invalid worker data"
+        if (type(error) is ValueError and len(error.args) == 1
+                and isinstance(error.args[0], str) and error.args[0] in safe_messages):
+            message = error.args[0]
+    elif isinstance(error, OSError):
+        message = "worker I/O failed"
+    elif isinstance(error, subprocess.CalledProcessError):
+        message = "worker subprocess failed"
+    return {"failure_class": type(error).__name__[:64], "failure_message": message}
+
+
 @contextmanager
 def observe(request):
     capture = None
@@ -139,6 +160,10 @@ def observe(request):
     try:
         yield
         outcome = 'succeeded'
+    except BaseException as error:
+        if capture is not None:
+            capture.tags.update(failure_tags(error))
+        raise
     finally:
         if capture is not None:
             try:

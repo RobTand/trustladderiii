@@ -17,9 +17,9 @@ LEAF = {
     "checks": [
         {"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
          "goal_ids": [0]},
-        {"kind": "behavior-preserving", "node_ids": ["tests/test_greeting.py::test_api"],
+        {"kind": "behavior-preserving", "node_ids": ["tests/test_existing.py::test_api"],
          "goal_ids": [1]},
-        {"kind": "regression", "node_ids": ["tests/test_greeting.py::test_existing"],
+        {"kind": "regression", "node_ids": ["tests/test_existing.py::test_existing"],
          "goal_ids": [0, 1]},
     ],
     "no_design_questions": True,
@@ -68,6 +68,9 @@ def planner_request(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "greeting.py").write_text("hello world\n")
+    (worktree / "tests").mkdir()
+    (worktree / "tests/test_existing.py").write_text(
+        "def test_api(): assert True\ndef test_existing(): assert True\n")
     return {
         "protocol": 1,
         "operation": {"node": 1, "generation": 0, "kind": "planning"},
@@ -479,3 +482,52 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     assert {key: value for key, value in actual.items()
             if key not in {'forecast', 'violations'}} == proposal
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
+
+
+@pytest.mark.parametrize('kind', ['regression', 'behavior-preserving'])
+@pytest.mark.parametrize('missing', ['tests/absent.py::test_absent',
+                                    'tests/test_sequences.py::test_absent',
+                                    'tests/test_sequences.py::TestAbsent::test_absent'])
+def test_planner_checks_base_test_definitions(planner_request, monkeypatch, kind, missing):
+    from tl3_workers.roles.planner import check_reply
+    from tl3_workers.forecast import Forecaster
+
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir(exist_ok=True)
+    source = (Path(__file__).parents[2] / 'harness/tests/fixtures/chunked_test.py').read_text()
+    (root / 'tests/test_sequences.py').write_text(source)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': kind, 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert any(missing in item and 'base' in item for item in reply['violations'])
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': kind,
+        'node_ids': ['tests/test_sequences.py::test_chunked_rejects_non_positive_sizes'],
+        'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert reply['violations'] == []
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert reply['violations'] == []
+
+
+def test_new_unique_test_is_a_planner_defect(tmp_path, planner_request):
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir(exist_ok=True)
+    (root / 'tests/test_sequences.py').write_text('def test_unique_preserves_order(): assert True\n')
+    test = 'tests/test_sequences.py::test_unique_does_not_mutate_input'
+    proposal = copy.deepcopy(LEAF)
+    proposal['checks'] = [{'kind': 'regression', 'node_ids': [test], 'goal_ids': [0, 1]}]
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert_rule_report(result, test)
+    assert 'base' in result.events[-1]['reply']['violations'][0]
+
+
+def test_prompt_states_how_existing_tests_are_named():
+    # The planner gets one retry; a rule it was never told about spends it.
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
+    assert "must name tests that already exist in the base" in prompt
+    assert "without its parameter suffix" in prompt

@@ -58,8 +58,8 @@ MUTANTS = {
 MUTANTS.update({
     "wake-before-durable": (
         "crates/controller/src/ingress.rs",
-        "    let status = receive_delivery(store, secret, request);\n    if status == 202 {\n        let _ = sender.send(Input::Wake);\n    }",
-        "    let _ = sender.send(Input::Wake);\n    let status = receive_delivery(store, secret, request);",
+        "    let status = receive_delivery(store, secret, request);\n    if status == 202 {\n        notifications.wake();\n    }",
+        "    notifications.wake();\n    let status = receive_delivery(store, secret, request);",
         "loom_durable_ingress_", "deadlock",
     ),
     "consume-before-apply": (

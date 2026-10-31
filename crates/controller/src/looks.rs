@@ -135,14 +135,9 @@ pub(crate) fn incident_id(snapshot: &Snapshot, cause: impl std::fmt::Display) ->
     format!("{}.{}", snapshot.revision.get() + 1, cause)
 }
 
-pub(crate) fn incident_note(
-    repository: &crate::Repository,
-    issue: u64,
-    id: &str,
-    summary: &str,
-) -> String {
+pub(crate) fn incident_note(repository: &crate::Repository, issue: u64, summary: &str) -> String {
     format!(
-        "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+        "{summary} Request: `https://github.com/{}/{}/issues/{}`.",
         repository.owner, repository.name, issue
     )
 }
@@ -332,6 +327,16 @@ impl Controller {
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
+            let result = match result {
+                Err(error)
+                    if error.is_github_not_found()
+                        && state.failure.as_deref() == Some("not_found")
+                        && matches!(state.delivery.output, Out::Effect { .. }) =>
+                {
+                    Ok(Look::Absent)
+                }
+                result => result,
+            };
             if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending))
             {
                 state.read_failures = 0;
@@ -413,12 +418,13 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    if self.is_held(&state.delivery)
+                    if (self.is_held(&state.delivery)
+                        || state.failure.as_deref() == Some("not_found"))
+                        && effect.state.is_pending()
                         && effect.state != EffectState::Cancelling
                         && matches!(state.delivery.output, Out::Effect { .. })
                     {
-                        // Authoritative absence permits the kernel to retry this write.
-                        // An unreadable record never grants that permission.
+                        // Absence or a repeated 404 spends the existing retry allowance.
                         self.complete(
                             &effect.key,
                             Completion {
@@ -784,10 +790,10 @@ impl Controller {
             notice: tl3_kernel::Notice::Incident { needs_rob },
         };
         delivery.epoch = snapshot.epoch.get();
-        delivery.note = Some(incident_note(&request.repo, request.issue, &id, &summary));
+        delivery.note = Some(incident_note(&request.repo, request.issue, &summary));
         delivery.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
-                request.repo.owner, request.repo.name, request.issue), "signature":signature}));
+                request.repo.owner, request.repo.name, request.issue), "signature":signature, "incident_id":id}));
         if let Some(o) = &self.bootstrap.operations {
             delivery.repository = crate::Repository {
                 owner: o.owner.clone(),

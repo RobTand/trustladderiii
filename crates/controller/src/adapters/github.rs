@@ -34,8 +34,21 @@ impl Executor for Fake {
             | Out::Notice { .. } => vec![],
             _ => return Err(crate::Error::Invalid("unsupported GitHub effect")),
         };
-        self.0
-            .deliver(delivery, Completion::confirmed(observations))
+        let mut posted = delivery.clone();
+        if matches!(
+            delivery.output,
+            Out::Notice {
+                notice: Notice::Incident { .. },
+                ..
+            }
+        ) && let Some(instruction) = fixed_notice_text(delivery)?
+        {
+            posted.note = Some(format!(
+                "{}\n\n{instruction}",
+                delivery.note.as_deref().unwrap_or_default()
+            ));
+        }
+        self.0.deliver(&posted, Completion::confirmed(observations))
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.0.reconcile(delivery)
@@ -190,14 +203,7 @@ impl Executor for Adapter {
     }
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        match self.execute_delivery(delivery) {
-            Err(Error::Permanent { class, .. })
-                if !matches!(delivery.output, Out::Effect { .. }) =>
-            {
-                Ok(Completion::permanent(class))
-            }
-            result => result,
-        }
+        self.execute_delivery(delivery)
     }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {
@@ -281,9 +287,10 @@ impl Executor for Adapter {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
-            return Ok(self
-                .reconcile_publication(delivery)
-                .unwrap_or(Reconciliation::Pending));
+            return match self.reconcile_publication(delivery) {
+                Err(error) if error.is_github_not_found() => Err(error),
+                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+            };
         }
         if let Some(crate::steering::Task::FileRequest {
             correction: true,
@@ -602,7 +609,8 @@ impl Adapter {
                     .filter(|path| path.contains('/'))
                     .cloned(),
             );
-            let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
+            let mut draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy)
+            {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected)
                     if matches!(
@@ -623,6 +631,10 @@ impl Adapter {
                 }
                 Err(error) => return Err(error),
             };
+            if let Some(text) = fixed_notice_text(delivery)? {
+                draft.push_str("\n\n");
+                draft.push_str(&text);
+            }
             self.fence(delivery)?;
             self.runtime.block_on(client.post_comment(
                 &repo,
@@ -636,5 +648,39 @@ impl Adapter {
                 .block_on(client.close_issue(&repo, delivery.issue, reason))?;
         }
         Ok(Completion::confirmed(vec![]))
+    }
+}
+
+fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
+    match delivery.output {
+        Out::Notice {
+            notice: Notice::Incident { .. },
+            ..
+        } => {
+            let id = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["incident_id"].as_str())
+                .or_else(|| {
+                    delivery
+                        .note
+                        .as_deref()
+                        .and_then(|note| note.split_once("clear incident ").map(|(_, tail)| tail))
+                        .and_then(|tail| {
+                            tail.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+                                .next()
+                        })
+                })
+                .ok_or(Error::Invalid("incident id missing"))?;
+            Ok(Some(format!(
+                "Reply with \"clear incident {id}\" on https://github.com/{}/{}/issues/{} or on the request's issue after fixing the cause.",
+                delivery.repository.owner, delivery.repository.name, delivery.issue
+            )))
+        }
+        Out::Notice {
+            notice: Notice::Summary(_),
+            ..
+        } => Ok(delivery.note.clone()),
+        _ => Ok(None),
     }
 }

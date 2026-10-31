@@ -252,7 +252,15 @@ Delivery ids remain unique while retained. After retirement, repeated deliveries
 still use the same durable intake and observation keys. A crash between applying
 an input and advancing its consumer cursor replays the same intake or observation key.
 
-`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+`Webhooks::bind` starts receipt immediately, before controller recovery or source
+registration. Until registration, receipt retains one pending wake bit; it then
+forwards wakes directly to the controller source channel. Catch-up reads its snapshot through a separate read-only connection
+and fetches GitHub evidence on its own thread. The receipt
+loop remains the only ingress writer and commits each completed catch-up batch
+and its cursor together. At most one fetch runs at a time; gaps during a fetch
+request another pass after that batch commits.
+
+Source registration starts the first catch-up. Ticket #19 wires the tunnel supervisor
 to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
 receiver's blocking channel. There is no polling timer. A failed persistence or
 response marks a gap, which is retried at the next receiver event. Catch-up stores
@@ -1141,7 +1149,9 @@ Kani campaign.
 
 The supervisor maps `Role::Review` to the `reviewer` worker. It selects the first
 model returned by `models.reviewer_for` for the current maker attempt's family.
-A missing independent family blocks dispatch. Review runs in its own process and
+After the worker reports exhaustion, Q44 starts a fresh conversation on the next
+reviewer model. The coordinator's ladder clamp and restart defaults are listed
+below. A missing independent family blocks initial dispatch. Review runs in its own process and
 reads a private clone at the exact checked commit. Dirty maker files never enter
 that clone.
 
@@ -1183,10 +1193,21 @@ through the existing retirement path.
 
 The reviewer uses the maker's 85% context guard, including provider usage counts
 and the character-count fallback. The controller supplies `context_size` from
-its limits; direct requests without it use 150,000 tokens. Exhaustion fails the
-worker without a verdict. The session records exhaustion before failure, so a
-retry does not repeat the model turn. Bounded rounds do not bound tool reads
-within a visit. No new kernel reply or transition is needed.
+its limits; direct requests without it use 150,000 tokens. The worker records
+exhaustion and returns `out_of_room` with exit zero. Recovery repeats that reply
+without another model turn. A model-emitted `out_of_room` is rejected; only the
+worker's context guard can report exhaustion. The controller maps it to
+`ReviewerOutOfRoom`. The first exhaustion starts a fresh conversation on the next
+reviewer model. A second exhaustion requires Planning to split, using the maker's
+out-of-room credit rules (Q44).
+
+Coordinator defaults, for Rob to check: the model ladder clamps at its last
+entry. The first restart shares the re-review allowance, free up to
+`free_rechecks`, then 1 each. A clean rebase or outside push to a new head resets
+the restart flag and keeps the recheck counter. Ordinary fix rounds continue the
+selected session; new maker attempts reset the reviewer. The controller carries
+the latest accepted generation even when starting a fresh conversation, so an
+older exhausted checkpoint is not treated as an unaccepted retry.
 
 To reproduce #88's checks, generate a manifest with
 `python3 crates/controller/tools/reviewer_resume_manifest.py hosts` or `workspace`,

@@ -125,6 +125,8 @@ The models call real code:
 - Two durable webhook sources call the production request handler, including
   `receive_ingress`, then wake `Sources::run`. The model checks application
   before consumption, one event per delivery, and an empty pending queue.
+- `Notifications::register` races a receipt wake and preserves exactly one
+  notification. Wakes before registration coalesce into one pending wake.
 - `WebhookControl::gap` and `stop` preserve queue order. An HTTP model also calls
   `Control::stop` and `accept_connections` with accept errors and a simulated
   wake. It checks that stop precedes the wake and publishes earlier state through
@@ -151,7 +153,7 @@ and webhook control models normally use bound one. HTTP stop uses bound two. The
 a 10,000-branch limit that fails rather than skips an unfinished execution. The model body and I/O actors
 use 8 MiB stacks because Loom's default coroutine stack cannot run these library
 calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
-HTTP, Tokio scheduling, and socket deadlines remain external operations. An eighth
+HTTP, Tokio scheduling, and socket deadlines remain external operations. A ninth
 model checks that the channel shim rejects sends after receiver drop. Loom 0.7
 does not model the timed-look branch: Loom 0.7.2's `recv_timeout` is
 `unimplemented!`. The models keep the controller out of that branch. Loom also
@@ -162,6 +164,13 @@ worker fixture serializes file append steps against individual source passes;
 it includes an incomplete line and checks every resulting input. These models
 check source publication and registration schedules, not every possible OS I/O
 interleaving. The process suites and SIGKILL simulation cover process loss.
+
+After #150, receipt starts at bind and notification registration replaces the
+former forwarding thread. The notification handoff is modeled. The independent
+fetch thread, its fakeable `Fetcher`, the `CaughtUp` receipt arm and `FetchState`
+retry/coalescing/stop joins are not yet modeled. Covering them together needs a
+seam around the receipt loop's HTTP server lifetime. The ordinary receipt and
+startup-ack scenarios exercise these paths; they do not prove Loom orderings.
 
 `loom_mutants.py MUTANT` changes one production site in a scratch checkout,
 prints its diff, runs the relevant model, and requires the expected assertion

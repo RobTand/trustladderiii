@@ -168,8 +168,10 @@ impl Source for DurableDelivery {
             ],
         );
         let (reply, response) = std::sync::mpsc::sync_channel(1);
+        let notifications = webhooks::Notifications::new();
+        notifications.register(sender);
         assert_eq!(
-            receive_request(&mut self.store, secret, &request, &sender, reply),
+            receive_request(&mut self.store, secret, &request, &notifications, reply),
             (202, false)
         );
         assert_eq!(response.recv().unwrap(), 202);

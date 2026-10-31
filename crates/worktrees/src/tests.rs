@@ -876,3 +876,163 @@ fn auth_header_is_scoped_to_github() {
     assert!(remote.credentials(Some(&f.token)).is_some());
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
+
+#[test]
+fn review_abort_rebase_preserves_spawn_failure() {
+    let f = Fixture::new();
+    assert!(
+        matches!(f.manager.abort_rebase(&f.worktree), Err(Error::Spawn)),
+        "a missing working directory must remain a transient spawn failure"
+    );
+}
+
+#[test]
+fn review_recovery_error_preserves_transient_failures() {
+    for error in [Error::Io, Error::Spawn, Error::Poisoned] {
+        let expected = std::mem::discriminant(&error);
+        assert_eq!(std::mem::discriminant(&recovery_error(error)), expected);
+    }
+}
+
+#[test]
+fn review_recovery_error_maps_git_and_dirty_failures() {
+    for error in [
+        Error::Git {
+            operation: "abort",
+            code: Some(1),
+        },
+        Error::DirtyWorktree,
+    ] {
+        assert!(matches!(recovery_error(error), Error::Recovery));
+    }
+}
+
+#[test]
+fn review_unreadable_gitlink_is_transient() {
+    let f = Fixture::new();
+    f.branch();
+    fs::create_dir_all(&f.worktree).unwrap();
+    std::os::unix::fs::symlink(".git", f.worktree.join(".git")).unwrap();
+    assert!(
+        matches!(
+            f.manager.create_worktree(&f.name, &f.worktree),
+            Err(Error::Io)
+        ),
+        "a symlink loop reading the gitlink does not prove another checkout owns the path"
+    );
+}
+
+#[test]
+fn review_missing_or_directory_gitlink_is_occupied() {
+    for directory in [false, true] {
+        let f = Fixture::new();
+        f.branch();
+        fs::create_dir_all(&f.worktree).unwrap();
+        fs::write(f.worktree.join("keep.txt"), "other checkout").unwrap();
+        if directory {
+            fs::create_dir(f.worktree.join(".git")).unwrap();
+        }
+        assert!(matches!(
+            f.manager.create_worktree(&f.name, &f.worktree),
+            Err(Error::WorktreeOccupied)
+        ));
+    }
+}
+
+#[test]
+fn scratch_preserves_live_index_working_files_and_untracked_files() {
+    let f = Fixture::new();
+    f.checkout();
+    fs::write(f.worktree.join("shared.txt"), b"staged\n").unwrap();
+    git(&f.worktree, ["add", "shared.txt"]);
+    fs::write(f.worktree.join("shared.txt"), b"working\n").unwrap();
+    fs::write(f.worktree.join("untracked.txt"), b"untracked\n").unwrap();
+    let index = path_line(
+        &f.manager
+            .run(
+                &f.worktree,
+                "index",
+                ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            )
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let before = fs::read(&index).unwrap();
+    let reference = f
+        .manager
+        .save_scratch(&f.name, &f.worktree, 7)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read(&index).unwrap(),
+        before,
+        "saving must leave the live index untouched"
+    );
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"working\n"
+    );
+    for (revision, content) in [
+        (format!("{reference}:shared.txt"), b"working\n".as_slice()),
+        (format!("{reference}^2:shared.txt"), b"staged\n".as_slice()),
+        (
+            format!("{reference}:untracked.txt"),
+            b"untracked\n".as_slice(),
+        ),
+    ] {
+        assert_eq!(git(&f.repo, ["show", &revision]), content);
+    }
+    let head = f.manager.resolve(&reference).unwrap();
+    let missing = format!("{reference}-missing");
+    let error = f
+        .manager
+        .clean_saved_scratch(&f.name, &f.worktree, &missing)
+        .unwrap_err();
+    assert!(matches!(error, Error::Recovery));
+    assert_eq!(error.permanent_class(), Some("worktree_recovery"));
+    assert_eq!(fs::read(&index).unwrap(), before);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"working\n"
+    );
+    assert_eq!(
+        fs::read(f.worktree.join("untracked.txt")).unwrap(),
+        b"untracked\n"
+    );
+    f.manager
+        .clean_saved_scratch(&f.name, &f.worktree, &reference)
+        .unwrap();
+    f.assert_clean();
+    assert_eq!(
+        f.manager.save_scratch(&f.name, &f.worktree, 7).unwrap(),
+        Some(reference.clone())
+    );
+    assert_eq!(f.manager.resolve(&reference).unwrap(), head);
+    f.manager.resume_removal(&f.name, &f.worktree).unwrap();
+    assert_eq!(f.manager.resolve(&reference).unwrap(), head);
+}
+
+#[test]
+fn scratch_refs_expire_only_after_thirty_days() {
+    let f = Fixture::new();
+    f.checkout();
+    fs::write(f.worktree.join("new.txt"), "scratch").unwrap();
+    let reference = f
+        .manager
+        .save_scratch(&f.name, &f.worktree, 1)
+        .unwrap()
+        .unwrap();
+    let saved = String::from_utf8(git(&f.repo, ["show", "-s", "--format=%ct", &reference]))
+        .unwrap()
+        .trim()
+        .parse::<u64>()
+        .unwrap();
+    f.manager
+        .prune_scratch(saved + 30 * 24 * 60 * 60 - 1)
+        .unwrap();
+    assert!(f.manager.resolve_optional(&reference).unwrap().is_some());
+    f.manager.prune_scratch(saved + 30 * 24 * 60 * 60).unwrap();
+    assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
+    assert!(f.manager.branch_state(&f.name).unwrap().is_some());
+}
