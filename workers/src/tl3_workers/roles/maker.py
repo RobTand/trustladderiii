@@ -77,6 +77,19 @@ def _merge_head(request):
     return merge.stdout.strip() if merge.returncode == 0 else None
 
 
+def _merge_files(request, head, target, recover=False):
+    if not recover:
+        files = _git(request, "diff", "--name-only", "--diff-filter=U", "-z").stdout
+        if files:
+            return files.rstrip("\0").split("\0")
+    # Older checkpoints can resume after the model has staged the resolution.
+    conflicts = _git(request, "merge-tree", "--write-tree", "--name-only",
+                     "--no-messages", "-z", head, target, check=False)
+    if conflicts.returncode not in (0, 1):
+        raise ValueError("could not recover the original merge conflicts")
+    return [path for path in conflicts.stdout.split("\0")[1:] if path]
+
+
 def _starting_state(request, session):
     root = _git(request, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(root).resolve() != Path(request["worktree"]).resolve():
@@ -86,23 +99,32 @@ def _starting_state(request, session):
     if checkpoint and checkpoint.exists():
         saved = read_json(checkpoint.read_text())
         if is_unaccepted_session(request, saved):
-            return saved['head'], saved.get('merge_target', _merge_head(request))
+            merge = saved.get('merge_target', _merge_head(request))
+            files = saved.get('merge_files')
+            if files is None:
+                files = _merge_files(request, saved['head'], merge, recover=True) if merge else None
+                if merge:
+                    saved.update(merge_target=merge, merge_files=files)
+                    save(checkpoint, saved)
+            return saved['head'], merge, files
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
     merge = _merge_head(request)
+    files = _merge_files(request, head, merge) if merge else None
     if checkpoint:
         # Replace the previous visit so retries cannot grow an open attempt's files.
         saved = {"generation": generation, "head": head}
         if merge:
             saved['merge_target'] = merge
+            saved['merge_files'] = files
         save(checkpoint, saved)
-    return head, merge
+    return head, merge, files
 
 
 class UnresolvedMerge(ValueError):
     pass
 
 
-def _commit(request, starting_head, merge_target=None):
+def _commit(request, starting_head, merge_target=None, merge_files=None):
     _git(request, "merge-base", "--is-ancestor", starting_head, "HEAD")
     merge = _merge_head(request)
     merge_target = merge_target or merge
@@ -111,12 +133,16 @@ def _commit(request, starting_head, merge_target=None):
             raise UnresolvedMerge("The pending merge target changed during resolution.")
         if not merge and _git(request, "merge-base", "--is-ancestor", merge_target, "HEAD", check=False).returncode:
             raise UnresolvedMerge("The merge was aborted; HEAD does not contain the required main.")
-        markers = _git(request, "grep", "--untracked", "--exclude-standard", "-I", "-n", "-E",
-                       r"^([<]{7,}|[>]{7,}|[|]{7,})( |$)|^[=]{7,}$", "--", ".", check=False)
-        if markers.returncode == 0:
-            raise UnresolvedMerge("The merge still has conflict markers; resolve them before reporting done.")
-        if markers.returncode != 1:
-            raise ValueError("could not inspect merge resolution")
+        if merge_files is None:
+            merge_files = _merge_files(request, starting_head, merge_target)
+        if merge_files:
+            markers = _git(request, "--literal-pathspecs", "grep", "--untracked",
+                           "--exclude-standard", "-I", "-n", "-E",
+                           r"^<<<<<<<|^>>>>>>>", "--", *merge_files, check=False)
+            if markers.returncode == 0:
+                raise UnresolvedMerge("The merge still has conflict markers; resolve them before reporting done.")
+            if markers.returncode != 1:
+                raise ValueError("could not inspect merge resolution")
     _git(request, "add", "--all", "--", ".")
     diff = _git(request, "diff", "--cached", "--quiet", "--no-ext-diff", "HEAD", "--", check=False)
     if diff.returncode not in (0, 1):
@@ -162,7 +188,7 @@ def run(model, request, worktree, emit):
     characters = ContextCharacters()
     last_message = None
     history = []
-    starting_head, merge_target = _starting_state(request, session)
+    starting_head, merge_target, merge_files = _starting_state(request, session)
     if session and session.exists() and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
@@ -208,7 +234,7 @@ def run(model, request, worktree, emit):
         if reply["kind"] != "done":
             break
         try:
-            head = _commit(request, starting_head, merge_target)
+            head = _commit(request, starting_head, merge_target, merge_files)
         except UnresolvedMerge as error:
             reply = {"kind": "cant_meet", "report": str(error)}
             break

@@ -1,5 +1,9 @@
 # TL3 CI runners
 
+TL3 is public and its workflows now use GitHub-hosted x64 and ARM runners.
+These services are retained for coordinator cleanup; the private sandbox still
+uses its fleet runners. The deployment details below describe that retained fleet.
+
 The current queue tests each batch once and fast-forwards `main` to the tested
 head. Ordinary PR checks are optional. Main pushes only build the Rust cache.
 See [CI batches](../../docs/ci-batches.md) for the trigger policy, protection

@@ -90,30 +90,27 @@ class FleetTests(unittest.TestCase):
                 self.assertEqual("labels[]=tl3-fast" in registration, expected,
                                  "only fast TL3 slots should serve the Rust queue")
 
-    def test_rust_routes_fast_and_python_keeps_fleet(self):
-        workflow = (test_runners.ROOT.parents[1] / ".github/workflows/light-checks.yml").read_text()
-        rust, python = workflow.split("\n  python:", 1)
-        rust_routing = next(line for line in rust.splitlines() if "runs-on:" in line)
-        python_routing = next(line for line in python.splitlines() if "runs-on:" in line)
-        self.assertIn("""fromJSON('["self-hosted","tl3-fleet","tl3-fast"]')""", rust_routing)
-        self.assertIn('"tl3-fast","tl3-host-{0}"', rust_routing)
-        self.assertNotIn("tl3-fast", python_routing)
-        self.assertIn("""fromJSON('["self-hosted","tl3-fleet"]')""", python_routing)
+    def test_public_workflows_never_route_to_fleet(self):
+        workflows = test_runners.ROOT.parents[1] / ".github/workflows"
+        for path in workflows.glob("*.yml"):
+            with self.subTest(workflow=path.name):
+                text = path.read_text()
+                self.assertNotIn("self-hosted", text)
+                self.assertNotIn("tl3-fast", text)
+                self.assertNotIn("runner_host", text)
 
-    def test_warm_cache_targets_each_enabled_rust_host(self):
+    def test_warm_cache_covers_both_hosted_architectures(self):
         workflow = (test_runners.ROOT.parents[1] / ".github/workflows/warm-cache.yml").read_text()
-        self.assertIn("host: [celestia]", workflow)
-        self.assertIn("tl3-fast", workflow)
-        self.assertIn("matrix.host", workflow,
-                      "one arbitrary fleet runner cannot warm every fast Rust host")
-        self.assertIn("strategy:", workflow)
-        self.assertNotIn("dl380g10", workflow)
+        self.assertIn("ubuntu-24.04", workflow)
+        self.assertIn("ubuntu-24.04-arm", workflow)
+        self.assertIn("matrix.runner", workflow)
+        self.assertNotIn("matrix.host", workflow)
 
-    def test_host_canaries_have_independent_concurrency_groups(self):
+    def test_shard_measurements_have_independent_concurrency_groups(self):
         workflow = (test_runners.ROOT.parents[1] / ".github/workflows/light-checks.yml").read_text()
         group = next(line for line in workflow.splitlines() if line.strip().startswith("group:"))
-        self.assertIn("inputs.runner_host", group,
-                      "dispatching another host must not cancel an active host canary")
+        self.assertIn("inputs.test_jobs", group,
+                      "different shard-count measurements must not cancel one another")
 
 
 if __name__ == "__main__":

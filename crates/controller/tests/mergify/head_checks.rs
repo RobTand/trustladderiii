@@ -1,6 +1,10 @@
 use super::*;
 
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
+    if matches!(mode, "grant-retry" | "request-retry") {
+        refused_then_retry(mode);
+        return;
+    }
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path(), true);
@@ -27,8 +31,23 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.workflow = Some(json!({"id":700,"check_suite_id":800,"head_sha":head,
             "status":"completed","conclusion":conclusion,"run_attempt":1}));
         state.required = mode != "optional";
-        if mode == "permission" {
+        if mode == "permission" || mode.starts_with("forbidden-") {
             state.rerun_status = 403;
+        }
+        match mode {
+            "workflow-running" => state.workflow.as_mut().unwrap()["status"] = json!("in_progress"),
+            "forbidden-running" => {
+                state.rerun_message =
+                    "Cannot rerun a workflow run that is already in progress.".into()
+            }
+            "forbidden-old" => {
+                state.rerun_message =
+                    "Cannot rerun a workflow run that is older than 30 days.".into()
+            }
+            "forbidden-other" => {
+                state.rerun_message = "Workflow runs are disabled for this repository.".into()
+            }
+            _ => {}
         }
         state.rerun_lost_response = mode == "restart";
     }
@@ -59,20 +78,62 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         return;
     }
     drain(&mut controller);
-    if mode == "permission" {
+    if matches!(mode, "workflow-running" | "forbidden-running") {
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            1,
+            "a finishing workflow must not be re-enqueued"
+        );
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Publishing,
+            "a finishing workflow must remain pending"
+        );
+        assert_eq!(
+            api.state.lock().unwrap().reruns,
+            usize::from(mode == "forbidden-running")
+        );
+        let pending = controller
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .into_iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
+            .unwrap();
+        let delivery: Delivery = serde_json::from_value(pending.payload).unwrap();
+        let mut adapter = api.adapter(&root.path().join("mergify"), 0);
+        assert!(matches!(
+            adapter.reconcile(&delivery).unwrap(),
+            Reconciliation::Pending
+        ));
+        {
+            let mut state = api.state.lock().unwrap();
+            state.workflow.as_mut().unwrap()["status"] = json!("completed");
+            state.rerun_status = 201;
+        }
+        controller.look_key(&pending.key).unwrap();
+        drain(&mut controller);
+    }
+    if matches!(mode, "permission" | "forbidden-old" | "forbidden-other") {
         let snapshot = controller.snapshot().unwrap();
         let incident = snapshot
             .rows
             .iter()
             .find(|row| row.table == "incidents")
             .expect("missing Actions write must raise a setup incident");
-        assert!(
-            incident
-                .value
-                .to_string()
-                .contains("Actions: Read and write"),
-            "{incident:?}"
-        );
+        let text = incident.value.to_string();
+        let expected = match mode {
+            "forbidden-old" => "older than 30 days",
+            "forbidden-other" => "refused the workflow request",
+            _ => "Actions: Read and write",
+        };
+        assert!(text.contains(expected), "expected {expected}: {incident:?}");
+        if mode != "permission" {
+            assert!(
+                !text.contains("Actions: Read and write"),
+                "a workflow restriction is not an App permission failure"
+            );
+        }
         assert_eq!(api.state.lock().unwrap().posts, 1);
         assert!(matches!(
             controller.world().unwrap().nodes[0].phase,
@@ -100,9 +161,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
         drain(&mut controller);
     }
+    let attempts = if mode == "forbidden-running" { 2 } else { 1 };
     assert_eq!(
         api.state.lock().unwrap().reruns,
-        1,
+        attempts,
         "rerun the cancelled head workflow once"
     );
     assert!(
@@ -126,7 +188,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().reruns,
-        1,
+        attempts,
         "the existing retry bound forbids a second rerun"
     );
     assert_eq!(api.state.lock().unwrap().posts, 2);
@@ -143,7 +205,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
 }
 
 #[derive(Clone)]
-struct Clock(std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
+pub(super) struct Clock(pub(super) std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
 impl tl3_controller::clock::Clock for Clock {
     fn now(&self) -> std::time::SystemTime {
         self.0.get()
@@ -203,13 +265,13 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().deletes,
-        1,
-        "remove the existing label before re-adding it"
+        0,
+        "a queue command does not remove the existing label"
     );
     assert_eq!(
         api.state.lock().unwrap().posts,
         2,
-        "the retry must cause a real label transition"
+        "the retry must send a real queue command"
     );
     if lag {
         assert_eq!(
@@ -240,4 +302,56 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     }
     println!("test head_check_label_present_lag_{lag} ... ok");
+}
+
+fn refused_then_retry(mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = delivery();
+    {
+        let mut state = api.state.lock().unwrap();
+        delivery.head_sha = Some(state.pull["head"]["sha"].as_str().unwrap().into());
+        state.checks = fixture("live-dequeued", "checks");
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+        state.head_checks = vec![json!({"id":900,"name":"Sandbox tests",
+            "head_sha":delivery.head_sha,"status":"completed","conclusion":"cancelled",
+            "app":{"id":15368,"slug":"github-actions"},"check_suite":{"id":800}})];
+        state.workflow = Some(
+            json!({"id":700,"check_suite_id":800,"head_sha":delivery.head_sha,
+            "status":"completed","conclusion":"cancelled","run_attempt":1}),
+        );
+        state.rerun_status = if mode == "grant-retry" { 403 } else { 422 };
+    }
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(adapter.execute(&delivery).is_err());
+    assert_eq!(
+        api.state.lock().unwrap().reruns,
+        1,
+        "the first attempt must reach the refused rerun POST"
+    );
+    assert_eq!(api.state.lock().unwrap().posts, 0);
+    drop(adapter);
+    api.state.lock().unwrap().rerun_status = 201;
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(
+        matches!(
+            adapter.reconcile(&delivery).unwrap(),
+            Reconciliation::Absent
+        ),
+        "an explicit refusal must permit the same key to retry after access is granted"
+    );
+    assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
+    assert_eq!(
+        api.state.lock().unwrap().reruns,
+        2,
+        "one refused POST and one accepted rerun"
+    );
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert!(matches!(
+        adapter.reconcile(&delivery).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    assert_eq!(api.state.lock().unwrap().reruns, 2);
+    println!("test head_check_{mode} ... ok");
 }

@@ -1,5 +1,11 @@
 # CI once per merge batch
 
+This document records the earlier fleet rollout. TL3 became public on
+2026-10-31 and now runs ordinary PRs and Mergify batches on GitHub-hosted
+ARM and x64 runners. See [Hosted CI](hosted-ci.md) for current triggers,
+shards and cache ownership. The merge queue and required check names below
+remain unchanged; optional PR CI and fleet routing are historical.
+
 The coordinator reviews a full PR head SHA and its PrismaBuild evidence, then
 runs `python3 tools/queue_pr.py NUMBER FULL_HEAD_SHA`. The helper uses REST,
 checks the head and mergeability, and posts the queue command without reading

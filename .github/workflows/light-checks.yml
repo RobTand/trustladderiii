@@ -5,20 +5,21 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
-      runner_host:
-        description: Fleet host for rollout verification
-        type: choice
-        default: fleet
-        options: [fleet, celestia, sparky, sparklina]
+      test_jobs:
+        description: Override total test jobs for a shard-count measurement (4-18)
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: light-checks-${{ github.event.pull_request.number || github.ref }}-${{ inputs.runner_host || 'fleet' }}
+  group: light-checks-${{ github.event.pull_request.number || github.ref }}-${{ inputs.test_jobs || 'default' }}
   cancel-in-progress: true
 
 env:
+  # Eight Rust and two Python test jobs, plus two compile jobs, lint and aggregation.
+  HOSTED_TEST_JOBS: '10'
   CARGO_BUILD_JOBS: '4'
   RUST_TEST_THREADS: '4'
   OMP_NUM_THREADS: '1'
@@ -28,27 +29,52 @@ env:
   TOKIO_WORKER_THREADS: '1'
 
 jobs:
-  rust:
-    name: >-
-      ${{ (github.event_name == 'workflow_dispatch' ||
-           startsWith(github.head_ref, 'mergify/merge-queue/') ||
-           contains(github.event.pull_request.labels.*.name, 'ci')) &&
-           'Rust' || 'Rust (not requested)' }}
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
-        contains(github.event.pull_request.labels.*.name, 'ci')))
-    runs-on: ${{ inputs.runner_host && inputs.runner_host != 'fleet' && fromJSON(format('["self-hosted","tl3-fleet","tl3-fast","tl3-host-{0}"]', inputs.runner_host)) || fromJSON('["self-hosted","tl3-fleet","tl3-fast"]') }}
-    timeout-minutes: 40
+  plan:
+    name: Plan hosted shards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.plan.outputs.rust }}
+      python: ${{ steps.plan.outputs.python }}
     steps:
-      - name: Verify runner input is scrubbed
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - id: plan
+        env:
+          TEST_JOBS: ${{ inputs.test_jobs || env.HOSTED_TEST_JOBS }}
+        run: python3 tools/ci/hosted.py plan --jobs "$TEST_JOBS"
+
+  rust-lint:
+    name: Rust format and lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install Rust
         run: |
-          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
-            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
-            exit 1
-          fi
-          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: hosted-${{ runner.arch }}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  rust-shards:
+    name: Rust shard ${{ matrix.index }}/${{ matrix.total }} (${{ matrix.runner }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.rust) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -64,43 +90,40 @@ jobs:
           cache-dependency-glob: |
             **/uv.lock
             **/pyproject.toml
-          cache-suffix: ${{ github.job }}
+          cache-suffix: rust-${{ runner.arch }}
       - name: Sync worker environment
         run: uv sync --locked --project workers --python 3.14+gil
       - name: Install Rust
         run: |
-          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # Keep lockfile changes out of rust-cache's fallback restore scope.
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
-          shared-key: rust
-      - name: Format, lint, and test every Rust project
-        run: python tools/ci/check.py rust
+          shared-key: hosted-${{ runner.arch }}
+      - name: Cache embedded Postgres test dependency
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          key: postgres-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/store/tests/support/mod.rs', 'crates/store/tests/support/cache.rs') }}
+          path: ~/.cache/tl3-test-postgres
+      - name: Run assigned binaries and enforce every test budget
+        run: python tools/ci/rust_gate.py --shard '${{ matrix.index }}/${{ matrix.total }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rust-times-${{ matrix.index }}-${{ runner.arch }}
+          path: target/ci-test-times.json
+          retention-days: 7
 
-  python:
-    name: >-
-      ${{ (github.event_name == 'workflow_dispatch' ||
-           startsWith(github.head_ref, 'mergify/merge-queue/') ||
-           contains(github.event.pull_request.labels.*.name, 'ci')) &&
-           'Python' || 'Python (not requested)' }}
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
-        contains(github.event.pull_request.labels.*.name, 'ci')))
-    runs-on: ${{ inputs.runner_host && inputs.runner_host != 'fleet' && fromJSON(format('["self-hosted","tl3-fleet","tl3-host-{0}"]', inputs.runner_host)) || fromJSON('["self-hosted","tl3-fleet"]') }}
-    timeout-minutes: 30
+  python-shards:
+    name: Python shard ${{ matrix.index }}/${{ matrix.total }} (${{ matrix.runner }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.python) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
-      - name: Verify runner input is scrubbed
-        run: |
-          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
-            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
-            exit 1
-          fi
-          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -115,20 +138,103 @@ jobs:
           cache-dependency-glob: |
             **/uv.lock
             **/pyproject.toml
-          cache-suffix: ${{ github.job }}
+          cache-suffix: python-${{ runner.arch }}
+      - name: Install Rust
+        if: matrix.deploy_helper
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: matrix.deploy_helper
+        with:
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: hosted-${{ runner.arch }}
+      - name: Build deployment test helper
+        if: matrix.deploy_helper
+        run: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
+      - name: Run assigned Python projects and standalone suites
+        env:
+          TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy
+        run: python tools/ci/hosted.py python --shard '${{ matrix.index }}/${{ matrix.total }}'
+
+  feature-builds:
+    name: Compile ${{ matrix.mode }} (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: features
+            runner: ubuntu-24.04-arm
+          - mode: kani
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Install Rust
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
-      - name: Cache deployment helper dependencies
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
-          shared-key: rust
-      - name: Build deployment test helper
-        run: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
-      - name: Lint and test every Python project
-        env:
-          TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy
-        run: python tools/ci/check.py python
+          shared-key: hosted-${{ runner.arch }}
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: matrix.mode == 'kani'
+        with:
+          key: kani-0.68.0-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.kani
+            ~/.rustup/toolchains/nightly-2026-08-21-*
+      - name: Install pinned Kani compiler
+        if: matrix.mode == 'kani'
+        run: |
+          if ! command -v cargo-kani >/dev/null; then
+            cargo install --locked kani-verifier --version 0.68.0
+          fi
+          cargo kani setup
+      - name: Compile test and proof targets without running them
+        run: python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: feature-times-${{ matrix.mode }}-${{ runner.arch }}
+          path: target/ci-feature-times-*.json
+          retention-days: 7
 
+  rust:
+    name: Rust
+    needs: [plan, rust-lint, rust-shards, feature-builds]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require successful lint and every Rust shard
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/hosted.py aggregate
+
+  python:
+    name: Python
+    needs: [plan, python-shards]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require every Python shard
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/hosted.py aggregate

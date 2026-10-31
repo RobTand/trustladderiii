@@ -214,10 +214,18 @@ impl From<&tl3_mergify::Observation> for Progress {
     }
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
+enum Requeue {
+    Ready,
+    Sending,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Attempt {
     before: Option<CheckRun>,
     last_event: u64,
+    #[serde(default)]
+    requeue: Option<Requeue>,
 }
 impl Attempt {
     fn check_changed(&self, current: &Option<CheckRun>) -> bool {
@@ -341,9 +349,9 @@ impl Adapter {
             || (current_head
                 && (active
                     || (terminal
-                        && baseline
-                            .as_ref()
-                            .is_some_and(|before| before.check_changed(&state.check)))))
+                        && baseline.as_ref().is_some_and(|before| {
+                            before.requeue.is_none() && before.check_changed(&state.check)
+                        }))))
         {
             let mut completion = Completion::confirmed(observations);
             completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
@@ -358,7 +366,20 @@ impl Adapter {
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
         // Without a durable intent this key has never reached the label write.
         if baseline.is_none() {
-            return Ok(Reconciliation::Absent);
+            return Ok(if dequeue_pending(&state, &issue) {
+                Reconciliation::Pending
+            } else {
+                Reconciliation::Absent
+            });
+        }
+        if let Some(requeue) = baseline.as_ref().and_then(|attempt| attempt.requeue) {
+            return Ok(
+                if matches!(requeue, Requeue::Sending) || dequeue_pending(&state, &issue) {
+                    Reconciliation::Pending
+                } else {
+                    Reconciliation::Absent
+                },
+            );
         }
         if issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
             || self
@@ -403,40 +424,60 @@ impl Executor for Adapter {
             Reconciliation::Absent => {}
         }
         let (state, _) = self.read(delivery)?;
-        self.rerun_head_checks(delivery, &state)?;
-        if self.baseline(delivery)?.is_none() {
-            self.records.write(
-                &self.records.path(&delivery.key).with_extension("intent"),
-                &serde_json::to_vec(&Attempt {
-                    before: state.check.clone(),
-                    last_event: self
-                        .runtime
-                        .block_on(
-                            self.clients[&delivery.repository.installation].issue_events(
-                                &full_name(&delivery.repository),
-                                enqueue(delivery)?.0,
-                            ),
-                        )?
-                        .iter()
-                        .map(|event| event.id)
-                        .max()
-                        .unwrap_or(0),
-                })?,
-            )?;
-        }
         let (number, head) = enqueue(delivery)?;
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let issue = self.runtime.block_on(github.issue(&repo, number))?;
+        if dequeue_pending(&state, &issue) {
+            return Err(Error::Invalid("Mergify dequeue is still finishing"));
+        }
+        self.rerun_head_checks(delivery, &state)?;
+        let mut attempt = match self.baseline(delivery)? {
+            Some(attempt) => attempt,
+            None => Attempt {
+                before: state.check.clone(),
+                last_event: self
+                    .runtime
+                    .block_on(github.issue_events(&repo, number))?
+                    .iter()
+                    .map(|event| event.id)
+                    .max()
+                    .unwrap_or(0),
+                requeue: issue
+                    .labels
+                    .iter()
+                    .any(|label| label.name == QUEUE_LABEL)
+                    .then_some(Requeue::Ready),
+            },
+        };
+        let path = self.records.path(&delivery.key).with_extension("intent");
+        self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
         self.fence(delivery)?;
         let mergify = Mergify::new(github);
-        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
-            self.runtime
-                .block_on(mergify.dequeue(&repo, number))
-                .map_err(adapter_error)?;
-            self.fence(delivery)?;
-        }
-        match self.runtime.block_on(mergify.queue(&repo, number, head)) {
+        let result = if attempt.requeue.is_some() {
+            // A crash or lost response cannot prove the command was not accepted.
+            attempt.requeue = Some(Requeue::Sending);
+            self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
+            let result = self
+                .runtime
+                .block_on(mergify.requeue(&repo, number, head, &delivery.key));
+            if matches!(
+                &result,
+                Err(tl3_mergify::Error::GitHub(
+                    tl3_github::Error::RateLimited { .. }
+                    | tl3_github::Error::Http {
+                        status: 400..=407 | 409..=499,
+                    },
+                ))
+            ) {
+                attempt.requeue = Some(Requeue::Ready);
+                self.records.write(&path, &serde_json::to_vec(&attempt)?)?;
+            }
+            result
+        } else {
+            self.runtime.block_on(mergify.queue(&repo, number, head))
+        };
+        match result {
             Ok(()) => {}
             Err(tl3_mergify::Error::HeadChanged) => {
                 return match self.completion(delivery)? {
@@ -457,7 +498,7 @@ impl Executor for Adapter {
                 Ok(completion)
             }
             _ => Err(Error::Invalid(
-                "queue label written; Mergify acceptance is still unknown",
+                "enqueue request sent; Mergify acceptance is still unknown",
             )),
         }
     }
@@ -480,6 +521,17 @@ impl Executor for Adapter {
         }
     }
 }
+fn dequeue_pending(state: &tl3_mergify::Observation, issue: &tl3_github::Issue) -> bool {
+    let retry = issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+        || matches!(
+            state.state,
+            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
+        );
+    retry
+        && !state.dequeue_rule_concluded
+        && !issue.labels.iter().any(|label| label.name == "dequeued")
+}
+
 fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
     if !matches!(
         delivery.output,
