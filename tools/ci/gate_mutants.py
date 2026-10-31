@@ -6,6 +6,7 @@ failure, fixture timeout, or unrelated process failure never counts.
 """
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -67,8 +68,11 @@ def run_mutant(name):
                                         stderr=subprocess.STDOUT, timeout=120)
                 log.seek(0)
                 output = log.read()
-            killed = (result.returncode != 0 and 'panicked at' in output
-                      and ('assertion' in output or 'assert!' in output)
+            assertions = []
+            for file, line in re.findall(r'panicked at (crates/controller/tests/[^:\n]+):(\d+):\d+:', output):
+                source = (ROOT / file).read_text().splitlines()[int(line) - 1].strip()
+                assertions.append(source.startswith(('assert!(', 'assert_eq!(', 'assert_ne!(')))
+            killed = (result.returncode != 0 and any(assertions)
                       and 'fixture did not' not in output and 'fixture did not finish' not in output)
             print(json.dumps({'mutant': name, 'test': case, 'returncode': result.returncode,
                               'killed_by_assertion': killed, 'failure': output[-4000:]}), flush=True)

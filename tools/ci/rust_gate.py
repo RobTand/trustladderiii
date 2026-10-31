@@ -136,7 +136,8 @@ def baseline_policy(config):
     exists = subprocess.run(['git', 'cat-file', '-e', f'{ref}^{{commit}}'], cwd=ROOT,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if exists.returncode:
-        raise RuntimeError(f'Budget comparison requires git history for {ref}; set checkout fetch-depth: 0')
+        subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', ref],
+                       cwd=ROOT, check=True)
     previous = subprocess.run(['git', 'show', f'{ref}:{POLICY}'], cwd=ROOT,
                               capture_output=True, text=True)
     if previous.returncode:
