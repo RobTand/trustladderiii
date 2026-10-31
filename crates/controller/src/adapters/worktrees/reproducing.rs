@@ -1,56 +1,13 @@
 use crate::{
-    Error, Result,
+    Result,
     adapters::prismabuild::{CheckRun, Kind},
 };
-use std::{path::Path, process::Command};
-use tl3_worktrees::BranchName;
-
-fn git(repo: &Path, args: &[&str]) -> Result<String> {
-    let result = Command::new("git")
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_AUTHOR_NAME", "TL3")
-        .env("GIT_AUTHOR_EMAIL", "tl3@example.invalid")
-        .env("GIT_COMMITTER_NAME", "TL3")
-        .env("GIT_COMMITTER_EMAIL", "tl3@example.invalid")
-        .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
-        .args([
-            "--no-replace-objects",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .output()?;
-    if !result.status.success() {
-        return Err(Error::Invalid(
-            "cannot replay the reviewed tree on the new base",
-        ));
-    }
-    Ok(String::from_utf8(result.stdout)
-        .map_err(|_| Error::Invalid("Git output must be UTF-8"))?
-        .trim()
-        .into())
-}
-
-fn prefix(branch: &BranchName) -> String {
-    // Heads are fetched by the private check/review clones; arbitrary refs are not.
-    format!("refs/heads/tl3-reviewed/{}/", branch.as_str())
-}
+use std::path::Path;
+use tl3_worktrees::{BranchName, CommitId, Worktrees};
 
 pub(super) fn pin(repo: &Path, branch: &BranchName, reviewed: &str) -> Result<()> {
-    git(
-        repo,
-        &[
-            "update-ref",
-            &format!("{}{reviewed}", prefix(branch)),
-            reviewed,
-        ],
-    )?;
+    let reviewed = CommitId::new(reviewed)?;
+    Worktrees::open(repo, repo)?.pin_reviewed(branch, &reviewed)?;
     Ok(())
 }
 
@@ -59,30 +16,13 @@ pub(super) fn rebase(repo: &Path, branch: &BranchName, run: &mut CheckRun, targe
         return;
     };
     let replay = || -> Result<String> {
-        // Replay the reviewed patch without touching the maker's index or worktree.
-        let tree = git(
-            repo,
-            &[
-                "merge-tree",
-                "--write-tree",
-                &format!("--merge-base={}", run.base_sha),
-                target,
-                reviewed,
-            ],
-        )?;
-        let sha = git(
-            repo,
-            &[
-                "commit-tree",
-                &tree,
-                "-p",
-                target,
-                "-m",
-                "Replay reviewed state for reproducing checks",
-            ],
-        )?;
-        pin(repo, branch, &sha)?;
-        Ok(sha)
+        let base = CommitId::new(run.base_sha.clone())?;
+        let target = CommitId::new(target)?;
+        let reviewed = CommitId::new(reviewed)?;
+        Ok(Worktrees::open(repo, repo)?
+            .replay_reviewed(branch, &base, &target, &reviewed)?
+            .as_str()
+            .to_owned())
     };
     match replay() {
         Ok(sha) => run.reviewed_sha = Some(sha),
@@ -104,14 +44,7 @@ pub(super) fn unavailable(run: &mut CheckRun, reason: &str) {
 }
 
 pub(super) fn remove(repo: &Path, branch: &BranchName) -> Result<()> {
-    for reference in git(
-        repo,
-        &["for-each-ref", "--format=%(refname)", &prefix(branch)],
-    )?
-    .lines()
-    {
-        git(repo, &["update-ref", "-d", reference])?;
-    }
+    Worktrees::open(repo, repo)?.remove_reviewed(branch)?;
     Ok(())
 }
 

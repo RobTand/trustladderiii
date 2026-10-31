@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
+use tl3_worktrees::{CommitId, Worktrees};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckRun {
@@ -33,39 +33,6 @@ pub enum Kind {
     Reproducing,
 }
 
-pub(super) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_AUTHOR_NAME", "TL3")
-        .env("GIT_AUTHOR_EMAIL", "tl3@example.invalid")
-        .env("GIT_COMMITTER_NAME", "TL3")
-        .env("GIT_COMMITTER_EMAIL", "tl3@example.invalid")
-        .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
-        .args([
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .output()?;
-    if !output.status.success() {
-        return Err(Error::Invalid("check input Git operation failed"));
-    }
-    Ok(output.stdout)
-}
-
-fn sha(value: &str) -> bool {
-    matches!(value.len(), 40 | 64)
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 pub(super) fn stage(
     root: &Path,
     harness: &Path,
@@ -80,10 +47,14 @@ pub(super) fn stage(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("checks require an exact head"))?;
-    if !sha(head)
-        || !sha(&run.base_sha)
-        || run.reviewed_sha.as_deref().is_some_and(|s| !sha(s))
-        || (run.plan.iter().any(|c| c.kind == Kind::Reproducing) && run.reviewed_sha.is_none())
+    let head = CommitId::new(head)?;
+    let base = CommitId::new(run.base_sha.clone())?;
+    let reviewed = run
+        .reviewed_sha
+        .as_ref()
+        .map(|sha| CommitId::new(sha.clone()))
+        .transpose()?;
+    if (run.plan.iter().any(|c| c.kind == Kind::Reproducing) && reviewed.is_none())
         || !run.repository.is_absolute()
         || run.plan.is_empty()
         || run
@@ -106,77 +77,22 @@ pub(super) fn stage(
     }
     fs::create_dir_all(root)?;
     // Never snapshot the maker's changing worktree. Clone committed objects into our private checkout.
-    git(
-        root,
-        &[
-            "clone",
-            "--quiet",
-            "--no-local",
-            "--no-checkout",
-            "--template=",
-            "--",
-            run.repository
-                .to_str()
-                .ok_or(Error::Invalid("repository path must be UTF-8"))?,
-            "served",
-        ],
-    )?;
+    let repository = Worktrees::open(&run.repository, &run.repository)?;
     let served = root.join("served");
-    git(&served, &["checkout", "--quiet", "--detach", head])?;
-    let base = git(
-        &served,
-        &[
-            "rev-parse",
-            "--verify",
-            &format!("{}^{{commit}}", run.base_sha),
-        ],
-    )?;
-    if base != format!("{}\n", run.base_sha).as_bytes()
-        || !git(&served, &["status", "--porcelain", "--untracked-files=all"])?.is_empty()
-    {
-        return Err(Error::Invalid(
-            "checks require a clean checkout and exact base",
-        ));
+    let checkout = repository.clone_checkout(&served, &head)?;
+    if checkout.verify_commit(&base)? != base {
+        return Err(Error::Invalid("checks require an exact base"));
     }
-    let paths = git(
-        &served,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-renames",
-            "--name-only",
-            "-z",
-            &format!("{}...{head}", run.base_sha),
-            "--",
-        ],
-    )?;
-    let changed = paths
-        .split(|b| *b == 0)
-        .filter(|p| !p.is_empty())
-        .map(|p| {
-            String::from_utf8(p.to_vec()).map_err(|_| Error::Invalid("changed path must be UTF-8"))
+    let changed = checkout
+        .changed_paths_since_merge_base(&base, &head)?
+        .into_iter()
+        .map(|path| {
+            path.into_os_string()
+                .into_string()
+                .map_err(|_| Error::Invalid("changed path must be UTF-8"))
         })
         .collect::<Result<Vec<_>>>()?;
-    // Both commits must survive PB materialization, even when base is not head's ancestor.
-    git(
-        &served,
-        &["update-ref", "refs/heads/tl3-base", &run.base_sha],
-    )?;
-    let mut bundle = vec![
-        "bundle",
-        "create",
-        "../served.bundle",
-        "HEAD",
-        "refs/heads/tl3-base",
-    ];
-    if let Some(reviewed) = &run.reviewed_sha {
-        git(
-            &served,
-            &["update-ref", "refs/heads/tl3-reviewed", reviewed],
-        )?;
-        bundle.push("refs/heads/tl3-reviewed");
-    }
-    git(&served, &bundle)?;
+    checkout.bundle_check_input(&root.join("served.bundle"), &base, reviewed.as_ref())?;
     fs::remove_dir_all(served)?;
     let trusted = root.join("trusted/tl3_harness");
     fs::create_dir_all(&trusted)?;
@@ -190,16 +106,11 @@ pub(super) fn stage(
     fs::write(
         root.join("request.json"),
         serde_json::to_vec(&serde_json::json!({
-            "effect_key": delivery.key, "base": run.base_sha, "head": head,
+            "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
             "reviewed": run.reviewed_sha,
             "plan": run.plan, "image": image,
         }))?,
     )?;
-    git(root, &["init", "--quiet", "--template="])?;
-    git(root, &["add", "--force", "--all"])?;
-    git(
-        root,
-        &["commit", "--quiet", "-m", "Freeze controller check input"],
-    )?;
+    Worktrees::commit_check_input(root)?;
     Ok(changed)
 }

@@ -50,6 +50,12 @@ pub enum Error {
     Quota { retry_after: std::time::Duration },
 }
 
+impl From<tl3_worktrees::Error> for Error {
+    fn from(error: tl3_worktrees::Error) -> Self {
+        Self::Adapter(Box::new(error))
+    }
+}
+
 impl From<tl3_github::Error> for Error {
     fn from(error: tl3_github::Error) -> Self {
         match error {

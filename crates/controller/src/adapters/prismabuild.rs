@@ -7,6 +7,7 @@ use crate::{
 use std::path::Path;
 use tl3_kernel::{EffectKind, NodeId};
 use tl3_kernel::{Event, Reply};
+use tl3_worktrees::{CommitId, Worktrees};
 
 pub struct Fake(Records);
 impl Fake {
@@ -115,23 +116,21 @@ fn read_wait(
         return Ok(WaitRecord::Ended);
     }
     // PB v2 snapshots retain the submitted HEAD even when the original checkout is gone.
-    let Some(parent) = record
-        .snapshot_parent
-        .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-    else {
+    let Some(parent) = record.snapshot_parent.and_then(|s| CommitId::new(s).ok()) else {
         return Ok(WaitRecord::Ended);
     };
-    let status = std::process::Command::new("git")
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .arg("--no-replace-objects")
-        .arg("-C")
-        .arg(checkout)
-        .args(["merge-base", "--is-ancestor", &parent, "HEAD"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    Ok(if status.success() {
+    let alive = match Worktrees::open(checkout, checkout)
+        .and_then(|repository| repository.is_ancestor(&parent, &repository.head()?))
+    {
+        Ok(alive) => alive,
+        Err(
+            error @ (tl3_worktrees::Error::Spawn
+            | tl3_worktrees::Error::Io
+            | tl3_worktrees::Error::Poisoned),
+        ) => return Err(error.into()),
+        Err(_) => false,
+    };
+    Ok(if alive {
         WaitRecord::Alive
     } else {
         WaitRecord::Ended

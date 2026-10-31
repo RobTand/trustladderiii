@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod queries;
+mod snapshots;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{
@@ -101,10 +102,14 @@ pub struct CommitId(String);
 impl CommitId {
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
         let value = value.into();
-        if !matches!(value.len(), 40 | 64) || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !matches!(value.len(), 40 | 64)
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err(Error::CommitId);
         }
-        Ok(Self(value.to_ascii_lowercase()))
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
@@ -1180,6 +1185,21 @@ impl Worktrees {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.execute_dated(path, args, token, input, false)
+    }
+
+    fn execute_dated<I, S>(
+        &self,
+        path: &Path,
+        args: I,
+        token: Option<&InstallationToken>,
+        input: Option<&[u8]>,
+        deterministic_dates: bool,
+    ) -> Result<Output, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new("git");
         // Clear inherited tracing, config injection, alternate indexes and credential helpers.
         command
@@ -1191,10 +1211,12 @@ impl Worktrees {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true")
             .env("LC_ALL", "C")
             .args([
+                "--no-replace-objects",
                 "-c",
                 "core.hooksPath=/dev/null",
                 "-c",
@@ -1229,6 +1251,11 @@ impl Worktrees {
             } else {
                 Stdio::null()
             });
+        if deterministic_dates {
+            command
+                .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z");
+        }
         if let Some(token) = token {
             let header = format!(
                 "Authorization: Basic {}",

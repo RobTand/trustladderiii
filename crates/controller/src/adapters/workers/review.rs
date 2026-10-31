@@ -1,24 +1,10 @@
 use crate::{Error, Result, executor::Delivery};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 use tl3_store::Store;
+use tl3_worktrees::{CommitId, Worktrees};
 
 pub const REPORT_RULE: &str = "test-report-integrity";
-
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["-c", "core.hooksPath=/dev/null"])
-        .args(args)
-        .output()?;
-    if !output.status.success() {
-        return Err(Error::Invalid("review snapshot Git operation failed"));
-    }
-    Ok(output.stdout)
-}
 
 pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
     Ok(store
@@ -59,21 +45,14 @@ pub(super) fn inputs(
     } else {
         &run.base_sha
     };
-    for sha in [head, base, &run.base_sha] {
-        if !matches!(sha.len(), 40 | 64)
-            || !sha
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(Error::Invalid("invalid review commit"));
-        }
-    }
-    if base != run.base_sha {
-        let common = git(&run.repository, &["merge-base", base, &run.base_sha])?;
-        if common.trim_ascii() != run.base_sha.as_bytes() {
-            // Rebasing moves the check base beyond the previously reviewed history.
-            base = &run.base_sha;
-        }
+    let head_id = CommitId::new(head)?;
+    let mut base_id = CommitId::new(base)?;
+    let check_base = CommitId::new(run.base_sha.clone())?;
+    let repository = Worktrees::open(&run.repository, &run.repository)?;
+    if base_id != check_base && repository.merge_base(&base_id, &check_base)? != check_base {
+        // Rebasing moves the check base beyond the previously reviewed history.
+        base = &run.base_sha;
+        base_id = check_base;
     }
     let node = delivery.node().0.to_string();
     let report = snapshot
@@ -86,10 +65,7 @@ pub(super) fn inputs(
         return Err(Error::Invalid("review and checks disagree on base"));
     }
     let criteria = criteria(store, delivery.node())?;
-    let diff = git(
-        &run.repository,
-        &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
-    )?;
+    let diff = repository.diff(&base_id, &head_id)?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
@@ -138,24 +114,8 @@ pub(super) fn checkout(root: &Path, delivery: &Delivery) -> Result<()> {
         .ok_or(Error::Invalid("review head missing"))?;
     // Clone committed objects. Dirty maker files never become review evidence.
     fs::remove_dir_all(root)?;
-    git(
-        root.parent()
-            .ok_or(Error::Invalid("review directory needs parent"))?,
-        &[
-            "clone",
-            "--quiet",
-            "--no-local",
-            "--no-checkout",
-            "--template=",
-            "--",
-            run.repository
-                .to_str()
-                .ok_or(Error::Invalid("review repository must be UTF-8"))?,
-            root.to_str()
-                .ok_or(Error::Invalid("review directory must be UTF-8"))?,
-        ],
-    )?;
-    git(root, &["checkout", "--quiet", "--detach", head])?;
+    let head = CommitId::new(head)?;
+    Worktrees::open(&run.repository, &run.repository)?.clone_checkout(root, &head)?;
     Ok(())
 }
 

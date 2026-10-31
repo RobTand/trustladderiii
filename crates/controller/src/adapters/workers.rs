@@ -1,4 +1,5 @@
 use crate::executor::Output as Out;
+use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
@@ -215,28 +216,20 @@ impl Supervisor {
                         .map(str::to_owned)
                 }) {
                 Some(base) => base,
-                None => {
-                    let output = Command::new("git")
-                        .arg("-C")
-                        .arg(&checkout)
-                        .args(["rev-parse", "HEAD"])
-                        .output()?;
-                    if !output.status.success() {
-                        return Err(Error::Invalid("maker checkout has no base"));
-                    }
-                    String::from_utf8(output.stdout)
-                        .map_err(|_| Error::Invalid("invalid maker base"))?
-                        .trim()
-                        .to_owned()
-                }
+                None => Worktrees::open(&checkout, &checkout)?
+                    .head()?
+                    .as_str()
+                    .to_owned(),
             };
+            let base = CommitId::new(base)?;
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()
                 .ok_or(Error::Invalid("maker plan needs checks"))?
                 .iter()
                 .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
                 .collect::<Vec<_>>();
-            materials["check_run"] = json!({"repository":checkout,"base_sha":base,"plan":checks});
+            materials["check_run"] =
+                json!({"repository":checkout,"base_sha":base.as_str(),"plan":checks});
             store.put_worker_materials(&node, &materials)?;
         }
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();
