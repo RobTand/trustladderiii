@@ -174,7 +174,18 @@ fn observe(
     repository: &Path,
     base: &str,
 ) {
-    if let Observation::WorkerReply { node, reply, .. } = &observation
+    if let Observation::WorkerReply {
+        node,
+        generation,
+        reply,
+        ..
+    } = &observation
+        && controller
+            .world()
+            .unwrap()
+            .nodes
+            .get(node.0 as usize)
+            .is_some_and(|n| n.run == Some(*generation) && n.generation == *generation)
         && let Some(sha) = reply.get("head").and_then(Value::as_str)
     {
         controller
