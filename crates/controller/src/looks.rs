@@ -135,14 +135,9 @@ pub(crate) fn incident_id(snapshot: &Snapshot, cause: impl std::fmt::Display) ->
     format!("{}.{}", snapshot.revision.get() + 1, cause)
 }
 
-pub(crate) fn incident_note(
-    repository: &crate::Repository,
-    issue: u64,
-    id: &str,
-    summary: &str,
-) -> String {
+pub(crate) fn incident_note(repository: &crate::Repository, issue: u64, summary: &str) -> String {
     format!(
-        "{summary} Request: `https://github.com/{}/{}/issues/{}`. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+        "{summary} Request: `https://github.com/{}/{}/issues/{}`.",
         repository.owner, repository.name, issue
     )
 }
@@ -777,10 +772,10 @@ impl Controller {
             notice: tl3_kernel::Notice::Incident { needs_rob },
         };
         delivery.epoch = snapshot.epoch.get();
-        delivery.note = Some(incident_note(&request.repo, request.issue, &id, &summary));
+        delivery.note = Some(incident_note(&request.repo, request.issue, &summary));
         delivery.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
-                request.repo.owner, request.repo.name, request.issue), "signature":signature}));
+                request.repo.owner, request.repo.name, request.issue), "signature":signature, "incident_id":id}));
         if let Some(o) = &self.bootstrap.operations {
             delivery.repository = crate::Repository {
                 owner: o.owner.clone(),

@@ -103,12 +103,11 @@ impl Controller {
         post.note = Some(crate::looks::incident_note(
             &request.repo,
             request.issue,
-            &id,
             &summary,
         ));
         post.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title, request.repo.owner, request.repo.name, request.issue),
-            "signature":signature}));
+            "signature":signature, "incident_id":id}));
         if let Some(operations) = &self.bootstrap.operations {
             post.repository = crate::Repository {
                 owner: operations.owner.clone(),

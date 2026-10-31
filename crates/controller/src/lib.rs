@@ -906,6 +906,18 @@ impl Controller {
             from,
             to: state,
         });
+        // Preserve teardown evidence in the same transaction that can emit the summary.
+        for observation in &completion.observations {
+            if let Observation::ScratchSaved { node, reference } = observation {
+                commit.rows.push(put(
+                    "saved_scratch",
+                    reference.clone(),
+                    json!({
+                        "node": node, "reference": reference,
+                    }),
+                ));
+            }
+        }
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
@@ -1180,6 +1192,39 @@ impl Controller {
                 steering: None,
                 request_text: request.source,
             };
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(_),
+                    ..
+                }
+            ) {
+                let mut references = std::collections::BTreeSet::new();
+                for value in snapshot
+                    .rows
+                    .iter()
+                    .filter(|r| r.table == "saved_scratch")
+                    .map(|r| &r.value)
+                    .chain(commit.rows.iter().filter_map(|row| match row {
+                        RowChange::Put { table, value, .. } if table == "saved_scratch" => {
+                            Some(value)
+                        }
+                        _ => None,
+                    }))
+                {
+                    if value["node"] == json!(node)
+                        && let Some(reference) = value["reference"].as_str()
+                    {
+                        references.insert(reference.to_owned());
+                    }
+                }
+                if !references.is_empty() {
+                    delivery.note = Some(format!(
+                        "Saved unfinished work, kept for 30 days:\n{}",
+                        references.into_iter().collect::<Vec<_>>().join("\n")
+                    ));
+                }
+            }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..
@@ -1218,13 +1263,12 @@ impl Controller {
                 delivery.note = Some(looks::incident_note(
                     &delivery.repository,
                     delivery.issue,
-                    &id,
                     &summary,
                 ));
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                         delivery.repository.owner, delivery.repository.name, delivery.issue),
-                    "signature":signature}));
+                    "signature":signature, "incident_id":id}));
                 if let Some(operations) = &self.bootstrap.operations {
                     delivery.repository = Repository {
                         owner: operations.owner.clone(),
@@ -1357,7 +1401,26 @@ impl Controller {
                 && o.installation_id == repository.installation
                 && o.number == issue
         });
-        if !operations {
+        let request_incident = if let Some(id) = comment.body.trim().strip_prefix("clear incident ")
+        {
+            snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == id)
+                .map(|row| -> Result<bool> {
+                    let incident: looks::Incident = serde_json::from_value(row.value.clone())?;
+                    let request = request(snapshot, incident.node)?;
+                    Ok(request.issue == issue
+                        && request.repo.owner.eq_ignore_ascii_case(&repository.owner)
+                        && request.repo.name.eq_ignore_ascii_case(&repository.name)
+                        && request.repo.installation == repository.installation)
+                })
+                .transpose()?
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if !operations && !request_incident {
             return Ok(false);
         }
         if comment.user.id != self.bootstrap.rob {
@@ -1445,6 +1508,14 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
+            Observation::ScratchSaved { node, reference } => {
+                commit.rows.push(put(
+                    "saved_scratch",
+                    reference.clone(),
+                    json!({"node":node,"reference":reference}),
+                ));
+                return Ok(None);
+            }
             Observation::Progress { key, checkpoint } => {
                 self.progress_allowance(snapshot, &key, checkpoint, commit)?;
                 return Ok(None);
@@ -2230,7 +2301,7 @@ fn observation_upstream(
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
-        Observation::Rebased { .. } => Some(Upstream::Worktrees),
+        Observation::Rebased { .. } | Observation::ScratchSaved { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
             Some(Upstream::Mergify)
         }
