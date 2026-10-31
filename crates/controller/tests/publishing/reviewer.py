@@ -43,11 +43,12 @@ def model(request):
                 assert previous[0].additional_kwargs["reasoning_content"] == "The goal needs another check."
             if mode == "review-retry" and count == 2:
                 raise AssertionError("retry must use the saved reply without a model turn")
-            if mode.startswith("out-of-room"):
+            if mode.startswith(("out-of-room", "review-reset")):
                 assert len([m for m in messages if m.type == "human"]) == (2 if request["resume_session"] else 1)
             return super()._generate(messages, **kwargs)
 
-    exhausted = mode.startswith("out-of-room") and (mode != "out-of-room-fix" or not first)
+    exhausted = ((mode.startswith("out-of-room") and (mode != "out-of-room-fix" or not first))
+                 or (mode.startswith("review-reset") and count % 2 == 0))
     return Model(responses=[AIMessage(content=json.dumps(reply), usage_metadata=(
         {"input_tokens": 127_499, "output_tokens": 1, "total_tokens": 127_500} if exhausted else None), additional_kwargs={
         "reasoning_content": "The goal needs another check."})])

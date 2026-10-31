@@ -528,7 +528,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
-    if mode.starts_with("out-of-room") {
+    if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
         let mut primary = config.models.maker[2].clone();
         primary.name = "review-primary".into();
         let mut backup = config.models.maker[0].clone();
@@ -702,7 +702,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .to_owned();
     let credit = c.world().unwrap().nodes[0].credit.balance();
     let d = f.delivery(EffectKind::Push, 100);
-    if matches!(mode, "push" | "reports-latest") {
+    if matches!(mode, "push" | "reports-latest" | "review-reset-push") {
         let checkout = f.adapter().checkout(&d);
         git(
             &checkout,
@@ -718,8 +718,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
 
         webhook(&mut c, &server, "synchronize");
+        if mode == "review-reset-push" {
+            assert!(
+                !c.world().unwrap().nodes[0].review_restarted,
+                "outside push starts a new review"
+            );
+        }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-    } else if matches!(mode, "rebase" | "round-one-rebase") {
+    } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
         let new_target = git(&f.remote, &["rev-parse", "main"]);
@@ -727,6 +733,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             c.drive_once().unwrap();
             let n = c.world().unwrap().nodes[0];
             if n.phase == Phase::Checking {
+                if mode == "review-reset-rebase" {
+                    assert!(!n.review_restarted, "clean rebase starts a new review");
+                }
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
                 let plan = c
@@ -748,6 +757,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    if mode.starts_with("review-reset") {
+        assert_eq!(reviews.len(), 4);
+        assert_ne!(
+            reviews[0]["inputs"]["head_sha"],
+            reviews[2]["inputs"]["head_sha"]
+        );
+        for pair in reviews.chunks_exact(2) {
+            assert_eq!(pair[0]["model"]["name"], "review-primary");
+            assert_eq!(pair[1]["model"]["name"], "review-backup");
+            assert_eq!(pair[0]["resume_session"], false);
+            assert_eq!(pair[1]["resume_session"], false);
+            assert_ne!(pair[0]["session_file"], pair[1]["session_file"]);
+        }
+        assert_eq!(
+            reviews[2]["last_accepted_generation"],
+            reviews[1]["operation"]["generation"]
+        );
+        assert_eq!(
+            reviews[3]["last_accepted_generation"],
+            reviews[2]["operation"]["generation"]
+        );
+        assert_eq!(c.world().unwrap().nodes[0].rechecks, 3);
+        return;
+    }
     assert_eq!(
         reviews.len(),
         if matches!(mode, "new-attempt" | "review-retry" | "round-one-rebase") {
@@ -1119,6 +1152,8 @@ fn main() {
         "out-of-room",
         "out-of-room-fix",
         "out-of-room-last",
+        "review-reset-push",
+        "review-reset-rebase",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -1131,5 +1166,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("15 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("17 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
