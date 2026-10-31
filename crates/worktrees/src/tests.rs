@@ -1000,7 +1000,12 @@ fn hostile_blob() {
             ["rev-parse", &format!("{}:feature.txt", head.as_str())],
         ))
         .unwrap();
-        assert_eq!(f.manager.blob(&object).unwrap(), b"feature\n");
+        assert_eq!(
+            f.manager
+                .blob(&BlobId::new(object.as_str()).unwrap())
+                .unwrap(),
+            b"feature\n"
+        );
     });
 }
 #[test]
@@ -1025,6 +1030,25 @@ fn assert_snapshot_identity(path: &Path, head: &CommitId, message: &str) {
         "{raw}"
     );
     assert!(raw.ends_with(&format!("\n{message}\n")));
+    let tree = String::from_utf8(git(
+        path,
+        ["rev-parse", &format!("{}^{{tree}}", head.as_str())],
+    ))
+    .unwrap();
+    let parents = String::from_utf8(git(
+        path,
+        ["rev-list", "--parents", "-n", "1", head.as_str()],
+    ))
+    .unwrap();
+    let parents: String = parents
+        .split_whitespace()
+        .skip(1)
+        .map(|parent| format!("parent {parent}\n"))
+        .collect();
+    let legacy = format!(
+        "tree {}\n{parents}author TL3 <tl3@example.invalid> 946684800 +0000\ncommitter TL3 <tl3@example.invalid> 946684800 +0000\n\n{message}\n",
+        tree.trim()
+    );
     let mut input = Command::new("git")
         .current_dir(path)
         .args(["hash-object", "-t", "commit", "--stdin"])
@@ -1036,7 +1060,7 @@ fn assert_snapshot_identity(path: &Path, head: &CommitId, message: &str) {
         .stdin
         .take()
         .unwrap()
-        .write_all(raw.as_bytes())
+        .write_all(legacy.as_bytes())
         .unwrap();
     assert_eq!(
         String::from_utf8(input.wait_with_output().unwrap().stdout)

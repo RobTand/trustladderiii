@@ -644,15 +644,13 @@ impl Store {
     }
 
     pub fn intern_commit(&mut self, node: &str, sha: &str) -> Result<CommitId> {
-        if !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(Error::Invalid(
-                "commit SHA must be 40 or 64 hexadecimal digits",
-            ));
-        }
+        let sha = tl3_worktrees::CommitId::new(sha).map_err(|_| {
+            Error::Invalid("commit SHA must be 40 or 64 lowercase hexadecimal digits")
+        })?;
         Ok(CommitId(self.intern(
             InternKind::Commit,
             node,
-            &sha.to_ascii_lowercase(),
+            sha.as_str(),
         )?))
     }
 

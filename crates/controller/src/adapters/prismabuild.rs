@@ -119,10 +119,14 @@ fn read_wait(
     let Some(parent) = record.snapshot_parent.and_then(|s| CommitId::new(s).ok()) else {
         return Ok(WaitRecord::Ended);
     };
+    if !checkout.try_exists()? {
+        return Ok(WaitRecord::Ended);
+    }
     let alive = match Worktrees::open(checkout, checkout)
         .and_then(|repository| repository.is_ancestor(&parent, &repository.head()?))
     {
         Ok(alive) => alive,
+        Err(tl3_worktrees::Error::Io) if !checkout.try_exists()? => false,
         Err(
             error @ (tl3_worktrees::Error::Spawn
             | tl3_worktrees::Error::Io

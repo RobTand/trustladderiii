@@ -93,7 +93,7 @@ impl Worktrees {
             .stdout)
     }
 
-    pub fn blob(&self, object: &CommitId) -> Result<Vec<u8>, Error> {
+    pub fn blob(&self, object: &BlobId) -> Result<Vec<u8>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         Ok(self
             .run(

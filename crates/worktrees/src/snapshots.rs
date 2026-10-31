@@ -50,6 +50,7 @@ impl Worktrees {
         let mut args = vec![
             OsString::from("bundle"),
             OsString::from("create"),
+            OsString::from("--"),
             destination.as_os_str().to_owned(),
             OsString::from("HEAD"),
             OsString::from("refs/heads/tl3-base"),

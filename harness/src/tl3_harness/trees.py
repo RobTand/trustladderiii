@@ -1,4 +1,5 @@
 import ast
+import os
 from pathlib import Path, PurePosixPath
 import subprocess
 import tomllib
@@ -6,7 +7,14 @@ import tomllib
 
 def git(repo: Path, *args: str) -> bytes:
     return subprocess.run(
-        ["git", "--no-replace-objects", "-C", str(repo), *args],
+        ["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null",
+         "-c", "credential.helper=", "-c", "protocol.allow=never",
+         "-c", "protocol.file.allow=always", "-c", "core.fsmonitor=false",
+         "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+        env={**{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+             "GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1",
+             "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"},
         check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     ).stdout
 

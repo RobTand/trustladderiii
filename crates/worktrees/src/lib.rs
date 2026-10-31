@@ -58,6 +58,26 @@ pub enum Error {
     Recovery,
 }
 
+impl Error {
+    pub fn permanent_class(&self) -> Option<&'static str> {
+        match self {
+            Self::BranchName => Some("invalid_branch"),
+            Self::CommitId => Some("invalid_commit"),
+            Self::Remote => Some("invalid_remote"),
+            Self::WorktreePath => Some("invalid_worktree_path"),
+            Self::Token => Some("invalid_token"),
+            Self::Response => Some("invalid_response"),
+            Self::MissingBranch => Some("missing_branch"),
+            Self::MainBranch => Some("reserved_branch"),
+            Self::WorktreeOccupied => Some("worktree_occupied"),
+            Self::DirtyWorktree => Some("dirty_worktree"),
+            Self::Recovery => Some("worktree_recovery"),
+            // A Git exit alone cannot distinguish a lock or network failure.
+            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchName(String);
 
@@ -114,6 +134,19 @@ impl CommitId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobId(CommitId);
+
+impl BlobId {
+    pub fn new(value: impl Into<String>) -> Result<Self, Error> {
+        CommitId::new(value).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
@@ -1253,6 +1286,10 @@ impl Worktrees {
             });
         if deterministic_dates {
             command
+                .env("GIT_AUTHOR_NAME", "TL3")
+                .env("GIT_AUTHOR_EMAIL", "tl3@example.invalid")
+                .env("GIT_COMMITTER_NAME", "TL3")
+                .env("GIT_COMMITTER_EMAIL", "tl3@example.invalid")
                 .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
                 .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z");
         }

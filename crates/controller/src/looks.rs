@@ -1149,6 +1149,13 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
+        crate::Error::Adapter(error)
+            if error
+                .downcast_ref::<tl3_worktrees::Error>()
+                .is_some_and(|error| error.permanent_class().is_some()) =>
+        {
+            "setup"
+        }
         crate::Error::Adapter(error) => match error.downcast_ref::<tl3_github::Error>() {
             Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
             Some(tl3_github::Error::Http { status: 500..=599 }) => "upstream_server",

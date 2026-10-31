@@ -251,7 +251,7 @@ pub(crate) fn repository_materials(
         if total > 32 * 1024 * 1024 {
             return Err(Error::Invalid("repository text exceeds the input bound"));
         }
-        let bytes = repository.blob(&CommitId::new(fields[2])?)?;
+        let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
         if bytes.contains(&0) {
             continue;
         }
