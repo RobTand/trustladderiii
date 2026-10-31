@@ -1245,3 +1245,38 @@ merge and cleanup, an outside commit, a free catch-up recheck,
 an unapproved merge, and lost-response recovery for GitHub writes. No test submits
 nested fleet work. After the host runs pass, generate the `workspace` campaign
 and submit it for formatting, Clippy and full workspace verification.
+
+
+## Proposed-head scope hook
+
+Before reporting a leaf's proposed head or starting its first check, call:
+
+```rust,ignore
+let trimmed = controller.trim_scope(&worktrees, &delivery, &config.planning.protected_paths)?;
+```
+
+`delivery.paths` contains the plan's declared files. Report `trimmed.head` as the
+resulting head through the existing head observation. The hook does not change
+kernel state, approve a head, or run a maker. It has no production caller yet;
+the adoption tracer can call it when it supplies proposed heads.
+
+The worktree adapter fences the trim against its durable epoch. The controller
+then records the head and removed paths in a `scope_trims` world row. Repeat the
+same call after a crash between Git completion and the SQL commit. Both stages
+are idempotent. The closing summary carries the removal text in the writer's
+`facts.removed_changes`. TL3 appends it after checking the writer's prose, so the
+existing checker continues to reject file paths in model-written text. Path
+bytes outside letters, digits, dot, underscore, hyphen, and slash are percent
+encoded to keep filenames from becoming references or Markdown instructions.
+
+Review always supplies the `request-scope` standing rule alongside
+`test-report-integrity`. A scope blocker must cite that rule, quote a changed
+hunk, and explain why it serves none of the supplied goals. On a fix round,
+`scope_diff` supplies the whole remaining change against the check base, while
+`diff` keeps the existing incremental review behavior.
+
+Generate the verification campaign with
+`python3 crates/controller/tools/scope_review_manifest.py all`, save its JSON
+outside the checkout, and submit it through `pbcampaign.py`. It includes the
+worktrees suite and controller scope scenarios on all three hosts, reviewer and
+writer Python tests with the deployment helper, and `tools/verify.sh`.

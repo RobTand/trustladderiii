@@ -31,6 +31,7 @@ let files = repo.changed_files(&base, &head)?;
 | `finish_prepare` | Repair Git-locked initialization only at the durable base |
 | `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
+| `trim_scope` | Restore changes outside declared files or matching protected globs; return the head and removed paths |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
@@ -82,6 +83,30 @@ unfinished intent reconciles after a newer Prepare. The next maker run sees
 leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
+
+### Trim a proposed head
+
+`trim_scope(branch, checkout, footprint, protected_paths)` runs once per leaf
+branch. It reads `refs/tl3/bases/<branch>`, compares both committed trees without
+rename detection, and restores paths outside the declared files. Protected globs
+use Git's `:(top,glob)` pathspec syntax and always override the footprint.
+The result is a new TL3 commit with the proposed head as its parent. A trim with
+no removed paths keeps its original head.
+
+The first call requires a clean checkout. It builds the target in a separate
+index, pins it under `refs/tl3/scope/<branch>`, and fsyncs a `tl3-scope` receipt
+before touching the checkout. Recovery restores that target, advances the branch
+with an expected-head check, then marks the receipt complete. The durable base
+never changes. A completed replay returns the saved result and preserves later
+maker commits, edits, and untracked files, even after checkout removal.
+
+Keep the receipt with the common Git directory. The owning controller and all
+its Git children must have ended before a replacement resumes an unfinished trim.
+Only an unfinished receipt authorizes checkout restoration and removal of that
+checkout's stale index lock and the branch's stale ref lock. The private scope
+pin's stale lock can be cleared before recording an intent. Other ref locks stay
+untouched. Prepare's initializing-lock repair rule is unchanged.
+`trim_scope_with` exposes durable boundaries for crash tests.
 
 ### Clear a half-registered add
 
