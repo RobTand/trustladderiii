@@ -526,31 +526,67 @@ mod tests {
     }
     #[tokio::test]
     async fn lookup_keeps_finish_present_when_marker_retires_after_terminals() {
-        let (root, client, key) = fixture();
-        let marker = root
-            .path()
-            .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
-        std::fs::rename(root.path().join(format!("claimed/{key}.json")), &marker).unwrap();
-        let record = client
-            .read_with(&key, |state| {
-                if state == "withdrawn" {
-                    std::fs::write(
-                        root.path().join(format!("done/{key}.json")),
-                        serde_json::to_vec(&serde_json::json!({
-                            "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
-                            "status": "executed", "detail": {"returncode": 0}
-                        }))
-                        .unwrap(),
-                    )
-                    .unwrap();
-                    std::fs::remove_file(&marker).unwrap();
+        for finish_after in ["failed", "done", "withdrawn"] {
+            let (root, client, key) = fixture();
+            let marker = root
+                .path()
+                .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
+            std::fs::rename(root.path().join(format!("claimed/{key}.json")), &marker).unwrap();
+            let record = client
+                .read_with(&key, |state| {
+                    if state == finish_after {
+                        std::fs::write(
+                            root.path().join(format!("done/{key}.json")),
+                            serde_json::to_vec(&serde_json::json!({
+                                "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
+                                "status": "executed", "detail": {"returncode": 0}
+                            }))
+                            .unwrap(),
+                        )
+                        .unwrap();
+                        std::fs::remove_file(&marker).unwrap();
+                    }
+                })
+                .await;
+            let present = match &record {
+                Ok(RecordRead::Moving) => true,
+                Ok(RecordRead::Present(record)) => {
+                    record.state == ActionState::Finished { returncode: 0 }
                 }
-            })
-            .await;
+                _ => false,
+            };
+            assert!(
+                present,
+                "finish after {finish_after}: expected moving or successful terminal, got {record:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_returns_terminal_while_ready_capture_remains() {
+        let (root, client, key) = fixture();
+        std::fs::create_dir(root.path().join("ready-transitions")).unwrap();
+        let capture = root.path().join(format!(
+            "ready-transitions/{key}.100000000.abc.origin-released.json"
+        ));
+        std::fs::rename(root.path().join(format!("claimed/{key}.json")), &capture).unwrap();
+        std::fs::write(
+            root.path().join(format!("failed/{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
+                "status": "origin_consumer_released"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let record = client.read(&key).await;
         assert!(
-            matches!(record, Ok(RecordRead::Moving | RecordRead::Present(_))),
-            "finished record read as absent or error"
+            matches!(&record, Ok(RecordRead::Present(record))
+                if matches!(&record.state, ActionState::Failed { status, .. }
+                    if status == "origin_consumer_released")),
+            "ready capture hid durable terminal: {record:?}"
         );
+        assert!(capture.exists());
     }
 
     #[tokio::test]
