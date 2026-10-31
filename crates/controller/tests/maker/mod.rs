@@ -2,6 +2,10 @@ use super::*;
 use tl3_controller::executor::{Completion, Registry, Upstream};
 mod real;
 
+pub(super) fn reproducing_rebase_contract(settings: &tl3_config::Store) {
+    real::reproducing_fix(settings, true);
+}
+
 pub(super) fn review_trial(settings: &tl3_config::Store) {
     real::review_feedback(settings);
 }

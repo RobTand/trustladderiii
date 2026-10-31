@@ -820,6 +820,7 @@ pub(super) fn concurrent_requests(settings: &tl3_config::Store) {
 pub(super) fn guidance(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-guidance");
     d.wait(|s| s.node()["question"]["kind"] == "CantMeet");
+    fs::write(d.marker.with_extension("guidance-requested"), "ready").unwrap();
     d.send(19001, "Try again using the public API");
     d.classified(19001);
     d.wait(|s| s.marker.with_extension("guided").exists());

@@ -344,6 +344,49 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--real-worker-contracts")
+    {
+        simulation(&database.create("contract_ingest_audit"));
+        println!("test real_worker_contract_ingest_audit ... ok");
+        planning::planning(&database.create("contract_planner"), "normal");
+        planning::planning(&database.create("contract_planner_reject"), "plan-invalid");
+        println!("test real_worker_contract_planner ... ok");
+        maker::reproducing_rebase_contract(&database.create("contract_maker_reviewer"));
+        println!("test real_worker_contract_maker_reviewer ... ok");
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--gate-planning") {
+        for mode in [
+            "normal",
+            "plan-split",
+            "plan-invalid",
+            "plan-cant-meet",
+            "plan-bad-split",
+            "plan-bad-schema",
+        ] {
+            planning::planning(&database.create(&mode.replace('-', "_")), mode);
+        }
+        database.stop();
+        return;
+    }
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--maker-reproducing-rebase")
+    {
+        maker::reproducing_rebase_contract(&database.create("maker_reproducing_rebase"));
+        println!("test real_worker_contract_maker_reviewer_reproducing_rebase ... ok");
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--gate-wire") {
+        invalid_replies(&database.create("gate_invalid"));
+        stop_and_exit_gate(&database.create("gate_stop"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-wait") {
         maker::declared_wait(&database.create("maker_declared_wait"));
         println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");

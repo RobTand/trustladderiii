@@ -432,7 +432,12 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
             .iter()
             .find(|row| row.table == "check_plans" && row.id == format!("0:{head}"))
             .unwrap();
-        let rebased_reviewed = plan.value["reviewed_sha"].as_str().unwrap();
+        let rebased_reviewed = plan.value["reviewed_sha"].as_str().unwrap_or_else(|| {
+            panic!(
+                "rebased check plan must retain its reviewed tree: {}",
+                plan.value
+            )
+        });
         assert_ne!(rebased_reviewed, reviewed);
         let evidence = store.worker_document("0", "review_fixes").unwrap().unwrap();
         assert_eq!(evidence["head_sha"], head);
