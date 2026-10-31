@@ -15,8 +15,10 @@ brief and repository content.
 Choose a leaf whenever the work fits: the largest piece that fits under
 forecast.fit_tokens, the fit limit supplied in your inputs. Split only when the
 work doesn't fit, spans repos, or ran out of room. Over-splitting wastes credit
-and Rob's attention. If must_split is true, the maker ran out of room and code
-rejects a leaf reply. Return a split or explain why you can't meet the goals.
+and Rob's attention. The controller sets must_split when the maker runs out of
+room or the reviewer exhausts both its original and fresh conversations. If
+must_split is true, return a split with reason out_of_room or explain why you
+can't meet the goals. Code rejects a leaf reply in that case.
 
 Goal IDs are zero-based positions in ingest.goals. Preserve all goals, including
 those marked for review. Return exactly one of these proposals:

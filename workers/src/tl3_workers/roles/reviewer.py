@@ -18,6 +18,8 @@ from tl3_workers.tools import build_tools
 def check_reply(inputs, reply):
     if reply["verdict"] == "approve" and reply["head_sha"] != inputs["head_sha"]:
         raise ValueError("approval names a head other than the reviewed head")
+    if reply["verdict"] == "out_of_room":
+        return
     known = {
         "goal": {goal["id"] for goal in inputs["goals"]},
         "standing_rule": {rule["id"] for rule in inputs["standing_rules"]},
@@ -57,7 +59,7 @@ def run(model, request, worktree, emit):
     if retry and saved["inputs"] != request["inputs"]:
         raise ValueError("review retry evidence changed before acceptance")
     if retry and saved.get("out_of_room"):
-        raise ValueError("reviewer out of room")
+        return {"verdict": "out_of_room"}
     history = messages_from_dict(saved["messages"]) if saved and (
         retry or request.get("resume_session")) else []
     if retry and "reply" in saved:
@@ -99,7 +101,7 @@ def run(model, request, worktree, emit):
                     state["messages"] = messages_to_dict(history)
                     if session:
                         save(session, state)
-                    raise ValueError("reviewer out of room")
+                    return {"verdict": "out_of_room"}
                 if isinstance(message, AIMessage) and session is None:
                     emit({"event": "progress", "unit": "model_turn"})
                 if isinstance(message, AIMessage) and not message.tool_calls:
@@ -107,6 +109,8 @@ def run(model, request, worktree, emit):
                         raise ValueError("invalid reviewer tool calls")
                     reply = read_json(message.text)
                     validate("reviewer-reply", reply)
+                    if reply["verdict"] == "out_of_room":
+                        raise ValueError("model cannot report reviewer exhaustion")
                     check_reply(request["inputs"], reply)
                     state["reply"] = reply
             state["messages"] = messages_to_dict(history)

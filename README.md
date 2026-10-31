@@ -4,6 +4,13 @@
 
 Created in [T3 Code](https://t3.codes).
 
+## Review exhaustion
+
+Q44 gives an exhausted reviewer one fresh conversation on the next reviewer
+model. If that review also runs out of room, Planning must split the leaf using
+the maker's credit rules. The [decision log](docs/state-machine.md) separates
+Rob's decision from the coordinator defaults that Rob still needs to check.
+
 ## Queue a pull request
 
 Wait for the required `Rust` and `Python` checks to pass.

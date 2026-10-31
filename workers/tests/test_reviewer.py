@@ -340,12 +340,11 @@ def test_reviewer_stops_before_context_exhaustion(review_request, session_model,
         review_request["session_file"] = str(tmp_path / "reviewer.json")
     responses[:] = [AIMessage(content=json.dumps(APPROVE), usage_metadata=usage)]
     events = []
-    with pytest.raises(ValueError, match="reviewer out of room"):
-        runtime.run(review_request, events.append)
-    assert not any(event["event"] == "reply" for event in events)
+    runtime.run(review_request, events.append)
+    assert events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}]
     if with_session:
-        with pytest.raises(ValueError, match="reviewer out of room"):
-            runtime.run(review_request, events.append)
+        runtime.run(review_request, events.append)
+        assert events[-1] == events[0]
         assert len(observed) == 1, "retry must not repeat an exhausted model turn"
 
 
@@ -369,9 +368,8 @@ def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, sessi
         "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}])]
     events = []
     for _ in range(2):
-        with pytest.raises(ValueError, match="reviewer out of room"):
-            runtime.run(review_request, events.append)
-    assert not events
+        runtime.run(review_request, events.append)
+    assert events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}] * 2
     assert len(observed) == 1
 
 
@@ -456,3 +454,22 @@ def test_scope_blocker_can_quote_unchanged_hunk_on_fix_round(tmp_path, review_re
     check_reply(inputs, changes(finding))
     result = start_worker(tmp_path, review_request, [{'content': json.dumps(changes(finding))}])
     assert result.exit_code == 0, result.stderr
+
+
+def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, review_request):
+    review_request["inputs"]["context_size"] = 1_000
+    result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}]
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_q44_model_cannot_request_a_free_restart(review_request, session_model, tmp_path, with_session):
+    _, responses = session_model
+    responses[:] = [AIMessage(content=json.dumps({"verdict": "out_of_room"}))]
+    if with_session:
+        review_request["session_file"] = str(tmp_path / "reviewer.json")
+    events = []
+    with pytest.raises(ValueError, match="model cannot report reviewer exhaustion"):
+        runtime.run(review_request, events.append)
+    assert not any(event["event"] == "reply" for event in events)
