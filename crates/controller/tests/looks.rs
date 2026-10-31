@@ -1118,7 +1118,7 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
-    for case in ["brief", "persistent", "forbidden"] {
+    for case in ["brief", "persistent", "forbidden", "webhooks"] {
         effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
     }
     for name in [
@@ -1748,6 +1748,19 @@ fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
                 .iter()
                 .any(|r| r.table == "incidents")
         );
+        if case == "webhooks" {
+            for index in 0..3 {
+                let mut issue = labelled();
+                issue.delivery = format!("duplicate-webhook-{index}");
+                c.intake(issue).unwrap();
+                drain(&mut c);
+                assert_eq!(
+                    calls.get(),
+                    1,
+                    "webhooks must not release a held 404 before its look"
+                );
+            }
+        }
         c.look_key(&first.key).unwrap();
         assert_eq!(c.world().unwrap().nodes[0].fx_failures, 1);
         drain(&mut c);
