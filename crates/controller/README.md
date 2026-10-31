@@ -867,9 +867,10 @@ later MLflow calibration. Their sum must be below `limits.fit_tokens`.
 No MLflow calls run in this flow. Protected paths can
 be extended in config, but the slice-one defaults cannot be removed.
 
-`plans` holds the latest schema-valid planner reply, accepted or rejected;
-`plan_reports` retains each generation's evidence. Malformed output fails the run
-and does not replace either document.
+`plans` holds the latest schema-valid planner reply, accepted or rejected.
+Malformed output fails the run and does not replace it. The controller does not
+write unused `plan_reports` or `reviews` documents. Review blockers are retained
+in `maker_findings`; accepted review visits are retained in `reviewer_session`.
 `findings` includes rejected-plan reasons and reports for the next planner run.
 Callers that record failed checks or review findings append them to that same
 text-list document before requesting a re-plan.
@@ -1045,8 +1046,9 @@ that clone.
 The controller retains each check's tests, outcomes and `custody: in-process` in
 `check_reports`. Each node keeps only its latest head's report, and closure deletes
 it. A review needs the matching check plan, base and report. Its diff is capped at 512 KiB. Goals receive stable `goal-N`
-identifiers when ingest did not supply IDs. Optional `standing_rules` in worker
-materials supplement the controller's rules. The reserved `test-report-integrity`
+identifiers in the accepted `goals` document when ingest did not supply IDs.
+Maker inputs and reviewer criteria share the same ID function.
+Optional `standing_rules` in worker materials supplement the controller's rules. The reserved `test-report-integrity`
 rule always replaces any supplied rule with the same ID. It protects test output
 and pytest internals while permitting ordinary program output. Review blockers
 must cite a supplied goal or rule. Approvals must name the exact reviewed head.
@@ -1128,7 +1130,8 @@ so the controller's death signal reaches the publisher.
 To add a supervisor role, update these points together:
 
 1. Map the existing kernel role in `workers/protocol.rs`.
-2. Register its packaged input and reply schemas there.
+2. Add its input and reply JSON schemas to the workers package. The controller
+   embeds every packaged schema and validates the registry at supervisor startup.
 3. Assemble its input, model and committed worktree in `Supervisor`.
 4. Validate input-dependent evidence in `workers/source.rs`.
 5. Translate and persist the reply in `Controller::translate`.

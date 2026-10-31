@@ -241,6 +241,8 @@ pub fn checked_draft(
                 message::check(&draft, policy).map(|checked| checked.as_str().to_owned())
             }
             WriterReply::Text(text) if input.kind != MessageKind::Question => {
+                // The quoted title and comment excerpt are exempt by design: they are
+                // Rob's or the issue's own text, not TL3's prose.
                 let prefix = format!("You asked for \"{title}\".");
                 let written = text.text.strip_prefix(&prefix).unwrap_or(&text.text);
                 let written = if input.kind == MessageKind::Clarification {
@@ -323,6 +325,15 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                     )
                 });
             let problem = match violation {
+                Violation::Mention(token) => {
+                    return format!("Remove the user or team mention '{token}'.");
+                }
+                Violation::ForeignReference(token) => {
+                    return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
+                }
+                Violation::HtmlEntity(entity) => {
+                    return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");
+                }
                 Violation::InternalVocabulary => "uses an internal word",
                 Violation::InternalNameOrId => "contains an internal name or identifier",
                 Violation::FilePath => "contains a file path",
