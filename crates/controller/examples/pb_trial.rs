@@ -81,6 +81,7 @@ fn fixture(root: &Path) -> Delivery {
         replanned: false,
         marker_key: None,
         note: None,
+        scope_removals: None,
         steering: None,
         request_text: None,
         question_context: None,
@@ -88,7 +89,7 @@ fn fixture(root: &Path) -> Delivery {
         job_generation: Some(1),
         checks: Some(CheckRun {
             repository: repo,
-            base_sha: base,
+            base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
             reviewed_sha: None,
             reproducing_unavailable: None,

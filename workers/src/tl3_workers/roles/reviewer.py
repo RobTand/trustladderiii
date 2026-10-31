@@ -28,6 +28,14 @@ def check_reply(inputs, reply):
         citation = finding["citation"]
         if citation["id"] not in known[citation["kind"]]:
             raise ValueError("blocking finding cites an unknown goal or standing rule")
+        if citation == {"kind": "standing_rule", "id": "request-scope"}:
+            changed = (line for line in inputs.get("scope_diff", inputs["diff"]).splitlines()
+                       if line.startswith(("+", "-"))
+                       and not line.startswith(("+++", "---"))
+                       and sum(not char.isspace() for char in line[1:]) >= 8)
+            quoted = {line.strip() for line in finding["evidence"].splitlines()}
+            if not any(line in quoted for line in changed):
+                raise ValueError("scope blocker must quote a changed hunk")
 
 
 def _pending_calls(history):

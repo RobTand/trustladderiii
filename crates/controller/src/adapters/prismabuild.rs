@@ -7,6 +7,7 @@ use crate::{
 use std::path::Path;
 use tl3_kernel::{EffectKind, NodeId};
 use tl3_kernel::{Event, Reply};
+use tl3_worktrees::{CommitId, Worktrees};
 
 pub struct Fake(Records);
 impl Fake {
@@ -115,23 +116,29 @@ fn read_wait(
         return Ok(WaitRecord::Ended);
     }
     // PB v2 snapshots retain the submitted HEAD even when the original checkout is gone.
-    let Some(parent) = record
-        .snapshot_parent
-        .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-    else {
+    let Some(parent) = record.snapshot_parent.and_then(|s| CommitId::new(s).ok()) else {
         return Ok(WaitRecord::Ended);
     };
-    let status = std::process::Command::new("git")
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .arg("--no-replace-objects")
-        .arg("-C")
-        .arg(checkout)
-        .args(["merge-base", "--is-ancestor", &parent, "HEAD"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    Ok(if status.success() {
+    if !checkout.try_exists()? {
+        return Ok(WaitRecord::Ended);
+    }
+    let alive = match Worktrees::open(checkout, checkout)
+        .and_then(|repository| repository.is_ancestor(&parent, &repository.head()?))
+    {
+        Ok(alive) => alive,
+        Err(tl3_worktrees::Error::Io | tl3_worktrees::Error::Spawn)
+            if !checkout.try_exists()? =>
+        {
+            false
+        }
+        Err(
+            error @ (tl3_worktrees::Error::Spawn
+            | tl3_worktrees::Error::Io
+            | tl3_worktrees::Error::Poisoned),
+        ) => return Err(error.into()),
+        Err(_) => false,
+    };
+    Ok(if alive {
         WaitRecord::Alive
     } else {
         WaitRecord::Ended
@@ -695,5 +702,122 @@ impl Executor for Adapter {
             }
             _ => Err(crate::Error::Invalid("unsupported PrismaBuild effect")),
         }
+    }
+}
+
+#[cfg(test)]
+mod git_tests {
+    use super::*;
+    use crate::git_tests::{Repo, wait_client};
+    #[test]
+    fn missing_checkout_ends_wait() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.base);
+        let runtime = crate::executor::runtime().unwrap();
+        fs::remove_dir_all(&f.path).unwrap();
+        assert!(matches!(
+            read_wait(&client, runtime, &"a".repeat(64), &f.path).unwrap(),
+            crate::executor::WaitRecord::Ended
+        ));
+    }
+    #[test]
+    fn checkout_disappears_during_open_ends_wait() {
+        disappearing_checkout(
+            "adapters::prismabuild::git_tests::checkout_disappears_during_open_ends_wait",
+            false,
+        );
+    }
+
+    #[test]
+    fn checkout_disappears_before_head_spawn_ends_wait() {
+        disappearing_checkout(
+            "adapters::prismabuild::git_tests::checkout_disappears_before_head_spawn_ends_wait",
+            true,
+        );
+    }
+
+    fn disappearing_checkout(name: &str, linked: bool) {
+        use std::{os::unix::fs::PermissionsExt, process::Command};
+        if std::env::var_os("TL3_VANISH_WAIT_CHILD").is_none() {
+            let bin = tempfile::tempdir().unwrap();
+            let git = bin.path().join("git");
+            fs::write(
+                &git,
+                r#"#!/bin/sh
+/usr/bin/git "$@"
+status=$?
+if [ "$status" -eq 0 ]; then
+    for arg do
+        if [ "$arg" = "--git-common-dir" ]; then
+            checkout=$(/bin/pwd)
+            : > "${checkout%/*}/removed"
+            /bin/rm -rf -- "$checkout"
+        fi
+    done
+fi
+exit "$status"
+"#,
+            )
+            .unwrap();
+            fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+            let mut paths = vec![bin.path().to_path_buf()];
+            paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+            let result = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env("TL3_VANISH_WAIT_CHILD", "1")
+                .env("PATH", std::env::join_paths(paths).unwrap())
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{name}:\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let f = Repo::new();
+        // Linked checkouts retain their common Git directory after this checkout disappears.
+        let checkout = if linked {
+            let checkout = f.root.path().join("checkout");
+            crate::git_tests::git(
+                &f.path,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "wait-race",
+                    checkout.to_str().unwrap(),
+                ],
+            );
+            checkout
+        } else {
+            f.path.clone()
+        };
+        let client = wait_client(f.root.path(), &f.head);
+        let runtime = crate::executor::runtime().unwrap();
+        let result = read_wait(&client, runtime, &"a".repeat(64), &checkout);
+        assert!(f.root.path().join("removed").exists());
+        assert!(!checkout.try_exists().unwrap());
+        assert!(matches!(
+            result.unwrap(),
+            crate::executor::WaitRecord::Ended
+        ));
+    }
+
+    #[test]
+    fn hostile_read_wait() {
+        crate::git_tests::hostile(
+            "adapters::prismabuild::git_tests::hostile_read_wait",
+            || {
+                let f = Repo::new();
+                let client = wait_client(f.root.path(), &f.head);
+                let runtime = crate::executor::runtime().unwrap();
+                assert!(matches!(
+                    read_wait(&client, runtime, &"a".repeat(64), &f.path).unwrap(),
+                    crate::executor::WaitRecord::Alive
+                ));
+            },
+        );
     }
 }
