@@ -439,3 +439,19 @@ def test_one_verified_tokenizer_per_check(monkeypatch, planner_request, proposal
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
     with pytest.raises(ValueError, match="must be preloaded"):
         check_reply(planner_request["inputs"], copy.deepcopy(proposal))
+
+
+@pytest.mark.parametrize("vector", json.loads((__import__('pathlib').Path(__file__).resolve().parents[2] / "harness/test-vectors/pytest-node-ids.json").read_text()), ids=lambda v: repr(v["node_id"]))
+def test_planner_exact_node_ids_agree_with_harness(vector, planner_request, monkeypatch):
+    from tl3_workers.roles import planner
+    from tl3_workers.forecast import Forecaster
+    monkeypatch.setattr(Forecaster, "measure", lambda *a: {"fits": True})
+    reply = copy.deepcopy(LEAF)
+    for check in reply["checks"]:
+        check["node_ids"] = [vector["node_id"]]
+    try:
+        planner.check_reply(planner_request["inputs"], reply)
+        valid = "Checks must name exact pytest node IDs." not in reply["violations"]
+    except ValueError:
+        valid = False
+    assert valid == vector["valid"]

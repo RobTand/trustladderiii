@@ -85,3 +85,29 @@ pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> 
         evidence: json!({"reviewed_sha": reviewed, "findings": evidence}),
     })
 }
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    #[test]
+    fn exact_node_ids_agree_with_harness_vectors() {
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../../../harness/test-vectors/pytest-node-ids.json"
+        ))
+        .unwrap();
+        let feedback =
+            json!([{"kind":"review_finding", "id":"f", "reviewed_sha":"head", "report":"fix"}]);
+        let mut mismatches = Vec::new();
+        for vector in vectors.as_array().unwrap() {
+            let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]]}]});
+            if check(&reply, &feedback, Some("head")).is_ok() != vector["valid"].as_bool().unwrap()
+            {
+                mismatches.push(vector.clone());
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "node-id disagreements: {mismatches:?}"
+        );
+    }
+}

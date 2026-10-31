@@ -439,3 +439,88 @@ mod classifier_tests {
         }
     }
 }
+
+#[cfg(test)]
+fn schemas_from(
+    _schemas: Vec<(String, Value)>,
+) -> Result<std::collections::BTreeMap<String, jsonschema::Validator>> {
+    todo!("load every packaged schema")
+}
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn registry_resolves_a_new_cross_schema_reference() {
+        let schemas = vec![
+            (
+                "new-input.json".into(),
+                json!({"$id":"https://trustladderiii.invalid/workers/protocol-1/new-input.json", "$ref":"maker-input.json#/properties/goals/items"}),
+            ),
+            (
+                "maker-input.json".into(),
+                serde_json::from_str(include_str!(
+                    "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
+                ))
+                .unwrap(),
+            ),
+        ];
+        let validators = schemas_from(schemas).unwrap();
+        assert!(
+            validators["new-input.json"]
+                .is_valid(&json!({"id":"g", "description":"Hello", "verification":"test"}))
+        );
+        assert!(!validators["new-input.json"].is_valid(&json!({})));
+    }
+
+    #[test]
+    fn schema_load_errors_are_returned() {
+        for schema in [
+            json!({"type":"unknown"}),
+            json!({"$ref":"https://trustladderiii.invalid/missing.json"}),
+        ] {
+            assert!(schemas_from(vec![("broken.json".into(), schema)]).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(
+    _reply: &Value,
+    _field: &str,
+) -> Result<T> {
+    todo!("decode reply fields at the controller boundary")
+}
+
+#[cfg(test)]
+mod decoding_defects {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn planner_arrays_reject_missing_and_wrong_item_types() {
+        for (field, reply) in [
+            ("violations", json!({})),
+            ("violations", json!({"violations": [1]})),
+            ("files", json!({"files":null})),
+            ("files", json!({"files":["ok.py",false]})),
+        ] {
+            assert!(matches!(
+                reply_field::<Vec<String>>(&reply, field),
+                Err(Error::Invalid(_))
+            ));
+        }
+        assert_eq!(
+            reply_field::<Vec<String>>(&json!({"files":["ok.py"]}), "files").unwrap(),
+            vec!["ok.py"]
+        );
+    }
+    #[test]
+    fn maker_self_check_must_be_an_array() {
+        assert!(matches!(
+            reply_field::<Vec<Value>>(&json!({"self_check":false}), "self_check"),
+            Err(Error::Invalid(_))
+        ));
+    }
+}

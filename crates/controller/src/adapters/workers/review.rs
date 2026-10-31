@@ -207,3 +207,24 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+
+    #[test]
+    fn malformed_blockers_return_invalid_before_feedback_is_built() {
+        let inputs = json!({"goals":[{"id":"g"}], "standing_rules":[]});
+        for finding in [
+            json!({"citation":{"kind":"goal","id":"g"},"evidence":"e"}),
+            json!({"citation":{"kind":"goal","id":"g"},"problem":42,"evidence":"e"}),
+            json!({"citation":{"kind":"goal","id":"g"},"problem":"p","evidence":null}),
+        ] {
+            let reply = json!({"verdict":"changes", "blocking_findings":[finding], "findings":[]});
+            assert!(
+                matches!(validate_reply(&reply, &inputs), Err(Error::Invalid(_))),
+                "{reply}"
+            );
+        }
+    }
+}

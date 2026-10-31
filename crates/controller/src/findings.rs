@@ -101,3 +101,31 @@ pub(crate) fn check_report(
     }
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)
 }
+
+#[cfg(test)]
+pub(crate) fn current_review_findings<'a>(
+    _feedback: &'a serde_json::Value,
+    _reviewed: Option<&str>,
+) -> Vec<&'a serde_json::Value> {
+    todo!("select current review findings once in Rust")
+}
+
+#[cfg(test)]
+mod selection_defects {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn current_findings_require_matching_reviewed_head_and_kind() {
+        let feedback = json!([
+            {"kind":"review_finding", "id":"current", "reviewed_sha":"a"},
+            {"kind":"review_finding", "id":"old", "reviewed_sha":"b"},
+            {"kind":"failed_check", "id":"check", "reviewed_sha":"a"},
+            {"kind":"review_finding", "id":"missing"}
+        ]);
+        assert!(current_review_findings(&feedback, None).is_empty());
+        assert_eq!(
+            current_review_findings(&feedback, Some("a")),
+            vec![&feedback[0]]
+        );
+    }
+}

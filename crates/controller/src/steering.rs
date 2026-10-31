@@ -704,3 +704,30 @@ fn excerpt(text: &str) -> String {
         .map(|c| if c == '?' { ' ' } else { c })
         .collect()
 }
+
+#[cfg(test)]
+fn credit_amount(_reply: &Value) -> Result<u8> {
+    todo!("decode credit without truncation")
+}
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    #[test]
+    fn credit_is_checked_without_panics_or_truncation() {
+        for amount in [
+            Value::Null,
+            json!("1"),
+            json!(-1),
+            json!(1.5),
+            json!(256),
+            json!(u64::MAX),
+        ] {
+            assert!(matches!(
+                credit_amount(&json!({"amount":amount})),
+                Err(Error::Invalid(_))
+            ));
+        }
+        assert_eq!(credit_amount(&json!({"amount":100})).unwrap(), 100);
+    }
+}

@@ -361,3 +361,25 @@ mod tests {
         assert_eq!(repo["file_list"].as_array().unwrap().len(), 4);
     }
 }
+
+#[cfg(test)]
+mod reply_defects {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn maker_preserves_goal_identity_used_by_review() {
+        let brief = json!({"brief":"hello", "goals":[{"id":"greeting", "description":"hello", "verification":"test"}]});
+        let plan = json!({"kind":"leaf", "files":["a.py"], "checks":[{"kind":"regression", "node_ids":["test_a.py::test_a"], "goal_ids":[0]}]});
+        let inputs = maker_inputs(&brief, &plan).unwrap();
+        assert_eq!(inputs["goals"][0]["id"], "greeting");
+        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!(["greeting"]));
+    }
+    #[test]
+    fn malformed_goal_returns_invalid_instead_of_panicking() {
+        let brief = json!({"brief":"hello", "goals":["unexpected"]});
+        assert!(matches!(
+            maker_inputs(&brief, &json!({"kind":"leaf"})),
+            Err(crate::Error::Invalid(_))
+        ));
+    }
+}
