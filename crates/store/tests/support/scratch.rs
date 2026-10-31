@@ -30,6 +30,7 @@ fn dead_pid(path: &Path) -> io::Result<bool> {
         .lines()
         .next()
         .and_then(|s| s.parse::<i32>().ok())
+        .filter(|pid| *pid > 0)
         .and_then(Pid::from_raw)
     else {
         return Ok(false);

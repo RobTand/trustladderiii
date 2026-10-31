@@ -6,7 +6,7 @@ use std::{
     os::{
         linux::net::SocketAddrExt,
         unix::{
-            fs::{DirBuilderExt, MetadataExt},
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
             net::{SocketAddr, UnixListener},
         },
     },
@@ -53,6 +53,7 @@ impl InstallLock {
         let mut handle = OpenOptions::new()
             .write(true)
             .create_new(true)
+            .mode(0o600)
             .open(&file)
             .unwrap();
         writeln!(handle, "{}", std::process::id()).unwrap();

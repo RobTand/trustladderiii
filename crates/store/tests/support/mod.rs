@@ -34,6 +34,11 @@ impl Database {
             format!("{}\n", std::process::id()),
         )
         .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(root.join("fixture.pid"), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
         let started = Instant::now();
         let settings = Settings {
             releases_url: "https://github.com/zonkyio/embedded-postgres-binaries".into(),
