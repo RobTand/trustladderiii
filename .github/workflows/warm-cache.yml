@@ -1,0 +1,51 @@
+name: Warm CI cache
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-ci-cache-main
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: '4'
+  RUST_TEST_THREADS: '4'
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  RAYON_NUM_THREADS: '1'
+  TOKIO_WORKER_THREADS: '1'
+
+jobs:
+  warm-cache:
+    name: Warm Rust cache
+    runs-on: [self-hosted, tl3-fleet]
+    timeout-minutes: 15
+    steps:
+      - name: Verify runner input is scrubbed
+        run: |
+          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
+            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
+            exit 1
+          fi
+          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci
+      - name: Build test dependencies without running tests
+        run: cargo test --workspace --all-targets --locked --no-run
+      - name: Build deployment helper without running tests
+        run: cargo build --locked -p tl3-controller --example tl3-deploy
