@@ -9,9 +9,6 @@ import sys
 import time
 from unittest.mock import patch
 
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
-from tl3_workers import runtime
 
 os.environ["TIKTOKEN_CACHE_DIR"] = str(Path(tempfile.gettempdir()) / "data-gym-cache")
 
@@ -181,6 +178,10 @@ if mode in {"bad-schema", "nonzero", "missing", "reply-before-exit", "duplicate"
     if mode == "duplicate":
         print(json.dumps({"event": "reply", "role": request["role"], "reply": reply}), flush=True)
     sys.exit(7 if mode == "nonzero" else 0)
+
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
+from tl3_workers import runtime
 
 with patch.object(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self, create=True), \
      patch.object(runtime, "create_model", create_model), \
