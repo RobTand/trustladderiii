@@ -207,13 +207,14 @@ def test_agent_gitattributes_cannot_run_drivers_at_commit(tmp_path, maker_reques
     assert not (root / "driver-ran").exists()
 
 
-@pytest.mark.parametrize("turns", [[turn(DONE)], [write_turn(content="def greet(): return 'goodbye'\n"), turn(DONE)]])
-def test_done_without_a_change_is_rejected(tmp_path, maker_request, turns):
+@pytest.mark.parametrize("turns", [[turn(DONE), turn(DONE)],
+    [write_turn(content="def greet(): return 'goodbye'\n"), turn(DONE), turn(DONE)]])
+def test_done_without_a_change_reports_cant_meet(tmp_path, maker_request, turns):
     root = Path(maker_request["worktree"])
     before = git(root, "rev-parse", "HEAD")
     result = start_worker(tmp_path, maker_request, turns)
-    assert result.exit_code == 1
-    assert all(event["event"] != "reply" for event in result.events)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply'] == {'kind': 'cant_meet', 'report': 'no code change was made'}
     assert git(root, "rev-parse", "HEAD") == before
 
 
@@ -745,8 +746,9 @@ def test_rebase_needs_changes_revisit_uses_its_own_checkpoint(
         assert events[-1]['reply']['kind'] == 'done'
         assert git(root, 'rev-parse', 'HEAD^') == before
     else:
-        with pytest.raises(ValueError, match='done requires code changes'):
-            runtime.run(maker_request, lambda event: None)
+        events = []
+        runtime.run(maker_request, events.append)
+        assert events[-1]['reply'] == {'kind': 'cant_meet', 'report': 'no code change was made'}
         assert git(root, 'rev-parse', 'HEAD') == before
     checkpoint = Path(maker_request['session_file']).with_suffix('.head')
     assert json.loads(checkpoint.read_text()) == {
@@ -922,3 +924,53 @@ def test_maker_uses_controller_selection_of_current_findings(maker_request):
     inputs.update(round=0, feedback=[selected], current_review_findings=[selected])
     reply = {**DONE, 'reproductions': [{'finding_id': 'chosen', 'reason': 'Review this manually.'}]}
     maker._check_reply(inputs, reply)
+
+
+@pytest.mark.parametrize('response', ['cant_meet', 'done', 'repair'])
+def test_no_change_done_gets_one_feedback_turn(tmp_path, maker_request, monkeypatch, response):
+    from langchain_core.messages import HumanMessage
+
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    maker_request['inputs']['attempt'] = 3
+    maker_request['model']['name'] = 'claude-fable-5-1'
+    maker_request['inputs']['context_size'] = 150000
+    maker_request['session_file'] = str(tmp_path / 'session.json')
+    report = 'Cannot satisfy test_greeting.py::test_hello without changing the protected test.'
+    final = {'kind': 'cant_meet', 'report': report} if response == 'cant_meet' else DONE
+    turns = [turn(DONE), *([write_turn()] if response == 'repair' else []), turn(final)]
+    seen = []
+    class RecordingModel(ToolModel):
+        def _generate(self, messages, *args, **kwargs):
+            seen.append(list(messages))
+            return super()._generate(messages, *args, **kwargs)
+    model = RecordingModel(responses=[AIMessage(**message) for message in turns])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    events = []
+    try:
+        runtime.run(maker_request, events.append)
+    except ValueError:
+        pytest.fail('no-change done crashed instead of returning feedback to the maker')
+    feedback = 'done requires code changes; if no code change can satisfy the failing checks, reply cant_meet with a report that names them'
+    assert any(isinstance(message, HumanMessage) and message.content == feedback for message in seen[1])
+    reply = events[-1]['reply']
+    if response == 'repair':
+        assert reply == {**DONE, 'head': git(root, 'rev-parse', 'HEAD')}
+        assert git(root, 'rev-parse', 'HEAD^') == before
+    else:
+        assert reply == {'kind': 'cant_meet', 'report': report if response == 'cant_meet' else 'no code change was made'}
+        assert git(root, 'rev-parse', 'HEAD') == before
+    assert len(seen) == len(turns)
+    saved = json.loads(Path(maker_request['session_file']).read_text())
+    assert any(message['data']['content'] == feedback for message in saved)
+
+
+def test_no_change_done_recovers_through_protocol(tmp_path, maker_request):
+    before = git(maker_request['worktree'], 'rev-parse', 'HEAD')
+    maker_request['inputs']['attempt'] = 3
+    maker_request['model']['name'] = 'claude-fable-5-1'
+    reply = {'kind': 'cant_meet', 'report': 'The named regression check does not exist at base.'}
+    result = start_worker(tmp_path, maker_request, [turn(DONE), turn(reply)])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1] == {'event': 'reply', 'role': 'maker', 'reply': reply}
+    assert git(maker_request['worktree'], 'rev-parse', 'HEAD') == before
