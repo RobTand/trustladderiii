@@ -16,6 +16,10 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     if let Some(case) = args.get(1) {
         match case.as_str() {
+            "--prepare-cache" => {
+                let database = Database::start();
+                database.stop();
+            }
             "lifecycle" => lifecycle(),
             "concurrent" => concurrent(),
             "safety" => safety(),
