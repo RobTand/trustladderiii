@@ -34,7 +34,8 @@ those marked for review. Return exactly one of these proposals:
   name tests that already exist in the base, exactly as written there; tests the
   maker adds belong only in demonstrating checks. Name each test by its pytest
   node ID, file::function or file::Class::method. Name a parametrized function
-  without its parameter suffix to select every case. State no_design_questions and lands_on_its_own
+  without its parameter suffix to select every case. A test file path on its own is
+  not a node ID; to guard existing behavior, name the existing tests that cover it. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both
