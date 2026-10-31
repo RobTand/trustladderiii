@@ -114,3 +114,105 @@ pub(super) fn remove(repo: &Path, branch: &BranchName) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, process::Command};
+
+    #[test]
+    fn hostile_environment_cannot_redirect_reviewed_pin() {
+        if let Some(repo) = std::env::var_os("TL3_PIN_REPO") {
+            pin(
+                Path::new(&repo),
+                &BranchName::new("tl3/test").unwrap(),
+                &std::env::var("TL3_PIN_SHA").unwrap(),
+            )
+            .unwrap();
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let foreign = temp.path().join("foreign");
+        fs::create_dir(&repo).unwrap();
+        let git = |path: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(path)
+                .env_clear()
+                .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        git(&repo, &["init", "--quiet"]);
+        git(
+            &repo,
+            &["commit", "--allow-empty", "--quiet", "-m", "fixture"],
+        );
+        let sha = git(&repo, &["rev-parse", "HEAD"]);
+        git(
+            temp.path(),
+            &[
+                "clone",
+                "--quiet",
+                repo.to_str().unwrap(),
+                foreign.to_str().unwrap(),
+            ],
+        );
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "adapters::worktrees::reproducing::tests::hostile_environment_cannot_redirect_reviewed_pin", "--nocapture"])
+            .env("TL3_PIN_REPO", &repo).env("TL3_PIN_SHA", &sha)
+            .env("GIT_DIR", foreign.join(".git"))
+            .env("GIT_WORK_TREE", &foreign)
+            .env("GIT_INDEX_FILE", foreign.join("hostile-index"))
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "protocol.allow")
+            .env("GIT_CONFIG_VALUE_0", "always")
+            .output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let refs = git(
+            &repo,
+            &[
+                "for-each-ref",
+                "--format=%(objectname)",
+                "refs/heads/tl3-reviewed/",
+            ],
+        );
+        assert_eq!(
+            refs, sha,
+            "reviewed pin must be written to the intended repository"
+        );
+        assert!(
+            git(
+                &foreign,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/heads/tl3-reviewed/"
+                ]
+            )
+            .is_empty(),
+            "foreign repository must remain unchanged"
+        );
+    }
+}

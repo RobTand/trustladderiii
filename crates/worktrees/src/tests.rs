@@ -876,3 +876,139 @@ fn auth_header_is_scoped_to_github() {
     assert!(remote.credentials(Some(&f.token)).is_some());
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
+
+fn hostile_query(name: &str, query: impl FnOnce(&Fixture, &CommitId, &CommitId, &CommitId)) {
+    if std::env::var_os("TL3_HOSTILE_QUERY_CHILD").is_none() {
+        let foreign = Fixture::new();
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("tests::{name}"), "--nocapture"])
+            .env("TL3_HOSTILE_QUERY_CHILD", "1")
+            .env("GIT_DIR", foreign.repo.join(".git"))
+            .env("GIT_WORK_TREE", &foreign.repo)
+            .env("GIT_INDEX_FILE", foreign.repo.join("hostile-index"))
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "protocol.allow")
+            .env("GIT_CONFIG_VALUE_0", "always")
+            .env("GIT_CONFIG_KEY_1", "credential.helper")
+            .env("GIT_CONFIG_VALUE_1", "!exit 99")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "hostile query failed: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        return;
+    }
+    let f = Fixture::new();
+    let common = f.manager.resolve("HEAD").unwrap();
+    git(&f.repo, ["checkout", "-b", "feature"]);
+    write_commit(&f.repo, "feature.txt", "feature\n", "feature");
+    let head = f.manager.resolve("HEAD").unwrap();
+    git(&f.repo, ["checkout", "main"]);
+    write_commit(&f.repo, "upstream.txt", "upstream\n", "upstream");
+    let base = f.manager.resolve("HEAD").unwrap();
+    query(&f, &common, &base, &head);
+    for invocation in f.manager.invocations.lock().unwrap().iter() {
+        assert!(!invocation.environment.iter().any(|(key, _)| {
+            [
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_INDEX_FILE",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+            ]
+            .iter()
+            .any(|bad| key == OsStr::new(bad))
+        }));
+    }
+}
+
+#[test]
+fn hostile_head() {
+    hostile_query("hostile_head", |f, _, base, _| {
+        assert_eq!(&f.manager.head().unwrap(), base)
+    });
+}
+#[test]
+fn hostile_verify_commit() {
+    hostile_query("hostile_verify_commit", |f, _, _, head| {
+        assert_eq!(&f.manager.verify_commit(head).unwrap(), head)
+    });
+}
+#[test]
+fn hostile_merge_base() {
+    hostile_query("hostile_merge_base", |f, common, base, head| {
+        assert_eq!(&f.manager.merge_base(base, head).unwrap(), common)
+    });
+}
+#[test]
+fn hostile_is_ancestor() {
+    hostile_query("hostile_is_ancestor", |f, common, base, head| {
+        assert!(f.manager.is_ancestor(common, head).unwrap());
+        assert!(!f.manager.is_ancestor(base, head).unwrap());
+    });
+}
+#[test]
+fn hostile_diff() {
+    hostile_query("hostile_diff", |f, _, base, head| {
+        let diff = String::from_utf8(f.manager.diff(base, head).unwrap()).unwrap();
+        assert!(diff.contains("+feature\n"));
+        assert!(diff.contains("-upstream\n"));
+    });
+}
+#[test]
+fn hostile_changed_paths_since_merge_base() {
+    hostile_query(
+        "hostile_changed_paths_since_merge_base",
+        |f, _, base, head| {
+            assert_eq!(
+                f.manager
+                    .changed_paths_since_merge_base(base, head)
+                    .unwrap(),
+                vec![PathBuf::from("feature.txt")]
+            );
+            assert_eq!(
+                f.manager.changed_files(base, head).unwrap(),
+                vec![PathBuf::from("feature.txt"), PathBuf::from("upstream.txt")]
+            );
+        },
+    );
+}
+#[test]
+fn hostile_list_tree() {
+    hostile_query("hostile_list_tree", |f, _, _, head| {
+        let tree = f.manager.list_tree(head).unwrap();
+        assert!(
+            tree.split(|b| *b == 0)
+                .any(|entry| entry.ends_with(b"\tfeature.txt"))
+        );
+        assert!(
+            !tree
+                .split(|b| *b == 0)
+                .any(|entry| entry.ends_with(b"\tupstream.txt"))
+        );
+    });
+}
+#[test]
+fn hostile_blob() {
+    hostile_query("hostile_blob", |f, _, _, head| {
+        let object = commit_line(&git(
+            &f.repo,
+            ["rev-parse", &format!("{}:feature.txt", head.as_str())],
+        ))
+        .unwrap();
+        assert_eq!(f.manager.blob(&object).unwrap(), b"feature\n");
+    });
+}
+#[test]
+fn commit_ids_reject_uppercase_at_both_hash_lengths() {
+    for length in [40, 64] {
+        assert!(CommitId::new("a".repeat(length)).is_ok());
+        assert!(
+            CommitId::new("A".repeat(length)).is_err(),
+            "uppercase is not a canonical commit id"
+        );
+    }
+}

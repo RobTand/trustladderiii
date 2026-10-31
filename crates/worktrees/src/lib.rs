@@ -5,6 +5,8 @@
 //! No OS file locks are used because of the deployment kernel's file-lock bug.
 #![forbid(unsafe_code)]
 
+mod queries;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{
     collections::HashMap,
