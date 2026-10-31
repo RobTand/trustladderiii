@@ -336,3 +336,32 @@ mod tests {
         assert_eq!(repo["file_list"].as_array().unwrap().len(), 4);
     }
 }
+
+#[cfg(test)]
+impl Materials {
+    pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
+        Self {
+            clients: Default::default(),
+            worktrees,
+        }
+    }
+}
+
+#[cfg(test)]
+mod hostile_tests {
+    #[test]
+    fn hostile_repository_materials() {
+        crate::git_tests::hostile(
+            "production::hostile_tests::hostile_repository_materials",
+            || {
+                let f = crate::git_tests::Repo::new();
+                let value = super::repository_materials(&f.path, &f.head).unwrap();
+                assert_eq!(
+                    value["readme"],
+                    std::fs::read_to_string(f.path.join("README.md")).unwrap()
+                );
+                assert_eq!(value["file_list"], serde_json::json!(["README.md"]));
+            },
+        );
+    }
+}

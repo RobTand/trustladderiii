@@ -696,3 +696,35 @@ impl Executor for Adapter {
         }
     }
 }
+
+#[cfg(test)]
+mod git_tests {
+    use super::*;
+    use crate::git_tests::{Repo, wait_client};
+    #[test]
+    fn missing_checkout_ends_wait() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.base);
+        let runtime = crate::executor::runtime().unwrap();
+        fs::remove_dir_all(&f.path).unwrap();
+        assert!(matches!(
+            read_wait(&client, &runtime, &"a".repeat(64), &f.path).unwrap(),
+            crate::executor::WaitRecord::Ended
+        ));
+    }
+    #[test]
+    fn hostile_read_wait() {
+        crate::git_tests::hostile(
+            "adapters::prismabuild::git_tests::hostile_read_wait",
+            || {
+                let f = Repo::new();
+                let client = wait_client(f.root.path(), &f.base);
+                let runtime = crate::executor::runtime().unwrap();
+                assert!(matches!(
+                    read_wait(&client, &runtime, &"a".repeat(64), &f.path).unwrap(),
+                    crate::executor::WaitRecord::Alive
+                ));
+            },
+        );
+    }
+}

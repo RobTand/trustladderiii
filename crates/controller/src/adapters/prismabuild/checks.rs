@@ -114,3 +114,28 @@ pub(super) fn stage(
     Worktrees::commit_check_input(root)?;
     Ok(changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn hostile_check_stage() {
+        crate::git_tests::hostile(
+            concat!(module_path!(), "::hostile_check_stage").trim_start_matches("tl3_controller::"),
+            || {
+                let f = crate::git_tests::Repo::new();
+                let staged = f.root.path().join("input");
+                let harness = f.root.path().join("harness");
+                fs::create_dir(&harness).unwrap();
+                fs::write(harness.join("__init__.py"), "").unwrap();
+                let changed = stage(&staged, &harness, &f.delivery(), "sha256:fixture").unwrap();
+                assert_eq!(changed, ["README.md"]);
+                assert!(staged.join("served.bundle").is_file());
+                assert_eq!(
+                    crate::git_tests::git(&staged, &["show", "HEAD:request.json"]),
+                    fs::read_to_string(staged.join("request.json")).unwrap()
+                );
+            },
+        );
+    }
+}

@@ -2230,3 +2230,6 @@ fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
         .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
         .map(|item| item.value.as_str())
 }
+
+#[cfg(test)]
+mod git_tests;

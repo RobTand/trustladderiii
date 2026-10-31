@@ -1127,3 +1127,55 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
         None => format!("Mergify's check \"{title}\" is {status}."),
     })
 }
+
+#[cfg(test)]
+mod git_failure_tests {
+    use super::*;
+    #[test]
+    fn deterministic_git_failures_are_setup_incidents() {
+        use tl3_worktrees::Error as W;
+        for error in [
+            W::BranchName,
+            W::CommitId,
+            W::Remote,
+            W::WorktreePath,
+            W::Token,
+            W::Response,
+            W::MissingBranch,
+            W::MainBranch,
+            W::WorktreeOccupied,
+            W::DirtyWorktree,
+            W::Recovery,
+        ] {
+            let error = crate::Error::from(error);
+            let crate::Error::Adapter(source) = &error else {
+                panic!("retain the typed Git error");
+            };
+            assert!(source.downcast_ref::<W>().is_some());
+            assert_eq!(failure_class(&error), "setup", "{error}");
+            assert!(
+                incident_summary(
+                    "request",
+                    &format!("Worktrees:{}", failure_class(&error)),
+                    false
+                )
+                .contains("could not complete its setup")
+            );
+        }
+    }
+    #[test]
+    fn ambiguous_git_failures_remain_transport() {
+        use tl3_worktrees::Error as W;
+        for error in [
+            W::Io,
+            W::Spawn,
+            W::Poisoned,
+            W::Git {
+                operation: "fetch",
+                code: Some(128),
+            },
+        ] {
+            assert_eq!(failure_class(&error.into()), "transport");
+        }
+    }
+}

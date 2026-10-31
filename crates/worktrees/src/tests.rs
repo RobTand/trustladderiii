@@ -1013,3 +1013,60 @@ fn commit_ids_reject_uppercase_at_both_hash_lengths() {
         );
     }
 }
+
+fn assert_snapshot_identity(path: &Path, head: &CommitId, message: &str) {
+    let raw = String::from_utf8(git(path, ["cat-file", "commit", head.as_str()])).unwrap();
+    assert!(
+        raw.contains("author TL3 <tl3@example.invalid> 946684800 +0000\n"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("committer TL3 <tl3@example.invalid> 946684800 +0000\n"),
+        "{raw}"
+    );
+    assert!(raw.ends_with(&format!("\n{message}\n")));
+    let mut input = Command::new("git")
+        .current_dir(path)
+        .args(["hash-object", "-t", "commit", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    input
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(raw.as_bytes())
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(input.wait_with_output().unwrap().stdout)
+            .unwrap()
+            .trim(),
+        head.as_str()
+    );
+}
+
+#[test]
+fn check_snapshot_retains_legacy_identity() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("request.json"), "{}\n").unwrap();
+    let head = Worktrees::commit_check_input(root.path()).unwrap();
+    assert_snapshot_identity(root.path(), &head, "Freeze controller check input");
+}
+
+#[test]
+fn replay_snapshot_retains_legacy_identity() {
+    let f = Fixture::new();
+    let base = f.manager.head().unwrap();
+    write_commit(&f.repo, "reviewed.txt", "reviewed\n", "reviewed");
+    let reviewed = f.manager.head().unwrap();
+    let replay = f
+        .manager
+        .replay_reviewed(&f.name, &base, &base, &reviewed)
+        .unwrap();
+    assert_snapshot_identity(
+        &f.repo,
+        &replay,
+        "Replay reviewed state for reproducing checks",
+    );
+}

@@ -167,3 +167,63 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod hostile_tests {
+    use super::*;
+    use crate::git_tests::{Repo, documents, support::Database};
+    #[test]
+    fn hostile_review_inputs() {
+        crate::git_tests::hostile(
+            "adapters::workers::review::hostile_tests::hostile_review_inputs",
+            || {
+                let f = Repo::new();
+                let mut db = Database::start();
+                let mut store = Store::open(&db.create("review_inputs")).unwrap();
+                store.put_worker_materials("0", &json!({})).unwrap();
+                let snapshot = documents(
+                    &mut store,
+                    &[
+                        (
+                            "goals",
+                            json!([{"description":"Read the intended repository","verification":"test"}]),
+                        ),
+                        ("check_reports", json!({})),
+                    ],
+                );
+                let mut snapshot = snapshot;
+                let report = snapshot
+                    .rows
+                    .iter_mut()
+                    .find(|r| r.table == "check_reports")
+                    .unwrap();
+                report.id = format!("0:{}", f.head);
+                report.value = json!({"base_sha":f.base,"results":[]});
+                let value = inputs(&f.delivery(), &mut store, &snapshot).unwrap();
+                assert!(
+                    value["diff"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("+intended {}", f.path.display()))
+                );
+            },
+        );
+    }
+    #[test]
+    fn hostile_review_checkout() {
+        crate::git_tests::hostile(
+            "adapters::workers::review::hostile_tests::hostile_review_checkout",
+            || {
+                let f = Repo::new();
+                let root = f.root.path().join("review");
+                fs::create_dir(&root).unwrap();
+                checkout(&root, &f.delivery()).unwrap();
+                assert_eq!(
+                    fs::read(root.join("README.md")).unwrap(),
+                    fs::read(f.path.join("README.md")).unwrap()
+                );
+                assert_eq!(crate::git_tests::git(&root, &["rev-parse", "HEAD"]), f.head);
+            },
+        );
+    }
+}
