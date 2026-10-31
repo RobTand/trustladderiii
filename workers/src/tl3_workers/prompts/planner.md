@@ -43,7 +43,7 @@ those marked for review. Return exactly one of these proposals:
 - Can't meet, kind cant_meet, with a report explaining the obstacle and files
   already identified, or an empty files list if none are known.
 
-Do not compute or supply forecast or violations. Code reports rule violations to the controller, which gives the kernel the evidence for its next step. After your reply, code counts the brief and
+Code reports rule violations to the controller, which gives the kernel the evidence for its next step. After your reply, code counts the brief and
 the complete base contents of declared files once each with o200k_base as a
 model-agnostic estimate. New files contribute zero base tokens. It sums the
 configured overhead_tokens constants, records the total and compares it with

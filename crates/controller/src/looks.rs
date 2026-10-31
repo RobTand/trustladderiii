@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, UNIX_EPOCH};
 use tl3_kernel::{Ack, Event, Fact, NodeId};
-use tl3_store::{Commit, EffectState, NewEffect, RowChange, Snapshot};
+use tl3_store::{Commit, EffectState, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AllowanceState {
@@ -67,14 +67,107 @@ pub(crate) struct Incident {
     pub needs_rob: bool,
     pub blocking: bool,
     pub summary: String,
-    pub signature: String,
+    pub signature: IncidentSignature,
     #[serde(default)]
     pub effect: Option<String>,
     #[serde(default)]
     pub post_key: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "StoredSignature")]
+pub(crate) struct IncidentSignature {
+    pub upstream: Upstream,
+    pub class: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredSignature {
+    Structured { upstream: Upstream, class: String },
+    Legacy(String),
+}
+
+impl TryFrom<StoredSignature> for IncidentSignature {
+    type Error = &'static str;
+
+    fn try_from(value: StoredSignature) -> std::result::Result<Self, Self::Error> {
+        let (upstream, class) = match value {
+            StoredSignature::Structured { upstream, class } => (upstream, class),
+            StoredSignature::Legacy(signature) => {
+                let (source, class) = signature
+                    .split_once(':')
+                    .ok_or("invalid incident signature")?;
+                let upstream = [
+                    Upstream::GitHub,
+                    Upstream::Mergify,
+                    Upstream::PrismaBuild,
+                    Upstream::Workers,
+                    Upstream::Worktrees,
+                ]
+                .into_iter()
+                .find(|upstream| upstream.kind() == source)
+                .ok_or("unknown incident upstream")?;
+                (upstream, class.into())
+            }
+        };
+        Ok(Self { upstream, class })
+    }
+}
+
+pub(crate) enum IncidentCause {
+    Kernel { needs_rob: bool },
+    ReadFailure { incidents: u64 },
+    NoticeFailure { incidents: u64 },
+}
+
+pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
+    match cause {
+        // Kernel notices also cover permanent failures and merge races.
+        IncidentCause::Kernel { needs_rob } => needs_rob,
+        IncidentCause::ReadFailure { incidents } | IncidentCause::NoticeFailure { incidents } => {
+            incidents > 1
+        }
+    }
+}
+
+pub(crate) fn incident_id(snapshot: &Snapshot, cause: impl std::fmt::Display) -> String {
+    format!("{}.{}", snapshot.revision.get() + 1, cause)
+}
+
+pub(crate) fn incident_note(
+    repository: &crate::Repository,
+    issue: u64,
+    id: &str,
+    summary: &str,
+) -> String {
+    format!(
+        "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
+        repository.owner, repository.name, issue
+    )
+}
+
 impl Controller {
+    pub(crate) fn link_allowance_incident(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        id: &str,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            state.incident = Some(id.into());
+            commit
+                .rows
+                .push(put("allowances", row.id.clone(), json!(state)));
+        }
+        Ok(())
+    }
     pub fn set_allowances(&mut self, allowances: tl3_config::Allowances) {
         self.allowances = allowances;
     }
@@ -155,6 +248,9 @@ impl Controller {
             }
             if !force && !state.due_ms.is_some_and(|due| due <= now) {
                 continue;
+            }
+            if let Some(effect) = self.store.effect(&state.delivery.key)? {
+                state.delivery = hydrate(&effect, &snapshot)?;
             }
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
             state.due_ms = None;
@@ -643,15 +739,16 @@ impl Controller {
         }
         state.read_failures = 0;
         state.read_incidents = state.read_incidents.saturating_add(1);
-        let needs_rob = state.read_incidents > 1;
-        let id = format!("read.{}.{}", self.now_ms(), snapshot.revision.get());
+        let needs_rob = incident_needs_rob(IncidentCause::ReadFailure {
+            incidents: u64::from(state.read_incidents),
+        });
+        let id = incident_id(&snapshot, "read");
         state.incident = Some(id.clone());
         let request = crate::request(&snapshot, state.delivery.node())?;
-        let signature = format!(
-            "{:?}:{}",
-            upstream(state.delivery.output),
-            failure_class(error)
-        );
+        let signature = IncidentSignature {
+            upstream: upstream(state.delivery.output),
+            class: failure_class(error).into(),
+        };
         let summary = incident_summary(&request.title, &signature, needs_rob);
         let mut commit = Commit::new(
             format!("incident:{id}"),
@@ -680,10 +777,7 @@ impl Controller {
             notice: tl3_kernel::Notice::Incident { needs_rob },
         };
         delivery.epoch = snapshot.epoch.get();
-        delivery.note = Some(format!(
-            "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
-            request.repo.owner, request.repo.name, request.issue
-        ));
+        delivery.note = Some(incident_note(&request.repo, request.issue, &id, &summary));
         delivery.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
                 request.repo.owner, request.repo.name, request.issue), "signature":signature}));
@@ -699,11 +793,7 @@ impl Controller {
             .rows
             .push(put("allowances", state.delivery.key.clone(), json!(state)));
         commit.rows.push(self.allowance_row(delivery.clone()));
-        commit.effects.push(NewEffect {
-            key: delivery.key.clone(),
-            kind: "GitHub".into(),
-            payload: json!(delivery),
-        });
+        commit.effects.push(delivery.into_effect());
         // Preserve the upstream key and unknown outcome. A read outage cannot
         // acknowledge the write or authorize a replacement operation.
         self.store.commit(&commit)?;
@@ -711,15 +801,24 @@ impl Controller {
     }
 
     fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
-        for (index, observation) in completion.observations.into_iter().enumerate() {
-            self.observe(
-                &format!(
-                    "look:{}:{index}:{}",
-                    delivery.key,
-                    crate::evidence_key(&observation)?
-                ),
-                observation,
-            )?;
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!(
+                "look-observations:{}:{}",
+                delivery.key,
+                snapshot.revision.get()
+            ),
+            json!(&completion),
+            &snapshot,
+        );
+        for (index, observation) in completion.observations.iter().enumerate() {
+            self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
+            if let Some(source) = crate::observation_upstream(&snapshot, observation)? {
+                self.retry_held_effects(source);
+            }
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
         }
         Ok(())
     }
@@ -1067,18 +1166,19 @@ pub(crate) fn outage_waiting(snapshot: &Snapshot, key: &str) -> bool {
     })
 }
 
-pub(crate) fn incident_summary(title: &str, signature: &str, needs_rob: bool) -> String {
-    let (source, class) = signature
-        .split_once(':')
-        .unwrap_or((signature, "operation_failed"));
-    let source = match source {
-        "Workers" => "the agent worker",
-        "Worktrees" => "the Git worktree",
-        "PrismaBuild" => "PrismaBuild",
-        "Mergify" => "Mergify",
-        _ => "GitHub",
+pub(crate) fn incident_summary(
+    title: &str,
+    signature: &IncidentSignature,
+    needs_rob: bool,
+) -> String {
+    let source = match signature.upstream {
+        Upstream::Workers => "the agent worker",
+        Upstream::Worktrees => "the Git worktree",
+        Upstream::PrismaBuild => "PrismaBuild",
+        Upstream::Mergify => "Mergify",
+        Upstream::GitHub => "GitHub",
     };
-    let reason = match class {
+    let reason = match signature.class.as_str() {
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
@@ -1156,7 +1256,10 @@ mod git_failure_tests {
             assert!(
                 incident_summary(
                     "request",
-                    &format!("Worktrees:{}", failure_class(&error)),
+                    &IncidentSignature {
+                        upstream: Upstream::Worktrees,
+                        class: failure_class(&error).into()
+                    },
                     false
                 )
                 .contains("could not complete its setup")
@@ -1176,6 +1279,47 @@ mod git_failure_tests {
             },
         ] {
             assert_eq!(failure_class(&error.into()), "transport");
+        }
+    }
+}
+
+#[cfg(test)]
+mod incident_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_incident_signature_remains_readable() {
+        let signature: IncidentSignature =
+            serde_json::from_value(json!("Workers:transport")).unwrap();
+        assert_eq!(signature.upstream, Upstream::Workers);
+        assert_eq!(signature.class, "transport");
+        assert_eq!(
+            json!(signature),
+            json!({"upstream":"Workers", "class":"transport"})
+        );
+        assert!(
+            incident_summary("Greeting", &signature, false)
+                .contains("the agent worker could not be reached")
+        );
+    }
+
+    #[test]
+    fn escalation_preserves_each_cause() {
+        for needs_rob in [false, true] {
+            assert_eq!(
+                incident_needs_rob(IncidentCause::Kernel { needs_rob }),
+                needs_rob
+            );
+        }
+        for incidents in [1, 2, 3] {
+            assert_eq!(
+                incident_needs_rob(IncidentCause::ReadFailure { incidents }),
+                incidents > 1
+            );
+            assert_eq!(
+                incident_needs_rob(IncidentCause::NoticeFailure { incidents }),
+                incidents > 1
+            );
         }
     }
 }
