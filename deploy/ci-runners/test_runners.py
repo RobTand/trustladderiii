@@ -26,7 +26,7 @@ class RunnerTests(unittest.TestCase):
                     "PATH": f"{self.bin}:{os.environ['PATH']}",
                     "CALLS": str(self.calls), "CI_RUNNER_IMAGE": IMAGE}
         self.env.pop("CI_RUNNER_CPUSET", None)
-        for tool in ("gh", "podman", "systemctl", "systemd-notify", "uname", "id"):
+        for tool in ("gh", "podman", "systemctl", "systemd-notify", "uname", "id", "hostname"):
             path = self.bin / tool
             path.write_text("#!/usr/bin/env python3\n" + '''import json, os, sys
 from pathlib import Path
@@ -37,7 +37,7 @@ with open(os.environ["CALLS"], "a") as file:
 if name == "gh":
     print("synthetic-one-job-config")
 elif name == "podman":
-    if args[0] == "info": print("true")
+    if args[0] == "info": print(os.environ.get("TEST_ROOTLESS", "true"))
     elif args[:2] == ["image", "inspect"]:
         key = "NEW_IMAGE" if (Path(os.environ["HOME"]) / "built").exists() else "OLD_IMAGE"
         print(os.environ.get(key, "sha256:" + "a" * 64))
@@ -47,7 +47,8 @@ elif name == "podman":
             assert "CI_RUNNER_IMAGE=" + args[2] not in config.read_text().splitlines(), config
     elif args[0] == "run":
         assert sys.stdin.read() == "synthetic-one-job-config\\n"
-elif name == "uname": print("x86_64")
+elif name == "uname": print(os.environ.get("TEST_ARCH", "x86_64"))
+elif name == "hostname": print(os.environ.get("TEST_HOST", "dl380g10"))
 elif name == "id": print("1000")
 ''')
             path.chmod(0o700)

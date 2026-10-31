@@ -98,6 +98,7 @@ class Hardening(unittest.TestCase):
 
     def installer_stubs(self):
         self.stub("uname", "echo x86_64")
+        self.stub("hostname", "echo dl380g10")
         self.stub("id", "echo 1000")
         self.stub("gh", "exit 0")
         self.stub("systemctl", 'printf "systemctl %s\\n" "$*" >> "$EVENTS"')
