@@ -178,8 +178,15 @@ impl Writer for PublishingWriter {
     fn draft(&mut self, key: &str, input: &WriteRequest) -> tl3_controller::Result<WriterReply> {
         if input.facts["change"]
             .as_str()
-            .is_some_and(|change| change.contains("clear incident "))
+            .is_some_and(|change| change.starts_with("For \"Fix the value\","))
         {
+            assert!(
+                !input.facts["change"]
+                    .as_str()
+                    .unwrap()
+                    .contains("clear incident "),
+                "the writer must receive only the incident summary"
+            );
             assert_eq!(input.facts["issue_title"], "Fix the value");
             assert!(
                 input.facts["request"]

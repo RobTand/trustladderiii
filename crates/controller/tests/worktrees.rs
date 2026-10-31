@@ -651,10 +651,32 @@ fn removal_of_unpopulated_prepare() {
         let mut current = f.adapter_at(2);
         let mut remove = f.delivery(EffectKind::RemoveWorktree, 2);
         remove.epoch = 2;
-        if matches!(dirt, "initializing" | "unowned_initializing") {
+        if !matches!(dirt, "locked" | "committed_initializing") {
             let completion = current.execute(&remove).unwrap();
             assert!(matches!(completion.ack, Ack::Confirmed));
             assert_removed(&f, &remove);
+            if !matches!(dirt, "initializing" | "unowned_initializing") {
+                let reference = git(
+                    &f.repo,
+                    &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"],
+                );
+                assert!(
+                    !reference.is_empty(),
+                    "dirty {dirt} requires saved evidence"
+                );
+                if dirt == "modified" {
+                    assert_eq!(
+                        git(&f.repo, &["show", &format!("{reference}:shared.txt")]),
+                        "keep edit"
+                    );
+                }
+                if dirt == "untracked" {
+                    assert_eq!(
+                        git(&f.repo, &["show", &format!("{reference}:notes.txt")]),
+                        "keep notes"
+                    );
+                }
+            }
             same(&completion, &found(current.reconcile(&remove).unwrap()));
             assert!(matches!(
                 current.reconcile(&prepare).unwrap(),
@@ -799,18 +821,32 @@ fn incomplete_remove() {
             assert!(checkout.exists());
         }
     }
-    // Deletions without a preflight receipt must not authorize destructive recovery.
+    // Without a preflight receipt, save the deletion before authorizing removal.
     let scratch = tempfile::tempdir().unwrap();
     let f = Fixture::create(scratch.path());
     let prepare = prepared(&f);
     let checkout = f.adapter().checkout(&prepare);
     fs::remove_file(checkout.join("shared.txt")).unwrap();
+    let completion = f
+        .adapter()
+        .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
+        .unwrap();
+    assert!(!checkout.exists());
     assert!(
-        f.adapter()
-            .execute(&f.delivery(EffectKind::RemoveWorktree, 2))
-            .is_err()
+        completion
+            .observations
+            .iter()
+            .any(|o| matches!(o, Observation::ScratchSaved { .. }))
     );
-    assert!(checkout.exists());
+    let reference = git(
+        &f.repo,
+        &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"],
+    );
+    assert_eq!(
+        git(&f.repo, &["show", &format!("{reference}^:shared.txt")]),
+        "base"
+    );
+    assert!(git(&f.repo, &["ls-tree", "--name-only", &reference]).is_empty());
 }
 
 fn removal_without_gitlink() {
@@ -1083,6 +1119,78 @@ fn remove_ignores_unrelated_journal_records() {
     assert_removed(&f, &remove);
 }
 
+fn dirty_writes_are_permanent() {
+    for kind in [EffectKind::Push, EffectKind::StartRebase] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Fixture::create(root.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        f.advance_main(false);
+        fs::write(checkout.join("shared.txt"), "keep tracked\n").unwrap();
+        fs::write(checkout.join("unfinished.txt"), "keep untracked\n").unwrap();
+        let mut delivery = f.delivery(kind, 2);
+        delivery.head_sha = Some(f.head(&prepare));
+        assert!(
+            matches!(
+                f.adapter().execute(&delivery),
+                Err(tl3_controller::Error::Permanent {
+                    class: "dirty_worktree",
+                    ..
+                })
+            ),
+            "dirty {kind:?} must remain permanent"
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+            "keep tracked\n"
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("unfinished.txt")).unwrap(),
+            "keep untracked\n"
+        );
+        assert!(
+            git(
+                &f.repo,
+                &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"]
+            )
+            .is_empty()
+        );
+    }
+    println!("test dirty_writes_are_permanent ... ok");
+}
+
+fn scratch_removal_crashes() {
+    for boundary in ["before", "after"] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Fixture::create(root.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        fs::write(checkout.join("shared.txt"), "saved tracked\n").unwrap();
+        fs::write(checkout.join("untracked.txt"), "saved untracked\n").unwrap();
+        let remove = f.delivery(EffectKind::RemoveWorktree, 2);
+        kill(&f, &remove, boundary);
+        let reference = git(
+            &f.repo,
+            &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"],
+        );
+        assert!(!reference.is_empty());
+        let completion = found(f.adapter().reconcile(&remove).unwrap());
+        assert!(completion.observations.iter().any(|o| matches!(o,
+            Observation::ScratchSaved { reference: saved, .. } if saved == &reference)));
+        same(&completion, &f.adapter().execute(&remove).unwrap());
+        assert_removed(&f, &remove);
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{reference}:shared.txt")]),
+            "saved tracked"
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{reference}:untracked.txt")]),
+            "saved untracked"
+        );
+    }
+    println!("test scratch_removal_crashes ... ok");
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--smudge") {
@@ -1100,6 +1208,8 @@ fn main() {
         killed_git_add();
         return;
     }
+    dirty_writes_are_permanent();
+    scratch_removal_crashes();
     crashes();
     conflicts();
     fences_and_unknowns();

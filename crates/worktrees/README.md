@@ -30,6 +30,8 @@ let files = repo.changed_files(&base, &head)?;
 | `branch_state` | Current `(head, base)` from the branch and recorded base refs |
 | `finish_prepare` | Repair Git-locked initialization only at the durable base |
 | `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
+| `save_scratch`, `clean_saved_scratch` | Save teardown edits on a durable ref before cleaning |
+| `prune_scratch` | Expire saved scratch after 30 days on a worktree event |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 | `head`, `verify_commit`, `merge_base`, `is_ancestor` | Typed commit and ancestry queries |
 | `diff`, `changed_paths_since_merge_base`, `list_tree`, `blob` | Committed review and check evidence |
@@ -110,12 +112,27 @@ If any check fails, preserve the files and investigate rather than deleting them
 
 ### Remove a checkout
 
-Removal refuses tracked edits and untracked files. Ignored build files are allowed.
-The controller records a clean preflight in its Remove intent. Git's
+Direct removal refuses tracked edits and untracked files. Ignored build files are allowed.
+For teardown, the controller saves dirty files before authorizing removal.
+`save_scratch` copies the index to a temporary directory, runs `git add -A` against
+that copy, and writes a commit under `refs/tl3/scratch/<branch>/<generation>`.
+The commit contains tracked and untracked files. Its second parent preserves the
+original index, including staged content that differs from the working file.
+Git fsyncs the objects and ref before the controller records the ref in its Remove
+intent. Saving changes neither working files nor the live index. A retry reuses
+the saved ref. Cleanup then resets the checkout and removes untracked files.
+The completion records the ref, and the closing notice lists it as plain text.
+Use `git show <ref>:<path>` to recover a file, or `<ref>^2:<path>` for staged content.
+Scratch refs stay for 30 days. New worktree deliveries prune expired refs in that
+repository. No timer runs for retention. Rebase and publish still reject dirty
+worktrees as permanent failures.
+
+For a clean checkout, the controller records a clean preflight in its Remove intent. Git's
 `initializing\n` lock and a branch head equal to the durable base also prove
 that no maker ran, including when a killed checkout left tracked files.
 Removal checks this evidence directly without scanning earlier effect records.
-Other dirty checkouts remain errors. Only the durable preflight authorizes
+Other dirty checkouts require saved scratch during teardown. Only a durable clean
+preflight or saved scratch authorizes
 `resume_removal`, which also accepts deletion-only interrupted removals.
 Git removes an initializing checkout with two `--force` flags, keeping its lock
 as evidence until removal ends so a crash can retry safely.

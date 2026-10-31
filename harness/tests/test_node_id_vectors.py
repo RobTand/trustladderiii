@@ -15,3 +15,9 @@ def test_harness_exact_node_ids(vector):
     else:
         with pytest.raises(ValueError):
             Check("vector", Kind.REPRODUCING, (vector["node_id"],))
+
+
+@pytest.mark.parametrize("vector", [v for v in VECTORS if "collected" in v])
+def test_function_selection_vectors(vector):
+    from tl3_harness.node_ids import selects
+    assert [selects(vector["node_id"], name) for name in vector["collected"]] == vector["selected"]

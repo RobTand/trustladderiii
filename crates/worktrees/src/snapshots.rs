@@ -72,12 +72,12 @@ impl Worktrees {
         repo.run(path, "add check input", ["add", "--force", "--all"])?;
         success(
             "commit check input",
-            repo.execute_dated(
+            repo.execute_with_environment(
                 path,
                 ["commit", "--quiet", "-m", "Freeze controller check input"],
                 None,
                 None,
-                true,
+                GitEnvironment::Snapshot,
             )?,
         )?;
         repo.resolve("HEAD")
@@ -114,7 +114,7 @@ impl Worktrees {
         )?;
         let output = success(
             "commit reviewed tree",
-            self.execute_dated(
+            self.execute_with_environment(
                 &self.repo,
                 [
                     "commit-tree",
@@ -126,7 +126,7 @@ impl Worktrees {
                 ],
                 None,
                 None,
-                true,
+                GitEnvironment::Snapshot,
             )?,
         )?;
         let head = commit_line(&output.stdout)?;

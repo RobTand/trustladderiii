@@ -1094,3 +1094,85 @@ fn replay_snapshot_retains_legacy_identity() {
         "Replay reviewed state for reproducing checks",
     );
 }
+
+#[test]
+fn scratch_preserves_live_index_working_files_and_untracked_files() {
+    let f = Fixture::new();
+    f.checkout();
+    fs::write(f.worktree.join("shared.txt"), b"staged\n").unwrap();
+    git(&f.worktree, ["add", "shared.txt"]);
+    fs::write(f.worktree.join("shared.txt"), b"working\n").unwrap();
+    fs::write(f.worktree.join("untracked.txt"), b"untracked\n").unwrap();
+    let index = path_line(
+        &f.manager
+            .run(
+                &f.worktree,
+                "index",
+                ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            )
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let before = fs::read(&index).unwrap();
+    let reference = f
+        .manager
+        .save_scratch(&f.name, &f.worktree, 7)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read(&index).unwrap(),
+        before,
+        "saving must leave the live index untouched"
+    );
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"working\n"
+    );
+    for (revision, content) in [
+        (format!("{reference}:shared.txt"), b"working\n".as_slice()),
+        (format!("{reference}^2:shared.txt"), b"staged\n".as_slice()),
+        (
+            format!("{reference}:untracked.txt"),
+            b"untracked\n".as_slice(),
+        ),
+    ] {
+        assert_eq!(git(&f.repo, ["show", &revision]), content);
+    }
+    let head = f.manager.resolve(&reference).unwrap();
+    f.manager
+        .clean_saved_scratch(&f.name, &f.worktree, &reference)
+        .unwrap();
+    f.assert_clean();
+    assert_eq!(
+        f.manager.save_scratch(&f.name, &f.worktree, 7).unwrap(),
+        Some(reference.clone())
+    );
+    assert_eq!(f.manager.resolve(&reference).unwrap(), head);
+    f.manager.resume_removal(&f.name, &f.worktree).unwrap();
+    assert_eq!(f.manager.resolve(&reference).unwrap(), head);
+}
+
+#[test]
+fn scratch_refs_expire_only_after_thirty_days() {
+    let f = Fixture::new();
+    f.checkout();
+    fs::write(f.worktree.join("new.txt"), "scratch").unwrap();
+    let reference = f
+        .manager
+        .save_scratch(&f.name, &f.worktree, 1)
+        .unwrap()
+        .unwrap();
+    let saved = String::from_utf8(git(&f.repo, ["show", "-s", "--format=%ct", &reference]))
+        .unwrap()
+        .trim()
+        .parse::<u64>()
+        .unwrap();
+    f.manager
+        .prune_scratch(saved + 30 * 24 * 60 * 60 - 1)
+        .unwrap();
+    assert!(f.manager.resolve_optional(&reference).unwrap().is_some());
+    f.manager.prune_scratch(saved + 30 * 24 * 60 * 60).unwrap();
+    assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
+    assert!(f.manager.branch_state(&f.name).unwrap().is_some());
+}
