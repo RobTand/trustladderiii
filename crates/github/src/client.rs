@@ -703,6 +703,81 @@ impl GitHub {
         .await
     }
 
+    pub async fn required_status_checks(
+        &self,
+        repo: &str,
+        branch: &str,
+    ) -> Result<Vec<RequiredStatusCheck>, Error> {
+        #[derive(Deserialize)]
+        struct Rule {
+            #[serde(rename = "type")]
+            kind: String,
+            parameters: Option<Parameters>,
+        }
+        #[derive(Deserialize)]
+        struct Parameters {
+            #[serde(default)]
+            required_status_checks: Vec<RequiredStatusCheck>,
+        }
+        let rules: Vec<Rule> = self
+            .list(
+                format!("{}/rules/branches/{}", repo_path(repo)?, segment(branch)?),
+                vec![],
+                None,
+            )
+            .await?;
+        Ok(rules
+            .into_iter()
+            .filter(|rule| rule.kind == "required_status_checks")
+            .filter_map(|rule| rule.parameters)
+            .flat_map(|parameters| parameters.required_status_checks)
+            .collect())
+    }
+
+    pub async fn check_annotations(
+        &self,
+        repo: &str,
+        check: u64,
+    ) -> Result<Vec<CheckAnnotation>, Error> {
+        self.list(
+            format!("{}/check-runs/{check}/annotations", repo_path(repo)?),
+            vec![],
+            None,
+        )
+        .await
+    }
+
+    pub async fn workflow_runs(&self, repo: &str, head: &str) -> Result<Vec<WorkflowRun>, Error> {
+        self.list(
+            format!("{}/actions/runs", repo_path(repo)?),
+            vec![("head_sha".into(), head.into())],
+            Some("workflow_runs"),
+        )
+        .await
+    }
+
+    pub async fn workflow_run(&self, repo: &str, run: u64) -> Result<WorkflowRun, Error> {
+        self.request(
+            Method::GET,
+            format!("{}/actions/runs/{run}", repo_path(repo)?),
+            vec![],
+            None,
+        )
+        .await
+    }
+
+    /// An uncertain POST must be reconciled through run_attempt before another write.
+    pub async fn rerun_workflow_run(&self, repo: &str, run: u64) -> Result<(), Error> {
+        self.request::<Value>(
+            Method::POST,
+            format!("{}/actions/runs/{run}/rerun", repo_path(repo)?),
+            vec![],
+            Some(json!({})),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn check_suites(&self, repo: &str, head: &str) -> Result<Vec<CheckSuite>, Error> {
         self.list(
             format!(

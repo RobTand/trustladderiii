@@ -40,3 +40,15 @@ GitHub references:
 - [Conversion endpoint and response](https://docs.github.com/en/rest/apps/apps#create-a-github-app-from-a-manifest)
 - [Merge-group event and required permission](https://docs.github.com/en/webhooks/webhook-events-and-payloads#merge_group)
 - [Install your own app and select repositories](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app)
+
+## Workflow rerun permission
+
+Recovery of cancelled, timed-out, or infrastructure-failed required checks needs
+repository permission **Actions: Read and write** on TL3's GitHub App. The original
+manifest does not request this permission. Rob must grant it in the App's
+repository permissions and approve the updated permissions for the installation,
+including sandbox installation `176903725`.
+
+An Actions API permission refusal raises a setup incident with that instruction.
+It prevents re-enqueueing until access is restored and the failed effect is retried.
+The controller does not change App permissions.

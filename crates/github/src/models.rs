@@ -91,6 +91,35 @@ pub struct CheckRun {
     pub completed_at: Option<DateTime<Utc>>,
     pub app: Option<CheckApp>,
     pub output: Option<CheckOutput>,
+    #[serde(default)]
+    pub check_suite: Option<CheckSuiteId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CheckSuiteId {
+    pub id: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkflowRun {
+    pub id: u64,
+    pub check_suite_id: u64,
+    pub head_sha: String,
+    pub run_attempt: u64,
+    pub status: String,
+    pub conclusion: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RequiredStatusCheck {
+    pub context: String,
+    pub integration_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CheckAnnotation {
+    pub annotation_level: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
