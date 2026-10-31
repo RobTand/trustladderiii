@@ -1,4 +1,7 @@
 import sys
+import json
+import os
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
@@ -9,6 +12,39 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_shallow_pr_checkout_uses_target_policy_instead_of_its_own_exceptions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'source'
+            checkout = Path(temporary) / 'checkout'
+            source.mkdir()
+
+            def git(*args, cwd=source):
+                return subprocess.check_output(['git', '-c', 'user.name=Fixture',
+                                                '-c', 'user.email=fixture@example.invalid',
+                                                '-c', 'commit.gpgsign=false', *args],
+                                               cwd=cwd, text=True).strip()
+
+            git('init', '--quiet', '-b', 'main')
+            policy = source / rust_gate.POLICY
+            policy.parent.mkdir(parents=True)
+            original = {'seconds': 2, 'slow': {'contract': 10}}
+            policy.write_text(json.dumps(original))
+            git('add', '.')
+            git('commit', '--quiet', '-m', 'Target policy')
+            base = git('rev-parse', 'HEAD')
+            git('checkout', '--quiet', '-b', 'feature')
+            enlarged = {'seconds': 2, 'slow': {'new': 100}}
+            policy.write_text(json.dumps(enlarged))
+            git('commit', '--quiet', '-am', 'PR attempts to add an exception')
+            git('clone', '--quiet', '--depth=1', '--branch=feature', source.as_uri(), str(checkout))
+            event = Path(temporary) / 'event.json'
+            event.write_text(json.dumps({'pull_request': {'base': {'sha': base}}}))
+            with patch.object(rust_gate, 'ROOT', checkout), patch.dict(os.environ, {'GITHUB_EVENT_PATH': str(event)}):
+                baseline = rust_gate.baseline_policy(enlarged)
+            self.assertEqual(baseline, original)
+            with self.assertRaisesRegex(RuntimeError, 'grow'):
+                rust_gate.check_budget({}, enlarged, baseline)
+
     def test_budget_rejects_slow_tests_without_an_exception(self):
         config = {'seconds': 2, 'slow': {'worker::contract': 10}}
         rust_gate.check_budget({'worker::contract': 3, 'fast::one': 1}, config, config)
