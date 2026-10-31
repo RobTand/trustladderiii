@@ -12,7 +12,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
-MARKER = re.compile(r'^test (\S+) \.\.\. ok(?:[ ;(].*)?$')
+MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
 
 
 def check_budget(results, config, baseline):

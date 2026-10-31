@@ -3,6 +3,13 @@ use super::*;
 pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(settings, root.path(), mode);
+    if !matches!(mode, "normal" | "plan-invalid") {
+        config.workers.command[0] = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/worker_transport.py")
+            .to_str()
+            .unwrap()
+            .into();
+    }
     config.models.planner.push(config.models.audit[0].clone());
     if mode == "plan-split" || mode == "plan-bad-split" {
         config.limits.fit_tokens = 31_000;
@@ -118,6 +125,10 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             context
         );
     } else {
+        assert!(
+            n.question.is_some(),
+            "rejected plans must open a decision question"
+        );
         assert_eq!(n.question.unwrap().kind, tl3_kernel::QKind::CantMeet);
         assert_eq!(requests.len(), 2, "the kernel retries a rejected plan once");
         let retry = requests

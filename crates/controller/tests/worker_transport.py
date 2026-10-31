@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from worker_replies import scripted_reply
 
@@ -39,7 +40,16 @@ def main():
             session.parent.mkdir(parents=True, exist_ok=True)
             session.write_text('[]')
     config = request['inputs'].get('forecast')
-    if config and request['role'] in {'ingest', 'planner'}:
+    if config and request['role'] in {'ingest', 'planner'} and not mode.startswith('steering'):
+        os.environ['TIKTOKEN_CACHE_DIR'] = str(Path(tempfile.gettempdir()) / 'data-gym-cache')
+        from tl3_workers.forecast import Forecaster
+        os.chdir(request['worktree'])
+        paths = reply.get('files', [])
+        if reply.get('kind') == 'split':
+            paths = {path for piece in reply['pieces'] for path in piece['files']}
+        text = reply['brief'] if request['role'] == 'ingest' else request['inputs']['ingest']['brief']
+        reply['forecast'] = Forecaster(config).measure(text, paths)
+    elif config and request['role'] in {'ingest', 'planner'}:
         paths = reply.get('files', [])
         overhead = sum(config['overhead_tokens'].values())
         tokens = 1 + len(paths) + overhead
@@ -50,7 +60,8 @@ def main():
             'context_tokens': config['context_tokens'], 'fits': tokens < config['fit_tokens'],
         }
     if request['role'] == 'planner':
-        reply['violations'] = []
+        reply['violations'] = (['A split must propose at least two pieces.']
+                               if mode == 'plan-bad-split' else [])
     print(json.dumps({'event': 'reply', 'role': request['role'], 'reply': reply}), flush=True)
     return 0
 

@@ -34,6 +34,10 @@ MUTANTS = {
                      ['writer:no-excerpt', 'writer:no-text', 'writer:always-multiline']),
     'exit': ('crates/controller/src/adapters/workers.rs', 'if exit["code"] != 0 {',
              'if false && exit["code"] != 0 {', ['workers:wire']),
+    'planner-evidence': ('crates/controller/src/adapters/workers/protocol.rs',
+                         'if !violations.is_empty() || reply["kind"] == "cant_meet" {',
+                         'if false && !violations.is_empty() || reply["kind"] == "cant_meet" {',
+                         ['workers:planning']),
 }
 
 
@@ -60,7 +64,7 @@ def run_mutant(name):
         target = 'workers' if cases[0].startswith('workers:') else 'github'
         binary = build(target)
         for case in cases:
-            flag = ('--gate-wire' if case == 'workers:wire' else
+            flag = ('--gate-' + case.split(':')[1] if case.startswith('workers:') else
                     '--writer-structural=' + case.split(':')[1] if case.startswith('writer:') else
                     '--gate-case=' + case)
             with tempfile.TemporaryFile(mode='w+') as log:

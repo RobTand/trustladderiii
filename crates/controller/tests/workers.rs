@@ -343,6 +343,20 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--gate-planning") {
+        for mode in [
+            "normal",
+            "plan-split",
+            "plan-invalid",
+            "plan-cant-meet",
+            "plan-bad-split",
+            "plan-bad-schema",
+        ] {
+            planning::planning(&database.create(&mode.replace('-', "_")), mode);
+        }
+        database.stop();
+        return;
+    }
     if args
         .get(1)
         .is_some_and(|arg| arg == "--maker-reproducing-rebase")
