@@ -45,11 +45,11 @@ if mode == "manifest":
     rows = []
     for name in selected:
         if name in {"apply_new_request", "apply_new_adoption", "progress_from_queued"}:
-            memory = 32
+            memory = 64
         elif name.startswith("progress_from_"):
             memory = 24
         elif name in replies:
-            memory = 32
+            memory = 64
         else:
             memory = 10
         rows.append({"cwd": str(HERE), "argv": ["/usr/bin/python3", "run.py", *(["tests"] if name == "tests" else ["prove", name])],
