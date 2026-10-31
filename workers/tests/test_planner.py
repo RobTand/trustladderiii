@@ -284,7 +284,6 @@ def test_forecast_reads_full_unicode_file_without_tool_truncation(tmp_path, plan
     ({"checks": [{**LEAF["checks"][0], "node_ids": []}]}, True),
     ({"checks": [{**LEAF["checks"][0], "kind": "guess"}]}, False),
     ({"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]}, True),
-    ({"checks": [{**LEAF["checks"][0], "node_ids": ["../test.py::test_escape"]}]}, False),
     ({"files": []}, True),
     ({"files": ["greeting.py", "greeting.py"]}, False),
     ({"no_design_questions": False}, True),
@@ -296,6 +295,14 @@ def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_req
         assert_rule_report(result)
     else:
         assert_rejected(result)
+
+
+def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
+    proposal = copy.deepcopy(LEAF)
+    proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert_rule_report(result)
+    assert result.events[-1]["reply"]["violations"] == ["Checks must name exact pytest node IDs."]
 
 
 @pytest.mark.parametrize("path", [
