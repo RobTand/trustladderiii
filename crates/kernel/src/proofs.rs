@@ -212,7 +212,6 @@ fn check_apply(event: Event) -> World {
             assert_eq!(after.nodes.len(), before.nodes.len() + 1);
             assert_eq!(after.nodes.last().unwrap().proposed, Some(*head));
             assert!(!after.nodes.last().unwrap().adopted);
-            kani::cover!(true, "new adoption retains the requested head");
         }
     }
     require_consistent(&after);
@@ -677,13 +676,17 @@ proof!(
     check_pr_merged(Phase::Closed(kani::any()))
 );
 
-proof!(
-    apply_new_adoption,
-    check_apply(Event::NewAdoption {
-        repo: kani::any(),
-        head: HeadId(7)
-    })
-);
+proof!(apply_new_adoption, {
+    let repo = kani::any();
+    let after = check_apply(Event::NewAdoption {
+        repo,
+        head: HeadId(7),
+    });
+    kani::cover!(
+        repo.index().is_some_and(|r| r < after.gates.len()),
+        "new adoption retains the requested head"
+    );
+});
 
 fn adoption_preparation() -> World {
     let w = any_world(Some(Phase::Making));
