@@ -67,6 +67,7 @@
       ],
       "additionalProperties": false
     },
+    "hindsight_key_file": {"type": ["string", "null"], "pattern": "^/"},
     "key_file": {
       "type": "string",
       "pattern": "^/"
@@ -88,6 +89,18 @@
     },
     "resume_session": {
       "type": "boolean"
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "summary_file": {"type": "string", "pattern": "^/"},
+        "repo": {"type": "string"},
+        "issue": {"type": "integer", "minimum": 1},
+        "request": {"type": "string"},
+        "epoch": {"type": "integer", "minimum": 0}
+      },
+      "required": ["summary_file", "repo", "issue", "request", "epoch"],
+      "additionalProperties": false
     }
   },
   "required": [

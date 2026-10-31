@@ -94,6 +94,9 @@ tools_dir = "/mnt/shared/prismabuild-fleet/repo/tools"
 container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [hindsight]
+# Set a private, owner-only file containing the raw API key when authentication is enabled.
+# The controller reads it only during background memory delivery.
+# api_key_file = "/run/tl3/hindsight-key"
 # Hindsight listens locally on dl380g10 at 8890; 8888 is celestia's tunnel.
 endpoint = "http://127.0.0.1:8890"
 bank = "tl3"

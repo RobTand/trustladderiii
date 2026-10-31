@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI
 from tl3_workers.contracts import read_json, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
+from tl3_workers.memory import Summary, current
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -109,7 +110,18 @@ def run(request, emit: Callable[[dict], None]):
     from tl3_workers.tracing import observe
 
     with observe(request):
-        _run(request, emit)
+        summary = Summary(request)
+        token = current.set(summary)
+        summary.save()
+        reply, error = None, None
+        try:
+            reply = _run(request, emit)
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            summary.finish(reply, error)
+            current.reset(token)
 
 
 def _run(request, emit):
@@ -117,6 +129,7 @@ def _run(request, emit):
     model = create_model(request)
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
         if worktree is not None:
+            worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.run is None:
             agent = build_agent(model, role, worktree)
@@ -128,6 +141,7 @@ def _run(request, emit):
         if role.check_reply is not None:
             role.check_reply(request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
+    return reply
 
 
 def _run_agent(agent, request, emit):
