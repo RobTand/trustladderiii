@@ -394,6 +394,32 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
     if rebase {
         flow.until(|phase| phase == Phase::Queued);
+        // Reconciliation can consume a reply before its source message is received.
+        let request = requests(&flow.config).pop().unwrap();
+        let reply = store.worker_document("0", "maker_replies").unwrap().unwrap();
+        observe(
+            &mut flow.controller,
+            "delayed-maker-source-reply",
+            Observation::WorkerReply {
+                node: NodeId(0),
+                generation: request["operation"]["generation"].as_u64().unwrap(),
+                role: "maker".into(),
+                reply,
+            },
+            &flow.worktree,
+            &flow.base,
+        );
+        while flow.controller.drive_once().unwrap() {}
+        let replayed = flow.controller.snapshot().unwrap();
+        let preserved = replayed
+            .rows
+            .iter()
+            .find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}"))
+            .unwrap();
+        assert_eq!(
+            preserved.value, run.value,
+            "a delayed maker source reply must preserve the enriched check plan"
+        );
         let upstream = root.path().join("repo");
         fs::OpenOptions::new()
             .append(true)
