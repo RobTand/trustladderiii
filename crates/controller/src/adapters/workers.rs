@@ -124,6 +124,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(config: &tl3_config::Config, records_root: &Path) -> Result<Self> {
+        protocol::initialize_schemas()?;
         fs::create_dir_all(config.workers.runs.join(".ready"))?;
         fs::create_dir_all(records_root)?;
         let active = ActiveRuns::default();
@@ -268,16 +269,12 @@ impl Supervisor {
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
             inputs.as_object_mut().unwrap().remove("reviewed_sha");
-            if delivery.round == 1
-                && let Some(head) = &delivery.head_sha
-                && inputs["feedback"].as_array().is_some_and(|items| {
-                    items.iter().any(|item| {
-                        item["kind"] == "review_finding" && item["reviewed_sha"] == *head
-                    })
-                })
-            {
-                inputs["reviewed_sha"] = json!(head);
+            let reviewed = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
+            let current = crate::findings::current_review_findings(&inputs["feedback"], reviewed);
+            if !current.is_empty() {
+                inputs["reviewed_sha"] = json!(reviewed);
             }
+            inputs["current_review_findings"] = json!(current);
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);

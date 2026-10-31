@@ -357,7 +357,7 @@ impl Controller {
         commit
             .rows
             .push(put("github_comments", comment_key.clone(), recorded));
-        let kind = reply["kind"].as_str().unwrap();
+        let kind: String = crate::adapters::workers::protocol::reply_field(&reply, "kind")?;
         if let Some(previous) = inputs["conversation"]["comment_id"].as_str() {
             commit.rows.push(RowChange::Delete {
                 table: "comment_questions".into(),
@@ -365,7 +365,7 @@ impl Controller {
             });
         }
         if kind == "unsure" {
-            let question = reply["question"].as_str().unwrap().to_owned();
+            let question = crate::adapters::workers::protocol::reply_field(&reply, "question")?;
             commit.rows.push(put(
                 "comment_questions",
                 comment_key.clone(),
@@ -394,12 +394,12 @@ impl Controller {
             correction.steering = Some(Task::FileRequest {
                 text: format!(
                     "{}\n\nRob's comment:\n{}",
-                    reply["summary"].as_str().unwrap(),
+                    crate::adapters::workers::protocol::reply_field::<String>(&reply, "summary")?,
                     inputs["comment"]["body"].as_str().unwrap()
                 ),
                 comment: comment.value["comment"]["id"].as_u64().unwrap(),
                 correction: true,
-                revert: reply["revert"].as_bool().unwrap(),
+                revert: crate::adapters::workers::protocol::reply_field(&reply, "revert")?,
                 since: comment.value["comment"]["created_at"]
                     .as_str()
                     .unwrap()
@@ -412,31 +412,36 @@ impl Controller {
         if n.phase.is_closed() {
             return Ok(None);
         }
-        let command = match kind {
+        let command = match kind.as_str() {
             "pause" => Command::Pause,
             "resume" => Command::Resume,
             "stop" => Command::Stop,
             "change_request" => Command::ChangeRequest,
             "remark" => return Ok(None),
             "answer" => Command::Answer {
-                question: reply["question_id"]
-                    .as_str()
-                    .unwrap()
-                    .parse()
-                    .map_err(|_| Error::Invalid("invalid question id"))?,
-                answer: match reply["answer"].as_str().unwrap() {
+                question: crate::adapters::workers::protocol::reply_field::<String>(
+                    &reply,
+                    "question_id",
+                )?
+                .parse()
+                .map_err(|_| Error::Invalid("invalid question id"))?,
+                answer: match crate::adapters::workers::protocol::reply_field::<String>(
+                    &reply, "answer",
+                )?
+                .as_str()
+                {
                     "continue" => Answer::Continue,
                     "unclear" => Answer::Unclear,
                     "change_request" => Answer::ChangeRequest,
                     "stop" => Answer::Stop,
                     "try_again" => Answer::TryAgain,
-                    "add_credit" => Answer::AddCredit(reply["amount"].as_u64().unwrap() as u8),
+                    "add_credit" => Answer::AddCredit(credit_amount(&reply)?),
                     "retry" => Answer::Retry,
                     "mark_handled" => Answer::MarkHandled,
-                    _ => unreachable!("validated classifier answer"),
+                    _ => return Err(Error::Invalid("invalid classifier answer")),
                 },
             },
-            _ => unreachable!("validated classification"),
+            _ => return Err(Error::Invalid("invalid classifier kind")),
         };
         let current_answer = match command {
             Command::Answer { question, .. } => n.question.is_some_and(|q| q.id == question),
@@ -705,9 +710,8 @@ fn excerpt(text: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
-fn credit_amount(_reply: &Value) -> Result<u8> {
-    todo!("decode credit without truncation")
+fn credit_amount(reply: &Value) -> Result<u8> {
+    crate::adapters::workers::protocol::reply_field(reply, "amount")
 }
 
 #[cfg(test)]

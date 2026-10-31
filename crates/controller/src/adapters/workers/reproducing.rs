@@ -11,15 +11,7 @@ pub(crate) struct Fixes {
 }
 
 pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> Result<Fixes> {
-    let findings = feedback
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|finding| {
-            reviewed.is_some_and(|sha| finding["reviewed_sha"] == sha)
-                && finding["kind"] == "review_finding"
-        })
-        .collect::<Vec<_>>();
+    let findings = crate::findings::current_review_findings(feedback, reviewed);
     let mappings = reply["reproductions"]
         .as_array()
         .cloned()
@@ -51,16 +43,7 @@ pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> 
                     let test = test
                         .as_str()
                         .ok_or(Error::Invalid("invalid reproducing test"))?;
-                    let mut parts = test.split("::");
-                    let path = parts.next().unwrap();
-                    let names = parts.collect::<Vec<_>>();
-                    if !super::protocol::relative_file(path)
-                        || test.contains('\0')
-                        || path.starts_with('-')
-                        || !path.ends_with(".py")
-                        || names.is_empty()
-                        || names.iter().any(|name| name.is_empty())
-                    {
+                    if !exact_pytest_node_id(test) {
                         return Err(Error::Invalid("expected an exact pytest node id"));
                     }
                     Ok(test.to_owned())
@@ -110,4 +93,17 @@ mod reply_defects {
             "node-id disagreements: {mismatches:?}"
         );
     }
+}
+
+fn exact_pytest_node_id(test: &str) -> bool {
+    let mut parts = test.split("::");
+    let path = parts.next().unwrap_or_default();
+    let names = parts.collect::<Vec<_>>();
+    !names.is_empty()
+        && names.iter().all(|name| !name.is_empty())
+        && path.ends_with(".py")
+        && !path.starts_with(['/', '-'])
+        && !path.split('/').any(|part| part == "..")
+        && !path.contains('\\')
+        && !test.contains('\0')
 }

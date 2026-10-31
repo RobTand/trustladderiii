@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster
-from tl3_workers.tools import _parts
+from tl3_harness import Check, Kind
 
 
 def check_reply(inputs, reply):
@@ -29,9 +29,9 @@ def check_reply(inputs, reply):
             if not check["goal_ids"]:
                 violations.append("Every check must cite at least one goal.")
             for node_id in check["node_ids"]:
-                path, *names = node_id.split("::")
-                _parts(path)
-                if not path.endswith(".py") or not names or not all(names) or path.startswith("-"):
+                try:
+                    Check("planned", Kind(check["kind"]), (node_id,))
+                except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
             cited = set(check["goal_ids"])
             if not cited <= goals:

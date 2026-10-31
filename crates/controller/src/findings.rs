@@ -102,12 +102,19 @@ pub(crate) fn check_report(
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)
 }
 
-#[cfg(test)]
 pub(crate) fn current_review_findings<'a>(
-    _feedback: &'a serde_json::Value,
-    _reviewed: Option<&str>,
+    feedback: &'a serde_json::Value,
+    reviewed: Option<&str>,
 ) -> Vec<&'a serde_json::Value> {
-    todo!("select current review findings once in Rust")
+    feedback
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| {
+            finding["kind"] == "review_finding"
+                && reviewed.is_some_and(|sha| finding["reviewed_sha"] == sha)
+        })
+        .collect()
 }
 
 #[cfg(test)]

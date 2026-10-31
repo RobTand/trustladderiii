@@ -217,16 +217,10 @@ pub(crate) fn maker_inputs(
     if plan["kind"] != "leaf" {
         return Err(Error::Invalid("making requires an accepted leaf plan"));
     }
-    let mut goals = brief["goals"]
-        .as_array()
-        .ok_or(Error::Invalid("accepted brief needs goals"))?
-        .clone();
-    for (index, goal) in goals.iter_mut().enumerate() {
-        goal["id"] = json!(format!("goal-{}", index + 1));
-    }
+    let goals = crate::goals::identified(&brief["goals"])?;
     let checks = plan["checks"].as_array().ok_or(Error::Invalid("accepted plan needs checks"))?.iter().enumerate().map(|(index, check)| {
         let ids = check["goal_ids"].as_array().ok_or(Error::Invalid("plan check needs goal indexes"))?.iter().map(|id| {
-            id.as_u64().and_then(|id| goals.get(id as usize)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
+            id.as_u64().and_then(|id| usize::try_from(id).ok()).and_then(|id| goals.get(id)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
         }).collect::<Result<Vec<_>>>()?;
         Ok(json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids}))
     }).collect::<Result<Vec<Value>>>()?;

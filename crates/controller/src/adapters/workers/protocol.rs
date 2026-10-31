@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::{collections::BTreeMap, sync::OnceLock};
 use tl3_kernel::{EarlyEnd, Reply, Role};
 
 pub(crate) enum MappedReply {
@@ -35,38 +35,7 @@ pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
 }
 
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
-    static INGEST: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static PLANNER: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static REVIEWER: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static AUDIT: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static MAKER: OnceLock<jsonschema::Validator> = OnceLock::new();
-    let (cell, schema) = match role {
-        "ingest" => (
-            &INGEST,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/ingest-reply.json"),
-        ),
-        "audit" => (
-            &AUDIT,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/audit-reply.json"),
-        ),
-        "maker" => (
-            &MAKER,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/maker-reply.json"),
-        ),
-        "planner" => (
-            &PLANNER,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/planner-reply.json"),
-        ),
-        "reviewer" => (
-            &REVIEWER,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/reviewer-reply.json"),
-        ),
-        _ => return Err(Error::Invalid("unsupported worker role")),
-    };
-    let validator = cell.get_or_init(|| {
-        let schema: Value = serde_json::from_str(schema).expect("packaged worker schema");
-        jsonschema::validator_for(&schema).expect("valid offline worker schema")
-    });
+    let validator = validator(role, "reply")?;
     if !validator.is_valid(reply) {
         return Err(Error::Invalid("worker reply breaks role schema"));
     }
@@ -154,90 +123,40 @@ pub(super) fn relative_file(path: &str) -> bool {
             .all(|part| !matches!(part, "" | "." | ".." | ".git"))
 }
 
+include!(concat!(env!("OUT_DIR"), "/worker_schemas.rs"));
+
+pub(super) fn initialize_schemas() -> Result<()> {
+    validators().map(|_| ())
+}
+
+fn validators() -> Result<&'static BTreeMap<String, jsonschema::Validator>> {
+    static VALIDATORS: OnceLock<
+        std::result::Result<BTreeMap<String, jsonschema::Validator>, String>,
+    > = OnceLock::new();
+    VALIDATORS
+        .get_or_init(|| {
+            let schemas = PACKAGED_SCHEMAS
+                .iter()
+                .map(|(name, source)| {
+                    serde_json::from_str(source)
+                        .map(|schema| ((*name).to_owned(), schema))
+                        .map_err(|error| format!("packaged worker schema {name}: {error}"))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            schemas_from(schemas).map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| Error::Adapter(error.clone().into()))
+}
+
+fn validator(role: &str, direction: &str) -> Result<&'static jsonschema::Validator> {
+    validators()?
+        .get(&format!("{role}-{direction}.json"))
+        .ok_or(Error::Invalid("unsupported worker role"))
+}
+
 pub(super) fn validate_inputs(role: &str, inputs: &Value) -> Result<()> {
-    if role == "maker" {
-        static MAKER: OnceLock<jsonschema::Validator> = OnceLock::new();
-        let validator = MAKER.get_or_init(|| {
-            let schema: Value = serde_json::from_str(include_str!(
-                "../../../../../workers/src/tl3_workers/schemas/maker-input.json"
-            ))
-            .unwrap();
-            jsonschema::validator_for(&schema).unwrap()
-        });
-        return if validator.is_valid(inputs) {
-            Ok(())
-        } else {
-            Err(Error::Invalid("maker inputs break role schema"))
-        };
-    }
-    if role == "classifier" {
-        return classifier_schema(inputs, false);
-    }
-    static VALIDATORS: OnceLock<(
-        jsonschema::Validator,
-        jsonschema::Validator,
-        jsonschema::Validator,
-        jsonschema::Validator,
-    )> = OnceLock::new();
-    let validators = VALIDATORS.get_or_init(|| {
-        let ingest: Value = serde_json::from_str(include_str!(
-            "../../../../../workers/src/tl3_workers/schemas/ingest-input.json"
-        ))
-        .unwrap();
-        let audit: Value = serde_json::from_str(include_str!(
-            "../../../../../workers/src/tl3_workers/schemas/audit-input.json"
-        ))
-        .unwrap();
-        let reply: Value = serde_json::from_str(include_str!(
-            "../../../../../workers/src/tl3_workers/schemas/ingest-reply.json"
-        ))
-        .unwrap();
-        let planner: Value = serde_json::from_str(include_str!(
-            "../../../../../workers/src/tl3_workers/schemas/planner-input.json"
-        ))
-        .unwrap();
-        let reviewer: Value = serde_json::from_str(include_str!(
-            "../../../../../workers/src/tl3_workers/schemas/reviewer-input.json"
-        ))
-        .unwrap();
-        let mut registry = jsonschema::Registry::new();
-        for schema in [&ingest, &audit, &reply, &planner, &reviewer] {
-            registry = registry
-                .add(schema["$id"].as_str().unwrap(), schema.clone())
-                .unwrap();
-        }
-        let registry = registry.prepare().unwrap();
-        (
-            jsonschema::options()
-                .with_registry(&registry)
-                .build(&ingest)
-                .unwrap(),
-            jsonschema::options()
-                .with_registry(&registry)
-                .build(&audit)
-                .unwrap(),
-            jsonschema::options()
-                .with_registry(&registry)
-                .build(&planner)
-                .unwrap(),
-            jsonschema::options()
-                .with_registry(&registry)
-                .build(&reviewer)
-                .unwrap(),
-        )
-    });
-    let validator = if role == "ingest" {
-        &validators.0
-    } else if role == "audit" {
-        &validators.1
-    } else if role == "planner" {
-        &validators.2
-    } else if role == "reviewer" {
-        &validators.3
-    } else {
-        return Err(Error::Invalid("unsupported worker role"));
-    };
-    if validator.is_valid(inputs) {
+    if validator(role, "input")?.is_valid(inputs) {
         Ok(())
     } else {
         Err(Error::Invalid("worker inputs break role schema"))
@@ -291,22 +210,7 @@ fn forecast(reply: &Value) -> Result<(u64, u64)> {
 }
 
 fn classifier_schema(value: &Value, reply: bool) -> Result<()> {
-    static INPUT: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static REPLY: OnceLock<jsonschema::Validator> = OnceLock::new();
-    let (cell, schema) = if reply {
-        (
-            &REPLY,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-reply.json"),
-        )
-    } else {
-        (
-            &INPUT,
-            include_str!("../../../../../workers/src/tl3_workers/schemas/classifier-input.json"),
-        )
-    };
-    let validator = cell.get_or_init(|| {
-        jsonschema::validator_for(&serde_json::from_str::<Value>(schema).unwrap()).unwrap()
-    });
+    let validator = validator("classifier", if reply { "reply" } else { "input" })?;
     if validator.is_valid(value) {
         Ok(())
     } else {
@@ -440,11 +344,29 @@ mod classifier_tests {
     }
 }
 
-#[cfg(test)]
-fn schemas_from(
-    _schemas: Vec<(String, Value)>,
-) -> Result<std::collections::BTreeMap<String, jsonschema::Validator>> {
-    todo!("load every packaged schema")
+fn schemas_from(schemas: Vec<(String, Value)>) -> Result<BTreeMap<String, jsonschema::Validator>> {
+    let mut registry = jsonschema::Registry::new();
+    for (name, schema) in &schemas {
+        let uri = format!("https://trustladderiii.invalid/workers/protocol-1/{name}");
+        registry = registry.add(uri, schema.clone()).map_err(|error| {
+            Error::Adapter(format!("packaged worker schema {name}: {error}").into())
+        })?;
+    }
+    let registry = registry.prepare().map_err(|error| {
+        Error::Adapter(format!("packaged worker schema registry: {error}").into())
+    })?;
+    schemas
+        .into_iter()
+        .map(|(name, schema)| {
+            let validator = jsonschema::options()
+                .with_registry(&registry)
+                .build(&schema)
+                .map_err(|error| {
+                    Error::Adapter(format!("packaged worker schema {name}: {error}").into())
+                })?;
+            Ok((name, validator))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -486,12 +408,11 @@ mod reply_defects {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(
-    _reply: &Value,
-    _field: &str,
-) -> Result<T> {
-    todo!("decode reply fields at the controller boundary")
+pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: &str) -> Result<T> {
+    let value = reply
+        .get(field)
+        .ok_or(Error::Invalid("worker reply field missing"))?;
+    serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
 }
 
 #[cfg(test)]
