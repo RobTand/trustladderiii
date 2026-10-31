@@ -677,8 +677,8 @@ def test_accepted_maker_session_missing_fails_closed(tmp_path, maker_request, se
     maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
     result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
     assert result.exit_code == 1, result.stderr
-    assert 'accepted maker session history is missing' in result.stderr
-    assert all(event['event'] != 'reply' for event in result.events)
+    assert result.stderr.strip() == 'tl3_workers: run failed'
+    assert result.events == []
     assert git(root, 'rev-parse', 'HEAD') == before
     assert (root / 'greeting.py').read_text() == "def greet(): return 'goodbye'\n"
     assert not session.exists()
