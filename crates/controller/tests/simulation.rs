@@ -1971,6 +1971,16 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
         .observe("close-with-rebase-context", Observation::Kernel(event))
         .unwrap();
     if !stopped {
+        for _ in 0..100 {
+            if controller.world().unwrap().nodes[0].merged.is_some() {
+                break;
+            }
+            assert!(controller.drive_once().unwrap());
+        }
+        assert!(matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Stopping(Outcome::Merged)
+        ));
         assert!(
             !controller
                 .snapshot()
