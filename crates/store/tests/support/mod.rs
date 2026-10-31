@@ -7,6 +7,9 @@ use std::{
 };
 use tempfile::TempDir;
 
+mod cache;
+mod scratch;
+
 pub struct Database {
     postgres: PostgreSQL,
     runtime: tokio::runtime::Runtime,
@@ -20,21 +23,36 @@ impl Database {
     }
 
     pub fn start_with_fsync(fsync: bool) -> Self {
-        // Every archive, executable, cluster and fixture credential belongs to this job.
+        scratch::reap(&std::env::temp_dir());
         let scratch = tempfile::Builder::new()
             .prefix("tl3-store-pg-")
             .tempdir()
             .unwrap();
         let root = scratch.path();
+        fs::write(
+            root.join("fixture.pid"),
+            format!("{}\n", std::process::id()),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(root.join("fixture.pid"), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let started = Instant::now();
         let settings = Settings {
             releases_url: "https://github.com/zonkyio/embedded-postgres-binaries".into(),
             version: VersionReq::parse("=17.4.0").unwrap(),
-            installation_dir: root.join("binaries"),
+            installation_dir: cache::directory().join("17.4.0"),
             password_file: root.join("pgpass"),
             data_dir: root.join("data"),
             host: "127.0.0.1".into(),
+            port: 0,
             username: "postgres".into(),
             password: "tl3-disposable-test-password".into(),
+            temporary: true,
+            trust_installation_dir: false,
+            socket_dir: None,
             timeout: Some(Duration::from_secs(90)),
             configuration: HashMap::from([
                 ("max_connections".into(), "20".into()),
@@ -45,20 +63,19 @@ impl Database {
                 ("fsync".into(), if fsync { "on" } else { "off" }.into()),
                 ("synchronous_commit".into(), "on".into()),
             ]),
-            ..Settings::default()
         };
-        let mut postgres = PostgreSQL::new(settings);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .max_blocking_threads(2)
             .build()
             .unwrap();
-        let started = Instant::now();
+        cache::install(&settings, &runtime);
+        let mut postgres = PostgreSQL::new(settings);
         runtime
             .block_on(postgres.setup())
             .expect("download and initialize embedded Postgres");
         println!(
-            "embedded Postgres cold setup (fsync={fsync}): {:.2}s",
+            "embedded Postgres cached setup (fsync={fsync}): {:.2}s",
             started.elapsed().as_secs_f64()
         );
         runtime
