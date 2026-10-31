@@ -29,7 +29,12 @@ if args.suite in {"python", "all"}:
     rows.append({**common, "anywhere": True, "argv": ["bash", "-ec", """
 cargo build --locked -p tl3-controller --example tl3-deploy
 export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"
-/usr/bin/python3.14 tools/ci/check.py python
+if [ -x /usr/bin/python3.14 ]; then
+    tl3_python=/usr/bin/python3.14
+else
+    tl3_python=$(/home/rob/.local/bin/uv python find 3.14+gil)
+fi
+"$tl3_python" tools/ci/check.py python
 """]})
 if args.suite in {"workspace", "all"}:
     rows.append({**common, "anywhere": True,
