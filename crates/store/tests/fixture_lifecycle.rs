@@ -121,6 +121,11 @@ fn lifecycle() {
     drop(database);
     assert!(!root.exists(), "next fixture left its own scratch folder");
     assert!(!stale.exists(), "next fixture did not reap the killed run");
+    assert_eq!(
+        fs::read_dir(std::env::temp_dir()).unwrap().count(),
+        0,
+        "fixture leaked other temporary folders"
+    );
 }
 
 fn concurrent() {

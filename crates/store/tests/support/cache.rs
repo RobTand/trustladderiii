@@ -6,7 +6,7 @@ use std::{
     os::{
         linux::net::SocketAddrExt,
         unix::{
-            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::{SocketAddr, UnixListener},
         },
     },
@@ -116,6 +116,11 @@ pub fn install(settings: &Settings, runtime: &tokio::runtime::Runtime) {
     runtime
         .block_on(installer.setup())
         .expect("install embedded Postgres into staging");
+    fs::set_permissions(
+        &installer.settings().installation_dir,
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
     fs::rename(
         &installer.settings().installation_dir,
         &settings.installation_dir,
