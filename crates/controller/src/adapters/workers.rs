@@ -334,6 +334,11 @@ impl Supervisor {
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
+            "trace": {
+                "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+                "issue": delivery.issue, "request": node,
+                "attempt": delivery.attempt, "round": delivery.round,
+            },
         });
         if role == "maker" {
             request["session_file"] = json!(
