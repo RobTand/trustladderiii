@@ -79,6 +79,8 @@ impl Sources {
                     Ok(input) => input,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         controller.look_due()?;
+                        // Retry deferred deliveries on the existing allowance look, without a new timer.
+                        drain(controller)?;
                         while controller.drive_once()? {}
                         continue;
                     }
@@ -242,11 +244,14 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
                         .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))
                     {
                         Ok(inputs) => inputs,
-                        Err(
-                            error @ (Error::Adapter(_)
-                            | Error::Quota { .. }
-                            | Error::Permanent { .. }),
-                        ) => {
+                        Err(Error::Permanent { class, source }) => {
+                            eprintln!(
+                                "discarding permanent observation failure for {name}, delivery {} ({}): {class}: {source}",
+                                stored.delivery_key, stored.event_name
+                            );
+                            Vec::new()
+                        }
+                        Err(error @ (Error::Adapter(_) | Error::Quota { .. })) => {
                             eprintln!("observation translation failed for {name}: {error}");
                             // Keep this delivery at the cursor for the next event or look.
                             break 'pending;

@@ -1572,8 +1572,9 @@ impl Controller {
                     return Ok(None);
                 }
                 let value = json!(&fact);
-                if let Evidence::CiFailed { head, .. } | Evidence::Conflict { head, .. } =
-                    &fact.evidence
+                if let Evidence::CiFailed { head, .. }
+                | Evidence::Conflict { head, .. }
+                | Evidence::DequeuedByCommand { head, .. } = &fact.evidence
                 {
                     let observed = self.head(node, head)?;
                     if world.nodes[node.0 as usize].head != Some(observed) {
@@ -1591,7 +1592,9 @@ impl Controller {
                     },
                     Evidence::CiFailed { infra, .. } => Fact::CiFailed { infra },
                     Evidence::Conflict { .. } => Fact::Conflict,
-                    Evidence::DequeuedByPerson { .. } => Fact::PrDequeuedByPerson,
+                    Evidence::DequeuedByPerson { .. } | Evidence::DequeuedByCommand { .. } => {
+                        Fact::PrDequeuedByPerson
+                    }
                     Evidence::ClosedByPerson { .. } => Fact::PrClosedByPerson,
                     Evidence::PushByOther { head } => {
                         let previous_sha = current.head.and_then(|head| {

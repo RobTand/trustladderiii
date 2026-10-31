@@ -15,6 +15,7 @@ pub enum QueueState {
     ChecksRunning,
     Merged,
     Dequeued,
+    DequeuedByPerson,
     FailedCi,
     Conflict,
     Unknown,
@@ -185,6 +186,10 @@ fn check_state(check: &CheckRun) -> QueueState {
             "Dequeued — conflict with base branch"
             | "Dequeued — conflict with another pull request",
         ) => QueueState::Conflict,
+        Some(
+            "Dequeued — pull request manually dequeued"
+            | "Dequeued — pull request manually removed from the queue",
+        ) => QueueState::DequeuedByPerson,
         Some(title) if title.starts_with("Dequeued — ") => QueueState::Dequeued,
         Some(title)
             if title
@@ -234,6 +239,8 @@ fn payload_state(json: &str) -> Option<QueueState> {
             .as_ref()
             .map(|reason| reason.code.as_str())
         {
+            // https://docs.mergify.com/api/statistics/ names the manual-command reason.
+            Some("PR_MANUALLY_DEQUEUED") => QueueState::DequeuedByPerson,
             Some("CHECKS_FAILED" | "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED") => QueueState::FailedCi,
             Some("CONFLICT_WITH_BASE_BRANCH" | "CONFLICT_WITH_ANOTHER_PR") => QueueState::Conflict,
             _ => QueueState::Dequeued,

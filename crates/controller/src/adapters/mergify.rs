@@ -91,6 +91,12 @@ pub enum Evidence {
         completed_at: Option<String>,
         head: String,
     },
+    DequeuedByCommand {
+        check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
+        head: String,
+    },
     DequeuedByPerson {
         event: u64,
     },
@@ -123,6 +129,7 @@ impl QueueFact {
             Evidence::CiFailed { .. }
                 | Evidence::Conflict { .. }
                 | Evidence::DequeuedByPerson { .. }
+                | Evidence::DequeuedByCommand { .. }
         )
     }
     pub(crate) fn identity(&self) -> String {
@@ -130,6 +137,7 @@ impl QueueFact {
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed { check, .. } => format!("ci:{check}"),
             Evidence::Conflict { check, .. } => format!("conflict:{check}"),
+            Evidence::DequeuedByCommand { check, .. } => format!("command-dequeued:{check}"),
             Evidence::DequeuedByPerson { event } => format!("dequeued:{event}"),
             Evidence::ClosedByPerson { event } => format!("closed:{event}"),
             Evidence::PushByOther { head } => format!("push:{head}"),
@@ -140,6 +148,10 @@ impl QueueFact {
             ..
         }
         | Evidence::Conflict {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::DequeuedByCommand {
             completed_at: Some(time),
             ..
         } = &self.evidence
@@ -204,6 +216,16 @@ impl From<&tl3_mergify::Observation> for Progress {
 struct Attempt {
     before: Option<CheckRun>,
     last_event: u64,
+}
+impl Attempt {
+    fn check_changed(&self, current: &Option<CheckRun>) -> bool {
+        let mut current = current.clone();
+        // Old intents predate completed_at. Its presence alone does not prove acceptance.
+        if let Some(check) = &mut current {
+            check.completed_at = self.before.as_ref().and_then(|before| before.completed_at);
+        }
+        self.before != current
+    }
 }
 
 pub struct Adapter {
@@ -275,7 +297,10 @@ impl Adapter {
         let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
         let terminal = matches!(
             state.state,
-            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
+            QueueState::Dequeued
+                | QueueState::FailedCi
+                | QueueState::Conflict
+                | QueueState::DequeuedByPerson
         );
         let mut person_removed = false;
         if let Some(attempt) = &baseline {
@@ -309,7 +334,7 @@ impl Adapter {
                     || (terminal
                         && baseline
                             .as_ref()
-                            .is_some_and(|before| before.before != state.check))))
+                            .is_some_and(|before| before.check_changed(&state.check)))))
         {
             let mut completion = Completion::confirmed(observations);
             completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
@@ -396,7 +421,10 @@ impl Executor for Adapter {
         if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
             || matches!(
                 state.state,
-                QueueState::FailedCi | QueueState::Conflict | QueueState::Dequeued
+                QueueState::FailedCi
+                    | QueueState::Conflict
+                    | QueueState::Dequeued
+                    | QueueState::DequeuedByPerson
             )
         {
             self.fence(delivery)?;
@@ -550,6 +578,16 @@ async fn queue_facts(
                 head: pull.head.sha.clone(),
                 infra: tl3_mergify::ci_is_infrastructure(check),
             }),
+            QueueState::DequeuedByPerson => {
+                state
+                    .check
+                    .as_ref()
+                    .map(|check| Evidence::DequeuedByCommand {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                        head: pull.head.sha.clone(),
+                    })
+            }
             QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
                 check: check.id,
                 completed_at: check.completed_at.map(|time| time.to_rfc3339()),
