@@ -1299,6 +1299,66 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
 }
 
 #[cfg(test)]
+mod git_failure_tests {
+    use super::*;
+    #[test]
+    fn deterministic_git_failures_are_permanent_incidents() {
+        use tl3_worktrees::Error as W;
+        for (error, expected) in [
+            (W::BranchName, "invalid_branch"),
+            (W::CommitId, "invalid_commit"),
+            (W::Remote, "invalid_remote"),
+            (W::WorktreePath, "invalid_worktree_path"),
+            (W::Token, "invalid_token"),
+            (W::Response, "invalid_response"),
+            (W::MissingBranch, "missing_branch"),
+            (W::MainBranch, "reserved_branch"),
+            (W::WorktreeOccupied, "worktree_occupied"),
+            (W::DirtyWorktree, "dirty_worktree"),
+            (W::Recovery, "worktree_recovery"),
+        ] {
+            assert_eq!(error.permanent_class(), Some(expected));
+            let error = crate::Error::from(error);
+            let crate::Error::Permanent { class, source } = &error else {
+                panic!("retain the permanent Git error and its class");
+            };
+            assert_eq!(*class, expected);
+            assert!(source.downcast_ref::<W>().is_some());
+            assert_eq!(failure_class(&error), expected, "{error}");
+            if expected == "dirty_worktree" {
+                assert!(
+                    incident_summary(
+                        "request",
+                        &IncidentSignature {
+                            upstream: Upstream::Worktrees,
+                            class: failure_class(&error).into()
+                        },
+                        false
+                    )
+                    .contains("has uncommitted or untracked files")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_git_failures_remain_transport() {
+        use tl3_worktrees::Error as W;
+        for error in [
+            W::Io,
+            W::Spawn,
+            W::Poisoned,
+            W::Git {
+                operation: "fetch",
+                code: Some(128),
+            },
+        ] {
+            assert_eq!(failure_class(&error.into()), "transport");
+        }
+    }
+}
+
+#[cfg(test)]
 mod incident_tests {
     use super::*;
 

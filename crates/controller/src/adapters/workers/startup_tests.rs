@@ -33,3 +33,63 @@ fn worker_credentials_survive_controller_credential_removal_and_expose_only_mode
     serde_json::to_writer(child.stdin.take().unwrap(), &request).unwrap();
     assert!(child.wait().unwrap().success());
 }
+
+#[test]
+fn hostile_maker_head() {
+    crate::git_tests::hostile(
+        "adapters::workers::startup_tests::hostile_maker_head",
+        || {
+            use crate::git_tests::{Repo, documents, git, support::Database};
+            let f = Repo::new();
+            let mut db = Database::start();
+            let settings = db.create("maker_head");
+            let mut config =
+                tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+            config.store = settings.clone();
+            config.workers.runs = f.root.path().join("runs");
+            config.worktrees_root = f.root.path().join("worktrees");
+            let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
+                .unwrap()
+                .with_materials(crate::production::Materials::fixture(
+                    config.worktrees_root.clone(),
+                ));
+            let mut delivery = f.delivery();
+            delivery.checks = None;
+            let checkout =
+                super::super::worktrees::checkout_path(&config.worktrees_root, &delivery);
+            fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+            git(
+                f.root.path(),
+                &[
+                    "clone",
+                    "--quiet",
+                    f.path.to_str().unwrap(),
+                    checkout.to_str().unwrap(),
+                ],
+            );
+            let mut store = Store::open(&settings).unwrap();
+            store.put_worker_materials("0", &json!({})).unwrap();
+            let snapshot = documents(
+                &mut store,
+                &[
+                    (
+                        "briefs",
+                        json!({"brief":"Read the intended repo","goals":[{"description":"Read it","verification":"test"}]}),
+                    ),
+                    (
+                        "plans",
+                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+                    ),
+                ],
+            );
+            let request = supervisor
+                .request(&delivery, "maker", &mut store, &snapshot)
+                .unwrap();
+            assert_eq!(request["worktree"], json!(checkout));
+            assert_eq!(
+                store.worker_materials("0").unwrap().unwrap()["check_run"]["base_sha"],
+                f.head
+            );
+        },
+    );
+}

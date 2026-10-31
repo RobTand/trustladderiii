@@ -701,7 +701,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             sha: "a".repeat(40),
             run: adapters::prismabuild::CheckRun {
                 repository: root.path().to_path_buf(),
-                base_sha: "b".repeat(40),
+                base_sha: tl3_worktrees::CommitId::new("b".repeat(40)).unwrap(),
                 reviewed_sha: None,
                 reproducing_unavailable: None,
                 plan: vec![],
@@ -1002,7 +1002,7 @@ fn assert_incident_request(payload: &serde_json::Value) {
     );
 }
 
-fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
+fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
     let root = tempfile::tempdir().unwrap();
     let fixture = worktree_fixture::Fixture::create(root.path());
     let mut boot = bootstrap();
@@ -1082,10 +1082,66 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
             .any(|note| note.contains(&reference)),
         "closing notice must include the saved ref"
     );
-    println!("test stopped_worktree_saves_scratch ... ok");
+    if check == "write-once" {
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "saved_scratch" && r.id == reference)
+            .unwrap();
+        let effects = Reader::open(settings).unwrap().effects().unwrap();
+        let effect = effects
+            .iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "RemoveWorktree")
+            .unwrap();
+        assert_eq!(
+            row.version, effect.updated_revision,
+            "scratch metadata must be written once with completion"
+        );
+    }
+    if check == "expiry" {
+        worktree_fixture::age_scratch(&fixture.repo, &reference);
+        c.intake(LabelledIssue {
+            delivery: "next-request".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 43,
+            title: "Fix another greeting".into(),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
+        drain(&mut c);
+        assert!(
+            worktree_fixture::git(
+                &fixture.repo,
+                &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"]
+            )
+            .is_empty()
+        );
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "saved_scratch" && r.id == reference),
+            "expired scratch metadata must be removed with its ref"
+        );
+        assert!(matches!(c.world().unwrap().nodes[1].phase, Phase::Making));
+    }
+    println!("test stopped_worktree_saves_scratch_{check} ... ok");
 }
 
 fn main() {
+    if let Some(check) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--scratch-metadata=").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        stopped_worktree_saves_scratch(&db.create("scratch_metadata"), &check);
+        db.stop();
+        return;
+    }
     if let Some(case) = std::env::args()
         .nth(1)
         .and_then(|s| s.strip_prefix("--effect-http=").map(str::to_owned))
@@ -1103,7 +1159,7 @@ fn main() {
     }
     if std::env::args().any(|arg| arg == "--dirty-worktree") {
         let mut db = support::Database::start();
-        stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
+        stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
         db.stop();
         return;
     }
@@ -1198,7 +1254,9 @@ fn main() {
     println!("test pb_owns_progress_failure ... ok");
     owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
     println!("test queue_stall_incident ... ok");
-    stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
+    stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
+    stopped_worktree_saves_scratch(&db.create("scratch_once"), "write-once");
+    stopped_worktree_saves_scratch(&db.create("scratch_expiry"), "expiry");
     permanent_incident_clear_at(&db.create("request_clear"), true);
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");

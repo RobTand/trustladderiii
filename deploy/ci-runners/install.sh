@@ -2,31 +2,40 @@
 set +x
 set -euo pipefail
 umask 077
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 slots=${1:-1}
 profile=${2:-tl3}
 case "$profile:$slots" in
-    tl3:0|tl3:1|tl3:6) prefix=tl3-ci-runner ;;
+    tl3:[0-6]) prefix=tl3-ci-runner ;;
     sandbox:0|sandbox:1|sandbox:2) prefix=tl3-ci-runner-sandbox ;;
-    *) echo 'Usage: install.sh [0|1|6] [tl3] or install.sh [0|1|2] sandbox' >&2; exit 1 ;;
+    *) echo 'Usage: install.sh [0..6] [tl3] or install.sh [0|1|2] sandbox' >&2; exit 1 ;;
 esac
-[[ $(uname -m) == x86_64 && $(id -u) != 0 ]] || {
-    echo 'Install as the rootless runner owner on x86_64' >&2
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=deploy/ci-runners/runner-platform.sh
+source "$here/runner-platform.sh"
+[[ "$profile" != sandbox || "$runner_arch" == x64 ]] || {
+    echo 'Sandbox runners require x64' >&2; exit 1
+}
+[[ $(id -u) != 0 ]] || {
+    echo 'Install as the rootless runner owner' >&2
     exit 1
 }
 for tool in podman gh systemctl systemd-notify; do
     command -v "$tool" >/dev/null
 done
-[[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || exit 1
+[[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || {
+    echo 'Rootless Podman is required; rootful Docker is not supported' >&2; exit 1
+}
 if [[ -n ${CI_RUNNER_CPUSET:-} && ! "$CI_RUNNER_CPUSET" =~ ^[0-9,-]+$ ]]; then
     echo 'CI_RUNNER_CPUSET must be a CPU list' >&2
     exit 1
 fi
 
-here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 previous_image=$(podman image inspect localhost/tl3-ci-runner:phase1 --format '{{.Id}}' 2>/dev/null) \
     || previous_image=
 podman build --cpu-period=100000 --cpu-quota=200000 --memory=6g \
+    --build-arg "TARGETARCH=$image_arch" \
     --tag localhost/tl3-ci-runner:phase1 "$here"
 image=$(podman image inspect localhost/tl3-ci-runner:phase1 --format '{{.Id}}')
 image="sha256:${image#sha256:}"
@@ -35,7 +44,13 @@ image="sha256:${image#sha256:}"
 install -d -m 700 "$HOME/.local/lib/tl3-ci-runners" "$HOME/.config/tl3-ci-runners"
 install -d -m 755 "$HOME/.config/systemd/user"
 install -C -m 700 "$here/runner-slot.sh" "$HOME/.local/lib/tl3-ci-runners/runner-slot.sh"
+install -C -m 700 "$here/runner-platform.sh" "$HOME/.local/lib/tl3-ci-runners/runner-platform.sh"
 install -C -m 644 "$here/$prefix@.service" "$HOME/.config/systemd/user/$prefix@.service"
+if [[ "$runner_host" == celestia ]]; then
+    install -d -m 755 "$HOME/.config/systemd/user/$prefix@.service.d"
+    printf '[Service]\nCPUWeight=50\nNice=5\n' \
+        > "$HOME/.config/systemd/user/$prefix@.service.d/50-workstation.conf"
+fi
 # The shared tag can change under either profile. Move every installed pin
 # before removing any old image, while preserving each profile's CPU placement.
 previous_images=("$previous_image")
@@ -50,7 +65,7 @@ if [[ "$profile" == sandbox ]]; then
 fi
 # Preserve an operator's CPU placement on an ordinary rerun.
 if [[ ! -f "$config" || ${CI_RUNNER_CPUSET+x} ]]; then
-    printf 'CI_RUNNER_IMAGE=%s\nCI_RUNNER_CPUSET=%s\n' "$image" "${CI_RUNNER_CPUSET:-40-79}" \
+    printf 'CI_RUNNER_IMAGE=%s\nCI_RUNNER_CPUSET=%s\n' "$image" "${CI_RUNNER_CPUSET:-$default_cpuset}" \
         > "$config"
 else
     sed -i "s/^CI_RUNNER_IMAGE=.*/CI_RUNNER_IMAGE=$image/" "$config"

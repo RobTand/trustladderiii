@@ -13,6 +13,7 @@ pub mod looks;
 pub mod memory;
 mod notices;
 pub mod production;
+mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -925,14 +926,19 @@ impl Controller {
         });
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
-            if let Observation::ScratchSaved { node, reference } = observation {
-                commit.rows.push(put(
+            match observation {
+                Observation::ScratchSaved { node, reference } => commit.rows.push(put(
                     "saved_scratch",
                     reference.clone(),
                     json!({
                         "node": node, "reference": reference,
                     }),
-                ));
+                )),
+                Observation::ScratchPruned { reference } => commit.rows.push(RowChange::Delete {
+                    table: "saved_scratch".into(),
+                    id: reference.clone(),
+                }),
+                _ => {}
             }
         }
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
@@ -989,6 +995,12 @@ impl Controller {
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
+            if matches!(
+                observation,
+                Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. }
+            ) {
+                continue;
+            }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
         self.store.commit(&commit)?;
@@ -1205,6 +1217,7 @@ impl Controller {
                 question: n.question,
                 marker_key: None,
                 note: None,
+                scope_removals: None,
                 question_context,
                 steering: None,
                 request_text: request.source,
@@ -1216,6 +1229,7 @@ impl Controller {
                     ..
                 }
             ) {
+                delivery.scope_removals = scope::summary(snapshot, node)?;
                 let mut references = std::collections::BTreeSet::new();
                 for value in snapshot
                     .rows
@@ -1525,12 +1539,8 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
-            Observation::ScratchSaved { node, reference } => {
-                commit.rows.push(put(
-                    "saved_scratch",
-                    reference.clone(),
-                    json!({"node":node,"reference":reference}),
-                ));
+            // Older controllers queued ScratchSaved after writing it with completion.
+            Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. } => {
                 return Ok(None);
             }
             Observation::Progress { key, checkpoint } => {
@@ -1984,7 +1994,8 @@ impl Controller {
                                     })
                                     .then_some(reviewed)
                                     .flatten()
-                                    .map(str::to_owned);
+                                    .map(tl3_worktrees::CommitId::new)
+                                    .transpose()?;
                                 commit.rows.push(put(
                                     "check_plans",
                                     format!("{}:{sha}", node.0),
@@ -2321,7 +2332,9 @@ fn observation_upstream(
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
-        Observation::Rebased { .. } | Observation::ScratchSaved { .. } => Some(Upstream::Worktrees),
+        Observation::Rebased { .. }
+        | Observation::ScratchSaved { .. }
+        | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
             Some(Upstream::Mergify)
         }
@@ -2393,3 +2406,11 @@ fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
         .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
         .map(|item| item.value.as_str())
 }
+
+#[cfg(test)]
+mod git_tests;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../store/tests/support/mod.rs"]
+mod store_support;

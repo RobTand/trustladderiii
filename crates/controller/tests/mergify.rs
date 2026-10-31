@@ -1217,6 +1217,7 @@ fn delivery() -> Delivery {
         question: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
         question_context: None,
         checks: None,
         job_generation: None,

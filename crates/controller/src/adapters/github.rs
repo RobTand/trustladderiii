@@ -390,7 +390,7 @@ fn writer_input(
             violations: vec![],
         });
     }
-    let (kind, facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
+    let (kind, mut facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
         Notice::Ask { question } => {
             let binding = delivery
                 .question
@@ -519,6 +519,11 @@ fn writer_input(
             }}),
         ),
     };
+    if kind == MessageKind::Summary
+        && let Some(removed) = &delivery.scope_removals
+    {
+        facts["removed_changes"] = json!(removed);
+    }
     Ok(WriteRequest {
         kind,
         facts,
@@ -568,23 +573,29 @@ impl Adapter {
             .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
             .is_none()
         {
+            let mut policy = self.policy.clone();
             let input = if matches!(notice, Some(Notice::Incident { .. })) {
                 let context = delivery
                     .question_context
                     .as_ref()
                     .ok_or(Error::Invalid("incident needs its request context"))?;
+                let title = context["issue_title"]
+                    .as_str()
+                    .ok_or(Error::Invalid("incident request title missing"))?;
+                policy.request_title = Some(title.into());
+                policy.request_body.clear();
                 writer_input(
                     delivery,
                     notice,
-                    context["issue_title"]
-                        .as_str()
-                        .ok_or(Error::Invalid("incident request title missing"))?,
+                    title,
                     context["request"]
                         .as_str()
                         .ok_or(Error::Invalid("incident request link missing"))?,
                 )?
             } else {
                 let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                policy.request_title = Some(issue.title.clone());
+                policy.request_body = issue.body.clone().unwrap_or_default();
                 writer_input(
                     delivery,
                     notice,
@@ -592,7 +603,6 @@ impl Adapter {
                     issue.body.as_deref().unwrap_or(""),
                 )?
             };
-            let mut policy = self.policy.clone();
             policy.own_repository = Some(repo.clone());
             policy.own_issue = Some(delivery.issue);
             policy.own_pull_request = delivery.pull_request;
@@ -672,9 +682,19 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
                         })
                 })
                 .ok_or(Error::Invalid("incident id missing"))?;
-            Ok(Some(format!(
-                "Reply with \"clear incident {id}\" on https://github.com/{}/{}/issues/{} or on the request's issue after fixing the cause.",
+            let destination = format!(
+                "https://github.com/{}/{}/issues/{}",
                 delivery.repository.owner, delivery.repository.name, delivery.issue
+            );
+            let request = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["request"].as_str())
+                .and_then(|request| request.rsplit_once('('))
+                .and_then(|(_, url)| url.strip_suffix(')'))
+                .unwrap_or(&destination);
+            Ok(Some(format!(
+                "Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
             )))
         }
         Out::Notice {
@@ -682,5 +702,46 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
             ..
         } => Ok(delivery.note.clone()),
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod scope_summary_tests {
+    use super::*;
+
+    #[test]
+    fn scope_summary_keeps_scratch_and_trim_notes_separate_and_appends_each_once() {
+        let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
+        let removed =
+            "Changes not part of this request were removed: `__init__.py`, `example.com`.";
+        let delivery: Delivery = serde_json::from_value(json!({
+            "key":"summary:0", "epoch":1,
+            "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(Outcome::Stopped)},
+            "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+            "issue":42, "paths":[], "attempt":1, "round":0,
+            "note":saved, "scope_removals":removed
+        })).unwrap();
+        let request = writer_input(
+            &delivery,
+            Some(Notice::Summary(Outcome::Stopped)),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap();
+        assert_eq!(request.facts["removed_changes"], removed);
+        let prose = checked_draft(
+            &mut super::super::workers::writer::FakeWriter,
+            "summary",
+            request,
+            &Policy::default(),
+        )
+        .unwrap();
+        let rendered = format!(
+            "{prose}\n\n{}",
+            fixed_notice_text(&delivery).unwrap().unwrap()
+        );
+        assert_eq!(rendered.matches(removed).count(), 1);
+        assert_eq!(rendered.matches(saved).count(), 1);
+        assert!(rendered.ends_with(saved));
     }
 }

@@ -75,10 +75,6 @@ def _stage(worktree, root):
     )
     # PB snapshots a Git checkout. These fixed commands create its private input,
     # never invoking hooks or commands from the role's Git configuration.
-    env = {"PATH": os.defpath, "LANG": "C.UTF-8",
-           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-           "GIT_AUTHOR_NAME": "TL3", "GIT_AUTHOR_EMAIL": "tl3@example.invalid",
-           "GIT_COMMITTER_NAME": "TL3", "GIT_COMMITTER_EMAIL": "tl3@example.invalid"}
     commands = [("init", "--quiet", "--template=")]
     maker_checkout = getattr(worktree, "test_checkout", None)
     if maker_checkout is not None:
@@ -92,9 +88,22 @@ def _stage(worktree, root):
     if maker_checkout is None:
         commands.append(("commit", "--quiet", "-m", "Freeze test input"))
     for args in commands:
-        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
-                       cwd=root, env=env, check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _git(root, *args)
+
+
+def _git(root, *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_TERMINAL_PROMPT="0", GIT_NO_LAZY_FETCH="1",
+               GIT_EDITOR="true", GIT_SEQUENCE_EDITOR="true",
+               GIT_AUTHOR_NAME="TL3", GIT_AUTHOR_EMAIL="tl3@example.invalid",
+               GIT_COMMITTER_NAME="TL3", GIT_COMMITTER_EMAIL="tl3@example.invalid")
+    subprocess.run(["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null",
+                    "-c", "credential.helper=", "-c", "protocol.allow=never",
+                    "-c", "protocol.file.allow=always", "-c", "core.fsmonitor=false",
+                    "-c", "commit.gpgsign=false", *args],
+                   cwd=root, env=env, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _json_command(command):

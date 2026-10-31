@@ -50,7 +50,8 @@ fn fix_round_rebases_reviewed_tree_with_upstream_configuration() {
         .expect("a clean rebase retains its check plan");
     let rebased_reviewed = run.reviewed_sha.as_ref().expect("keep reproducing checks");
     assert_ne!(
-        rebased_reviewed, &reviewed,
+        rebased_reviewed.as_str(),
+        &reviewed,
         "the before tree must move with main"
     );
     assert_eq!(

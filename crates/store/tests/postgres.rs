@@ -362,10 +362,16 @@ fn credit_and_interning(settings: &tl3_config::Store) {
     let other = store.intern_repo("RobTand", "other").unwrap();
     let sha = "a".repeat(40);
     let commit = store.intern_commit("node-1", &sha).unwrap();
-    assert_eq!(
-        commit,
-        store.intern_commit("node-1", &sha.to_uppercase()).unwrap()
-    );
+    for length in [40, 64] {
+        let canonical = "a".repeat(length);
+        assert!(store.intern_commit("node-1", &canonical).is_ok());
+        assert!(
+            store
+                .intern_commit("node-1", &canonical.to_uppercase())
+                .is_err(),
+            "uppercase SHAs must be rejected"
+        );
+    }
     assert_ne!(commit, store.intern_commit("node-2", &sha).unwrap());
     let path = store.intern_path(repo, "src/lib.rs").unwrap();
     assert_eq!(path, store.intern_path(repo, "src/lib.rs").unwrap());

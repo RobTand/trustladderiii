@@ -1,4 +1,7 @@
-FROM ghcr.io/actions/actions-runner@sha256:0ce3288e48b012a83685998f683a2ae0cbd284fa722c090dda0af5443215cf30
+ARG TARGETARCH=amd64
+FROM ghcr.io/actions/actions-runner@sha256:0ce3288e48b012a83685998f683a2ae0cbd284fa722c090dda0af5443215cf30 AS runner-amd64
+FROM ghcr.io/actions/actions-runner@sha256:2089924d7fb6a96f1d1d2aca242ad6a07315b4ec2d7d275391ee265de70e941b AS runner-arm64
+FROM runner-${TARGETARCH}
 
 USER root
 RUN apt-get update \
@@ -21,8 +24,13 @@ ENV PATH=/home/runner/.cargo/bin:${PATH} \
     OPENBLAS_NUM_THREADS=1
 RUN download_dir=$(mktemp -d) \
     && cd "$download_dir" \
-    && curl -fsSLo rustup-init https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init \
-    && echo '5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4  rustup-init' | sha256sum -c - \
+    && case "$(uname -m)" in \
+        x86_64) rust_arch=x86_64; rustup_sha=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4 ;; \
+        aarch64) rust_arch=aarch64; rustup_sha=a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697 ;; \
+        *) exit 1 ;; \
+       esac \
+    && curl -fsSLo rustup-init "https://static.rust-lang.org/rustup/dist/$rust_arch-unknown-linux-gnu/rustup-init" \
+    && printf '%s  rustup-init\n' "$rustup_sha" | sha256sum -c - \
     && chmod 700 rustup-init \
     && ./rustup-init -y --no-modify-path --default-toolchain none \
     && rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy \

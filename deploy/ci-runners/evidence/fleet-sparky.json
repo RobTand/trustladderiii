@@ -1,0 +1,848 @@
+{
+  "recorded_at": "2026-10-31T18:02:01.743486+00:00",
+  "runtime_snapshot_at": "2026-10-31T16:51:02.045661+00:00",
+  "host": "sparky",
+  "requested_slots": 4,
+  "runtime_snapshot": {
+    "host": "sparky",
+    "architecture": "aarch64",
+    "podman_version": "4.9.3",
+    "rootless": true,
+    "cgroups": "v2",
+    "containers": [
+      {
+        "name": "tl3-ci-runner-1",
+        "image": "99055ccc0281e7f996cca30822611a9aced6ab114e77384312e274e23f389d96",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "slirp4netns",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-2",
+        "image": "99055ccc0281e7f996cca30822611a9aced6ab114e77384312e274e23f389d96",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "slirp4netns",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-4",
+        "image": "99055ccc0281e7f996cca30822611a9aced6ab114e77384312e274e23f389d96",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "slirp4netns",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      },
+      {
+        "name": "tl3-ci-runner-3",
+        "image": "99055ccc0281e7f996cca30822611a9aced6ab114e77384312e274e23f389d96",
+        "user": "runner",
+        "mounts": [],
+        "binds": [],
+        "privileged": false,
+        "cap_drop": [
+          "CAP_CHOWN",
+          "CAP_DAC_OVERRIDE",
+          "CAP_FOWNER",
+          "CAP_FSETID",
+          "CAP_KILL",
+          "CAP_NET_BIND_SERVICE",
+          "CAP_SETFCAP",
+          "CAP_SETGID",
+          "CAP_SETPCAP",
+          "CAP_SETUID",
+          "CAP_SYS_CHROOT"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "slirp4netns",
+        "pid_mode": "private",
+        "userns_mode": "",
+        "cpu_quota": 400000,
+        "cpu_period": 100000,
+        "cpuset_cpus": "",
+        "memory": 6442450944,
+        "memory_swap": 6442450944,
+        "pids_limit": 1024
+      }
+    ],
+    "listener_nice_values": [
+      "10",
+      "10",
+      "10",
+      "10"
+    ],
+    "unit_properties": [
+      "CPUWeight=20",
+      "Nice=10",
+      "ActiveState=active"
+    ],
+    "installed_sha256": {
+      ".local/lib/tl3-ci-runners/runner-slot.sh": "c5224d79c810628a479bd742188ec23bcf222701f72fd7ce68a52fdcc9bb24c2",
+      ".local/lib/tl3-ci-runners/runner-platform.sh": "08c5c224caa50d618488c395689325381dff0fb7cdc08f66117116cb4d209c62",
+      ".config/systemd/user/tl3-ci-runner@.service": "c4aa9db40396f12ad288bc27a821f4f8ed59223d7c190751e0df48b4ec96e324"
+    },
+    "user_manager_delegation": "DelegateControllers=cpu memory pids",
+    "lingering": "Linger=yes",
+    "installed_image": {
+      "id": "sha256:99055ccc0281e7f996cca30822611a9aced6ab114e77384312e274e23f389d96",
+      "architecture": "arm64"
+    }
+  },
+  "github_runner_access": {
+    "account": "RobTand",
+    "admin": true,
+    "authentication": "existing host login; gh auth status checked; no credentials copied"
+  },
+  "current_runners": [
+    {
+      "name": "tl3-sparky-slot-2-1793464915-32298",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "tl3-fleet",
+        "ARM64",
+        "tl3-host-sparky"
+      ]
+    },
+    {
+      "name": "tl3-sparky-slot-1-1793465521-32400",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "tl3-fleet",
+        "ARM64",
+        "tl3-host-sparky"
+      ]
+    },
+    {
+      "name": "tl3-sparky-slot-4-1793466097-5495",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "tl3-fleet",
+        "ARM64",
+        "tl3-host-sparky"
+      ]
+    },
+    {
+      "name": "tl3-sparky-slot-3-1793467630-29751",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "tl3-fleet",
+        "ARM64",
+        "tl3-host-sparky"
+      ]
+    },
+    {
+      "name": "tl3-sparky-slot-1-1793468763-4265",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "ARM64",
+        "tl3-host-sparky",
+        "tl3-fleet-diagnostic"
+      ]
+    },
+    {
+      "name": "tl3-sparky-slot-2-1793469583-31887",
+      "status": "offline",
+      "busy": false,
+      "labels": [
+        "self-hosted",
+        "linux",
+        "ARM64",
+        "tl3-host-sparky",
+        "tl3-fleet-diagnostic"
+      ]
+    }
+  ],
+  "canary": {
+    "id": 41221385179,
+    "url": "https://github.com/RobTand/trustladderiii/actions/runs/41221385179",
+    "head_sha": "1bc998e78dabf18fbf4f9bfe0891328b0ac44171",
+    "attempt": 2,
+    "status": "completed",
+    "conclusion": "failure",
+    "jobs": [
+      {
+        "id": 124602539439,
+        "name": "Rust",
+        "status": "completed",
+        "conclusion": "failure",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221385179/job/124602539439",
+        "runner_name": "tl3-sparky-slot-3-1793465089-1986",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-host-sparky"
+        ],
+        "started_at": "2026-10-31T17:12:58Z",
+        "completed_at": "2026-10-31T17:26:21Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T17:12:58Z",
+            "completed_at": "2026-10-31T17:12:59Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T17:12:59Z",
+            "completed_at": "2026-10-31T17:13:00Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T17:13:00Z",
+            "completed_at": "2026-10-31T17:13:00Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T17:13:00Z",
+            "completed_at": "2026-10-31T17:13:06Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T17:13:06Z",
+            "completed_at": "2026-10-31T17:13:06Z"
+          },
+          {
+            "name": "Sync worker environment",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T17:13:06Z",
+            "completed_at": "2026-10-31T17:13:07Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T17:13:07Z",
+            "completed_at": "2026-10-31T17:13:08Z"
+          },
+          {
+            "name": "Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T17:13:08Z",
+            "completed_at": "2026-10-31T17:13:19Z"
+          },
+          {
+            "name": "Format, lint, and test every Rust project",
+            "status": "completed",
+            "conclusion": "failure",
+            "number": 9,
+            "started_at": "2026-10-31T17:13:19Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          },
+          {
+            "name": "Post Cache Rust dependencies",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 15,
+            "started_at": "2026-10-31T17:26:20Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 16,
+            "started_at": "2026-10-31T17:26:20Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 17,
+            "started_at": "2026-10-31T17:26:20Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T17:26:20Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T17:26:20Z",
+            "completed_at": "2026-10-31T17:26:20Z"
+          }
+        ],
+        "elapsed_seconds": 803,
+        "jit_scrub_step_passed": true
+      },
+      {
+        "id": 124602540174,
+        "name": "Python",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221385179/job/124602540174",
+        "runner_name": "tl3-sparky-slot-1-1793464915-32122",
+        "labels": [
+          "self-hosted",
+          "tl3-fleet",
+          "tl3-host-sparky"
+        ],
+        "started_at": "2026-10-31T16:47:44Z",
+        "completed_at": "2026-10-31T16:51:30Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-31T16:47:44Z",
+            "completed_at": "2026-10-31T16:47:46Z"
+          },
+          {
+            "name": "Verify runner input is scrubbed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-31T16:47:46Z",
+            "completed_at": "2026-10-31T16:47:46Z"
+          },
+          {
+            "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-31T16:47:46Z",
+            "completed_at": "2026-10-31T16:47:46Z"
+          },
+          {
+            "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-31T16:47:46Z",
+            "completed_at": "2026-10-31T16:47:51Z"
+          },
+          {
+            "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-31T16:47:51Z",
+            "completed_at": "2026-10-31T16:47:52Z"
+          },
+          {
+            "name": "Install Rust",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-31T16:47:52Z",
+            "completed_at": "2026-10-31T16:47:53Z"
+          },
+          {
+            "name": "Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-31T16:47:53Z",
+            "completed_at": "2026-10-31T16:47:53Z"
+          },
+          {
+            "name": "Build deployment test helper",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-31T16:47:53Z",
+            "completed_at": "2026-10-31T16:48:35Z"
+          },
+          {
+            "name": "Lint and test every Python project",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-31T16:48:35Z",
+            "completed_at": "2026-10-31T16:50:52Z"
+          },
+          {
+            "name": "Post Cache deployment helper dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-31T16:50:52Z",
+            "completed_at": "2026-10-31T16:51:27Z"
+          },
+          {
+            "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-31T16:51:27Z",
+            "completed_at": "2026-10-31T16:51:28Z"
+          },
+          {
+            "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-31T16:51:28Z",
+            "completed_at": "2026-10-31T16:51:28Z"
+          },
+          {
+            "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 18,
+            "started_at": "2026-10-31T16:51:28Z",
+            "completed_at": "2026-10-31T16:51:28Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 19,
+            "started_at": "2026-10-31T16:51:28Z",
+            "completed_at": "2026-10-31T16:51:28Z"
+          }
+        ],
+        "elapsed_seconds": 226,
+        "jit_scrub_step_passed": true
+      }
+    ]
+  },
+  "first_attempt_jobs": [
+    {
+      "id": 124596489741,
+      "name": "Python",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221385179/job/124596489741",
+      "runner_name": "tl3-sparky-slot-1-1793464915-32122",
+      "labels": [
+        "self-hosted",
+        "tl3-fleet",
+        "tl3-host-sparky"
+      ],
+      "started_at": "2026-10-31T16:47:44Z",
+      "completed_at": "2026-10-31T16:51:30Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Verify runner input is scrubbed",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:51Z"
+        },
+        {
+          "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-31T16:47:51Z",
+          "completed_at": "2026-10-31T16:47:52Z"
+        },
+        {
+          "name": "Install Rust",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-31T16:47:52Z",
+          "completed_at": "2026-10-31T16:47:53Z"
+        },
+        {
+          "name": "Cache deployment helper dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-31T16:47:53Z",
+          "completed_at": "2026-10-31T16:47:53Z"
+        },
+        {
+          "name": "Build deployment test helper",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-31T16:47:53Z",
+          "completed_at": "2026-10-31T16:48:35Z"
+        },
+        {
+          "name": "Lint and test every Python project",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-31T16:48:35Z",
+          "completed_at": "2026-10-31T16:50:52Z"
+        },
+        {
+          "name": "Post Cache deployment helper dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-31T16:50:52Z",
+          "completed_at": "2026-10-31T16:51:27Z"
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-31T16:51:27Z",
+          "completed_at": "2026-10-31T16:51:28Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-31T16:51:28Z",
+          "completed_at": "2026-10-31T16:51:28Z"
+        },
+        {
+          "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-31T16:51:28Z",
+          "completed_at": "2026-10-31T16:51:28Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-31T16:51:28Z",
+          "completed_at": "2026-10-31T16:51:28Z"
+        }
+      ],
+      "elapsed_seconds": 226,
+      "jit_scrub_step_passed": true
+    },
+    {
+      "id": 124596490048,
+      "name": "Rust",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/RobTand/trustladderiii/actions/runs/41221385179/job/124596490048",
+      "runner_name": "tl3-sparky-slot-4-1793465087-16997",
+      "labels": [
+        "self-hosted",
+        "tl3-fleet",
+        "tl3-host-sparky"
+      ],
+      "started_at": "2026-10-31T16:47:44Z",
+      "completed_at": "2026-10-31T17:00:48Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-31T16:47:44Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Verify runner input is scrubbed",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:46Z"
+        },
+        {
+          "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-31T16:47:46Z",
+          "completed_at": "2026-10-31T16:47:51Z"
+        },
+        {
+          "name": "Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-31T16:47:51Z",
+          "completed_at": "2026-10-31T16:47:52Z"
+        },
+        {
+          "name": "Sync worker environment",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-31T16:47:52Z",
+          "completed_at": "2026-10-31T16:47:54Z"
+        },
+        {
+          "name": "Install Rust",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-31T16:47:54Z",
+          "completed_at": "2026-10-31T16:47:54Z"
+        },
+        {
+          "name": "Cache Rust dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-31T16:47:54Z",
+          "completed_at": "2026-10-31T16:47:56Z"
+        },
+        {
+          "name": "Format, lint, and test every Rust project",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 9,
+          "started_at": "2026-10-31T16:47:56Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        },
+        {
+          "name": "Post Cache Rust dependencies",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 15,
+          "started_at": "2026-10-31T17:00:46Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        },
+        {
+          "name": "Post Run astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 16,
+          "started_at": "2026-10-31T17:00:46Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17,
+          "started_at": "2026-10-31T17:00:46Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        },
+        {
+          "name": "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-31T17:00:46Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-31T17:00:46Z",
+          "completed_at": "2026-10-31T17:00:46Z"
+        }
+      ],
+      "elapsed_seconds": 784,
+      "jit_scrub_step_passed": true
+    }
+  ],
+  "current_service_state": {
+    "recorded_at": "2026-10-31T18:02:01.188463+00:00",
+    "units": [
+      {
+        "Id": "tl3-ci-runner@1.service",
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "UnitFileState": "disabled"
+      },
+      {
+        "Id": "tl3-ci-runner@2.service",
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "UnitFileState": "disabled"
+      },
+      {
+        "Id": "tl3-ci-runner@3.service",
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "UnitFileState": "disabled"
+      },
+      {
+        "Id": "tl3-ci-runner@4.service",
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "UnitFileState": "disabled"
+      }
+    ],
+    "status": "disabled pending reliable clean Rust CI qualification",
+    "installed_slot_script_sha256": "df936dfc8de4a85db23f00da97a6b7a6bcb5f48b086a503d50bb3361385015a3"
+  },
+  "first_failure": {
+    "source_log_sha256": "5a5bfe87eab08014f0fa04f9359441e1acbaa6940b71040850a5b5ac4c5405b1",
+    "error": "Option::unwrap() on None at crates/controller/tests/maker/real.rs:435; cargo workers integration executable",
+    "diagnosis": "Unresolved in the full rootless CI context. Controls on sparky passed natively through PrismaBuild, including with Git 2.56 from the pinned ARM image; an isolated instrumented Rust CI run on sparky also passed without reproducing the failure. Clean failures on both hosts remain unresolved. See fleet-ci-diagnostics.json. No application code or assertions were changed."
+  },
+  "pids_observations": [
+    {
+      "host": "sparky",
+      "time": 1793466891.1090338,
+      "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-134f3cb6214c22d82c61b62db4f6549bdbe3bfd3d12416fc7957081fa45d8701.scope",
+      "pids_current": "43",
+      "pids_max": "1024",
+      "pids_events": "max 0",
+      "memory_events": "low 0\nhigh 0\nmax 10628\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    }
+  ],
+  "pids_observation_limits": "One sampled CI cgroup observation per host, not a complete resource history; absence of a sampled limit event does not rule out later pressure.",
+  "installed_slot_script_sha256_current": "df936dfc8de4a85db23f00da97a6b7a6bcb5f48b086a503d50bb3361385015a3",
+  "rust_routing": {
+    "required_labels": [
+      "self-hosted",
+      "tl3-fleet",
+      "tl3-fast"
+    ],
+    "enabled": false,
+    "warm_cache_hosts": [
+      "celestia"
+    ],
+    "celestia_total_ci_slot_cap": 6,
+    "scope": "Verified PR branch; main workflow changes after coordinator merge"
+  },
+  "runtime_snapshot_notes": "Initial no-mount runtime inspection precedes the fast-label script update; current service state and current slot-script hash are recorded separately.",
+  "post_fast_routing_validation": "No production Rust run after fast routing: host excluded until full Rust qualification passes."
+}

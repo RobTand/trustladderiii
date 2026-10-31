@@ -40,6 +40,8 @@ class Hardening(unittest.TestCase):
         )
 
     def slot_stubs(self):
+        self.stub("uname", "echo x86_64")
+        self.stub("hostname", "echo dl380g10")
         self.stub("gh", 'printf "synthetic-jit-input\\n"')
         self.stub("podman", 'printf "podman %s\\n" "$*" >> "$EVENTS"')
         self.stub("systemd-notify", 'printf "notify %s\\n" "$*" >> "$EVENTS"')
@@ -98,6 +100,7 @@ class Hardening(unittest.TestCase):
 
     def installer_stubs(self):
         self.stub("uname", "echo x86_64")
+        self.stub("hostname", "echo dl380g10")
         self.stub("id", "echo 1000")
         self.stub("gh", "exit 0")
         self.stub("systemctl", 'printf "systemctl %s\\n" "$*" >> "$EVENTS"')

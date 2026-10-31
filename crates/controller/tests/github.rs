@@ -5,6 +5,8 @@ mod catchup_heads;
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
 mod real_writer;
+#[path = "github/request_vocabulary.rs"]
+mod request_vocabulary;
 #[path = "github/startup_ack.rs"]
 mod startup_ack;
 #[path = "github/steering.rs"]
@@ -483,6 +485,13 @@ fn post_event(
 fn main() {
     if let Some(mode) = env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--request-vocabulary=").map(str::to_owned))
+    {
+        request_vocabulary::run(&mode);
+        return;
+    }
+    if let Some(mode) = env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))
     {
         real_writer::run(&mode);
@@ -504,6 +513,7 @@ fn main() {
         notice_incidents::child(&args);
         return;
     }
+    request_vocabulary::all();
     let mut database = support::Database::start();
     if args.get(1).is_some_and(|arg| arg == "--catchup-heads") {
         catchup_heads::run(&mut database);
@@ -852,6 +862,7 @@ fn delivery(notice: Notice) -> Delivery {
         job_generation: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
     }
 }
 fn message_reconciliation() {
@@ -1935,7 +1946,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         .unwrap();
     let body: Value = serde_json::from_slice(&post.body).unwrap();
     let text = body["body"].as_str().unwrap();
-    assert!(text.lines().any(|line| line == "Reply with \"clear incident 5.0\" on https://github.com/owner/tl3/issues/17 or on the request's issue after fixing the cause."), "fixed instruction missing: {text}");
+    assert!(text.lines().any(|line| line == "Reply with \"clear incident 5.0\" on https://github.com/owner/tl3/issues/17 or on the request's issue at https://github.com/owner/sandbox/issues/12 after fixing the cause."), "fixed instruction missing request URL: {text}");
     for expected in [
         "Fix a greeting",
         "`https://github.com/owner/sandbox/issues/12`",

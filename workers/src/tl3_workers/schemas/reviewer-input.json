@@ -51,6 +51,9 @@
     "diff": {
       "type": "string"
     },
+    "scope_diff": {
+      "type": "string"
+    },
     "checks": {
       "type": "array",
       "items": {

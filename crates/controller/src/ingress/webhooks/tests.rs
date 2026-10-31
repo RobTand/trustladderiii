@@ -10,9 +10,7 @@ use std::{
     time::Duration,
 };
 
-#[allow(dead_code)]
-#[path = "../../../../store/tests/support/mod.rs"]
-mod database;
+use crate::store_support as database;
 
 fn ping(address: SocketAddr, id: usize) {
     let body = b"{}";
