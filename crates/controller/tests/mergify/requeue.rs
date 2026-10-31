@@ -66,7 +66,6 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         .key;
     drop(controller);
     let mut controller = open(settings, &api, root.path(), clock.clone());
-    controller.look_key(&key).unwrap();
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().posts,
@@ -118,7 +117,6 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     );
     drop(controller);
     let mut controller = open(settings, &api, root.path(), clock.clone());
-    controller.look_key(&key).unwrap();
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().requeues,
