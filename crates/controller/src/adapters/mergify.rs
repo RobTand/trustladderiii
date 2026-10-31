@@ -456,7 +456,10 @@ fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
     ))
 }
 fn adapter_error(error: tl3_mergify::Error) -> Error {
-    Error::Adapter(Box::new(error))
+    match error {
+        tl3_mergify::Error::GitHub(error) => error.into(),
+        error => Error::Adapter(Box::new(error)),
+    }
 }
 fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
