@@ -1,5 +1,7 @@
 #[path = "mergify/dequeue_followups.rs"]
 mod dequeue_followups;
+#[path = "mergify/head_checks.rs"]
+mod head_checks;
 mod support;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -86,6 +88,12 @@ struct State {
     pull_reads: usize,
     changing_reads: usize,
     reads: usize,
+    head_checks: Vec<Value>,
+    workflow: Option<Value>,
+    reruns: usize,
+    rerun_status: u16,
+    rerun_lost_response: bool,
+    required: bool,
 }
 impl State {
     fn new() -> Self {
@@ -112,6 +120,12 @@ impl State {
             pull_reads: 0,
             changing_reads: 0,
             reads: 0,
+            head_checks: vec![],
+            workflow: None,
+            reruns: 0,
+            rerun_status: 201,
+            rerun_lost_response: false,
+            required: true,
         }
     }
     fn checks(&self) -> Value {
@@ -119,6 +133,7 @@ impl State {
         for check in checks.as_array_mut().unwrap() {
             check["head_sha"] = self.pull["head"]["sha"].clone();
         }
+        checks.as_array_mut().unwrap().extend(self.head_checks.clone());
         checks
     }
     fn queue_check(&self) -> Value {
@@ -191,6 +206,24 @@ impl Respond for Api {
             return response;
         }
         match (method, path) {
+            ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
+                if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
+            ("GET", "/repos/owner/sandbox/actions/runs") => {
+                assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
+                ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":state.workflow.iter().collect::<Vec<_>>()}))
+            }
+            ("GET", "/repos/owner/sandbox/actions/runs/700") => ResponseTemplate::new(200).set_body_json(state.workflow.clone().unwrap()),
+            ("GET", "/repos/owner/sandbox/check-runs/900/annotations") => ResponseTemplate::new(200).set_body_json(json!([])),
+            ("POST", "/repos/owner/sandbox/actions/runs/700/rerun") => {
+                state.reruns += 1;
+                if state.rerun_status == 201 {
+                    let run = state.workflow.as_mut().unwrap();
+                    run["run_attempt"] = json!(2);
+                    run["status"] = json!("queued");
+                    run["conclusion"] = Value::Null;
+                }
+                ResponseTemplate::new(if state.rerun_lost_response { 503 } else { state.rerun_status }).set_body_json(json!({}))
+            }
             ("GET", "/repos/owner/sandbox/pulls/100") => {
                 state.pull_reads += 1;
                 if state.changing_reads > 0 {
@@ -207,6 +240,9 @@ impl Respond for Api {
                 "pull_request":{"url":"local"}})),
             ("POST", "/repos/owner/sandbox/issues/100/labels") => {
                 assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap(), json!({"labels":["tl3-queue"]}));
+                if state.workflow.as_ref().is_some_and(|run| run["head_sha"] == state.pull["head"]["sha"]) && !state.head_checks.is_empty() && state.required {
+                    assert_eq!(state.reruns, 1, "rerun must precede the next queue label write");
+                }
                 state.posts += 1;
                 let changed = !state.label;
                 state.label = true;
@@ -2313,6 +2349,12 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned)) {
+        let mut database = support::Database::start();
+        head_checks::scenario(&database.create("head_check"), &mode);
+        database.stop();
+        return;
+    }
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--followup-").map(str::to_owned))
@@ -2531,6 +2573,9 @@ fn main() {
             dirty,
             lazy,
         );
+    }
+    for mode in ["cancelled", "timed_out", "startup_failure", "failure", "permission", "restart", "otherhead", "optional"] {
+        head_checks::scenario(&database.create(&format!("head_{mode}")), mode);
     }
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
