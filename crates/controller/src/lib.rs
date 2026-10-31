@@ -1988,7 +1988,8 @@ impl Controller {
                                     })
                                     .then_some(reviewed)
                                     .flatten()
-                                    .map(str::to_owned);
+                                    .map(tl3_worktrees::CommitId::new)
+                                    .transpose()?;
                                 commit.rows.push(put(
                                     "check_plans",
                                     format!("{}:{sha}", node.0),
@@ -2399,3 +2400,11 @@ fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
         .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
         .map(|item| item.value.as_str())
 }
+
+#[cfg(test)]
+mod git_tests;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../store/tests/support/mod.rs"]
+mod store_support;
