@@ -163,3 +163,30 @@ def test_tracing_initialization_failure_does_not_fail_run(request_doc, monkeypat
     stderr = capfd.readouterr().err
     assert 'tl3_workers: MLflow export failed' in stderr
     assert 'fixture-secret-value' not in stderr
+
+
+@pytest.mark.parametrize('error,category,message', [
+    (ValueError('done requires code changes'), 'ValueError', 'done requires code changes'),
+    (RuntimeError('fixture-secret-value /private/key provider payload'), 'RuntimeError', 'worker run failed'),
+])
+def test_failed_worker_trace_records_a_safe_reason(request_doc, monkeypatch, exporters, receiver,
+                                                  error, category, message):
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    def fail(_):
+        raise error
+    monkeypatch.setattr(runtime, 'create_model', fail)
+    with pytest.raises(type(error)):
+        runtime.run(request_doc, lambda event: None)
+    for child in exporters:
+        child.wait(timeout=15)
+    spans = decode(packets)
+    root = next(span for span in spans if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    assert attrs['mlflow.traceTag.outcome'] == 'failed'
+    assert 'mlflow.traceTag.failure_class' in attrs
+    assert attrs['mlflow.traceTag.failure_class'] == category
+    assert attrs['mlflow.traceTag.failure_message'] == message
+    assert b'fixture-secret-value' not in packets[-1][2]
+    assert b'/private/key' not in packets[-1][2]
+    assert all(not span.events and not span.status.message for span in spans)
