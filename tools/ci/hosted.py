@@ -7,3 +7,7 @@ def plan(total):
 
 def aggregate(results):
     raise NotImplementedError
+
+
+def python_partition(files, total):
+    raise NotImplementedError

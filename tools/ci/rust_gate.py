@@ -156,7 +156,9 @@ def baseline_policy(config):
     return json.loads(previous.stdout)
 
 
-def test_workspace(manifest, jobs=None, report=None, enforce=True):
+def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
+    if shard is not None:
+        raise NotImplementedError("hosted shard selection")
     jobs = int(os.environ.get('RUST_TEST_THREADS', '4')) if jobs is None else jobs
     if jobs < 1:
         raise ValueError('Test concurrency must be positive')
