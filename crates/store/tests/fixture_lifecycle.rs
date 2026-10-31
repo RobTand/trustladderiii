@@ -3,7 +3,7 @@ mod support;
 use postgres::NoTls;
 use std::{
     fs::{self, File, FileTimes},
-    os::unix::{fs::MetadataExt, fs::symlink},
+    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Barrier},
@@ -102,8 +102,17 @@ fn dead_pid() -> u32 {
 
 fn leftover(name: &str, pid: &str) -> PathBuf {
     let root = std::env::temp_dir().join(name);
-    fs::create_dir_all(root.join("data")).unwrap();
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(root.join("data"))
+        .unwrap();
     fs::write(root.join("data/postmaster.pid"), pid).unwrap();
+    fs::set_permissions(
+        root.join("data/postmaster.pid"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
     fs::write(root.join("data/PG_VERSION"), "17\n").unwrap();
     old(&root);
     root
@@ -120,6 +129,11 @@ fn lifecycle() {
     let interrupted = leftover("tl3-store-pg-interrupted-setup", "");
     fs::remove_file(interrupted.join("data/postmaster.pid")).unwrap();
     fs::write(interrupted.join("fixture.pid"), format!("{}\n", dead_pid())).unwrap();
+    fs::set_permissions(
+        interrupted.join("fixture.pid"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
     old(&interrupted);
     let (database, root) = fixture();
     drop(database);
@@ -139,13 +153,22 @@ fn lifecycle() {
 fn concurrent() {
     let cache =
         PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).join("tl3-test-postgres");
-    fs::create_dir_all(cache.join("installing/binaries/17.4.0/bin")).unwrap();
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(cache.join("installing/binaries/17.4.0/bin"))
+        .unwrap();
     fs::write(
         cache.join("installing/binaries/17.4.0/bin/postgres"),
         "incomplete install",
     )
     .unwrap();
     fs::write(cache.join("install.lock"), format!("{}\n", dead_pid())).unwrap();
+    fs::set_permissions(
+        cache.join("install.lock"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let threads: Vec<_> = (0..2)
         .map(|_| {

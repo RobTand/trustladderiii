@@ -106,7 +106,7 @@ pub fn install(settings: &Settings, runtime: &tokio::runtime::Runtime) {
         assert!(settings.binary_dir().join("postgres").is_file());
         return;
     }
-    fs::create_dir(&staging).unwrap();
+    fs::DirBuilder::new().mode(0o700).create(&staging).unwrap();
     let mut installer = PostgreSQL::new(Settings {
         installation_dir: staging.join("binaries"),
         // setup also initializes this fixture's cluster; retain it after publication.
