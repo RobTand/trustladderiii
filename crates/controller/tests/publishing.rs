@@ -16,7 +16,7 @@ use std::{
 };
 use tl3_controller::executor::Output as Out;
 use tl3_controller::{
-    Bootstrap, Controller, LabelledIssue, Repository,
+    Bootstrap, Boundary, Controller, LabelledIssue, Repository,
     adapters::{
         self,
         github::APPROVAL_CHECK,
@@ -130,6 +130,8 @@ struct State {
     labels: bool,
     closed: bool,
     fail_reads: bool,
+    not_found: Option<&'static str>,
+    not_found_reads: usize,
     lose_response: Option<&'static str>,
     opens: usize,
     reopens: usize,
@@ -149,6 +151,8 @@ impl Default for State {
             labels: false,
             closed: false,
             fail_reads: false,
+            not_found: None,
+            not_found_reads: 0,
             lose_response: None,
             opens: 0,
             reopens: 0,
@@ -250,6 +254,13 @@ impl Respond for Api {
         let path = r.url.path();
         if let Some(response) = support::github::access_token(path, 1, "disposable") {
             return response;
+        }
+        if path.starts_with("/repos/RobTand/tl3-sandbox/")
+            && s.not_found.is_some_and(|resource| path.ends_with(resource))
+        {
+            s.not_found_reads += usize::from(method == "GET");
+            return ResponseTemplate::new(404)
+                .set_body_json(json!({"message":"fixture resource not found"}));
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
@@ -1132,7 +1143,129 @@ fn publication_recovery() {
     assert!(newer.execute(&approval).is_err());
 }
 
+fn publication_404_look(settings: &tl3_config::Store, case: &str) {
+    let kind = if case == "approval" {
+        EffectKind::PostApproval
+    } else {
+        EffectKind::OpenPr
+    };
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::new(Arc::new(Fixture::create(root.path())));
+    server.api.state.lock().unwrap().not_found = Some(if case == "approval" {
+        "check-runs"
+    } else {
+        "pulls"
+    });
+    let registry = || {
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(
+            Upstream::GitHub,
+            server.adapter(&root.path().join("github"), 0),
+        );
+        registry
+    };
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "publication-404".into(),
+            owner: repo().owner,
+            repo: repo().name,
+            installation: repo().installation,
+            number: 42,
+            title: "Fix the value".into(),
+            actor: 1,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    let attempts = std::cell::Cell::new(0);
+    let settle = |controller: &mut Controller| {
+        for _ in 0..300 {
+            if !controller.drive_once_with(|boundary, key| {
+                if boundary == Boundary::BeforeDispatch {
+                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                    if matches!(delivery.output, Out::Effect { kind: actual, .. } if actual == kind) {
+                        attempts.set(attempts.get() + 1);
+                    }
+                }
+            }).unwrap() {
+                return;
+            }
+        }
+        panic!("publication 404 did not settle");
+    };
+    settle(&mut controller);
+    assert_eq!(attempts.get(), 1);
+    let pending = controller
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .into_iter()
+        .find(|effect| {
+            let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+            matches!(delivery.output, Out::Effect { kind: actual, .. } if actual == kind)
+        })
+        .expect("the first publication 404 must be held");
+    assert_eq!(pending.state, tl3_store::EffectState::Uncertain);
+    if kind == EffectKind::OpenPr {
+        let delivery: Delivery = serde_json::from_value(pending.payload.clone()).unwrap();
+        assert_eq!(delivery.pull_request, None);
+    }
+    if case == "open-restart" {
+        drop(controller);
+        controller =
+            Controller::open(Store::open(settings).unwrap(), registry(), bootstrap()).unwrap();
+    }
+    let reads = server.api.state.lock().unwrap().not_found_reads;
+    controller.look_key(&pending.key).unwrap();
+    assert!(
+        server.api.state.lock().unwrap().not_found_reads > reads,
+        "the real look must read the still-missing resource"
+    );
+    assert_eq!(
+        controller.world().unwrap().nodes[0].fx_failures,
+        1,
+        "a held publication's 404 look must permit its one retry"
+    );
+    settle(&mut controller);
+    assert_eq!(
+        attempts.get(),
+        2,
+        "persistent 404 must dispatch exactly one retry"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot.rows.iter().any(|row| row.table == "incidents"
+            && row.value["signature"] == json!({"upstream":"GitHub", "class":"not_found"})),
+        "persistent publication 404 must end permanent not_found"
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
+    );
+    for _ in 0..5 {
+        assert!(
+            !controller.drive_once().unwrap(),
+            "persistent publication 404 must not loop"
+        );
+    }
+    assert_eq!(attempts.get(), 2);
+    println!("test publication_404_look_{case} ... ok");
+}
+
 fn main() {
+    if let Some(case) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        publication_404_look(&database.create("publication_404"), &case);
+        database.stop();
+        return;
+    }
     if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
         let root = tempfile::tempdir().unwrap();
         let mut router = workers(
@@ -1162,6 +1295,9 @@ fn main() {
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
     let mut database = support::Database::start();
+    for case in ["open", "approval", "open-restart"] {
+        publication_404_look(&database.create(&format!("publication_404_{case}")), case);
+    }
     for mode in [
         "merged",
         "push",

@@ -921,7 +921,12 @@ impl Worktrees {
         }
         if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
             // Only adopt a checkout whose stale gitlink points into this repository.
-            let link = fs::read(path.join(".git")).map_err(|_| Error::WorktreeOccupied)?;
+            let link = fs::read(path.join(".git")).map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::IsADirectory => {
+                    Error::WorktreeOccupied
+                }
+                _ => Error::Io,
+            })?;
             let expected = self.common.join("worktrees");
             let old_admin = gitlink(&link)?;
             if old_admin.parent() != Some(expected.as_path()) {
@@ -1372,8 +1377,8 @@ impl Worktrees {
 
     fn abort_rebase(&self, path: &Path) -> Result<(), Error> {
         self.run(path, "abort rebase", ["rebase", "--abort"])
-            .map_err(|_| Error::Recovery)?;
-        self.require_clean(path).map_err(|_| Error::Recovery)
+            .map_err(recovery_error)?;
+        self.require_clean(path).map_err(recovery_error)
     }
 
     fn checkouts(&self) -> Result<Vec<Checkout>, Error> {
@@ -1673,6 +1678,13 @@ struct Invocation {
     environment: Vec<(OsString, Option<OsString>)>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+}
+
+fn recovery_error(error: Error) -> Error {
+    match error {
+        Error::Git { .. } | Error::DirtyWorktree => Error::Recovery,
+        error => error,
+    }
 }
 
 #[cfg(test)]
