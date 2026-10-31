@@ -230,7 +230,7 @@ impl Worktrees {
         let path = self.destination(path)?;
         if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
             self.verify_checkout(&path, name)?;
-            if self.initializing_at_base(name, &path)? {
+            if self.initializing_at_start(name, &path)? {
                 return Ok(());
             }
             self.require_clean(&path)?;
@@ -238,7 +238,7 @@ impl Worktrees {
         Ok(())
     }
 
-    fn initializing_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+    fn initializing_at_start(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
         if !self.initializing(path)? {
             return Ok(false);
         }
@@ -257,7 +257,7 @@ impl Worktrees {
         self.remove_worktree_locked(name, path, true)
     }
 
-    /// Git's initializing lock and unchanged base authorize interrupted checkout repair.
+    /// Git's initializing lock and unchanged start authorize interrupted checkout repair.
     pub fn finish_prepare(
         &self,
         name: &BranchName,
@@ -275,7 +275,7 @@ impl Worktrees {
         if !writable {
             return Ok(false);
         }
-        if !self.initializing_at_base(name, path)? {
+        if !self.initializing_at_start(name, path)? {
             return Err(Error::Recovery);
         }
         // Repository ownership guarantees the killed controller's Git children have ended.
@@ -844,7 +844,7 @@ impl Worktrees {
                     self.restore_removal_gitlink(name, &path)?;
                 }
                 self.verify_checkout(&path, name)?;
-                let initializing = allow_deletions && self.initializing_at_base(name, &path)?;
+                let initializing = allow_deletions && self.initializing_at_start(name, &path)?;
                 if allow_deletions && !initializing {
                     let status = self.status(&path)?;
                     if status
@@ -859,7 +859,7 @@ impl Worktrees {
                 }
             }
             let initializing =
-                allow_deletions && path.exists() && self.initializing_at_base(name, &path)?;
+                allow_deletions && path.exists() && self.initializing_at_start(name, &path)?;
             let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
             if allow_deletions {
                 args.push(OsStr::new("--force"));

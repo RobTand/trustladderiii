@@ -122,6 +122,22 @@ pub(super) fn stage(
         ],
     )?;
     let served = root.join("served");
+    // An adopted head may not contain the durable main base in its history.
+    git(
+        &served,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-auto-maintenance",
+            "--no-write-fetch-head",
+            "--",
+            run.repository
+                .to_str()
+                .ok_or(Error::Invalid("repository path must be UTF-8"))?,
+            &run.base_sha,
+        ],
+    )?;
     git(&served, &["checkout", "--quiet", "--detach", head])?;
     let base = git(
         &served,

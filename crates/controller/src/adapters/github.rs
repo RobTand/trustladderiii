@@ -197,7 +197,7 @@ impl Executor for Adapter {
             .get(&question.repository.installation)
             .ok_or(Error::Invalid("missing GitHub installation client"))?;
         let repo = format!("{}/{}", question.repository.owner, question.repository.name);
-        self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which one issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
+        self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
         Ok(())
     }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
