@@ -1,0 +1,54 @@
+{
+  "host": "dl380g10",
+  "observed_date": "2026-10-30",
+  "inspection": "Read-only unit/script copies, systemctl show, podman inspect, image inspect, and podman cp of the sandbox entrypoint. No live runner or TL3 changes.",
+  "files": [
+    {
+      "file": "tl3-ci-runner@.service",
+      "sha256": "0760a2277fdd667838d72e3e9f18d003f0ee6a55e078bff97230e0a342f5ba7c",
+      "source_matches_installed_bytes": true
+    },
+    {
+      "file": "tl3-ci-runner-sandbox@.service",
+      "sha256": "c27cb70168c6bfc2b4ef9ef124f07d5cba1aab961bf18308840963a73d635aea",
+      "source_matches_installed_bytes": true
+    },
+    {
+      "file": "runner-slot.sh",
+      "sha256": "7cfd0db93d52f9ff53efa0d23dd3c8ec2995fe93cb506d508bd2c5c572685bae",
+      "source_matches_installed_bytes": true
+    },
+    {
+      "file": "runner-entrypoint.sh",
+      "sha256": "07d5779d3f4bdc0647230a49748420343fb06d8e2d99018a217394cefb23bf52",
+      "source_matches_installed_bytes": true
+    }
+  ],
+  "loaded_units": {
+    "start_limit_interval_usec": 0,
+    "notify_access": "all",
+    "restart_steps": 5,
+    "restart_max_delay": "5min",
+    "drop_ins": []
+  },
+  "containers": {
+    "profiles": [
+      "tl3-ci-runner-1",
+      "tl3-ci-runner-sandbox-1"
+    ],
+    "nano_cpus": 4000000000,
+    "cpuset": "40-79",
+    "memory_bytes": 6442450944
+  },
+  "image": {
+    "id": "sha256:76afe4d116c62cfbd6748591ac07fe96f6f3d50451d4ec5264c86363320f6664",
+    "cargo_build_jobs": 4,
+    "rust_test_threads": 4,
+    "native_threads": 1
+  },
+  "differences": [
+    "The installed TL3 unit uses runner.env and the default slot-script prefix; sandbox uses %p.env and passes %i %p. Separate checked-in templates reproduce both units exactly.",
+    "The installed sandbox environment has an empty CI_RUNNER_CPUSET, which the shared script resolves to 40-79. Reinstall preserves the empty value; a fresh install writes 40-79 explicitly. Effective placement matches.",
+    "install.sh and the Containerfile are not installed host scripts. No installation or image rebuild was performed."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "recorded_at": "2026-10-30T19:50:47.661912+00:00",
+  "actor": {
+    "id": 24923402,
+    "login": "RobTand",
+    "type": "User"
+  },
+  "method": "POST",
+  "endpoint": "repos/RobTand/tl3-sandbox/git/refs",
+  "request": {
+    "ref": "refs/heads/tl3/issue-17-node-999",
+    "sha": "f9a76b6a9fc62518540d80cd989ad3d0bd35591e"
+  },
+  "returncode": 1,
+  "response": {
+    "message": "Reference update failed",
+    "documentation_url": "https://docs.github.com/rest/git/refs#create-a-reference",
+    "status": "422"
+  },
+  "scope": "repeat of the original denied-branch trial; historical actor was not captured",
+  "prismabuild_action": "668d3b4156507b36307a42a2e88d2f0765a6e140b2d63080549a84f88895d6bc",
+  "cas_payload_sha256": "5bad7ff7e916c5847d5235666803e32e0f0bebeaf5ec77760acb2e5cae5dfe45"
+}

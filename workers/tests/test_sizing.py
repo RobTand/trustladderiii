@@ -54,3 +54,18 @@ def test_sized_ingest_requires_declarations_and_refuses_forged_evidence(tmp_path
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
     assert not any(event["event"] == "reply" for event in result.events)
+
+
+def test_ingest_schema_follower_succeeds_without_code_only_fields(tmp_path, request_doc, monkeypatch):
+    from worker_process import fill_visible_fields
+
+    request_doc['inputs']['forecast'] = {
+        'fit_tokens': 100, 'context_tokens': 150, 'overhead_tokens': {'prompt': 10},
+    }
+    fill_visible_fields(monkeypatch, {'forecast': FORGED['forecast']})
+    reply = {**BRIEF, 'files': []}
+    result = start_worker(tmp_path, request_doc, [{'content': json.dumps(reply)}])
+    assert result.exit_code == 0, result.stderr
+    actual = result.events[-1]['reply']
+    assert actual['forecast']['brief_tokens'] > 1
+    assert {key: value for key, value in actual.items() if key != 'forecast'} == reply

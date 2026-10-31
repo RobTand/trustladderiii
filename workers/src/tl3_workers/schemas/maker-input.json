@@ -38,12 +38,15 @@
     },
     "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
     "round": {"type": "integer", "enum": [0, 1]},
+    "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "feedback": {
       "type": "array", "minItems": 1,
       "items": {
         "type": "object",
         "properties": {
           "kind": {"enum": ["failed_check", "review_finding"]},
+          "id": {"$ref": "#/$defs/text"},
+          "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
           "report": {"$ref": "#/$defs/text", "maxLength": 16000},
           "goal_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
           "failed_tests": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"test": {"$ref": "#/$defs/text"}, "message": {"$ref": "#/$defs/text", "maxLength": 1000}}, "required": ["test", "message"], "additionalProperties": false}},
@@ -51,7 +54,8 @@
           "outside_paths_total": {"type": "integer", "minimum": 0},
           "ci_checks": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"name": {"$ref": "#/$defs/text"}, "summary": {"$ref": "#/$defs/text", "maxLength": 1000}, "url": {"type": ["string", "null"], "maxLength": 4096}}, "required": ["name", "summary", "url"], "additionalProperties": false}}
         },
-        "required": ["kind", "report", "goal_ids"], "additionalProperties": false
+        "required": ["kind", "report", "goal_ids"], "additionalProperties": false,
+        "dependentRequired": {"id": ["reviewed_sha"], "reviewed_sha": ["id"]}
       }
     },
     "tests": {

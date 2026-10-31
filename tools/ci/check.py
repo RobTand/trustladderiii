@@ -90,7 +90,11 @@ def python(files):
             command.append("--locked")
         if "test" in config["project"].get("optional-dependencies", {}):
             command.extend(["--extra", "test"])
+        if directory == Path("workers"):
+            command.extend(["--with", "pytest-xdist==3.8.0"])
         command.extend(["--with", "pytest==9.0.2", "python", "-m", "pytest", "--durations=15"])
+        if directory == Path("workers"):
+            command.extend(["-n", "4"])
         # Nested projects own their files and run with their own dependencies.
         command.extend(
             f"--ignore={nested.relative_to(directory)}"

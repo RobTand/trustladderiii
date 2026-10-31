@@ -7,6 +7,7 @@ mod fake;
 mod json;
 mod process;
 pub(crate) mod protocol;
+pub(crate) mod reproducing;
 pub(crate) mod review;
 mod source;
 #[cfg(test)]
@@ -266,6 +267,17 @@ impl Supervisor {
             }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
+            inputs.as_object_mut().unwrap().remove("reviewed_sha");
+            if delivery.round == 1
+                && let Some(head) = &delivery.head_sha
+                && inputs["feedback"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["kind"] == "review_finding" && item["reviewed_sha"] == *head
+                    })
+                })
+            {
+                inputs["reviewed_sha"] = json!(head);
+            }
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);
@@ -281,6 +293,7 @@ impl Supervisor {
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "reviewer" {
             inputs = review::inputs(delivery, store, snapshot)?;
+            inputs["context_size"] = json!(self.limits.context_tokens);
         } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];
@@ -363,6 +376,22 @@ impl Supervisor {
             }
             let needs_files = session.is_some_and(|session| session["needs_files"] == true);
             request["resume_session"] = json!(delivery.round == 1 || needs_files);
+        } else if role == "reviewer" {
+            request["session_file"] = json!(
+                self.settings
+                    .runs
+                    .join("sessions")
+                    .join(&node)
+                    .join(format!("plan-{}", u8::from(delivery.replanned)))
+                    .join(format!("reviewer-attempt-{}.json", delivery.attempt))
+            );
+            let session = review::session(delivery, store)?;
+            if let Some(session) = &session {
+                request["last_accepted_generation"] = json!(session["generation"].as_u64().ok_or(
+                    Error::Invalid("reviewer session has no accepted generation")
+                )?);
+            }
+            request["resume_session"] = json!(delivery.round == 1 && session.is_some());
         }
         Ok(request)
     }

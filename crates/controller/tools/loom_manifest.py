@@ -17,6 +17,7 @@ env = {
     "MKL_NUM_THREADS": "1",
     "OPENBLAS_NUM_THREADS": "1",
     "RAYON_NUM_THREADS": "1",
+    "TMPDIR": "/home/rob/tmp",
     "TL3_SIM_SEED": "1450022",
 }
 rows = []
@@ -40,6 +41,6 @@ rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
     "demand": {"mem_gb": 6}, "env": env,
     "priority": -10, "timeout_s": 3600,
-    "argv": ["bash", "-c", "for mutant in ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage; do python3 crates/controller/tools/loom_mutants.py \"$mutant\" || exit; done"],
+    "argv": ["/usr/bin/python3.14", "-c", "import subprocess\nfor mutant in 'ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage'.split():\n    subprocess.run(['/usr/bin/python3.14', 'crates/controller/tools/loom_mutants.py', mutant], check=True)"],
 })
 print(json.dumps(rows, indent=2))

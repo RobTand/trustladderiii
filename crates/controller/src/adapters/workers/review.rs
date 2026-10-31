@@ -20,6 +20,14 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
+    Ok(store
+        .worker_document(&delivery.node().0.to_string(), "reviewer_session")?
+        .filter(|session| {
+            session["attempt"] == delivery.attempt && session["replanned"] == delivery.replanned
+        }))
+}
+
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
@@ -33,13 +41,38 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    for sha in [head, &run.base_sha] {
+    let session = session(delivery, store)?;
+    // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
+    let mut base = if delivery.round == 1 {
+        match run.reviewed_sha.as_deref() {
+            Some(reviewed) => reviewed,
+            None => session
+                .as_ref()
+                .map(|s| {
+                    s["head_sha"]
+                        .as_str()
+                        .ok_or(Error::Invalid("reviewer session has no reviewed head"))
+                })
+                .transpose()?
+                .unwrap_or(&run.base_sha),
+        }
+    } else {
+        &run.base_sha
+    };
+    for sha in [head, base, &run.base_sha] {
         if !matches!(sha.len(), 40 | 64)
             || !sha
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err(Error::Invalid("invalid review commit"));
+        }
+    }
+    if base != run.base_sha {
+        let common = git(&run.repository, &["merge-base", base, &run.base_sha])?;
+        if common.trim_ascii() != run.base_sha.as_bytes() {
+            // Rebasing moves the check base beyond the previously reviewed history.
+            base = &run.base_sha;
         }
     }
     let node = delivery.node().0.to_string();
@@ -55,19 +88,18 @@ pub(super) fn inputs(
     let criteria = criteria(store, delivery.node())?;
     let diff = git(
         &run.repository,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            &run.base_sha,
-            head,
-            "--",
-        ],
+        &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
     )?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
-    let inputs = json!({"goals": criteria["goals"], "base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
+        && fixes["head_sha"] == head
+    {
+        fixes.as_object_mut().unwrap().remove("head_sha");
+        inputs["review_fixes"] = fixes;
+    }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

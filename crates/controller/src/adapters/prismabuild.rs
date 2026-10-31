@@ -539,7 +539,7 @@ impl Executor for Adapter {
         let pending = snapshot
             .pending_effects
             .iter()
-            .filter(|effect| effect.kind == "PrismaBuild")
+            .filter(|effect| effect.kind == crate::executor::Upstream::PrismaBuild.kind())
             .map(|effect| serde_json::from_value::<Delivery>(effect.payload.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let watches = snapshot

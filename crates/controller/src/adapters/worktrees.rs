@@ -1,3 +1,4 @@
+mod reproducing;
 use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
@@ -82,6 +83,8 @@ enum Intent {
     },
     Rebase {
         target: String,
+        #[serde(default)]
+        pin_failed: bool,
     },
     Remove {
         expected: Option<String>,
@@ -273,7 +276,14 @@ impl Served {
     fn load(&self, delivery: &Delivery) -> Result<Option<Record>> {
         let record: Option<Record> = read(&self.record_path(delivery))?;
         if let Some(record) = &record
-            && serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)?
+            && (record.delivery.key != delivery.key
+                || record.delivery.generation != delivery.generation
+                || !same_repo(&record.delivery.repository, &delivery.repository)
+                || record.delivery.issue != delivery.issue
+                || serde_json::to_value(record.delivery.output)?
+                    != serde_json::to_value(delivery.output)?
+                || matches!(&record.intent, Intent::Push { head, .. }
+                    if delivery.head_sha.as_ref() != Some(head)))
         {
             return Err(Error::Invalid(
                 "worktree effect key reused with different payload",
@@ -321,8 +331,21 @@ impl Served {
                     .git
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
+                let mut pin_failed = false;
+                if let Some(run) = &delivery.checks
+                    && let Some(reviewed) = &run.reviewed_sha
+                {
+                    // Pin before rewriting the branch, including across a controller crash.
+                    if let Err(error) =
+                        reproducing::pin(self.git.common_directory(), branch, reviewed)
+                    {
+                        eprintln!("reviewed tree pin failed for {}: {error}", branch.as_str());
+                        pin_failed = true;
+                    }
+                }
                 Ok(Intent::Rebase {
                     target: target.as_str().into(),
+                    pin_failed,
                 })
             }
             Out::Effect {
@@ -401,7 +424,7 @@ impl Served {
                 }
                 write(&self.published_path(branch), &head.as_str())?;
             }
-            Intent::Rebase { target } => {
+            Intent::Rebase { target, pin_failed } => {
                 let target = CommitId::new(target).map_err(adapter)?;
                 let Some((head, base)) = self.git.branch_state(branch).map_err(adapter)? else {
                     return Ok(None);
@@ -435,6 +458,23 @@ impl Served {
                 match result {
                     RebaseResult::Clean { base, head } => {
                         if let Some(mut run) = record.delivery.checks.clone() {
+                            if *pin_failed {
+                                reproducing::unavailable(
+                                    &mut run,
+                                    "the reviewed tree pin failed before rebasing",
+                                );
+                            }
+                            if run.reviewed_sha.is_some() {
+                                if !writable {
+                                    return Ok(None);
+                                }
+                                reproducing::rebase(
+                                    self.git.common_directory(),
+                                    branch,
+                                    &mut run,
+                                    base.as_str(),
+                                );
+                            }
                             run.base_sha = base.as_str().into();
                             observations.push(Observation::CheckPlan {
                                 node: record.delivery.node(),
@@ -483,6 +523,7 @@ impl Served {
                             .map_err(adapter)?;
                     }
                     self.git.delete_local_branch(branch).map_err(adapter)?;
+                    reproducing::remove(self.git.common_directory(), branch)?;
                 }
                 if self.git.branch_state(branch).map_err(adapter)?.is_some()
                     || self

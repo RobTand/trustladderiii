@@ -92,6 +92,12 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             .map(|index| NodeId(index as u64))
             .collect();
         let mut details = load_request_details(&mut tx, &ids)?;
+        let failed_notices = snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "notice_failures")
+            .map(|r| serde_json::from_value::<crate::notices::FailedNotice>(r.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         for (index, node) in world.nodes.iter().enumerate() {
             let id = NodeId(index as u64);
             let request = request(&snapshot, id)?;
@@ -106,33 +112,40 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             } else {
                 &title
             };
-            let waiting_on = match node.waiting_on() {
-                Wait::Incident => "incident resolution",
-                Wait::Answer => "Rob's answer",
-                Wait::Resume => "resume",
-                Wait::Effect(kind) => effect_wait(kind),
-                Wait::WorkerReply => "the current task to finish",
-                Wait::CheckResults => "check results",
-                Wait::MergeQueue => "merge queue",
-                Wait::SlotOrFiles => "another change to finish using these files",
-                Wait::AgentPool => "a planner to become available",
-                Wait::None => "none",
-                Wait::UpstreamEvent => match node.phase {
-                    Phase::Ingesting => "the request to be read",
-                    Phase::Auditing => "the goals to be checked",
-                    Phase::Unplanned => "planning to begin",
-                    Phase::Planning { .. } => "a planner to become available",
-                    Phase::Ready(_) => "another change to finish using these files",
-                    Phase::Making => "the change to be written",
-                    Phase::Checking => "checks to finish",
-                    Phase::Reviewing => "the review to finish",
-                    Phase::Publishing => "the pull request to be published",
-                    Phase::Queued => "merge queue",
-                    Phase::Rebasing => "the branch update to finish",
-                    Phase::AwaitingRob => "Rob's answer",
-                    Phase::Stopping(_) => "cleanup to finish",
-                    Phase::Closed(_) => "none",
-                },
+            let failed_question = failed_notices.iter().any(|f| matches!(f.delivery.output,
+                    crate::executor::Output::Notice { node: n, notice: tl3_kernel::Notice::Ask { question } }
+                    if n == id && node.question.is_some_and(|q| q.id == question)));
+            let waiting_on = if failed_question {
+                "the question post that failed; the question was never posted"
+            } else {
+                match node.waiting_on() {
+                    Wait::Incident => "incident resolution",
+                    Wait::Answer => "Rob's answer",
+                    Wait::Resume => "resume",
+                    Wait::Effect(kind) => effect_wait(kind),
+                    Wait::WorkerReply => "the current task to finish",
+                    Wait::CheckResults => "check results",
+                    Wait::MergeQueue => "merge queue",
+                    Wait::SlotOrFiles => "another change to finish using these files",
+                    Wait::AgentPool => "a planner to become available",
+                    Wait::None => "none",
+                    Wait::UpstreamEvent => match node.phase {
+                        Phase::Ingesting => "the request to be read",
+                        Phase::Auditing => "the goals to be checked",
+                        Phase::Unplanned => "planning to begin",
+                        Phase::Planning { .. } => "a planner to become available",
+                        Phase::Ready(_) => "another change to finish using these files",
+                        Phase::Making => "the change to be written",
+                        Phase::Checking => "checks to finish",
+                        Phase::Reviewing => "the review to finish",
+                        Phase::Publishing => "the pull request to be published",
+                        Phase::Queued => "merge queue",
+                        Phase::Rebasing => "the branch update to finish",
+                        Phase::AwaitingRob => "Rob's answer",
+                        Phase::Stopping(_) => "cleanup to finish",
+                        Phase::Closed(_) => "none",
+                    },
+                }
             };
             requests.push(RequestStatus {
                 issue: format!(

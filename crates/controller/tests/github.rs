@@ -1,7 +1,8 @@
 use tl3_controller::executor::Output as Out;
+#[path = "github/notice_incidents.rs"]
+mod notice_incidents;
 #[path = "github/steering.rs"]
 mod steering;
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -116,9 +117,49 @@ struct ApiState {
     new_delivery: bool,
     linked: Vec<Value>,
     lose_issue_reply: bool,
+    forbidden_question: bool,
+    question_status: Option<u16>,
+    rejected_question_posts: usize,
+    forbidden_filing: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
+impl support::github::Routes for ApiState {
+    fn pulls(&self) -> Value {
+        let mut pulls: Vec<_> = self.pull.iter().cloned().collect();
+        if self.catch_up_evidence {
+            let mut pull = event_fixture("pull_request")["pull_request"].clone();
+            pull["updated_at"] = json!(Utc::now());
+            pulls.push(pull);
+        }
+        json!(pulls)
+    }
+    fn checks(&self, sha: &str) -> Value {
+        let mut checks: Vec<_> = self
+            .checks
+            .iter()
+            .filter(|check| check["head_sha"] == sha)
+            .cloned()
+            .collect();
+        if self.catch_up_evidence {
+            checks.push(event_fixture("check_run")["check_run"].clone());
+        }
+        json!(checks)
+    }
+    fn suites(&self) -> Value {
+        if self.catch_up_evidence {
+            json!([event_fixture("check_suite")["check_suite"]])
+        } else {
+            json!([])
+        }
+    }
+    fn checks_mut(&mut self) -> Option<&mut Vec<Value>> {
+        Some(&mut self.checks)
+    }
+    fn pull_mut(&mut self) -> Option<&mut Value> {
+        self.pull.as_mut()
+    }
+}
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
@@ -134,13 +175,16 @@ impl Respond for Api {
             );
         let path = mapped_path.as_str();
         let method = request.method.as_str();
-        if path == "/app/installations/3/access_tokens" {
-            return ResponseTemplate::new(201).set_body_json(
-                json!({"token": "disposable-test-token", "expires_at": "2099-01-01T00:00:00Z"}),
-            );
+        if let Some(response) = support::github::access_token(path, 3, "disposable-test-token") {
+            return response;
         }
         if state.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if let Some(response) =
+            support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
+        {
+            return response;
         }
         match (method, path) {
             ("GET", "/app/hook/deliveries") => {
@@ -186,10 +230,27 @@ impl Respond for Api {
                 ResponseTemplate::new(202)
             }
 
-            ("GET", "/repos/owner/sandbox/issues/12/comments") => {
+            ("GET", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path
+                        .rsplit('/')
+                        .nth(1)
+                        .is_some_and(|issue| issue.parse::<u64>().is_ok())
+                    && path.ends_with("/comments") =>
+            {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
-            ("POST", "/repos/owner/sandbox/issues/12/comments") => {
+            ("POST", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path.ends_with("/comments") =>
+            {
+                if (state.forbidden_question || state.question_status.is_some())
+                    && original_path.contains("/sandbox/")
+                    && String::from_utf8_lossy(&request.body).contains("recommend option")
+                {
+                    state.rejected_question_posts += 1;
+                    return ResponseTemplate::new(state.question_status.unwrap_or(403));
+                }
                 state.posts += 1;
                 let mut comment = fixture(true)["comment"].clone();
                 comment["id"] = json!(100 + state.posts as u64);
@@ -205,7 +266,7 @@ impl Respond for Api {
                 state.deletes += 1;
                 ResponseTemplate::new(204)
             }
-            ("PATCH", "/repos/owner/sandbox/issues/12") => {
+            ("PATCH", path) if path.starts_with("/repos/owner/sandbox/issues/") => {
                 state.closed = true;
                 let mut issue = fixture(false)["issue"].clone();
                 issue["state"] = json!("closed");
@@ -229,6 +290,9 @@ impl Respond for Api {
                 | "/repos/owner/tl3/pulls",
             ) => ResponseTemplate::new(200).set_body_json(json!([])),
             ("POST", "/repos/owner/sandbox/issues") => {
+                if state.forbidden_filing {
+                    return ResponseTemplate::new(403);
+                }
                 let payload: Value = serde_json::from_slice(&request.body).unwrap();
                 let mut issue = fixture(false)["issue"].clone();
                 issue["number"] = json!(1000 + state.linked.len());
@@ -280,15 +344,6 @@ impl Respond for Api {
                 };
                 ResponseTemplate::new(200).set_body_json(events)
             }
-            ("GET", "/repos/owner/sandbox/pulls") => {
-                let mut pulls: Vec<_> = state.pull.iter().cloned().collect();
-                if state.catch_up_evidence {
-                    let mut pull = event_fixture("pull_request")["pull_request"].clone();
-                    pull["updated_at"] = json!(Utc::now());
-                    pulls.push(pull);
-                }
-                ResponseTemplate::new(200).set_body_json(pulls)
-            }
             ("POST", "/repos/owner/sandbox/pulls") => {
                 let body: Value = serde_json::from_slice(&request.body).unwrap();
                 let mut pull = event_fixture("pull_request")["pull_request"].clone();
@@ -303,44 +358,6 @@ impl Respond for Api {
                 pull["base"]["ref"] = body["base"].clone();
                 state.pull = Some(pull.clone());
                 ResponseTemplate::new(201).set_body_json(pull)
-            }
-            ("PATCH", "/repos/owner/sandbox/pulls/100") => {
-                let body: Value = serde_json::from_slice(&request.body).unwrap();
-                let pull = state.pull.as_mut().unwrap();
-                pull["state"] = body["state"].clone();
-                ResponseTemplate::new(200).set_body_json(pull)
-            }
-            ("GET", path) if path.ends_with("/check-runs") => {
-                let sha = path.split('/').nth(5).unwrap();
-                let mut checks: Vec<_> = state
-                    .checks
-                    .iter()
-                    .filter(|check| check["head_sha"] == sha)
-                    .cloned()
-                    .collect();
-                if state.catch_up_evidence {
-                    checks.push(event_fixture("check_run")["check_run"].clone());
-                }
-                ResponseTemplate::new(200).set_body_json(json!({"check_runs": checks}))
-            }
-            ("POST", "/repos/owner/sandbox/check-runs") => {
-                let mut check: Value = serde_json::from_slice(&request.body).unwrap();
-                check["id"] = json!(state.checks.len() + 1);
-                check["app"] = json!({"id": 123, "slug": "factory"});
-                state.checks.push(check.clone());
-                ResponseTemplate::new(201).set_body_json(check)
-            }
-            ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200)
-                .set_body_json(if state.catch_up_evidence {
-                    json!({"check_suites": [event_fixture("check_suite")["check_suite"]]})
-                } else {
-                    json!({"check_suites": []})
-                }),
-            ("GET", path)
-                if path.starts_with("/repos/owner/sandbox/issues/1")
-                    && path.ends_with("/comments") =>
-            {
-                ResponseTemplate::new(200).set_body_json(json!([]))
             }
             ("GET", path) if path.starts_with("/repos/owner/sandbox/issues/1") => {
                 let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
@@ -470,7 +487,19 @@ fn main() {
         steering::merge_pending_child(&args);
         return;
     }
+    if args.get(1).is_some_and(|arg| arg == "--notice-retry-child") {
+        notice_incidents::child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
+        notice_incidents::run(&mut database);
+        database.stop();
+        return;
+    }
+    notice_incidents::run(&mut database);
+    operations_and_delivery_log(&database.create("operations"));
+    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
         match scenario {
             "quote" => steering::dropped_change_quote(),
@@ -481,8 +510,6 @@ fn main() {
         database.stop();
         return;
     }
-    operations_and_delivery_log(&database.create("operations"));
-    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
@@ -791,6 +818,7 @@ fn delivery(notice: Notice) -> Delivery {
         request_text: None,
         checks: None,
         job_generation: None,
+        marker_key: None,
         note: None,
     }
 }

@@ -484,6 +484,14 @@ pub(super) fn parse_reply(
             if role == "reviewer" {
                 super::review::validate_reply(&value["reply"], inputs)?;
             }
+            if role == "maker" && value["reply"]["kind"] == "done" {
+                let reviewed = if inputs["round"] == 1 {
+                    inputs["reviewed_sha"].as_str()
+                } else {
+                    None
+                };
+                super::reproducing::check(&value["reply"], &inputs["feedback"], reviewed)?;
+            }
             protocol::validate_forecast_settings(&value["reply"], &inputs["forecast"])?;
         }
         reply = Some(value["reply"].clone());

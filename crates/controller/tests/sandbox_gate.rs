@@ -9,7 +9,7 @@ use tl3_github::{AppConfig, ClientOptions, GitHub};
 use tl3_kernel::{EffectKind, NodeId, Out};
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
-fn replay(name: &str, expected: bool) {
+fn replay(name: &str) -> Vec<bool> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../deploy/sandbox/evidence")
         .join(name);
@@ -102,6 +102,7 @@ fn replay(name: &str, expected: bool) {
         round: 0,
         replanned: false,
         question: None,
+        marker_key: None,
         note: None,
         question_context: None,
         checks: None,
@@ -123,10 +124,15 @@ fn replay(name: &str, expected: bool) {
             _ => None,
         })
         .collect();
-    assert_eq!(merges, [expected]);
+    merges
 }
 
 #[test]
 fn bootstrap_merge_has_no_queue_ci_evidence() {
-    replay("bootstrap", false);
+    assert_eq!(replay("bootstrap"), [false]);
+}
+
+#[test]
+fn approved_queue_merge_has_exact_head_and_queue_ci_evidence() {
+    assert_eq!(replay("queue-trials/approved/after"), [true]);
 }

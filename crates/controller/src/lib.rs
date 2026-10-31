@@ -18,6 +18,7 @@ pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
+mod notices;
 pub mod production;
 mod snapshot;
 pub mod status;
@@ -34,8 +35,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
-    Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
-    Store,
+    Commit, CreditEntry, Effect, EffectState, EffectTransition, RowChange, Snapshot, Store,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -409,6 +409,39 @@ impl Controller {
         Ok(())
     }
 
+    pub(crate) fn queue_observation(
+        &mut self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        key: &str,
+        index: usize,
+        observation: &Observation,
+    ) -> Result<()> {
+        let id = inbox_key(key, index, observation)?;
+        let aliases = [
+            id.clone(),
+            format!("{key}:{index:08}"),
+            format!("external:look:{key}:{index}:{}", evidence_key(observation)?),
+        ];
+        let value = json!(observation);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" && aliases.contains(&row.id) && row.value == value)
+            || self.store.event_matches(
+                &aliases
+                    .iter()
+                    .map(|id| format!("consume:{id}"))
+                    .collect::<Vec<_>>(),
+                &value,
+            )?
+        {
+            return Ok(());
+        }
+        commit.rows.push(put("inbox", id, value));
+        Ok(())
+    }
+
     /// Only news from an effect's own upstream releases its holds.
     pub fn retry_held_effects(&mut self, source: executor::Upstream) {
         self.held_effects.remove(&source);
@@ -654,6 +687,7 @@ impl Controller {
             if active && looks::outage_waiting(&snapshot, &delivery.key) {
                 continue;
             }
+            let mut quota = false;
             if active {
                 delivery = hydrate(&effect, &snapshot)?;
                 hook(Boundary::BeforeReconcile, &delivery.key);
@@ -696,15 +730,20 @@ impl Controller {
                 if completion.releases_holds() {
                     self.retry_held_effects(executor::upstream(delivery.output));
                 }
+                quota = completion
+                    .observations
+                    .iter()
+                    .any(|observation| matches!(observation, Observation::Quota { .. }));
                 for (index, observation) in completion.observations.iter().enumerate() {
-                    commit.rows.push(put(
-                        "inbox",
-                        format!("{}:{index:08}:{}", delivery.key, evidence_key(observation)?),
-                        json!(observation),
-                    ));
+                    self.queue_observation(
+                        &snapshot,
+                        &mut commit,
+                        &delivery.key,
+                        index,
+                        observation,
+                    )?;
                 }
             }
-            let quota = commit.rows.iter().any(|row| matches!(row, RowChange::Put { table, value, .. } if table == "inbox" && value.get("Quota").is_some()));
             if !quota {
                 commit.rows.push(RowChange::Delete {
                     table: "watches".into(),
@@ -852,6 +891,19 @@ impl Controller {
                 &mut commit,
             )?;
         }
+        if completion.ack == Ack::Permanent
+            && !matches!(delivery.output, DeliveryOutput::Effect { .. })
+        {
+            self.failed_notice(
+                &snapshot,
+                &delivery,
+                completion
+                    .failure_class
+                    .as_deref()
+                    .unwrap_or("permanent_failure"),
+                &mut commit,
+            )?;
+        }
         if completion.ack == Ack::Retryable
             && state == EffectState::Intended
             && matches!(delivery.output, DeliveryOutput::Effect { .. })
@@ -871,15 +923,17 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            if let Some(marker) = &delivery.marker_key {
+                commit.rows.push(RowChange::Delete {
+                    table: "notice_incidents".into(),
+                    id: marker.clone(),
+                });
+            }
             self.record_progress(&snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
-            commit.rows.push(put(
-                "inbox",
-                format!("{key}:{index:08}"),
-                json!(observation),
-            ));
+            self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
@@ -1093,6 +1147,7 @@ impl Controller {
                 checks,
                 job_generation: n.job,
                 question: n.question,
+                marker_key: None,
                 note: None,
                 question_context,
                 steering: None,
@@ -1103,9 +1158,14 @@ impl Controller {
                 ..
             } = output
             {
-                let id = format!("{}.{}", snapshot.revision.get() + 1, index);
+                let id = looks::incident_id(snapshot, index);
                 let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
-                let signature = format!("{source:?}:{class}");
+                let signature = looks::IncidentSignature {
+                    upstream: source,
+                    class: class.clone(),
+                };
+                let needs_rob =
+                    looks::incident_needs_rob(looks::IncidentCause::Kernel { needs_rob });
                 let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)
@@ -1125,11 +1185,14 @@ impl Controller {
                         summary: summary.clone(),
                         signature: signature.clone(),
                         effect: None,
+                        post_key: Some(key.clone()),
                     }),
                 ));
-                delivery.note = Some(format!(
-                    "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
-                    delivery.repository.owner, delivery.repository.name, delivery.issue
+                delivery.note = Some(looks::incident_note(
+                    &delivery.repository,
+                    delivery.issue,
+                    &id,
+                    &summary,
                 ));
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
@@ -1159,11 +1222,7 @@ impl Controller {
                     .push(put("watches", key.clone(), json!(delivery)));
             }
             commit.rows.push(self.allowance_row(delivery.clone()));
-            commit.effects.push(NewEffect {
-                key,
-                kind: format!("{:?}", executor::upstream(output.into())),
-                payload: json!(delivery),
-            });
+            commit.effects.push(delivery.into_effect());
         }
         for (index, node) in world.nodes.iter().enumerate() {
             let old = previous
@@ -1258,7 +1317,7 @@ impl Controller {
     }
 
     fn operations_comment(
-        &self,
+        &mut self,
         snapshot: &Snapshot,
         repository: &Repository,
         issue: u64,
@@ -1309,7 +1368,9 @@ impl Controller {
                 ));
             } else {
                 incident.open = false;
-                self.resume_incident_look(snapshot, &incident, commit)?;
+                if !self.retry_notice(snapshot, &incident, commit)? {
+                    self.resume_incident_look(snapshot, &incident, commit)?;
+                }
                 commit
                     .rows
                     .push(put("incidents", id.into(), json!(incident)));
@@ -1485,6 +1546,29 @@ impl Controller {
             },
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
+                if let Some(n) = world.nodes.get(node.0 as usize)
+                    && n.phase == tl3_kernel::Phase::Rebasing
+                    && let Some(mut fixes) = self
+                        .store
+                        .worker_document(&node.0.to_string(), "review_fixes")?
+                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                {
+                    fixes["head_sha"] = json!(sha);
+                    if let Some(reviewed) = &run.reviewed_sha {
+                        fixes["reviewed_sha"] = json!(reviewed);
+                    }
+                    if let Some(reason) = &run.reproducing_unavailable {
+                        for finding in fixes["findings"].as_array_mut().unwrap() {
+                            if finding.get("tests").is_some() {
+                                finding.as_object_mut().unwrap().remove("tests");
+                                finding["reason"] = json!(reason);
+                            }
+                        }
+                    }
+                    commit
+                        .rows
+                        .push(put("review_fixes", node.0.to_string(), fixes));
+                }
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
@@ -1624,11 +1708,12 @@ impl Controller {
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
                         let mut remaining = findings::MAX_REPORT_CHARS;
-                        for finding in reply["blocking_findings"]
+                        for (index, finding) in reply["blocking_findings"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
+                            .enumerate()
                         {
                             let report = format!(
                                 "{}: {}",
@@ -1652,6 +1737,15 @@ impl Controller {
                                 Vec::new()
                             };
                             reports.push(serde_json::to_value(findings::Finding {
+                                id: Some(format!("review-{generation}-{index}")),
+                                reviewed_sha: Some(
+                                    criteria["head_sha"]
+                                        .as_str()
+                                        .ok_or(Error::Invalid(
+                                            "review finding needs its exact commit",
+                                        ))?
+                                        .to_owned(),
+                                ),
                                 kind: findings::Kind::ReviewFinding,
                                 report,
                                 goal_ids,
@@ -1741,12 +1835,52 @@ impl Controller {
                             goals.iter().map(|g| g["id"].as_str()).collect();
                         let checked: BTreeSet<_> =
                             checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        let feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let previous = commit_sha(snapshot, n.head);
+                        let reviewed = if n.round == 1 { previous } else { None };
+                        let fixes =
+                            adapters::workers::reproducing::check(&reply, &feedback, reviewed);
                         if expected != checked || checks.len() != goals.len() {
                             Reply::RunFailed
-                        } else {
+                        } else if let Ok(fixes) = fixes {
+                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                                let mut run = check_run(snapshot, node, Some(&sha))?
+                                    .or(check_run(snapshot, node, previous)?)
+                                    .ok_or(Error::Invalid(
+                                        "review fix needs its original check plan",
+                                    ))?;
+                                run.plan.retain(|check| {
+                                    check.kind != adapters::prismabuild::Kind::Reproducing
+                                });
+                                run.plan.extend(fixes.checks);
+                                run.reviewed_sha = run
+                                    .plan
+                                    .iter()
+                                    .any(|check| {
+                                        check.kind == adapters::prismabuild::Kind::Reproducing
+                                    })
+                                    .then_some(reviewed)
+                                    .flatten()
+                                    .map(str::to_owned);
+                                commit.rows.push(put(
+                                    "check_plans",
+                                    format!("{}:{sha}", node.0),
+                                    json!(run),
+                                ));
+                                let mut evidence = fixes.evidence;
+                                evidence["head_sha"] = json!(sha);
+                                commit
+                                    .rows
+                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                            }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,
                             }
+                        } else {
+                            Reply::RunFailed
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
@@ -1769,6 +1903,17 @@ impl Controller {
                         }
                     }
                 };
+                if role == "reviewer" {
+                    commit.rows.push(put(
+                        "reviewer_session",
+                        node.0.to_string(),
+                        json!({"attempt": n.attempt, "replanned": n.replanned,
+                            "generation": generation,
+                            "head_sha": n.head.and_then(|head| snapshot.interned.iter()
+                                .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+                                .map(|i| i.value.clone()))}),
+                    ));
+                }
                 if role == "maker" && mapped != Reply::RunFailed {
                     commit.rows.push(put(
                         "maker_session",
@@ -1933,6 +2078,8 @@ impl Controller {
                 .worker_document(&node.0.to_string(), "maker_findings")?
                 .unwrap_or(json!([]));
             let finding = findings::Finding {
+                id: None,
+                reviewed_sha: None,
                 kind,
                 report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
                 goal_ids,
@@ -2022,6 +2169,10 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn inbox_key(key: &str, index: usize, observation: &Observation) -> Result<String> {
+    Ok(format!("{key}:{index:08}:{}", evidence_key(observation)?))
 }
 
 fn evidence_key(observation: &Observation) -> Result<String> {
@@ -2114,4 +2265,13 @@ fn check_run(
         .map(|r| serde_json::from_value(r.value.clone()))
         .transpose()
         .map_err(Into::into)
+}
+
+fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
+    let head = head?;
+    snapshot
+        .interned
+        .iter()
+        .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
+        .map(|item| item.value.as_str())
 }

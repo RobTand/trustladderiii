@@ -1,7 +1,6 @@
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 use bell::Bell;
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
     collections::BTreeSet,
@@ -110,6 +109,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         attempt: 1,
         round: 0,
         replanned: false,
+        marker_key: None,
         note: None,
         steering: None,
         request_text: None,
@@ -119,6 +119,9 @@ fn run(root: &Path, outside: bool) -> Delivery {
         checks: Some(CheckRun {
             repository: repo,
             base_sha: base,
+
+            reviewed_sha: None,
+            reproducing_unavailable: None,
             plan: vec![Check {
                 name: "value".into(),
                 kind: Kind::Demonstrating,
@@ -226,6 +229,42 @@ fn bounded_failure_details() {
     assert!(
         matches!(serde_json::from_value::<Observation>(legacy).unwrap(), Observation::Checks { failed_tests, .. } if failed_tests.is_empty())
     );
+}
+
+fn reproducing_check_plan_and_verdict() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+    let reviewed = delivery.checks.as_ref().unwrap().base_sha.clone();
+    value["reviewed_sha"] = serde_json::json!(reviewed);
+    value["plan"][0]["kind"] = serde_json::json!("reproducing");
+    let parsed = serde_json::from_value::<CheckRun>(value);
+    assert!(
+        parsed.is_ok(),
+        "the check plan must carry reproducing checks"
+    );
+    delivery.checks = Some(parsed.unwrap());
+    for (mode, expected) in [("done", true), ("check_fail", false)] {
+        let trial = tempfile::tempdir().unwrap();
+        let mut adapter = fixture(trial.path(), mode);
+        adapter.execute(&delivery).unwrap();
+        let requests = fs::read_dir(trial.path().join("queue")).unwrap();
+        let path = requests
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "request")
+            })
+            .unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            request["reviewed"], reviewed,
+            "freeze the exact reviewed commit"
+        );
+        let (report, pass, _) = observed(completion(&mut adapter, &delivery));
+        assert!(report);
+        assert_eq!(pass, expected, "a failed reproducer is a failed round");
+    }
 }
 
 fn pending_and_withdrawal() {
@@ -1207,26 +1246,18 @@ fn abandoned_inputs_are_removed() {
     );
 }
 
-struct Workers {
-    fake: adapters::workers::Fake,
-    head: String,
-}
-impl Executor for Workers {
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        let mut completion = self.fake.execute(delivery)?;
+fn workers(fake: impl Executor + 'static, head: String) -> impl Executor {
+    support::workers::Workers::new(None, fake, vec![], move |_, completion| {
         for observation in &mut completion.observations {
             match observation {
-                Observation::Made { sha, .. } => *sha = self.head.clone(),
+                Observation::Made { sha, .. } => *sha = head.clone(),
                 Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
                 _ => {}
             }
         }
-        Ok(completion)
-    }
-    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        self.fake.reconcile(delivery)
-    }
+    })
 }
+
 fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool, recover: bool) {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), outside);
@@ -1240,10 +1271,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     registry.register(Upstream::PrismaBuild, adapter);
     registry.register(
         Upstream::Workers,
-        Workers {
-            fake: adapters::workers::Fake::new(&fakes),
-            head: delivery.head_sha.clone().unwrap(),
-        },
+        workers(
+            adapters::workers::Fake::new(&fakes),
+            delivery.head_sha.clone().unwrap(),
+        ),
     );
     let mut controller = Controller::open(
         tl3_store::Store::open(settings).unwrap(),
@@ -1573,6 +1604,16 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 }
 
 fn main() {
+    if std::env::args().len() == 1
+        || std::env::args().nth(1).as_deref() == Some("--router-regression")
+    {
+        let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
+        support::executor_probe::assert_retire_delivery(&mut router);
+        if std::env::args().len() > 1 {
+            return;
+        }
+    }
+
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--r5") {
         let mut failures = 0;
@@ -1638,6 +1679,10 @@ fn main() {
         (
             "moving_job_reconcile_is_pending",
             moving_job_reconcile_is_pending,
+        ),
+        (
+            "reproducing_check_plan_and_verdict",
+            reproducing_check_plan_and_verdict,
         ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
