@@ -163,8 +163,11 @@ stay within Rob's six-job cap. No separate cache-warming runner is installed.
 
 The initial rollout passed both checks on celestia in run
 [41221383547](https://github.com/RobTand/trustladderiii/actions/runs/41221383547).
-Its Rust job took 10m28s; a successful dl380g10 batch at the same Rust source
-base took 27m08s. Cache state and host load were not controlled.
+Its Rust job took 10m28s. After fast routing,
+[41226136570](https://github.com/RobTand/trustladderiii/actions/runs/41226136570)
+passed with Rust in 9m49s and Python in 2m37s. A successful dl380g10 batch at
+the same Rust source base took 27m08s. Cache state and host load were not
+controlled.
 
 Both Spark canaries passed Python but failed Rust twice at
 `crates/controller/tests/maker/real.rs:435`, where a reproducing-check rebase
@@ -172,8 +175,9 @@ had no `reviewed_sha`. Their four slots per host are installed but disabled
 after checking the runners were idle. Keep them disabled until full Rust CI
 passes. The boundary suites passed on both hosts. Native PrismaBuild controls,
 including the image's Git version, also passed the failing worker scenario.
-The full rootless CI failure remains unresolved; no application assertions
-were weakened. See the per-host and diagnostic evidence for the failed
+An isolated sparky Rust run with temporary replay-error logging later passed
+in 15m59s, without reproducing the error. That does not resolve the two clean
+failures on each Spark. No application assertions were weakened. See the per-host and diagnostic evidence for the failed
 attempts and controls.
 
 Systemd 255 on the Sparks supports restart steps, but does not implement

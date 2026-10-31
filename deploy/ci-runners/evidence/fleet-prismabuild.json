@@ -176,5 +176,107 @@
     "Green boundary suites each ran 23 tests, plus bash syntax checks. All three terminal records exited 0 and published CAS receipts; payload hashes were independently read.",
     "Standalone ShellCheck on the sourced platform variable file raised SC2034. Linting both consumers with --external-sources checks that file in its intended context and passes.",
     "Initial full suites failed because old command-count assertions included hostname and uname reads. They now exclude only those read-only probes; registration, notification, launch and credential assertions remain."
-  ]
+  ],
+  "fast_routing_round": {
+    "red_commit": "67fa6afe",
+    "red_action": "00b632d62206317a5cfa02cdf9e634ea60f7e3cb6f09c5bf978c5a3e9fe2763c",
+    "green_commit": "7dfa06bd",
+    "green": [
+      {
+        "action_key": "8054a088bdbe5093aed4333dbc507b56581bfb923759384073ba2c473461e6f6",
+        "host": "dl380g10",
+        "returncode": 0,
+        "elapsed_s": 10.101908922195435,
+        "tests": 26,
+        "stdout_log": {
+          "bytes": 6369,
+          "path": "attempts/8054a088bdbe5093aed4333dbc507b56581bfb923759384073ba2c473461e6f6/756a613621a39fe8c6e2072e3e15efca136997de3b77206ac75f9b94fe6bc378/00000001.stdout.48bb174baa8e845818ce2fa5ca6f7cba9670d497a3c05cfa018822a153012ee7.log",
+          "sha256": "48bb174baa8e845818ce2fa5ca6f7cba9670d497a3c05cfa018822a153012ee7"
+        },
+        "receipt_sha256": "50bb7f687706853a5ac886b5a191272b7782849df9a6e067948268929e93f3bd",
+        "result": {
+          "sha256": "c293ad54ac7280d9cba56db8d6e4aca9207b01475de37fb05199a0bdfc4a6696",
+          "bytes": 3493
+        },
+        "payload_sha256": "c293ad54ac7280d9cba56db8d6e4aca9207b01475de37fb05199a0bdfc4a6696",
+        "snapshot_parent": "7dfa06bd89c2fce94818e0d5c045c6ca0df0121b"
+      },
+      {
+        "action_key": "d736db2a8955071b909a9b0c9e43549d9fdb2bd6db551936e5a8a8fe6c41b680",
+        "host": "sparky",
+        "returncode": 0,
+        "elapsed_s": 5.143896102905273,
+        "tests": 26,
+        "stdout_log": {
+          "bytes": 6452,
+          "path": "attempts/d736db2a8955071b909a9b0c9e43549d9fdb2bd6db551936e5a8a8fe6c41b680/1bf668d0996a84c290004e1c082f17dd079efab0c6713820fc8309eb5bf150a4/00000001.stdout.644480c4802e71a7f7a9d1cc9207c0b0f3a7abb4f36eacbc2cb3692bc14c98ed.log",
+          "sha256": "644480c4802e71a7f7a9d1cc9207c0b0f3a7abb4f36eacbc2cb3692bc14c98ed"
+        },
+        "receipt_sha256": "090382706684c908e1a19bc8d01bcc3412259fa881f6e4aef7131b5e6efd02d7",
+        "result": {
+          "sha256": "62c4db56395bfe9225f97a829e5566c27a6aac4a9379a441cab879b2357197a1",
+          "bytes": 3493
+        },
+        "payload_sha256": "62c4db56395bfe9225f97a829e5566c27a6aac4a9379a441cab879b2357197a1",
+        "snapshot_parent": "7dfa06bd89c2fce94818e0d5c045c6ca0df0121b"
+      },
+      {
+        "action_key": "3befb5c005a6485ab00d6b7c16320a1f3bba34db40fe8a60c1f5b03774a71c77",
+        "host": "sparklina",
+        "returncode": 0,
+        "elapsed_s": 4.834899663925171,
+        "tests": 26,
+        "stdout_log": {
+          "bytes": 6458,
+          "path": "attempts/3befb5c005a6485ab00d6b7c16320a1f3bba34db40fe8a60c1f5b03774a71c77/1305e027dac4f96335418eff30088fa079cd25004943b6a64ffeb01535b031fd/00000001.stdout.7199c22ce6997ccd817fc3aff4740b65bd8220bce57e198101b00ff363a885b8.log",
+          "sha256": "7199c22ce6997ccd817fc3aff4740b65bd8220bce57e198101b00ff363a885b8"
+        },
+        "receipt_sha256": "a735d96d32174c61004a4f1d1713112d9319b350235b5090992699047b10afca",
+        "result": {
+          "sha256": "e59bb375e61713fae835b1a59329f88b318ffc311ff6e334b3894e3590a60982",
+          "bytes": 3493
+        },
+        "payload_sha256": "e59bb375e61713fae835b1a59329f88b318ffc311ff6e334b3894e3590a60982",
+        "snapshot_parent": "7dfa06bd89c2fce94818e0d5c045c6ca0df0121b"
+      }
+    ],
+    "lint": {
+      "action_key": "ff686d38c447b02c228fdde990fb1c51a58acfd915ccafacb8b95e38040fa568",
+      "host": "dl380g10",
+      "returncode": 0,
+      "receipt_sha256": "eb05ede1e5fbc0ad56039c9fd76560b3743a35d4614339b697bc2cbbd093c48e",
+      "result": {
+        "bytes": 19,
+        "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+      },
+      "checks": [
+        "ShellCheck 0.11.0, external sources",
+        "Ruff 0.14.14 E9,F"
+      ]
+    },
+    "red": {
+      "action_key": "00b632d62206317a5cfa02cdf9e634ea60f7e3cb6f09c5bf978c5a3e9fe2763c",
+      "commit": "67fa6afe68313d6dd35319812e5b041286015863",
+      "host": "dl380g10",
+      "returncode": 1,
+      "stdout_log": {
+        "bytes": 7504,
+        "path": "attempts/00b632d62206317a5cfa02cdf9e634ea60f7e3cb6f09c5bf978c5a3e9fe2763c/3475bbe98d7b78c8964f2d97b8ccc2eab0ad1ad80cdde8c4b2a701865a123c5a/00000001.stdout.9966c975485b2a2428d85ca88f11c6e835ad431406b3632e60aba6db0865a6e9.log",
+        "sha256": "9966c975485b2a2428d85ca88f11c6e835ad431406b3632e60aba6db0865a6e9"
+      },
+      "failures": [
+        "FAIL: test_only_fast_tl3_hosts_register_fast_label (test_fleet.FleetTests.test_only_fast_tl3_hosts_register_fast_label) (host='celestia', profile='tl3-ci-runner')",
+        "AssertionError: False != True : only fast TL3 slots should serve the Rust queue",
+        "FAIL: test_only_fast_tl3_hosts_register_fast_label (test_fleet.FleetTests.test_only_fast_tl3_hosts_register_fast_label) (host='sparky', profile='tl3-ci-runner')",
+        "AssertionError: False != True : only fast TL3 slots should serve the Rust queue",
+        "FAIL: test_only_fast_tl3_hosts_register_fast_label (test_fleet.FleetTests.test_only_fast_tl3_hosts_register_fast_label) (host='sparklina', profile='tl3-ci-runner')",
+        "AssertionError: False != True : only fast TL3 slots should serve the Rust queue",
+        "FAIL: test_rust_routes_fast_and_python_keeps_fleet (test_fleet.FleetTests.test_rust_routes_fast_and_python_keeps_fleet)",
+        "AssertionError: 'fromJSON(\\'[\"self-hosted\",\"tl3-fleet\",\"tl3-fast\"]\\')' not found in '    runs-on: ${{ inputs.runner_host && inputs.runner_host != \\'fleet\\' && fromJSON(format(\\'[\"self-hosted\",\"tl3-fleet\",\"tl3-host-{0}\"]\\', inputs.runner_host)) || fromJSON(\\'[\"self-hosted\",\"tl3-fleet\"]\\') }}'",
+        "FAIL: test_warm_cache_targets_each_enabled_rust_host (test_fleet.FleetTests.test_warm_cache_targets_each_enabled_rust_host)",
+        "AssertionError: 'host: [celestia]' not found in \"name: Warm CI cache\\n\\non:\\n  push:\\n    branches: [main]\\n\\npermissions:\\n  contents: read\\n\\nconcurrency:\\n  group: warm-ci-cache-main\\n  cancel-in-progress: true\\n\\nenv:\\n  CARGO_BUILD_JOBS: '4'\\n  RUST_TEST_THREADS: '4'\\n  OMP_NUM_THREADS: '1'\\n  MKL_NUM_THREADS: '1'\\n  OPENBLAS_NUM_THREADS: '1'\\n  RAYON_NUM_THREADS: '1'\\n  TOKIO_WORKER_THREADS: '1'\\n\\njobs:\\n  warm-cache:\\n    name: Warm Rust cache\\n    runs-on: [self-hosted, tl3-fleet]\\n    timeout-minutes: 15\\n    steps:\\n      - name: Verify runner input is scrubbed\\n        run: |\\n          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then\\n            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'\\n            exit 1\\n          fi\\n          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'\\n      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\\n        with:\\n          persist-credentials: false\\n      - name: Install Rust\\n        run: |\\n          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy\\n          rustup default 1.99.1\\n      - name: Cache Rust dependencies\\n        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3\\n        with:\\n          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}\\n          shared-key: rust\\n      - name: Build test dependencies without running tests\\n        run: cargo test --workspace --all-targets --locked --no-run\\n      - name: Build deployment helper without running tests\\n        run: cargo build --locked -p tl3-controller --example tl3-deploy\\n\"",
+        "FAILED (failures=5)"
+      ]
+    }
+  }
 }
