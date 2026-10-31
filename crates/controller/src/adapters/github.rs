@@ -586,6 +586,9 @@ impl Adapter {
                 )?
             };
             let mut policy = self.policy.clone();
+            policy.own_repository = Some(repo.clone());
+            policy.own_issue = Some(delivery.issue);
+            policy.own_pull_request = delivery.pull_request;
             policy
                 .internal_terms
                 .extend([delivery.key.clone(), "TL3".into()]);

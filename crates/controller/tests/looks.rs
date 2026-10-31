@@ -217,6 +217,7 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
         .unwrap();
     assert_eq!(message.payload["repository"]["name"], "tl3");
     assert_eq!(message.payload["issue"], 17);
+    assert_incident_request(&message.payload);
     // The fake GitHub receipt proves the incident was sent to the operations target.
     let deliveries = adapters::delivered_notes(root.path()).unwrap();
     assert!(deliveries.iter().any(|text| text.contains(&id)));
@@ -559,6 +560,8 @@ fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
     }
     let id = incident(&mut c);
     let snapshot = c.snapshot().unwrap();
+    let message = c.effect(&format!("incident:{id}")).unwrap().unwrap();
+    assert_incident_request(&message.payload);
     assert!(
         snapshot
             .pending_effects
@@ -961,6 +964,18 @@ fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     c.look_due().unwrap();
     assert_eq!(c.snapshot().unwrap(), before);
 }
+fn assert_incident_request(payload: &serde_json::Value) {
+    let note = payload["note"].as_str().unwrap();
+    assert!(
+        note.contains("Request: `https://github.com/owner/sandbox/issues/12`"),
+        "incident request address must be inert: {note}"
+    );
+    assert!(
+        tl3_github::message::check_prose(note, &tl3_github::message::Policy::default()).is_ok(),
+        "incident prose must pass the reference policy: {note}"
+    );
+}
+
 fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let fixture = worktree_fixture::Fixture::create(root.path());
@@ -1071,6 +1086,20 @@ fn main() {
     if std::env::args().any(|arg| arg == "--dirty-worktree") {
         let mut db = support::Database::start();
         dirty_worktree_is_permanent(&db.create("dirty_worktree"));
+        db.stop();
+        return;
+    }
+    if let Some(case) = std::env::args()
+        .nth(1)
+        .and_then(|s| s.strip_prefix("--incident-references=").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        let settings = db.create("incident_references");
+        match case.as_str() {
+            "stall" => stalled_runs_and_incident_controls(&settings),
+            "read" => read_outages_keep_looking(&settings, false),
+            _ => panic!("unknown incident reference scenario"),
+        }
         db.stop();
         return;
     }

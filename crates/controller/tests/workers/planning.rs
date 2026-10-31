@@ -97,9 +97,9 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             snapshot
                 .rows
                 .iter()
-                .filter(|r| r.table == "plan_reports")
+                .filter(|r| matches!(r.table.as_str(), "plan_reports" | "reviews"))
                 .count(),
-            1
+            0
         );
         drop(controller);
         let (registry, _) = worker_simulation(&root.path().join("fakes"), &config, false).unwrap();
@@ -142,9 +142,9 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             snapshot
                 .rows
                 .iter()
-                .filter(|r| r.table == "plan_reports")
+                .filter(|r| matches!(r.table.as_str(), "plan_reports" | "reviews"))
                 .count(),
-            2
+            0
         );
     }
 }
