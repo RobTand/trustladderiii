@@ -253,7 +253,8 @@ still use the same durable intake and observation keys. A crash between applying
 an input and advancing its consumer cursor replays the same intake or observation key.
 
 `Webhooks::bind` starts receipt immediately, before controller recovery or source
-registration. Catch-up reads its snapshot through a separate read-only connection
+registration. Until registration, receipt retains one pending wake bit; it then
+forwards wakes directly to the controller source channel. Catch-up reads its snapshot through a separate read-only connection
 and fetches GitHub evidence on its own thread. The receipt
 loop remains the only ingress writer and commits each completed catch-up batch
 and its cursor together. At most one fetch runs at a time; gaps during a fetch

@@ -523,7 +523,7 @@ struct WebhookReceiver {
     store: Store,
     bootstrap: Bootstrap,
     secret: Vec<u8>,
-    catch_up: Option<CatchUp>,
+    catch_up: Option<Arc<dyn webhooks::Fetcher>>,
     catch_up_reader: Option<tl3_store::Reader>,
 }
 impl WebhookReceiver {
@@ -553,7 +553,7 @@ impl WebhookReceiver {
             store,
             bootstrap,
             secret,
-            catch_up,
+            catch_up: catch_up.map(|fetcher| Arc::new(fetcher) as Arc<dyn webhooks::Fetcher>),
             catch_up_reader,
         })
     }
@@ -597,8 +597,8 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
     }
 }
 
-impl Source for WebhookReceiver {
-    fn run(self, sender: Sender<Input>) -> Result<()> {
+impl WebhookReceiver {
+    fn run(self, notifications: Arc<webhooks::Notifications>) -> Result<()> {
         let Self {
             control,
             server,
@@ -638,59 +638,65 @@ impl Source for WebhookReceiver {
             .unwrap_or(Err(Error::Invalid("webhook HTTP server panicked")));
             let _ = exits.send(WebhookMessage::ServerExit(result));
         });
-        let mut gap = false;
-        let mut retry_ready = true;
-        let mut catching_up = None;
+        let mut state = webhooks::FetchState::Idle;
         let result = (|| {
             loop {
-                if gap && retry_ready && catching_up.is_none() {
-                    gap = false;
-                    if let Some(catch_up) = &catch_up {
-                        catching_up = Some(webhooks::fetch_catch_up(
-                            catch_up.clone(),
-                            catch_up_reader.take().expect("idle catch-up reader"),
-                            bootstrap.clone(),
-                            control.0.sender.clone(),
-                        ));
-                    }
-                }
                 match receiver
                     .recv()
                     .map_err(|_| Error::Invalid("webhook receiver stopped"))?
                 {
                     WebhookMessage::Request(request, reply) => {
-                        retry_ready = true;
                         let status = receive_delivery(&mut store, &secret, &request);
                         if status == 202 {
-                            let _ = sender.send(Input::Wake);
+                            notifications.wake();
                         }
                         let disconnected = reply.send(status).is_err();
-                        if status == 503 || disconnected {
-                            gap = true;
+                        if (status == 503 || disconnected || state.waiting())
+                            && let Some(catch_up) = &catch_up
+                        {
+                            state.request(|| {
+                                webhooks::fetch_catch_up(
+                                    Arc::clone(catch_up),
+                                    catch_up_reader.take().expect("idle catch-up reader"),
+                                    bootstrap.clone(),
+                                    control.0.sender.clone(),
+                                )
+                            });
                         }
                     }
                     WebhookMessage::Gap => {
-                        gap = true;
-                        retry_ready = true;
+                        if let Some(catch_up) = &catch_up {
+                            state.request(|| {
+                                webhooks::fetch_catch_up(
+                                    Arc::clone(catch_up),
+                                    catch_up_reader.take().expect("idle catch-up reader"),
+                                    bootstrap.clone(),
+                                    control.0.sender.clone(),
+                                )
+                            });
+                        }
                     }
                     WebhookMessage::CaughtUp(reader, result) => {
                         catch_up_reader = Some(*reader);
-                        if let Some(thread) = catching_up.take() {
-                            thread
-                                .join()
-                                .map_err(|_| Error::Invalid("GitHub catch-up panicked"))?;
-                        }
+                        let previous = std::mem::replace(&mut state, webhooks::FetchState::Idle);
+                        let wanted = matches!(&previous, webhooks::FetchState::Wanted(Some(_)));
+                        previous.join()?;
                         match result.and_then(|batch| batch.persist(&mut store)) {
-                            Ok(_) => {
-                                let _ = sender.send(Input::Wake);
-                            }
+                            Ok(_) => notifications.wake(),
                             Err(error) => {
                                 eprintln!("GitHub catch-up failed: {error}");
-                                if !gap {
-                                    gap = true;
-                                    retry_ready = false;
-                                }
+                                state = webhooks::FetchState::Wanted(None);
                             }
+                        }
+                        if wanted && let Some(catch_up) = &catch_up {
+                            state.request(|| {
+                                webhooks::fetch_catch_up(
+                                    Arc::clone(catch_up),
+                                    catch_up_reader.take().expect("idle catch-up reader"),
+                                    bootstrap.clone(),
+                                    control.0.sender.clone(),
+                                )
+                            });
                         }
                     }
                     WebhookMessage::Stop => return Ok(()),
@@ -703,11 +709,7 @@ impl Source for WebhookReceiver {
         })();
         control.0.server.stop();
         drop(receiver);
-        if let Some(thread) = catching_up {
-            thread
-                .join()
-                .map_err(|_| Error::Invalid("GitHub catch-up panicked"))?;
-        }
+        state.join()?;
         server_thread
             .join()
             .map_err(|_| Error::Invalid("webhook HTTP server panicked"))?;

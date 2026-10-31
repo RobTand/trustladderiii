@@ -203,37 +203,75 @@ fn loop_scenarios(database: &mut support::Database) {
         api.runtime.block_on(async {
             Mock::given(wiremock::matchers::method("GET"))
                 .and(wiremock::matchers::path("/repos/owner/sandbox/issues"))
-                .respond_with(Passes { entered, release: Mutex::new(blocked), api: Api(api.state.clone()) })
-                .with_priority(1).mount(&api.server).await;
+                .respond_with(Passes {
+                    entered,
+                    release: Mutex::new(blocked),
+                    api: Api(api.state.clone()),
+                })
+                .with_priority(1)
+                .mount(&api.server)
+                .await;
         });
-        let source = Webhooks::bind("127.0.0.1:0".parse().unwrap(), Store::open(&settings).unwrap(), bootstrap(), b"test-secret".to_vec(), Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap())).unwrap();
+        let source = Webhooks::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            Store::open(&settings).unwrap(),
+            bootstrap(),
+            b"test-secret".to_vec(),
+            Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+        )
+        .unwrap();
         let address = source.address();
         let control = source.control();
         let (sender, wakes) = mpsc::channel();
         let (done, finished) = mpsc::channel();
-        let running = thread::spawn(move || { done.send(source.run(sender)).unwrap(); });
+        let running = thread::spawn(move || {
+            done.send(source.run(sender)).unwrap();
+        });
         calls.recv_timeout(Duration::from_secs(10)).unwrap();
         if scenario == "stop" {
             control.stop();
-            assert!(finished.recv_timeout(Duration::from_millis(250)).is_err(), "Stop must join the outstanding fetch");
+            assert!(
+                finished.recv_timeout(Duration::from_millis(250)).is_err(),
+                "Stop must join the outstanding fetch"
+            );
             release.send(true).unwrap();
-            finished.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+            finished
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
             running.join().unwrap();
             assert!(calls.try_recv().is_err());
             println!("test startup_loop_stop_joins_inflight_fetch ... ok");
             continue;
         }
         if scenario == "gap" {
-            for _ in 0..12 { control.gap(); }
+            for _ in 0..12 {
+                control.gap();
+            }
             // A signed request is processed after all the Gap messages, before release.
-            assert_eq!(post(address, "gap-barrier", false, fixture(false), true), 202);
+            assert_eq!(
+                post(address, "gap-barrier", false, fixture(false), true),
+                202
+            );
             wakes.recv_timeout(Duration::from_secs(10)).unwrap();
         }
         release.send(scenario != "failure").unwrap();
         if scenario == "failure" {
-            assert!(calls.recv_timeout(Duration::from_millis(250)).is_err(), "failed passes must wait for an event, without a timer");
-            assert!(Store::open(&settings).unwrap().ingress_cursor("github-catch-up").unwrap().is_none());
-            assert_eq!(post(address, "retry-event", false, fixture(false), true), 202);
+            assert!(
+                calls.recv_timeout(Duration::from_millis(250)).is_err(),
+                "failed passes must wait for an event, without a timer"
+            );
+            assert!(
+                Store::open(&settings)
+                    .unwrap()
+                    .ingress_cursor("github-catch-up")
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                post(address, "retry-event", false, fixture(false), true),
+                202
+            );
             wakes.recv_timeout(Duration::from_secs(10)).unwrap();
         } else {
             wakes.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -245,12 +283,27 @@ fn loop_scenarios(database: &mut support::Database) {
         calls.recv_timeout(Duration::from_secs(10)).unwrap();
         release.send(true).unwrap();
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert!(Store::open(&settings).unwrap().ingress_cursor("github-catch-up").unwrap().is_some());
-        assert!(calls.recv_timeout(Duration::from_millis(250)).is_err(), "all gaps during a fetch must coalesce into exactly one follow-up pass");
+        assert!(
+            Store::open(&settings)
+                .unwrap()
+                .ingress_cursor("github-catch-up")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            calls.recv_timeout(Duration::from_millis(250)).is_err(),
+            "all gaps during a fetch must coalesce into exactly one follow-up pass"
+        );
         control.stop();
-        finished.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        finished
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
         running.join().unwrap();
-        assert_eq!(api.state.lock().unwrap().catch_up_passes, if scenario == "failure" { 1 } else { 2 });
+        assert_eq!(
+            api.state.lock().unwrap().catch_up_passes,
+            if scenario == "failure" { 1 } else { 2 }
+        );
         println!("test startup_loop_{scenario} ... ok");
     }
 }

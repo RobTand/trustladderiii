@@ -1,10 +1,11 @@
 use super::*;
+use std::sync::Mutex;
 
 /// Receipt starts at bind, before controller recovery or source registration.
 pub struct Webhooks {
     address: SocketAddr,
     control: WebhookControl,
-    receiver: mpsc::Receiver<Input>,
+    notifications: Arc<Notifications>,
     thread: Option<thread::JoinHandle<Result<()>>>,
 }
 
@@ -17,16 +18,21 @@ impl Webhooks {
         catch_up: Option<CatchUp>,
     ) -> Result<Self> {
         let source = WebhookReceiver::bind(address, store, bootstrap, secret, catch_up)?;
+        Ok(Self::start(source))
+    }
+
+    fn start(source: WebhookReceiver) -> Self {
         let address = source.address();
         let control = source.control();
-        let (sender, receiver) = mpsc::channel();
-        let thread = Some(thread::spawn(move || source.run(sender)));
-        Ok(Self {
+        let notifications = Arc::new(Notifications(Mutex::new(WakeTarget::Pending(false))));
+        let receipts = Arc::clone(&notifications);
+        let thread = Some(thread::spawn(move || source.run(receipts)));
+        Self {
             address,
             control,
-            receiver,
+            notifications,
             thread,
-        })
+        }
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -40,10 +46,8 @@ impl Webhooks {
 
 impl Source for Webhooks {
     fn run(mut self, sender: Sender<Input>) -> Result<()> {
+        self.notifications.register(sender);
         self.control.gap();
-        for input in &self.receiver {
-            let _ = sender.send(input);
-        }
         self.thread
             .take()
             .expect("webhook receiver thread")
@@ -59,7 +63,7 @@ impl Drop for Webhooks {
 }
 
 pub(super) fn fetch_catch_up(
-    catch_up: CatchUp,
+    catch_up: Arc<dyn Fetcher>,
     mut reader: tl3_store::Reader,
     bootstrap: Bootstrap,
     sender: Sender<WebhookMessage>,
@@ -88,8 +92,7 @@ fn catch_up_state(
     Ok((reader.ingress_cursor("github-catch-up")?, reader.load()?))
 }
 
-#[cfg(test)]
-trait Fetcher: Send + Sync {
+pub(super) trait Fetcher: Send + Sync {
     fn fetch(
         &self,
         since: DateTime<Utc>,
@@ -98,13 +101,80 @@ trait Fetcher: Send + Sync {
     ) -> Result<CatchUpBatch>;
 }
 
+impl Fetcher for CatchUp {
+    fn fetch(
+        &self,
+        since: DateTime<Utc>,
+        snapshot: tl3_store::Snapshot,
+        bootstrap: &Bootstrap,
+    ) -> Result<CatchUpBatch> {
+        CatchUp::fetch(self, since, snapshot, bootstrap)
+    }
+}
+
 #[cfg(test)]
 impl Webhooks {
-    fn bind_with_fetcher(
-        _store: Store,
-        _fetcher: Arc<dyn Fetcher>,
-    ) -> Result<Self> {
-        todo!("fakeable fetch boundary for the real receipt loop")
+    fn bind_with_fetcher(store: Store, fetcher: Arc<dyn Fetcher>) -> Result<Self> {
+        let reader = store.reader()?;
+        let mut source = WebhookReceiver::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            store,
+            tests::bootstrap(),
+            b"test-secret".to_vec(),
+            None,
+        )?;
+        source.catch_up = Some(fetcher);
+        source.catch_up_reader = Some(reader);
+        Ok(Self::start(source))
+    }
+}
+
+pub(super) struct Notifications(Mutex<WakeTarget>);
+enum WakeTarget {
+    Pending(bool),
+    Registered(Sender<Input>),
+}
+impl Notifications {
+    pub(super) fn wake(&self) {
+        match &mut *self.0.lock().expect("webhook notifications") {
+            WakeTarget::Pending(pending) => *pending = true,
+            WakeTarget::Registered(sender) => {
+                let _ = sender.send(Input::Wake);
+            }
+        }
+    }
+    fn register(&self, sender: Sender<Input>) {
+        let mut target = self.0.lock().expect("webhook notifications");
+        if matches!(*target, WakeTarget::Pending(true)) {
+            let _ = sender.send(Input::Wake);
+        }
+        *target = WakeTarget::Registered(sender);
+    }
+}
+
+pub(super) enum FetchState {
+    Idle,
+    Running(thread::JoinHandle<()>),
+    // Some: coalesced gaps during a fetch. None: a failed pass awaiting an event.
+    Wanted(Option<thread::JoinHandle<()>>),
+}
+impl FetchState {
+    pub(super) fn request(&mut self, start: impl FnOnce() -> thread::JoinHandle<()>) {
+        *self = match std::mem::replace(self, Self::Idle) {
+            Self::Idle | Self::Wanted(None) => Self::Running(start()),
+            Self::Running(thread) | Self::Wanted(Some(thread)) => Self::Wanted(Some(thread)),
+        };
+    }
+    pub(super) fn waiting(&self) -> bool {
+        matches!(self, Self::Wanted(None))
+    }
+    pub(super) fn join(self) -> Result<()> {
+        if let Self::Running(thread) | Self::Wanted(Some(thread)) = self {
+            thread
+                .join()
+                .map_err(|_| Error::Invalid("GitHub catch-up panicked"))?;
+        }
+        Ok(())
     }
 }
 
