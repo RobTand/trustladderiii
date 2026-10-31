@@ -35,7 +35,11 @@ pub(super) fn run(mode: &str) {
     config.workers.python = package.join(".venv/bin/python");
     config.workers.command = vec![
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/worker_model.py")
+            .join(if mode == "multiline" {
+                "tests/worker_model.py"
+            } else {
+                "tests/worker_transport.py"
+            })
             .to_str()
             .unwrap()
             .into(),
@@ -119,7 +123,11 @@ pub(super) fn run(mode: &str) {
         }),
         "unexpected posted reply: {body}"
     );
-    println!("test real_writer_{mode} ... ok");
+    if mode == "multiline" {
+        println!("test real_worker_contract_writer ... ok");
+    } else {
+        println!("test writer_transport_{mode} ... ok");
+    }
 }
 
 pub(super) fn classifier_contract() {
