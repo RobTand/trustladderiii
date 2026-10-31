@@ -119,6 +119,34 @@ pub(super) fn stage(
 mod tests {
     use super::*;
     #[test]
+    fn check_plan_base_rejects_uppercase_at_the_edge() {
+        for length in [40, 64] {
+            let mut value =
+                serde_json::to_value(crate::git_tests::Repo::new().delivery().checks.unwrap())
+                    .unwrap();
+            value["base_sha"] = serde_json::json!("A".repeat(length));
+            assert!(
+                serde_json::from_value::<CheckRun>(value).is_err(),
+                "reject uppercase check base before staging"
+            );
+        }
+    }
+
+    #[test]
+    fn check_plan_reviewed_rejects_uppercase_at_the_edge() {
+        for length in [40, 64] {
+            let mut value =
+                serde_json::to_value(crate::git_tests::Repo::new().delivery().checks.unwrap())
+                    .unwrap();
+            value["reviewed_sha"] = serde_json::json!("A".repeat(length));
+            assert!(
+                serde_json::from_value::<CheckRun>(value).is_err(),
+                "reject uppercase reviewed commit before staging"
+            );
+        }
+    }
+
+    #[test]
     fn hostile_check_stage() {
         crate::git_tests::hostile(
             concat!(module_path!(), "::hostile_check_stage").trim_start_matches("tl3_controller::"),
