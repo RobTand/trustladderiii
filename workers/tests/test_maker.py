@@ -663,6 +663,28 @@ def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request,
     assert 'Greeting still fails.' in json.dumps(history)
 
 
+@pytest.mark.parametrize('session_path_supplied', [False, True])
+def test_accepted_maker_session_missing_fails_closed(tmp_path, maker_request, session_path_supplied):
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    session = tmp_path / 'missing-accepted-session.json'
+    if session_path_supplied:
+        maker_request['session_file'] = str(session)
+    maker_request['resume_session'] = True
+    maker_request['last_accepted_generation'] = 0
+    maker_request['operation']['generation'] = 1
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 1, result.stderr
+    assert 'accepted maker session history is missing' in result.stderr
+    assert all(event['event'] != 'reply' for event in result.events)
+    assert git(root, 'rev-parse', 'HEAD') == before
+    assert (root / 'greeting.py').read_text() == "def greet(): return 'goodbye'\n"
+    assert not session.exists()
+    assert not session.with_suffix('.head').exists()
+
+
 def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, monkeypatch, tmp_path):
     root = Path(maker_request['worktree'])
     base = git(root, 'rev-parse', 'HEAD')
