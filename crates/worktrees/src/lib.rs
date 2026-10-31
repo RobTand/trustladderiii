@@ -238,6 +238,187 @@ impl Worktrees {
         Ok(())
     }
 
+    /// Save teardown scratch without changing the live index or working files.
+    /// The second parent retains staged content even when the working copy differs.
+    pub fn save_scratch(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        generation: u64,
+    ) -> Result<Option<String>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let path = self.destination(path)?;
+        let reference = format!("refs/tl3/scratch/{}/{generation}", name.as_str());
+        if self.resolve_optional(&reference)?.is_some() {
+            return Ok(Some(reference));
+        }
+        self.verify_checkout(&path, name)?;
+        match self.require_clean(&path) {
+            Ok(()) => return Ok(None),
+            Err(Error::DirtyWorktree) => {}
+            Err(error) => return Err(error),
+        }
+        let head = self.resolve(&name.reference())?;
+        let temporary = tempfile::tempdir_in(&self.common).map_err(|_| Error::Io)?;
+        let index = temporary.path().join("index");
+        let live_index = path_line(
+            &self
+                .run(
+                    &path,
+                    "scratch index",
+                    ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+                )?
+                .stdout,
+        )?;
+        if live_index.exists() {
+            fs::copy(live_index, &index).map_err(|_| Error::Io)?;
+        } else {
+            success(
+                "scratch read tree",
+                self.execute_index(&path, ["read-tree", "HEAD"], None, None, Some(&index))?,
+            )?;
+        }
+        let staged_tree = self.scratch_git(&path, &index, ["write-tree"])?;
+        let staged = self.scratch_git(
+            &path,
+            &index,
+            [
+                "commit-tree",
+                staged_tree.as_str(),
+                "-p",
+                head.as_str(),
+                "-m",
+                "Saved maker index",
+            ],
+        )?;
+        self.scratch_git(&path, &index, ["add", "-A"])?;
+        let tree = self.scratch_git(&path, &index, ["write-tree"])?;
+        let commit = self.scratch_git(
+            &path,
+            &index,
+            [
+                "commit-tree",
+                tree.as_str(),
+                "-p",
+                head.as_str(),
+                "-p",
+                staged.as_str(),
+                "-m",
+                "Saved maker scratch",
+            ],
+        )?;
+        // Objects and the owning ref must reach disk before cleanup is authorized.
+        self.run(
+            &self.repo,
+            "save scratch ref",
+            [
+                "-c",
+                "core.fsync=committed",
+                "-c",
+                "core.fsyncMethod=fsync",
+                "update-ref",
+                &reference,
+                &commit,
+                &"0".repeat(head.as_str().len()),
+            ],
+        )?;
+        Ok(Some(reference))
+    }
+
+    fn scratch_git<const N: usize>(
+        &self,
+        path: &Path,
+        index: &Path,
+        args: [&str; N],
+    ) -> Result<String, Error> {
+        let args = ["-c", "core.fsync=committed", "-c", "core.fsyncMethod=fsync"]
+            .into_iter()
+            .chain(args);
+        let output = success(
+            "save scratch",
+            self.execute_index(path, args, None, None, Some(index))?,
+        )?;
+        Ok(String::from_utf8(output.stdout)
+            .map_err(|_| Error::Response)?
+            .trim()
+            .into())
+    }
+
+    /// Only a durable scratch ref authorizes resetting a maker's unfinished edit.
+    pub fn clean_saved_scratch(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        reference: &str,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let path = self.destination(path)?;
+        if !reference.starts_with(&format!("refs/tl3/scratch/{}/", name.as_str()))
+            || self.resolve_optional(reference)?.is_none()
+        {
+            return Err(Error::Recovery);
+        }
+        if path.join(".git").exists() {
+            self.verify_checkout(&path, name)?;
+            let lock = path_line(
+                &self
+                    .run(
+                        &path,
+                        "removal lock",
+                        [
+                            "rev-parse",
+                            "--path-format=absolute",
+                            "--git-path",
+                            "locked",
+                        ],
+                    )?
+                    .stdout,
+            )?;
+            if lock.exists() && !self.initializing_at_base(name, &path)? {
+                return Err(Error::WorktreeOccupied);
+            }
+            self.run(&path, "clean saved scratch", ["reset", "--hard", "HEAD"])?;
+            self.run(&path, "clean saved untracked files", ["clean", "-fd"])?;
+            self.require_clean(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Called on worktree events; expiry never schedules a wakeup.
+    pub fn prune_scratch(&self, now_secs: u64) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let output = self.run(
+            &self.repo,
+            "list saved scratch",
+            [
+                "for-each-ref",
+                "--format=%(refname) %(objectname) %(committerdate:unix)",
+                "refs/tl3/scratch/",
+            ],
+        )?;
+        let text = std::str::from_utf8(&output.stdout).map_err(|_| Error::Response)?;
+        for line in text.lines() {
+            let mut fields = line.split_whitespace();
+            let reference = fields.next().ok_or(Error::Response)?;
+            let head = fields.next().ok_or(Error::Response)?;
+            let saved: u64 = fields
+                .next()
+                .ok_or(Error::Response)?
+                .parse()
+                .map_err(|_| Error::Response)?;
+            if now_secs.saturating_sub(saved) >= 30 * 24 * 60 * 60 {
+                self.run(
+                    &self.repo,
+                    "expire saved scratch",
+                    ["update-ref", "-d", reference, head],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn initializing_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
         if !self.initializing(path)? {
             return Ok(false);
@@ -1203,6 +1384,21 @@ impl Worktrees {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.execute_index(path, args, token, input, None)
+    }
+
+    fn execute_index<I, S>(
+        &self,
+        path: &Path,
+        args: I,
+        token: Option<&InstallationToken>,
+        input: Option<&[u8]>,
+        index: Option<&Path>,
+    ) -> Result<Output, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new("git");
         // Clear inherited tracing, config injection, alternate indexes and credential helpers.
         command
@@ -1252,6 +1448,9 @@ impl Worktrees {
             } else {
                 Stdio::null()
             });
+        if let Some(index) = index {
+            command.env("GIT_INDEX_FILE", index);
+        }
         if let Some(token) = token {
             let header = format!(
                 "Authorization: Basic {}",
