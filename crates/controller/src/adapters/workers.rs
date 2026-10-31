@@ -261,7 +261,11 @@ impl Supervisor {
                     inputs["feedback"] = feedback;
                 }
             }
-            if let Some(conflict) = store.worker_document(&node, "rebase_conflicts")?
+            if let Some(conflict) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "rebase_conflicts" && row.id == node)
+                .map(|row| &row.value)
                 && conflict["head"].as_str() == delivery.head_sha.as_deref()
             {
                 let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));

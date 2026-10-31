@@ -840,8 +840,12 @@ impl Worktrees {
         target: &CommitId,
     ) -> Result<Option<Vec<PathBuf>>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        self.verify_checkout(path, name)?;
-        self.merge_resolution_locked(path, target)
+        self.verify_repository(path)?;
+        let resolution = self.merge_resolution_locked(path, target)?;
+        if resolution.is_some() {
+            self.verify_checkout(path, name)?;
+        }
+        Ok(resolution)
     }
 
     fn merge_resolution_locked(
