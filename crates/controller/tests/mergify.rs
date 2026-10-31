@@ -2420,7 +2420,8 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
-    if let Some(mode) = std::env::args().nth(1)
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--held-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2745,7 +2746,14 @@ fn main() {
     for quota in [false, true] {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
-    for mode in ["quiet", "success", "merged", "stop", "stop-restart", "closed-restart"] {
+    for mode in [
+        "quiet",
+        "success",
+        "merged",
+        "stop",
+        "stop-restart",
+        "closed-restart",
+    ] {
         held::scenario(&database.create(&format!("held_{mode}")), mode);
     }
     database.stop();
