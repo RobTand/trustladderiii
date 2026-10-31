@@ -2889,6 +2889,7 @@ dependencies = [
  "postgres",
  "postgresql_embedded",
  "rand 0.8.8",
+ "regex",
  "reqwest 0.12.28",
  "rsa",
  "rustix",

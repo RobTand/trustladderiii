@@ -20,9 +20,10 @@ fn main() {
     let mut database = Database::start();
     let cases = [
         (
-            "review_fixes_worker_document",
-            review_fixes_worker_document as fn(&tl3_config::Store),
+            "mvp_schema_6_upgrades_to_hindsight",
+            mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
+        ("review_fixes_worker_document", review_fixes_worker_document),
         (
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
@@ -533,6 +534,92 @@ fn epochs_and_upgrades(settings: &tl3_config::Store) {
     assert_eq!(Store::open(settings).unwrap().load().unwrap(), after);
 }
 
+fn mvp_schema_6_upgrades_to_hindsight(settings: &tl3_config::Store) {
+    let mut client = raw(settings);
+    // Freeze #115's deployed migration bytes independently of the current list.
+    let deployed = [
+        include_str!("../migrations/0001_store.sql"),
+        include_str!("../migrations/0002_world_arrival.sql"),
+        include_str!("../migrations/0003_workers.sql"),
+        include_str!("../migrations/0004_ingress.sql"),
+        include_str!("../migrations/0005_worker_retirement.sql"),
+        include_str!("fixtures/mvp_schema_6.sql"),
+    ];
+    client
+        .batch_execute(
+            "CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)",
+        )
+        .unwrap();
+    for (index, sql) in deployed.iter().enumerate() {
+        client.batch_execute(sql).unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&((index + 1) as i32), sql],
+            )
+            .unwrap();
+    }
+    client.execute("INSERT INTO tl3_worker_progress (run_key, node_id, epoch, attempt, output_offset, unit, started_ms, external_wait) VALUES ('existing', '1', 1, 1, 0, 'tokens', 1, $1)", &[&json!({"upstream": "prismabuild", "key": "existing-action"})]).unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT MAX(version) FROM tl3_schema_migrations", &[])
+            .unwrap()
+            .get::<_, i32>(0),
+        6
+    );
+    let upgraded = Store::open(settings);
+    assert!(
+        upgraded.is_ok(),
+        "schema 6 must upgrade to Hindsight: {:?}",
+        upgraded.err()
+    );
+    for table in ["tl3_memory_outbox", "tl3_memory_health"] {
+        assert!(
+            client
+                .query_one("SELECT to_regclass($1)::text IS NOT NULL", &[&table])
+                .unwrap()
+                .get::<_, bool>(0),
+            "missing Hindsight table {table}"
+        );
+    }
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT external_wait FROM tl3_worker_progress WHERE run_key = 'existing'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, serde_json::Value>(0),
+        json!({"upstream": "prismabuild", "key": "existing-action"})
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT sql FROM tl3_schema_migrations WHERE version = 6",
+                &[]
+            )
+            .unwrap()
+            .get::<_, String>(0),
+        deployed[5]
+    );
+    let mut store = Store::open(settings).unwrap();
+    store
+        .queue_memory("upgrade-record", &json!({"summary": "after MVP"}))
+        .unwrap();
+    store.park_memory("upgrade-record", 422).unwrap();
+    assert!(store.pending_memories(0).unwrap().is_empty());
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT http_status FROM tl3_memory_outbox WHERE operation_id = 'upgrade-record'",
+                &[]
+            )
+            .unwrap()
+            .get::<_, i32>(0),
+        422
+    );
+}
+
 fn migrations_and_append_only(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let seed = seed(&mut store);
@@ -550,7 +637,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
     for table in ["tl3_events", "tl3_credit"] {
         for sql in [
