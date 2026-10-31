@@ -594,23 +594,29 @@ impl Adapter {
             .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
             .is_none()
         {
+            let mut policy = self.policy.clone();
             let input = if matches!(notice, Some(Notice::Incident { .. })) {
                 let context = delivery
                     .question_context
                     .as_ref()
                     .ok_or(Error::Invalid("incident needs its request context"))?;
+                let title = context["issue_title"]
+                    .as_str()
+                    .ok_or(Error::Invalid("incident request title missing"))?;
+                policy.request_title = Some(title.into());
+                policy.request_body.clear();
                 writer_input(
                     delivery,
                     notice,
-                    context["issue_title"]
-                        .as_str()
-                        .ok_or(Error::Invalid("incident request title missing"))?,
+                    title,
                     context["request"]
                         .as_str()
                         .ok_or(Error::Invalid("incident request link missing"))?,
                 )?
             } else {
                 let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+                policy.request_title = Some(issue.title.clone());
+                policy.request_body = issue.body.clone().unwrap_or_default();
                 writer_input(
                     delivery,
                     notice,
@@ -618,7 +624,6 @@ impl Adapter {
                     issue.body.as_deref().unwrap_or(""),
                 )?
             };
-            let mut policy = self.policy.clone();
             policy.own_repository = Some(repo.clone());
             policy.own_issue = Some(delivery.issue);
             policy.own_pull_request = delivery.pull_request;

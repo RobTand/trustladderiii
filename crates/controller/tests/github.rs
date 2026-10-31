@@ -5,6 +5,8 @@ mod catchup_heads;
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
 mod real_writer;
+#[path = "github/request_vocabulary.rs"]
+mod request_vocabulary;
 #[path = "github/startup_ack.rs"]
 mod startup_ack;
 #[path = "github/steering.rs"]
@@ -481,6 +483,18 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--real-worker-contracts") {
+        real_writer::run("multiline");
+        real_writer::classifier_contract();
+        return;
+    }
+    if let Some(mode) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--request-vocabulary=").map(str::to_owned))
+    {
+        request_vocabulary::run(&mode);
+        return;
+    }
     if let Some(mode) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))
@@ -504,9 +518,29 @@ fn main() {
         notice_incidents::child(&args);
         return;
     }
+    request_vocabulary::all();
     let mut database = support::Database::start();
     if args.get(1).is_some_and(|arg| arg == "--catchup-heads") {
         catchup_heads::run(&mut database);
+        database.stop();
+        return;
+    }
+    if let Some(case) = args.get(1).and_then(|arg| arg.strip_prefix("--gate-case=")) {
+        let settings = database.create("gate_case");
+        match case {
+            "commands" => steering::commands(&settings),
+            "answers" => steering::answers(&settings),
+            "replacement" => steering::replacement(&settings),
+            "correction" => steering::correction(&settings),
+            "queued_pause" => steering::queued_pause(&settings),
+            "answer_recovery" => steering::answer_recovery(&settings),
+            "classifier_failures" => steering::classifier_failures(&settings),
+            "concurrent_requests" => steering::concurrent_requests(&settings),
+            "guidance" => steering::guidance(&settings),
+            "credit" => steering::credit(&settings),
+            "answer_replacement" => steering::answer_replacement(&settings),
+            _ => panic!("unknown gate case: {case}"),
+        }
         database.stop();
         return;
     }
@@ -525,9 +559,19 @@ fn main() {
         database.stop();
         return;
     }
-    notice_incidents::run(&mut database);
-    operations_and_delivery_log(&database.create("operations"));
-    println!("test operations_messages_and_missed_delivery_recovery ... ok");
+    let group = args
+        .get(1)
+        .and_then(|arg| arg.strip_prefix("--gate-group="));
+    assert!(group.is_none_or(|group| matches!(group, "notices" | "flow")));
+    if group != Some("flow") {
+        notice_incidents::run(&mut database);
+        operations_and_delivery_log(&database.create("operations"));
+        println!("test operations_messages_and_missed_delivery_recovery ... ok");
+    }
+    if group == Some("notices") {
+        database.stop();
+        return;
+    }
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
         match scenario {
             "quote" => steering::dropped_change_quote(),
@@ -549,6 +593,7 @@ fn main() {
     message_reconciliation();
     println!("test message_reconciliation ... ok");
     real_writer::all();
+    real_writer::classifier_contract();
     writer_checks();
     println!("test writer_checks ... ok");
     receiver_limits(&database.create("receiver_limits"));
@@ -2049,7 +2094,11 @@ fn worker_daemon_config(
             "command = [\"-m\", \"tl3_workers\", \"run\"]",
             &format!(
                 "command = [{:?}, {mode:?}, {marker:?}]",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py")
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(if mode.starts_with("steering") {
+                    "tests/worker_transport.py"
+                } else {
+                    "tests/worker_model.py"
+                })
             ),
         );
     let config_path = root.join("config.toml");

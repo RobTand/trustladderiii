@@ -1,0 +1,35 @@
+[
+  {
+    "name": "selector-red",
+    "complete": true,
+    "action_key": "ec7473bb9707da6456d08bb81db0e9ed3197303947ac40a660e3504fd5bff0bc",
+    "exit_code": 1,
+    "host": "dl380g10",
+    "receipt_sha256": null,
+    "result_verified": true,
+    "stdout_digest_verified": true,
+    "stderr_digest_verified": true
+  },
+  {
+    "name": "comparison-red",
+    "complete": true,
+    "action_key": "4453480bce9114f016d1976d8d23987be39db3989437cf6a822f32367c480967",
+    "exit_code": 1,
+    "host": "dl380g10",
+    "receipt_sha256": null,
+    "result_verified": true,
+    "stdout_digest_verified": true,
+    "stderr_digest_verified": true
+  },
+  {
+    "name": "green",
+    "complete": true,
+    "action_key": "85f38432bf435f4af2724228ad51bba3e050c547e7a344e891d7b387116968ba",
+    "exit_code": 0,
+    "host": "sparklina",
+    "receipt_sha256": "d02e1ac98a2c63cf2137aa8356d30b65bd034d50954d5484ec78355cce3a3754",
+    "result_verified": true,
+    "stdout_digest_verified": true,
+    "stderr_digest_verified": true
+  }
+]

@@ -1,3 +1,5 @@
+#[path = "mergify/dequeue_followups.rs"]
+mod dequeue_followups;
 mod support;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -2255,6 +2257,15 @@ fn command_dequeue_pauses(settings: &tl3_config::Store, title: bool) {
         state.pull["mergeable_state"] = json!("clean");
     }
     drain(&mut c);
+    if title {
+        assert_eq!(
+            api.state.lock().unwrap().posts,
+            2,
+            "an unverified manual-looking title follows the generic retry rule"
+        );
+        assert!(!c.world().unwrap().nodes[0].paused);
+        return;
+    }
     assert_eq!(
         api.state.lock().unwrap().posts,
         1,
@@ -2303,6 +2314,23 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--followup-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        let settings = database.create("followup");
+        match mode.as_str() {
+            "persistent" | "timeout" => {
+                dequeue_followups::source_loop(&settings, mode == "timeout")
+            }
+            "adapter" | "quota" => dequeue_followups::transient_bound(&settings, mode == "quota"),
+            _ => panic!("unknown follow-up mode"),
+        }
+        database.stop();
+        return;
+    }
+
     if let Some(mode) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--review-").map(str::to_owned))
@@ -2536,6 +2564,15 @@ fn main() {
         command_dequeue_pauses(&database.create(&format!("manual_dequeue_{title}")), title);
     }
     legacy_intent_ignores_completed_at();
+    for timeout_delivery in [false, true] {
+        dequeue_followups::source_loop(
+            &database.create(&format!("persistent_{timeout_delivery}")),
+            timeout_delivery,
+        );
+    }
+    for quota in [false, true] {
+        dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
+    }
     database.stop();
-    println!("72 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("76 Mergify scenarios passed; no skips; no live upstream calls");
 }

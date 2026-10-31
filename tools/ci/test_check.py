@@ -140,9 +140,9 @@ class DiscoveryTests(unittest.TestCase):
         files = list(map(Path, [
             "Cargo.toml", "crates/member/Cargo.toml", "services/standalone/Cargo.toml",
         ]))
-        with patch.object(check, "run", command):
+        with patch.object(check, "run", command), patch.object(check.rust_gate, "test_workspace") as gate:
             check.rust(files)
-        tested = [args[3] for args in calls if args[:2] == ("cargo", "test")]
+        tested = [call.args[0] for call in gate.call_args_list]
         self.assertEqual(tested, [Path("Cargo.toml"), Path("standalone/Cargo.toml")])
 
     def test_failed_lint_stops_the_job(self):

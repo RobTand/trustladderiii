@@ -1,0 +1,24 @@
+{
+  "pipeline": "https://app.circleci.com/pipelines/github/RobTand/trustladderiii/9",
+  "source_head": "95d4dc6b4370961839a764f3020eda9f7cef2d0e",
+  "attempts": [
+    {
+      "workflow": "4ee5011d-ca92-4c9d-8bb9-ba0be6e4d886",
+      "jobs": [2, 3],
+      "result": "infrastructure failure before tests",
+      "error": "getwd: no such file or directory",
+      "cause": "listener cwd was the disposable job directory",
+      "fix": "start listener at /; use /work/jobs under writable parent"
+    },
+    {
+      "workflow": "96c73381-51f3-4355-9e7c-d7ea430d1c2f",
+      "jobs": [4, 5],
+      "result": "checkout and isolation assertions passed; dependency setup failed",
+      "error": "uv cache permission denied at sdists-v9/.git",
+      "cause": "Podman :U mount option recursively changed the cache to container root",
+      "fix": "remove :U; repair private cache ownership before privilege drop"
+    }
+  ],
+  "qualifying_shadow_batches": 0,
+  "full_gate_pass_claimed": false
+}

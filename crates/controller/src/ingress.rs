@@ -69,10 +69,14 @@ impl Sources {
     pub fn run(self, controller: &mut Controller) -> Result<()> {
         drop(self.sender);
         drop(self.exit_sender);
-        drain_on_wake(controller)?;
+        let deferred = drain_on_wake(controller)?;
         while controller.drive_once()? {}
         controller.look_now()?;
         while controller.drive_once()? {}
+        if deferred {
+            // The startup look must not postpone recovery of a deferred queue observation.
+            controller.retry_queue_observation_looks()?;
+        }
         loop {
             let input = match controller.next_look_in()? {
                 Some(wait) => match self.receiver.recv_timeout(wait) {
@@ -207,14 +211,57 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
     drain_pending(controller).map(|_| ())
 }
 
-fn drain_on_wake(controller: &mut Controller) -> Result<()> {
-    // Bound same-wake retries; persistent failures wait for the next existing input or look.
-    for _ in 0..3 {
-        if !drain_pending(controller)? {
+const TRANSLATION_ATTEMPTS: u8 = 3;
+
+#[derive(Deserialize, Serialize)]
+struct TranslationRetry {
+    sequence: i64,
+    attempts: u8,
+}
+
+fn translation_retry_exhausted(
+    controller: &mut Controller,
+    name: &str,
+    sequence: i64,
+) -> Result<bool> {
+    let snapshot = controller.store.load()?;
+    // One latest failure per translator bounds metadata; a new sequence starts its own allowance.
+    let previous = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "translation_retries" && row.id == name)
+        .map(|row| serde_json::from_value::<TranslationRetry>(row.value.clone()))
+        .transpose()?;
+    let attempts = previous
+        .filter(|retry| retry.sequence == sequence)
+        .map_or(1, |retry| retry.attempts.saturating_add(1))
+        .min(TRANSLATION_ATTEMPTS);
+    let retry = TranslationRetry { sequence, attempts };
+    let mut commit = tl3_store::Commit::new(
+        format!("translation-retry:{name}:{sequence}:{attempts}"),
+        json!({"translator":name,"sequence":sequence,"attempts":attempts}),
+        &snapshot,
+    );
+    commit
+        .rows
+        .push(crate::put("translation_retries", name.into(), json!(retry)));
+    controller.store.commit(&commit)?;
+    Ok(attempts >= TRANSLATION_ATTEMPTS)
+}
+
+fn drain_on_wake(controller: &mut Controller) -> Result<bool> {
+    let mut deferred = false;
+    for _ in 0..TRANSLATION_ATTEMPTS {
+        let pending = drain_pending(controller)?;
+        deferred |= pending;
+        if !pending {
             break;
         }
     }
-    Ok(())
+    if deferred {
+        controller.retry_queue_observation_looks()?;
+    }
+    Ok(deferred)
 }
 
 fn drain_pending(controller: &mut Controller) -> Result<bool> {
@@ -273,9 +320,15 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
                         }
                         Err(error @ (Error::Adapter(_) | Error::Quota { .. })) => {
                             eprintln!("observation translation failed for {name}: {error}");
-                            // Keep this delivery at the cursor for a bounded retry or the next look.
                             deferred = true;
-                            break 'pending;
+                            if !translation_retry_exhausted(controller, &name, stored.sequence)? {
+                                break 'pending;
+                            }
+                            eprintln!(
+                                "observation retry bound exhausted for {name}, delivery {} ({}); advancing the cursor and retaining allowance recovery: {error}",
+                                stored.delivery_key, stored.event_name
+                            );
+                            Vec::new()
                         }
                         Err(error) => return Err(error),
                     };
