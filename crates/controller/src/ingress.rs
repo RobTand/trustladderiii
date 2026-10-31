@@ -497,7 +497,7 @@ enum WebhookMessage {
     Gap,
     Stop,
     ServerExit(Result<()>),
-    CaughtUp(Result<CatchUpBatch>),
+    CaughtUp(tl3_store::Reader, Result<CatchUpBatch>),
 }
 struct Control {
     sender: Sender<WebhookMessage>,
@@ -524,6 +524,7 @@ struct WebhookReceiver {
     bootstrap: Bootstrap,
     secret: Vec<u8>,
     catch_up: Option<CatchUp>,
+    catch_up_reader: Option<tl3_store::Reader>,
 }
 impl WebhookReceiver {
     pub fn bind(
@@ -539,6 +540,7 @@ impl WebhookReceiver {
         if secret.is_empty() {
             return Err(Error::Invalid("webhook secret is empty"));
         }
+        let catch_up_reader = catch_up.as_ref().map(|_| store.reader()).transpose()?;
         let server = http::Server::bind(address)?;
         let (sender, receiver) = mpsc::channel();
         Ok(Self {
@@ -552,6 +554,7 @@ impl WebhookReceiver {
             bootstrap,
             secret,
             catch_up,
+            catch_up_reader,
         })
     }
     pub fn address(&self) -> SocketAddr {
@@ -604,6 +607,7 @@ impl Source for WebhookReceiver {
             bootstrap,
             secret,
             catch_up,
+            mut catch_up_reader,
         } = self;
         let requests = control.0.sender.clone();
         let exits = requests.clone();
@@ -642,19 +646,12 @@ impl Source for WebhookReceiver {
                 if gap && retry_ready && catching_up.is_none() {
                     gap = false;
                     if let Some(catch_up) = &catch_up {
-                        match webhooks::fetch_catch_up(
+                        catching_up = Some(webhooks::fetch_catch_up(
                             catch_up.clone(),
-                            &mut store,
+                            catch_up_reader.take().expect("idle catch-up reader"),
                             bootstrap.clone(),
                             control.0.sender.clone(),
-                        ) {
-                            Ok(thread) => catching_up = Some(thread),
-                            Err(error) => {
-                                eprintln!("GitHub catch-up failed: {error}");
-                                gap = true;
-                                retry_ready = false;
-                            }
-                        }
+                        ));
                     }
                 }
                 match receiver
@@ -676,7 +673,8 @@ impl Source for WebhookReceiver {
                         gap = true;
                         retry_ready = true;
                     }
-                    WebhookMessage::CaughtUp(result) => {
+                    WebhookMessage::CaughtUp(reader, result) => {
+                        catch_up_reader = Some(reader);
                         if let Some(thread) = catching_up.take() {
                             thread
                                 .join()

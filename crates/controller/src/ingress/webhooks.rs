@@ -60,22 +60,30 @@ impl Drop for Webhooks {
 
 pub(super) fn fetch_catch_up(
     catch_up: CatchUp,
-    store: &mut Store,
+    mut reader: tl3_store::Reader,
     bootstrap: Bootstrap,
     sender: Sender<WebhookMessage>,
-) -> Result<thread::JoinHandle<()>> {
-    let since = store
-        .ingress_cursor("github-catch-up")?
-        .map(serde_json::from_value)
-        .transpose()?
-        .unwrap_or(DateTime::UNIX_EPOCH);
-    let snapshot = store.load()?;
-    Ok(thread::spawn(move || {
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (cursor, snapshot) = catch_up_state(&mut reader).or_else(|_| {
+                reader.reconnect()?;
+                catch_up_state(&mut reader)
+            })?;
+            let since = cursor
+                .map(serde_json::from_value)
+                .transpose()?
+                .unwrap_or(DateTime::UNIX_EPOCH);
             catch_up.fetch(since, snapshot, &bootstrap)
         }))
         .unwrap_or(Err(Error::Invalid("GitHub catch-up panicked")));
         // Only the receipt loop inserts rows, so sequence order remains commit order.
-        let _ = sender.send(WebhookMessage::CaughtUp(result));
-    }))
+        let _ = sender.send(WebhookMessage::CaughtUp(reader, result));
+    })
+}
+
+fn catch_up_state(
+    reader: &mut tl3_store::Reader,
+) -> tl3_store::Result<(Option<serde_json::Value>, tl3_store::Snapshot)> {
+    Ok((reader.ingress_cursor("github-catch-up")?, reader.load()?))
 }

@@ -117,6 +117,11 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
 // Ingress receipt, catch-up, consumer registration and cursor/retirement writes
 // are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
+    /// Open an independent read-only session without transferring this writer's ownership.
+    pub fn reader(&self) -> Result<Reader> {
+        Reader::open(&self.settings)
+    }
+
     /// Replace a failed ingress session. The controller's ownership session is never reconnected.
     pub fn reconnect(&mut self) -> Result<()> {
         let mut store = Self::open(&self.settings)?;
@@ -722,12 +727,31 @@ impl Store {
 /// A reader never runs migrations or exposes the store's write operations.
 pub struct Reader {
     client: Client,
+    settings: tl3_config::Store,
 }
 
 impl Reader {
+    pub fn reconnect(&mut self) -> Result<()> {
+        *self = Self::open(&self.settings)?;
+        Ok(())
+    }
+
+    pub fn ingress_cursor(&mut self, source: &str) -> Result<Option<serde_json::Value>> {
+        let mut tx = self.transaction()?;
+        let cursor = tx
+            .query_opt(
+                "SELECT cursor FROM tl3_ingress_cursors WHERE source = $1",
+                &[&source],
+            )?
+            .map(|row| row.get(0));
+        tx.commit()?;
+        Ok(cursor)
+    }
+
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut reader = Self {
             client: connect(settings, true)?,
+            settings: settings.clone(),
         };
         reader.transaction()?.commit()?;
         Ok(reader)
