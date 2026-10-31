@@ -639,6 +639,10 @@ impl Worktrees {
         Ok(true)
     }
 
+    pub fn delete_pull_head(&self, _number: u64) -> Result<(), Error> {
+        todo!()
+    }
+
     /// Fetch the base repository's pull ref and retain the label-time commit.
     pub fn fetch_pull_head(
         &self,

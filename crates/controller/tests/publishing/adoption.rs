@@ -154,7 +154,16 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         server.api.state.lock().unwrap().proposed.as_mut().unwrap()["body"] = json!("Almost done.");
         label(&mut c, &server, settings, 1, "no-keyword");
         while c.drive_once().unwrap() {}
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .all(|r| r.table != "adoption_questions"),
+            "sent clarification payloads must leave the active snapshot"
+        );
         label(&mut c, &server, settings, 1, "no-keyword-again");
+        while c.drive_once().unwrap() {}
         assert!(c.world().unwrap().nodes.is_empty());
         let state = server.api.state.lock().unwrap();
         assert_eq!(state.proposed_comments.len(), 1);
@@ -235,6 +244,14 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Phase::Closed(Outcome::Merged),
     );
     let state = server.api.state.lock().unwrap();
+    assert_eq!(
+        git(
+            &f.repo,
+            &["for-each-ref", "--format=%(refname)", "refs/tl3/pulls/"]
+        ),
+        "",
+        "closing the request must release its pinned pull ref"
+    );
     assert!(state.closed);
     assert!(state.comments.iter().any(|c| {
         c["body"]

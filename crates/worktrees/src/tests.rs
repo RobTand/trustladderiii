@@ -1165,3 +1165,26 @@ fn scratch_refs_expire_only_after_thirty_days() {
     assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
     assert!(f.manager.branch_state(&f.name).unwrap().is_some());
 }
+
+#[test]
+fn adoption_releases_pull_ref_without_losing_the_author_commit() {
+    let f = Fixture::new();
+    let head = f.manager.resolve("HEAD").unwrap();
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    f.manager
+        .fetch_pull_head(&f.remote, None, 17, &head)
+        .unwrap();
+    f.manager.create_branch_from(&f.name, &head, &head).unwrap();
+    f.manager.delete_pull_head(17).unwrap();
+    f.manager.delete_pull_head(17).unwrap();
+    assert!(
+        f.manager
+            .resolve_optional("refs/tl3/pulls/17")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), head);
+}

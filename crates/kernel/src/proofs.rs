@@ -207,6 +207,14 @@ fn check_apply(event: Event) -> World {
     apply(&mut after, event.clone(), &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
+    if let Event::NewAdoption { repo, head } = &event {
+        if repo.index().is_some_and(|r| r < before.gates.len()) {
+            assert_eq!(after.nodes.len(), before.nodes.len() + 1);
+            assert_eq!(after.nodes.last().unwrap().proposed, Some(*head));
+            assert!(!after.nodes.last().unwrap().adopted);
+            kani::cover!(true, "new adoption retains the requested head");
+        }
+    }
     require_consistent(&after);
     check_nodes(&before, &after);
     let exempt = match event {

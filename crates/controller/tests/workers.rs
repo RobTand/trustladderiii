@@ -375,6 +375,12 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--adopted-first-fix") {
+        maker::adopted_fix_without_session(&database.create("adopted_first_fix"));
+        println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-legacy") {
         maker::legacy_session(&database.create("maker_legacy_session"));
         println!("test maker_legacy_session_fails_closed ... ok");
