@@ -83,7 +83,7 @@ class GateTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / 'fixture.py'
                 path.write_text(content)
-                with self.assertRaises(RuntimeError):
+                with self.assertRaisesRegex(RuntimeError, 'suite|skipped'):
                     rust_gate.execute_binary(
                         {'name': 'fixture', 'command': [sys.executable, str(path)]}, custom=False,
                     )

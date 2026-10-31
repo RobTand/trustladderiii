@@ -122,7 +122,6 @@ pub(super) fn run(mode: &str) {
     println!("test real_writer_{mode} ... ok");
 }
 
-
 pub(super) fn classifier_contract() {
     let root = tempfile::tempdir().unwrap();
     let key = root.path().join("fixture-key");
@@ -136,13 +135,22 @@ pub(super) fn classifier_contract() {
     let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers");
     let mut child = Command::new(package.join(".venv/bin/python"))
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py"))
-        .arg("normal").arg(root.path().join("entered"))
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        .arg("normal")
+        .arg(root.path().join("entered"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     serde_json::to_writer(child.stdin.take().unwrap(), &request).unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    let events: Vec<Value> = String::from_utf8(output.stdout).unwrap().lines()
-        .map(|line| serde_json::from_str(line).unwrap()).collect();
-    assert!(events.iter().any(|event| event["event"] == "reply" && event["role"] == "classifier" && event["reply"]["kind"] == "pause"));
+    let events: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|event| event["event"] == "reply"
+        && event["role"] == "classifier"
+        && event["reply"]["kind"] == "pause"));
     println!("test real_worker_contract_classifier ... ok");
 }
