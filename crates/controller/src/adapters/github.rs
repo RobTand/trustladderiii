@@ -190,14 +190,7 @@ impl Executor for Adapter {
     }
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        match self.execute_delivery(delivery) {
-            Err(Error::Permanent { class, .. })
-                if !matches!(delivery.output, Out::Effect { .. }) =>
-            {
-                Ok(Completion::permanent(class))
-            }
-            result => result,
-        }
+        self.execute_delivery(delivery)
     }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {

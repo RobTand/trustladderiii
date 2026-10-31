@@ -582,12 +582,28 @@ impl Controller {
                     let delivery = hydrate(effect, &current)?;
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
+                    let retry_not_found = match delivery.output {
+                        DeliveryOutput::Effect { node, .. } => {
+                            let index =
+                                node.index().ok_or(Error::Invalid("node index overflow"))?;
+                            world.nodes[index].fx_failures == 0
+                        }
+                        DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
+                    };
                     match result {
                         Ok(completion) => {
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
-                        Err(Error::Permanent { class, .. }) => {
+                        // GitHub can briefly return 404 for a newly created resource.
+                        // A look proving absence spends the existing retry allowance.
+                        Err(Error::Permanent { class, source })
+                            if !(retry_not_found
+                                && matches!(
+                                    source.downcast_ref::<tl3_github::Error>(),
+                                    Some(tl3_github::Error::Http { status: 404 })
+                                )) =>
+                        {
                             self.complete(&effect.key, Completion::permanent(class))?;
                             return Ok(true);
                         }

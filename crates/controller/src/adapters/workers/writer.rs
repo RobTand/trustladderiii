@@ -253,7 +253,7 @@ pub fn checked_draft(
                 };
                 message::check_prose(&written, policy).map(|_| text.text.clone())
             }
-            _ => Err(vec![Violation::MissingRequest]),
+            _ => Err(vec![Violation::WrongReplyShape]),
         };
         match checked {
             Ok(mut text) => {
@@ -323,6 +323,9 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                     )
                 });
             let problem = match violation {
+                Violation::WrongReplyShape => {
+                    "has the wrong reply shape for the requested message kind"
+                }
                 Violation::InternalVocabulary => "uses an internal word",
                 Violation::InternalNameOrId => "contains an internal name or identifier",
                 Violation::FilePath => "contains a file path",
