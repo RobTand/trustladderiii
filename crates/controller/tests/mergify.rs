@@ -280,7 +280,7 @@ impl Respond for Api {
             }
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
                 "number":100, "title":"change", "state":state.pull["state"], "updated_at":state.pull["updated_at"],
-                "labels": [state.label.then(|| json!({"name":"tl3-queue"})), state.dequeued.then(|| json!({"name":"dequeued"}))].into_iter().flatten().collect::<Vec<_>>(),
+                "labels": ([state.label.then(|| json!({"name":"tl3-queue"})), state.dequeued.then(|| json!({"name":"dequeued"}))].into_iter().flatten().collect::<Vec<_>>()),
                 "pull_request":{"url":"local"}})),
             ("POST", "/repos/owner/sandbox/issues/100/labels") => {
                 assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap(), json!({"labels":["tl3-queue"]}));
@@ -2395,7 +2395,10 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
-    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--requeue-").map(str::to_owned)) {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--requeue-").map(str::to_owned))
+    {
         let mut database = support::Database::start();
         requeue::scenario(&database.create("requeue"), &mode);
         database.stop();
@@ -2648,7 +2651,12 @@ fn main() {
     for lag in [false, true] {
         head_checks::label_present(&database.create(&format!("head_label_{lag}")), lag);
     }
-    for mode in ["delayed-label", "delayed-rule", "lost-response", "no-acceptance"] {
+    for mode in [
+        "delayed-label",
+        "delayed-rule",
+        "lost-response",
+        "no-acceptance",
+    ] {
         requeue::scenario(&database.create(&format!("requeue_{mode}")), mode);
     }
     queue_failure(&database.create("failed"), false, false);
