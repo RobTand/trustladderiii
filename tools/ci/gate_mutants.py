@@ -27,7 +27,7 @@ MUTANTS = {
                'The owner requested a revert as part of this correction.',
                'The owner requested a correction.', ['correction']),
     'writer-policy': (WRITER, 'match checked {',
-                      'match checked.or_else(|_| Ok("mutation accepted".to_owned())) {',
+                      'match checked.or_else(|_| Ok::<String, Vec<Violation>>("mutation accepted".to_owned())) {',
                       ['writer:wrong-quote', 'writer:no-draft', 'writer:recommendation']),
     'writer-shape': (WRITER, 'if input.kind == MessageKind::Clarification\n            &&',
                      'if false && input.kind == MessageKind::Clarification\n            &&',
@@ -44,8 +44,14 @@ MUTANTS = {
 def build(target):
     command = ['cargo', 'test', '--locked', '-p', 'tl3-controller', '--test', target,
                '--no-run', '--message-format=json']
-    output = subprocess.check_output(command, cwd=ROOT, text=True)
-    binaries = [event['executable'] for line in output.splitlines()
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    if result.returncode:
+        for line in result.stdout.splitlines():
+            event = json.loads(line)
+            if event.get('reason') == 'compiler-message':
+                print(event['message']['rendered'], flush=True)
+        raise RuntimeError(f'{target}: mutation build failed: {result.stderr}')
+    binaries = [event['executable'] for line in result.stdout.splitlines()
                 if (event := json.loads(line)).get('reason') == 'compiler-artifact'
                 and event['target']['name'] == target and event['executable']]
     if len(binaries) != 1:
