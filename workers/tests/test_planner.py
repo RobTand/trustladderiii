@@ -531,3 +531,4 @@ def test_prompt_states_how_existing_tests_are_named():
     prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
     assert "must name tests that already exist in the base" in prompt
     assert "without its parameter suffix" in prompt
+    assert "A test file path on its own is not a node ID" in prompt
