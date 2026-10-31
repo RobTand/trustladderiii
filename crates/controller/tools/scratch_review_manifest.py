@@ -22,7 +22,8 @@ common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env,
 if args.suite == "hosts":
     command = """set -euo pipefail
 cargo test -p tl3-worktrees --locked
-cargo test -p tl3-controller --locked --test looks --test github --test publishing --test workers --test reproducing_rebase --test worktrees --test crash_safety
+cargo test -p tl3-controller --locked --test looks --test worktrees
+cargo test -p tl3-controller --locked --test github --test publishing --test workers --test reproducing_rebase --test crash_safety
 """
     rows = [{**common, "tags": [host], "argv": ["bash", "-c", command]}
             for host in ("dl380g10", "sparky", "sparklina")]
