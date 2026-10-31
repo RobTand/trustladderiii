@@ -332,6 +332,16 @@ impl Controller {
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
+            let result = match result {
+                Err(error)
+                    if error.is_github_not_found()
+                        && state.failure.as_deref() == Some("not_found")
+                        && matches!(state.delivery.output, Out::Effect { .. }) =>
+                {
+                    Ok(Look::Absent)
+                }
+                result => result,
+            };
             if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
                 self.adapters
                     .get(Upstream::PrismaBuild)?
@@ -409,12 +419,13 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    if self.is_held(&state.delivery)
+                    if (self.is_held(&state.delivery)
+                        || state.failure.as_deref() == Some("not_found"))
+                        && effect.state.is_pending()
                         && effect.state != EffectState::Cancelling
                         && matches!(state.delivery.output, Out::Effect { .. })
                     {
-                        // Authoritative absence permits the kernel to retry this write.
-                        // An unreadable record never grants that permission.
+                        // Absence or a repeated 404 spends the existing retry allowance.
                         self.complete(
                             &effect.key,
                             Completion {

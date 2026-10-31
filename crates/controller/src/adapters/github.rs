@@ -274,9 +274,10 @@ impl Executor for Adapter {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
-            return Ok(self
-                .reconcile_publication(delivery)
-                .unwrap_or(Reconciliation::Pending));
+            return match self.reconcile_publication(delivery) {
+                Err(error) if error.is_github_not_found() => Err(error),
+                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+            };
         }
         if let Some(crate::steering::Task::FileRequest {
             correction: true,

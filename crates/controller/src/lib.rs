@@ -59,6 +59,14 @@ pub enum Error {
     Quota { retry_after: std::time::Duration },
 }
 
+impl Error {
+    fn is_github_not_found(&self) -> bool {
+        matches!(self, Self::Permanent { source, .. }
+            if matches!(source.downcast_ref::<tl3_github::Error>(),
+                Some(tl3_github::Error::Http { status: 404 })))
+    }
+}
+
 impl From<tl3_github::Error> for Error {
     fn from(error: tl3_github::Error) -> Self {
         match error {
@@ -462,7 +470,10 @@ impl Controller {
 
     /// Only news from an effect's own upstream releases its holds.
     pub fn retry_held_effects(&mut self, source: executor::Upstream) {
-        self.held_effects.remove(&source);
+        if let Some(effects) = self.held_effects.get_mut(&source) {
+            // A 404 must spend its retry allowance through a look first.
+            effects.retain(|_, class| class == "not_found");
+        }
     }
 
     fn is_held(&self, delivery: &Delivery) -> bool {
@@ -586,14 +597,6 @@ impl Controller {
                     let delivery = hydrate(effect, &current)?;
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
-                    let retry_not_found = match delivery.output {
-                        DeliveryOutput::Effect { node, .. } => {
-                            let index =
-                                node.index().ok_or(Error::Invalid("node index overflow"))?;
-                            world.nodes[index].fx_failures == 0
-                        }
-                        DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
-                    };
                     match result {
                         Ok(completion) => {
                             self.complete(&effect.key, completion)?;
@@ -601,12 +604,10 @@ impl Controller {
                         }
                         // GitHub can briefly return 404 for a newly created resource.
                         // A look proving absence spends the existing retry allowance.
-                        Err(Error::Permanent { class, source })
-                            if !(retry_not_found
-                                && matches!(
-                                    source.downcast_ref::<tl3_github::Error>(),
-                                    Some(tl3_github::Error::Http { status: 404 })
-                                )) =>
+                        Err(ref error @ Error::Permanent { class, .. })
+                            if !(error.is_github_not_found()
+                                && matches!(delivery.output, DeliveryOutput::Effect { node, .. }
+                                    if world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?].fx_failures == 0)) =>
                         {
                             self.complete(&effect.key, Completion::permanent(class))?;
                             return Ok(true);
