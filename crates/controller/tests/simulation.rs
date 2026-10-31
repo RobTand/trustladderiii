@@ -1,3 +1,4 @@
+use serde_json::json;
 use tl3_controller::executor::Output as Out;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
@@ -94,10 +95,27 @@ fn main() {
         ),
         ("mixed_registry", mixed_registry),
         ("mixed_registry_conflict", mixed_registry_conflict),
+        (
+            "publication_main_advance_clean",
+            publication_main_advance_clean,
+        ),
+        (
+            "publication_main_advance_conflict",
+            publication_main_advance_conflict,
+        ),
     ];
+    let selected = args.iter().find_map(|arg| arg.strip_prefix("--case="));
     for (name, test) in cases {
+        if selected.is_some_and(|selected| selected != *name) {
+            continue;
+        }
         test(&database.create(name));
         println!("test {name} ... ok");
+    }
+    if let Some(selected) = selected {
+        assert!(cases.iter().any(|(name, _)| *name == selected));
+        database.stop();
+        return;
     }
     status_requires_initialized_database(&database.create("status_fresh"));
     status_page_and_command(&database.create("status"), &mut database);
@@ -1896,6 +1914,78 @@ fn mixed_registry(settings: &tl3_config::Store) {
 fn mixed_registry_conflict(settings: &tl3_config::Store) {
     mixed_registry_case(settings, true);
 }
+
+fn publication_main_advance_clean(settings: &tl3_config::Store) {
+    publication_main_advance(settings, false);
+}
+
+fn publication_main_advance_conflict(settings: &tl3_config::Store) {
+    publication_main_advance(settings, true);
+}
+
+fn publication_main_advance(settings: &tl3_config::Store, conflict: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let f = worktree_fixture::Fixture::create(root.path());
+    let records = root.path().join("fakes");
+    let mut registry = adapters::simulation(&records).unwrap();
+    registry.register(Upstream::Worktrees, f.adapter());
+    registry.register(
+        Upstream::Workers,
+        GitHeadWorker {
+            fake: adapters::workers::Fake::new(&records),
+            root: root.path().into(),
+            conflict: true,
+            heads: BTreeMap::new(),
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    for _ in 0..100 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Publishing {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Publishing
+    );
+    f.advance_main(conflict);
+    for _ in 0..200 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let snapshot = controller.snapshot().unwrap();
+    if conflict {
+        assert!(matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::AwaitingRob
+        ));
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.value["signature"]["class"] == "unrebased_head")
+            .expect("publication conflict must explain why it stopped");
+        assert!(
+            incident.value["summary"]
+                .as_str()
+                .unwrap()
+                .contains("checked head conflicts with current main"),
+            "Rob must see the actual publication conflict: {}",
+            incident.value
+        );
+    } else {
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Closed(Outcome::Merged),
+            "a nonconflicting main advance must not require Rob"
+        );
+        assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
+    }
+}
+
 fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
@@ -1943,6 +2033,17 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
             created = true;
         }
         if world.nodes[0].phase == Phase::Queued && !pushed {
+            if !conflict {
+                let mut store = Store::open(settings).unwrap();
+                let mut saved =
+                    Commit::new("old-rebase-context", json!({}), &store.load().unwrap());
+                saved.rows.push(RowChange::Put {
+                    table: "rebase_conflicts".into(),
+                    id: "0".into(),
+                    value: json!({"head":"old", "target":"old", "files":["shared.txt"]}),
+                });
+                store.commit(&saved).unwrap();
+            }
             original = Some(fixture.head(&prepare));
             queued_credit = world.nodes[0].credit.balance();
             queued_attempt_round = (world.nodes[0].attempt, world.nodes[0].round);
@@ -2004,6 +2105,13 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
             let head = fixture.head(&prepare);
             assert_ne!(Some(head.clone()), original);
             let snapshot = controller.snapshot().unwrap();
+            assert!(
+                !snapshot
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "rebase_conflicts" && row.id == "0"),
+                "a clean rebase must delete obsolete conflict context"
+            );
             assert!(
                 snapshot
                     .interned
