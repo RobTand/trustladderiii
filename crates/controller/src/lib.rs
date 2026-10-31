@@ -347,11 +347,9 @@ impl Controller {
             return Ok(());
         }
         let mut commit = Commit::new(key.clone(), json!(&question), &snapshot);
-        commit.rows.push(put(
-            "adoption_questions",
-            key,
-            json!({"question":question}),
-        ));
+        commit
+            .rows
+            .push(put("adoption_questions", key, json!({"question":question})));
         self.store.commit(&commit)?;
         Ok(())
     }
