@@ -75,12 +75,15 @@ def standalone_test_dirs(files, projects):
     })
 
 
-def python(files):
+def python(files, *, selected=None, lint=True):
     projects = python_projects(files)
     sources = sorted(path for path in files if path.suffix == ".py" and active(path))
-    run("uv", "tool", "run", "--from", "ruff==0.14.14", "ruff", "check",
-        "--isolated", "--select", "E9,F", *sources)
+    if lint:
+        run("uv", "tool", "run", "--from", "ruff==0.14.14", "ruff", "check",
+            "--isolated", "--select", "E9,F", *sources)
     for directory, config in sorted(projects.items()):
+        if selected is not None and f"project:{directory}" not in selected:
+            continue
         if not any(path.match("test_*.py") and path.is_relative_to(directory) for path in files):
             # Deployment environments pin their own interpreter and have no tests to run.
             if (ROOT / directory / "uv.lock").exists():
@@ -105,6 +108,8 @@ def python(files):
         # Run in the package so pytest reads its own configuration and imports.
         run(*command, cwd=ROOT / directory)
     for directory in standalone_test_dirs(files, projects):
+        if selected is not None and f"unittest:{directory}" not in selected:
+            continue
         run(sys.executable, "-m", "unittest", "discover", "-s", directory,
             "-p", "test_*.py", "-v")
 

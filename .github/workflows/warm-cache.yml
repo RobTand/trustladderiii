@@ -22,21 +22,14 @@ env:
 
 jobs:
   warm-cache:
-    name: Warm Rust cache (${{ matrix.host }})
+    name: Warm Rust cache (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        host: [celestia]
-    runs-on: [self-hosted, tl3-fleet, tl3-fast, "tl3-host-${{ matrix.host }}"]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - name: Verify runner input is scrubbed
-        run: |
-          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
-            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
-            exit 1
-          fi
-          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
@@ -48,7 +41,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
-          shared-key: rust
+          shared-key: hosted-${{ runner.arch }}
       - name: Build test dependencies without running tests
         run: cargo test --workspace --all-targets --locked --no-run
       - name: Build deployment helper without running tests

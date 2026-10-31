@@ -10,6 +10,8 @@ import subprocess
 import time
 import tomllib
 
+import shards
+
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
 MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
@@ -157,8 +159,6 @@ def baseline_policy(config):
 
 
 def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
-    if shard is not None:
-        raise NotImplementedError("hosted shard selection")
     jobs = int(os.environ.get('RUST_TEST_THREADS', '4')) if jobs is None else jobs
     if jobs < 1:
         raise ValueError('Test concurrency must be positive')
@@ -166,9 +166,18 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
     baseline = baseline_policy(config) if enforce else config
     check_budget({}, config, baseline)
     binaries = collect_binaries(manifest)
+    if shard is not None:
+        index, total = shard
+        selected = set(shards.partition([binary['name'] for binary in binaries], total,
+                                        shards.weights('rust'))[index])
+        binaries = [binary for binary in binaries if binary['name'] in selected]
+        if not binaries:
+            raise RuntimeError('Empty Rust shard')
+        print(json.dumps({'rust_shard': index, 'total': total,
+                          'binaries': [binary['name'] for binary in binaries]}), flush=True)
     started = time.monotonic()
     results = execute_binaries(binaries, jobs)
-    output = {'seconds': time.monotonic() - started, 'jobs': jobs, 'tests': results}
+    output = {'seconds': time.monotonic() - started, 'jobs': jobs, 'shard': shard, 'tests': results}
     for name, seconds in sorted(results.items()):
         print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
@@ -187,6 +196,7 @@ if __name__ == '__main__':
     parser.add_argument('--manifest-path', type=Path, default=Path('Cargo.toml'))
     parser.add_argument('--jobs', type=int)
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--shard', type=shards.parse_shard, help='Zero-based INDEX/TOTAL')
     parser.add_argument('--measure', action='store_true', help='Report timings without enforcing budgets')
     args = parser.parse_args()
-    test_workspace(args.manifest_path, jobs=args.jobs, report=args.report, enforce=not args.measure)
+    test_workspace(args.manifest_path, jobs=args.jobs, report=args.report, enforce=not args.measure, shard=args.shard)
