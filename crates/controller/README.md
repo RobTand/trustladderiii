@@ -1297,6 +1297,9 @@ existing checker continues to reject file paths in model-written text. Path
 bytes outside letters, digits, dot, underscore, hyphen, and slash are percent
 encoded to keep filenames from becoming references or Markdown instructions.
 Each listed path is inline code to prevent emphasis and automatic links.
+The removal notice is capped at 8 KiB, leaving room in the GitHub comment for
+the writer's prose and scratch notice. It lists complete paths in order, then
+counts the omitted paths. The durable row retains the full list.
 
 Review always supplies the `request-scope` standing rule alongside
 `test-report-integrity`. A scope blocker must cite that rule, quote a changed

@@ -74,14 +74,31 @@ pub(crate) fn summary(snapshot: &Snapshot, node: NodeId) -> Result<Option<String
     };
     let paths: Vec<String> = serde_json::from_value(row.value["removed_paths"].clone())?;
     Ok((!paths.is_empty()).then(|| {
-        format!(
-            "Changes not part of this request were removed: {}.",
-            paths
-                .iter()
-                .map(|path| format!("`{path}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        // Leave room for the writer's prose and scratch notice within GitHub's comment limit.
+        const MAX_BYTES: usize = 8_192;
+        let mut text = "Changes not part of this request were removed: ".to_owned();
+        let tail_budget = format!(", and {} more paths.", paths.len()).len();
+        let mut listed = 0;
+        for path in &paths {
+            let separator = if listed == 0 { "" } else { ", " };
+            if text.len() + separator.len() + path.len() + 2 + tail_budget > MAX_BYTES {
+                break;
+            }
+            text.push_str(separator);
+            text.push('`');
+            text.push_str(path);
+            text.push('`');
+            listed += 1;
+        }
+        let remaining = paths.len() - listed;
+        match (listed, remaining) {
+            (_, 0) => text.push('.'),
+            (0, 1) => text.push_str("1 path, name omitted."),
+            (0, _) => text.push_str(&format!("{remaining} paths, names omitted.")),
+            (_, 1) => text.push_str(", and 1 more path."),
+            _ => text.push_str(&format!(", and {remaining} more paths.")),
+        }
+        text
     }))
 }
 
@@ -114,7 +131,10 @@ mod tests {
             .map(|i| format!("removed/{i:05}/__init__.py"))
             .collect();
         let text = scope_summary(&paths);
-        assert!(text.len() <= 8_192, "removal notice must leave comment room");
+        assert!(
+            text.len() <= 8_192,
+            "removal notice must leave comment room"
+        );
         let listed = text.matches('`').count() / 2;
         assert!(listed > 0 && listed < paths.len());
         let prefix = paths[..listed]
@@ -135,7 +155,10 @@ mod tests {
     fn scope_summary_caps_a_single_oversized_path_without_splitting_it() {
         let paths = vec!["%FF".repeat(30_000)];
         let text = scope_summary(&paths);
-        assert!(text.len() <= 8_192, "one long path must not overflow the cap");
+        assert!(
+            text.len() <= 8_192,
+            "one long path must not overflow the cap"
+        );
         assert_eq!(
             text,
             "Changes not part of this request were removed: 1 path, name omitted."
