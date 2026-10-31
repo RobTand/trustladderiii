@@ -718,7 +718,7 @@ mod git_tests {
             "adapters::prismabuild::git_tests::hostile_read_wait",
             || {
                 let f = Repo::new();
-                let client = wait_client(f.root.path(), &f.base);
+                let client = wait_client(f.root.path(), &f.head);
                 let runtime = crate::executor::runtime().unwrap();
                 assert!(matches!(
                     read_wait(&client, &runtime, &"a".repeat(64), &f.path).unwrap(),
