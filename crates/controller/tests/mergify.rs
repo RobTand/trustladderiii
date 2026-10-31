@@ -2351,7 +2351,11 @@ fn legacy_intent_ignores_completed_at() {
 fn main() {
     if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned)) {
         let mut database = support::Database::start();
-        head_checks::scenario(&database.create("head_check"), &mode);
+        if mode.starts_with("label-") {
+            head_checks::label_present(&database.create("head_label"), mode == "label-lag");
+        } else {
+            head_checks::scenario(&database.create("head_check"), &mode);
+        }
         database.stop();
         return;
     }
@@ -2576,6 +2580,9 @@ fn main() {
     }
     for mode in ["cancelled", "timed_out", "startup_failure", "failure", "permission", "restart", "otherhead", "optional"] {
         head_checks::scenario(&database.create(&format!("head_{mode}")), mode);
+    }
+    for lag in [false, true] {
+        head_checks::label_present(&database.create(&format!("head_label_{lag}")), lag);
     }
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);

@@ -91,3 +91,63 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         "the second infrastructure failure must raise the usual incident");
     println!("test head_check_{mode} ... ok");
 }
+
+#[derive(Clone)]
+struct Clock(std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
+impl tl3_controller::clock::Clock for Clock {
+    fn now(&self) -> std::time::SystemTime {
+        self.0.get()
+    }
+}
+
+pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    drop(queued(settings, &api, root.path(), true));
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now())));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Mergify, api.adapter(&root.path().join("mergify"), 0));
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(), registry, bootstrap(), clock.clone(),
+    ).unwrap();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("live-dequeued", "checks");
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+        assert!(state.label, "Mergify leaves the queue label on a dequeued PR");
+    }
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    for input in Translator::new(api.clients()).unwrap().webhook(
+        &parsed("check_run", body), &controller.snapshot().unwrap(), &bootstrap().repos,
+    ).unwrap() {
+        ingress::apply(&mut controller, input).unwrap();
+    }
+    // The queue check can return to ready while the queue rule remains failed.
+    // Presence of the old label does not prove that this retry wrote anything.
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("waiting", "checks");
+        state.lag = lag;
+    }
+    drain(&mut controller);
+    assert_eq!(api.state.lock().unwrap().deletes, 1, "remove the existing label before re-adding it");
+    assert_eq!(api.state.lock().unwrap().posts, 2, "the retry must cause a real label transition");
+    if lag {
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing,
+            "a label write alone never confirms queue acceptance");
+        for _ in 0..2 {
+            clock.0.set(clock.0.get() + Duration::from_secs(100_000));
+            controller.look_now().unwrap();
+            drain(&mut controller);
+        }
+        assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "incidents"),
+            "missing queue acceptance must raise the usual incident");
+        assert_eq!(api.state.lock().unwrap().posts, 2, "looks must not repeat the queue mutation");
+    } else {
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    }
+    println!("test head_check_label_present_lag_{lag} ... ok");
+}
