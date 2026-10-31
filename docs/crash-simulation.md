@@ -151,7 +151,7 @@ and webhook control models normally use bound one. HTTP stop uses bound two. The
 a 10,000-branch limit that fails rather than skips an unfinished execution. The model body and I/O actors
 use 8 MiB stacks because Loom's default coroutine stack cannot run these library
 calls. Channels and shared source locks use Loom primitives. Postgres, inotify,
-HTTP, Tokio scheduling, and socket deadlines remain external operations. A seventh
+HTTP, Tokio scheduling, and socket deadlines remain external operations. An eighth
 model checks that the channel shim rejects sends after receiver drop. Loom 0.7
 does not model the timed-look branch: Loom 0.7.2's `recv_timeout` is
 `unimplemented!`. The models keep the controller out of that branch. Loom also
@@ -171,6 +171,10 @@ application, missing owner drain, a lost gap, stop loss and reordering, relaxed
 stop atomics, progress replay, progress without persistence, wait registration,
 the awaited key, and reset or outage rereads.
 Run mutations through PrismaBuild, just like the green suite.
+
+`crates/prismabuild/tools/lookup_mutants.py` moves the capture scan just before
+the withdrawn read. It requires the finish-gap regression to fail after the
+done read, then restores the source.
 
 ## Fleet verification
 
@@ -192,5 +196,5 @@ Ticket #71's focused final campaign comes from
 the bounded models and all twenty crash save points on `dl380g10`, `sparky`, and
 `sparklina`. The dl380g10 action also repeats both bell models 50 times at bound two.
 A portable action runs `crates/controller/tools/verify.sh`, and another checks
-all 13 ordering mutants. The workspace script also runs the bounded loom suite. Each action reserves two
+all 13 ordering mutants plus the lookup scan-position mutant. The workspace script also runs the bounded loom suite. Each action reserves two
 CPUs and 6 GiB, bounds build and native threads, and preserves PB affinity.

@@ -41,6 +41,6 @@ rows.append({
     "cwd": str(root), "anywhere": True, "cpus": 2,
     "demand": {"mem_gb": 6}, "env": env,
     "priority": -10, "timeout_s": 3600,
-    "argv": ["/usr/bin/python3.14", "-c", "import subprocess\nfor mutant in 'ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage'.split():\n    subprocess.run(['/usr/bin/python3.14', 'crates/controller/tools/loom_mutants.py', mutant], check=True)"],
+    "argv": ["/usr/bin/python3.14", "-c", "import subprocess\nfor mutant in 'ingress wake-before-durable consume-before-apply no-owner-drain gap stop-dropped stop-after-wake stop-relaxed progress persistence registration awaited reset-outage'.split():\n    subprocess.run(['/usr/bin/python3.14', 'crates/controller/tools/loom_mutants.py', mutant], check=True)\nsubprocess.run(['/usr/bin/python3.14', 'crates/prismabuild/tools/lookup_mutants.py'], check=True)"],
 })
 print(json.dumps(rows, indent=2))

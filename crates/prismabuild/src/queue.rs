@@ -221,6 +221,7 @@ impl PrismaBuild {
     ) -> Result<RecordRead, Error> {
         let root = &self.options.queue_root;
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
+        let mut ready_capture_seen = false;
         // Claims can return to ready. Revisit live slots after the terminal scan
         // so a link-ready/unlink-claimed handoff cannot look like an ending.
         for (index, state) in STATES.iter().chain(["ready", "claimed"].iter()).enumerate() {
@@ -259,7 +260,12 @@ impl PrismaBuild {
                                 name.ends_with(".json")
                             })
                         {
-                            return Ok(RecordRead::Moving);
+                            if state == "claimed" {
+                                return Ok(RecordRead::Moving);
+                            }
+                            // Ready captures have no retirement bell. Read their published ending now.
+                            ready_capture_seen = true;
+                            break;
                         }
                     }
                 }
@@ -303,7 +309,11 @@ impl PrismaBuild {
             }
         }
         let Some((rank, path, record)) = chosen else {
-            return Ok(RecordRead::Absent);
+            return Ok(if ready_capture_seen {
+                RecordRead::Moving
+            } else {
+                RecordRead::Absent
+            });
         };
         let status = record.status.as_deref();
         let returncode = record.detail.returncode();
