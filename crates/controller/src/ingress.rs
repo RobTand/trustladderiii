@@ -388,16 +388,13 @@ impl CatchUp {
         })
     }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
-        self.collect(store, bootstrap)?.persist(store)
-    }
-    fn collect(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<CatchUpBatch> {
         let since: DateTime<Utc> = store
             .ingress_cursor("github-catch-up")?
             .map(serde_json::from_value)
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;
-        self.fetch(since, snapshot, bootstrap)
+        self.fetch(since, snapshot, bootstrap)?.persist(store)
     }
     fn fetch(
         &self,
@@ -691,8 +688,10 @@ impl Source for WebhookReceiver {
                             }
                             Err(error) => {
                                 eprintln!("GitHub catch-up failed: {error}");
-                                gap = true;
-                                retry_ready = false;
+                                if !gap {
+                                    gap = true;
+                                    retry_ready = false;
+                                }
                             }
                         }
                     }

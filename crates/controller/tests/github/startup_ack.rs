@@ -108,7 +108,10 @@ fn during_catch_up(settings: &tl3_config::Store) {
         snapshot
             .rows
             .iter()
-            .filter(|row| row.table == "github_comments")
+            .filter(|row| row.table == "inbox"
+                && serde_json::from_value::<Observation>(row.value.clone()).is_ok_and(
+                    |observation| matches!(observation, Observation::GitHubComment { .. })
+                ))
             .count(),
         1,
         "catch-up and webhook apply the comment once"
@@ -122,6 +125,15 @@ fn during_catch_up(settings: &tl3_config::Store) {
             .unwrap()
             .is_empty()
     );
+    drain(&mut controller);
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .comment_retired("owner/sandbox/3/9")
+            .unwrap()
+    );
+    assert_eq!(controller.world().unwrap().nodes.len(), 1);
+    assert_eq!(api.state.lock().unwrap().posts, 2);
     println!(
         "test startup_ack_during_catch_up ... ok ({elapsed:?}; durable before catch-up finished)"
     );
