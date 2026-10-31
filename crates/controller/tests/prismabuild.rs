@@ -258,7 +258,8 @@ fn reproducing_check_plan_and_verdict() {
             .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(
-            request["reviewed"], reviewed,
+            request["reviewed"],
+            reviewed.as_str(),
             "freeze the exact reviewed commit"
         );
         let (report, pass, _) = observed(completion(&mut adapter, &delivery));

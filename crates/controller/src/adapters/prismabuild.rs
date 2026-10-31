@@ -712,7 +712,7 @@ mod git_tests {
         let runtime = crate::executor::runtime().unwrap();
         fs::remove_dir_all(&f.path).unwrap();
         assert!(matches!(
-            read_wait(&client, &runtime, &"a".repeat(64), &f.path).unwrap(),
+            read_wait(&client, runtime, &"a".repeat(64), &f.path).unwrap(),
             crate::executor::WaitRecord::Ended
         ));
     }
@@ -725,7 +725,7 @@ mod git_tests {
                 let client = wait_client(f.root.path(), &f.head);
                 let runtime = crate::executor::runtime().unwrap();
                 assert!(matches!(
-                    read_wait(&client, &runtime, &"a".repeat(64), &f.path).unwrap(),
+                    read_wait(&client, runtime, &"a".repeat(64), &f.path).unwrap(),
                     crate::executor::WaitRecord::Alive
                 ));
             },
