@@ -101,6 +101,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
         }
         Ok(result)
     }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        self.backend(delivery).reconcile_cancellation(delivery)
+    }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.backend(delivery).look(delivery)
     }

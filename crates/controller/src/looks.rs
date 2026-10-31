@@ -77,11 +77,14 @@ pub(crate) struct Incident {
 pub(crate) fn resolve_effect_incidents(
     snapshot: &Snapshot,
     commit: &mut Commit,
-    resolved: impl Fn(&Incident) -> bool,
+    mut resolved: impl FnMut(&Incident, &str) -> Result<bool>,
 ) -> Result<()> {
     for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
         let mut incident: Incident = serde_json::from_value(row.value.clone())?;
-        if incident.open && incident.effect.is_some() && resolved(&incident) {
+        if incident.open
+            && let Some(key) = incident.effect.as_deref()
+            && resolved(&incident, key)?
+        {
             incident.open = false;
             commit
                 .rows
@@ -160,6 +163,27 @@ pub(crate) fn incident_note(repository: &crate::Repository, issue: u64, summary:
 }
 
 impl Controller {
+    pub(crate) fn resolve_closed_effect_incidents(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        resolve_effect_incidents(snapshot, commit, |incident, key| {
+            if !matches!(
+                world.nodes[incident.node.0 as usize].phase,
+                tl3_kernel::Phase::Closed(_)
+            ) {
+                return Ok(false);
+            }
+            let Some(effect) = self.store.effect(key)? else {
+                return Ok(false);
+            };
+            let delivery: Delivery = serde_json::from_value(effect.payload)?;
+            // Failed summaries and other notices still need delivery after closure.
+            Ok(matches!(delivery.output, Out::Effect { .. }))
+        })
+    }
     pub(crate) fn link_allowance_incident(
         &self,
         snapshot: &Snapshot,
@@ -1158,12 +1182,7 @@ impl Controller {
             snapshot,
         );
         // Repair snapshots from before closed requests retired recovery incidents.
-        resolve_effect_incidents(snapshot, &mut commit, |incident| {
-            matches!(
-                world.nodes[incident.node.0 as usize].phase,
-                tl3_kernel::Phase::Closed(_)
-            )
-        })?;
+        self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
             let state: AllowanceState = serde_json::from_value(row.value.clone())?;
             let incident_open = state.incident.as_ref().is_some_and(|id| {

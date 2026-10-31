@@ -44,6 +44,9 @@ impl Executor for Spy {
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile", delivery.key.clone())
     }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        self.hit("reconcile_cancellation", delivery.key.clone())
+    }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.hit("look", delivery.key.clone())
     }
@@ -180,6 +183,7 @@ fn assert_delivery_methods(
     calls.lock().unwrap().clear();
     assert!(router.execute(d).is_err());
     assert!(router.reconcile(d).is_err());
+    assert!(router.reconcile_cancellation(d).is_err());
     assert!(router.look(d).is_err());
     assert!(router.probe(d).is_err());
     assert!(router.resume_after_quota(d).is_err());
@@ -191,6 +195,7 @@ fn assert_delivery_methods(
         [
             "execute",
             "reconcile",
+            "reconcile_cancellation",
             "look",
             "probe",
             "resume_after_quota",

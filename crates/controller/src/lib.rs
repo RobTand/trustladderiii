@@ -1003,9 +1003,7 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
-            looks::resolve_effect_incidents(&snapshot, &mut commit, |incident| {
-                incident.effect.as_deref() == Some(key)
-            })?;
+            looks::resolve_effect_incidents(&snapshot, &mut commit, |_, effect| Ok(effect == key))?;
             if let Some(marker) = &delivery.marker_key {
                 commit.rows.push(RowChange::Delete {
                     table: "notice_incidents".into(),
@@ -1091,12 +1089,7 @@ impl Controller {
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
-        looks::resolve_effect_incidents(snapshot, commit, |incident| {
-            matches!(
-                world.nodes[incident.node.0 as usize].phase,
-                tl3_kernel::Phase::Closed(_)
-            )
-        })?;
+        self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
         commit.result = json!({"kernel_event": event});
         for (index, node) in world.nodes.iter().enumerate() {
             if previous

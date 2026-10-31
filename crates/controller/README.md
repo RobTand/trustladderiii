@@ -1059,8 +1059,9 @@ stop intent keeps the exact attempt identity across restart.
 Mergify recovery probes read the PR issue with one GET through the existing
 incident allowance. A successful read releases the hold on a quiet upstream.
 A confirmed effect resolves its recovery incident. Closing a request resolves
-its remaining effect-linked incidents; restart also repairs older closed rows.
-Kernel warnings, including unapproved merges, retain their own lifecycle.
+its remaining operation recovery incidents; restart also repairs older closed
+rows. Failed notices still need delivery after closure. Kernel warnings,
+including unapproved merges, retain their own lifecycle.
 
 Cancelling queue admission ends its local watch without waiting for Mergify.
 The synchronous dispatch has ended, and the existing ClosePr teardown removes
