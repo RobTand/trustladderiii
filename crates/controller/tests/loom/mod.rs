@@ -37,6 +37,8 @@ pub(crate) fn delivery() -> Delivery {
         repository: repository(),
         issue: 42,
         pull_request: None,
+        proposed: None,
+        scope_removals: None,
         paths: vec![],
         attempt: 1,
         round: 0,
