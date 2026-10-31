@@ -437,6 +437,9 @@ fn owner_progress_contract(settings: &tl3_config::Store, upstream: Upstream) {
     assert!(c.world().unwrap().valid());
 }
 fn permanent_incident_clear(settings: &tl3_config::Store) {
+    permanent_incident_clear_at(settings, false);
+}
+fn permanent_incident_clear_at(settings: &tl3_config::Store, request_issue: bool) {
     struct Permanent;
     impl Executor for Permanent {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
@@ -463,7 +466,30 @@ fn permanent_incident_clear(settings: &tl3_config::Store) {
     let id = incident(&mut c);
     comment(&mut c, &id, 7, 17, 1);
     assert_eq!(incident(&mut c), id);
-    comment(&mut c, &id, 42, 17, 2);
+    if request_issue {
+        c.observe(
+            "request-clear",
+            Observation::GitHubComment {
+                repository: bootstrap().repos[0].clone(),
+                issue: 12,
+                comment: tl3_github::Comment {
+                    id: 200,
+                    body: format!("clear incident {id}"),
+                    user: tl3_github::Actor {
+                        id: 42,
+                        login: "fixture".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+                },
+            },
+        )
+        .unwrap();
+        drain(&mut c);
+    } else {
+        comment(&mut c, &id, 42, 17, 2);
+    }
     assert!(
         status::load(&mut Reader::open(settings).unwrap())
             .unwrap()
@@ -976,13 +1002,24 @@ fn assert_incident_request(payload: &serde_json::Value) {
     );
 }
 
-fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
+fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let fixture = worktree_fixture::Fixture::create(root.path());
     let mut boot = bootstrap();
     boot.repos = vec![worktree_fixture::identity()];
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::Worktrees, fixture.adapter());
+    registry.register(
+        Upstream::Workers,
+        WaitingMaker {
+            fake: adapters::workers::Fake::new(root.path()),
+            stops: Rc::new(Cell::new(0)),
+            owner: "prismabuild".into(),
+            checkout: fixture
+                .adapter()
+                .checkout(&fixture.delivery(EffectKind::PrepareWorktree, 1)),
+        },
+    );
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
     c.intake(LabelledIssue {
         delivery: "dirty-worktree".into(),
@@ -997,14 +1034,13 @@ fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
     .unwrap();
     let delivery = fixture.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = fixture.adapter().checkout(&delivery);
-    for _ in 0..300 {
-        if checkout.exists() {
-            break;
-        }
-        assert!(c.drive_once().unwrap());
-    }
-    assert!(checkout.exists());
-    std::fs::write(checkout.join("unfinished.txt"), "Keep this work.").unwrap();
+    drain(&mut c);
+    assert!(matches!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::Making { .. }
+    ));
+    std::fs::write(checkout.join("shared.txt"), "Interrupted tracked edit.\n").unwrap();
+    std::fs::write(checkout.join("unfinished.txt"), "Keep this work.\n").unwrap();
     c.observe(
         "stop-dirty-worktree",
         Observation::Kernel(Event::Command {
@@ -1016,46 +1052,52 @@ fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
     .unwrap();
     drain(&mut c);
     let snapshot = c.snapshot().unwrap();
-    let allowance = snapshot
-        .rows
-        .iter()
-        .find(|r| {
-            r.table == "allowances"
-                && r.value["delivery"]["output"]["Effect"]["kind"] == "RemoveWorktree"
-        })
-        .unwrap();
-    let key = allowance.value["delivery"]["key"].as_str().unwrap();
-    assert_eq!(
-        c.effect(key).unwrap().unwrap().state,
-        EffectState::Failed,
-        "a dirty worktree must permanently fail, not retry as transport"
-    );
-    let incident = snapshot
-        .rows
-        .iter()
-        .find(|r| {
-            r.table == "incidents"
-                && r.value["signature"]
-                    == serde_json::json!({"upstream":"Worktrees", "class":"dirty_worktree"})
-        })
-        .expect("dirty-worktree incident cause");
-    let summary = incident.value["summary"].as_str().unwrap();
     assert!(
-        summary.contains("uncommitted or untracked files"),
-        "wrong incident cause: {summary}"
+        matches!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(tl3_kernel::Outcome::Stopped)
+        ),
+        "stop must finish without an incident"
     );
-    assert!(!summary.contains("could not be reached"));
-    assert_eq!(
-        std::fs::read_to_string(checkout.join("unfinished.txt")).unwrap(),
-        "Keep this work."
+    assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
+    assert!(!checkout.exists());
+    let reference = worktree_fixture::git(
+        &fixture.repo,
+        &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"],
     );
-    println!("test dirty_worktree_is_permanent ... ok");
+    assert!(
+        reference.starts_with("refs/tl3/scratch/tl3/issue-42-node-0/"),
+        "{reference}"
+    );
+    for (file, content) in [
+        ("shared.txt", "Interrupted tracked edit."),
+        ("unfinished.txt", "Keep this work."),
+    ] {
+        assert_eq!(
+            worktree_fixture::git(&fixture.repo, &["show", &format!("{reference}:{file}")]),
+            content
+        );
+    }
+    assert!(
+        adapters::delivered_notes(root.path())
+            .unwrap()
+            .iter()
+            .any(|note| note.contains(&reference)),
+        "closing notice must include the saved ref"
+    );
+    println!("test stopped_worktree_saves_scratch ... ok");
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--request-incident-clear") {
+        let mut db = support::Database::start();
+        permanent_incident_clear_at(&db.create("request_clear"), true);
+        db.stop();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--dirty-worktree") {
         let mut db = support::Database::start();
-        dirty_worktree_is_permanent(&db.create("dirty_worktree"));
+        stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
         db.stop();
         return;
     }
@@ -1147,7 +1189,8 @@ fn main() {
     println!("test pb_owns_progress_failure ... ok");
     owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
     println!("test queue_stall_incident ... ok");
-    dirty_worktree_is_permanent(&db.create("dirty_worktree"));
+    stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
+    permanent_incident_clear_at(&db.create("request_clear"), true);
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");
     progress_releases_nothing(&db.create("progress_holds"));

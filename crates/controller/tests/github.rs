@@ -501,6 +501,11 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--incident-verbatim") {
+        operations_and_delivery_log(&database.create("verbatim"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
         notice_incidents::run(&mut database);
         database.stop();
@@ -1872,7 +1877,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     delivery.repository.name = "tl3".into();
     delivery.issue = 17;
     delivery.question_context = Some(
-        json!({"issue_title":"Fix a greeting", "request":"Fix a greeting (https://github.com/owner/sandbox/issues/12)", "signature":"GitHub:permission"}),
+        json!({"issue_title":"Fix a greeting", "request":"Fix a greeting (https://github.com/owner/sandbox/issues/12)", "signature":"GitHub:permission", "incident_id":"5.0"}),
     );
     delivery.note = Some(
         "For Fix a greeting, GitHub refused access. Work needs your help. Reply with \"clear incident 5.0\" here once the cause is fixed."
@@ -1913,6 +1918,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         .unwrap();
     let body: Value = serde_json::from_slice(&post.body).unwrap();
     let text = body["body"].as_str().unwrap();
+    assert!(text.lines().any(|line| line == "Reply with \"clear incident 5.0\" on https://github.com/owner/tl3/issues/17 or on the request's issue after fixing the cause."), "fixed instruction missing: {text}");
     for expected in [
         "Fix a greeting",
         "`https://github.com/owner/sandbox/issues/12`",
