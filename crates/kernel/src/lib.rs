@@ -1534,22 +1534,27 @@ pub fn proof_of_event(event: &Event) -> &'static str {
 
 /// The Kani proofs that cover each phase: settle's internal transitions, and
 /// progress. Exhaustive for the same reason.
-pub fn proofs_of_phase(phase: Phase) -> [&'static str; 2] {
+pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
     match phase {
-        Phase::Ingesting => ["advance_ingesting", "progress_from_ingesting"],
-        Phase::Auditing => ["advance_auditing", "progress_from_auditing"],
-        Phase::Unplanned => ["advance_unplanned", "progress_from_unplanned"],
-        Phase::Planning { .. } => ["advance_planning", "progress_from_planning"],
-        Phase::Ready(_) => ["advance_ready", "progress_from_ready"],
-        Phase::Making => ["advance_making", "progress_from_making"],
-        Phase::Checking => ["advance_checking", "progress_from_checking"],
-        Phase::Reviewing => ["advance_reviewing", "progress_from_reviewing"],
-        Phase::Publishing => ["advance_publishing", "progress_from_publishing"],
-        Phase::Queued => ["advance_queued", "progress_from_queued"],
-        Phase::Rebasing => ["advance_rebasing", "progress_from_rebasing"],
-        Phase::AwaitingRob => ["advance_awaiting_rob", "progress_from_awaiting_rob"],
-        Phase::Stopping(_) => ["advance_stopping", "progress_from_stopping"],
-        Phase::Closed(_) => ["advance_closed", "progress_from_closed"],
+        Phase::Ingesting => &["advance_ingesting", "progress_from_ingesting"],
+        Phase::Auditing => &["advance_auditing", "progress_from_auditing"],
+        Phase::Unplanned => &["advance_unplanned", "progress_from_unplanned"],
+        Phase::Planning { .. } => &["advance_planning", "progress_from_planning"],
+        Phase::Ready(_) => &["advance_ready", "progress_from_ready"],
+        Phase::Making => &[
+            "advance_making",
+            "progress_from_making",
+            "apply_adoption_at_most_once",
+            "apply_adoption_has_no_maker_credit",
+        ],
+        Phase::Checking => &["advance_checking", "progress_from_checking"],
+        Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
+        Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
+        Phase::Queued => &["advance_queued", "progress_from_queued"],
+        Phase::Rebasing => &["advance_rebasing", "progress_from_rebasing"],
+        Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
+        Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
+        Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
     }
 }
 // proof map end
