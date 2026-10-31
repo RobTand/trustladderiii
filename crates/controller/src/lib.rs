@@ -835,18 +835,6 @@ impl Controller {
             from: effect.state,
             to: EffectState::Cancelled,
         });
-        // Preserve teardown evidence in the same transaction that can emit the summary.
-        for observation in &completion.observations {
-            if let Observation::ScratchSaved { node, reference } = observation {
-                commit.rows.push(put(
-                    "saved_scratch",
-                    reference.clone(),
-                    json!({
-                        "node": node, "reference": reference,
-                    }),
-                ));
-            }
-        }
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
@@ -915,6 +903,18 @@ impl Controller {
             from,
             to: state,
         });
+        // Preserve teardown evidence in the same transaction that can emit the summary.
+        for observation in &completion.observations {
+            if let Observation::ScratchSaved { node, reference } = observation {
+                commit.rows.push(put(
+                    "saved_scratch",
+                    reference.clone(),
+                    json!({
+                        "node": node, "reference": reference,
+                    }),
+                ));
+            }
+        }
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
             self.apply(
                 &snapshot,
