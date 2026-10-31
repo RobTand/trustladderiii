@@ -263,7 +263,7 @@ impl Respond for Api {
             ("POST", "/repos/owner/sandbox/issues/100/comments") => {
                 assert_eq!(request.headers.get("authorization").unwrap(), "Bearer disposable");
                 let body: Value = serde_json::from_slice(&request.body).unwrap();
-                assert!(body["body"].as_str().unwrap().lines().any(|line| line == "@mergifyio queue"));
+                assert!(body["body"].as_str().unwrap().starts_with("@mergifyio queue\n"));
                 let comment = json!({"id":1000 + state.requeues,"body":body["body"],
                     "user":{"id":123,"login":"factory[bot]"},
                     "created_at":"2026-10-31T22:20:05Z","updated_at":"2026-10-31T22:20:05Z",
