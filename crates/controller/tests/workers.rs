@@ -234,6 +234,11 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
 }
 
 fn main() {
+    if env::args().len() == 1 {
+        maker::router_regression(false);
+        maker::router_regression(true);
+    }
+
     if let Some(mode) = env::args().nth(1).filter(|s| s.starts_with("--router-")) {
         maker::router_regression(mode == "--router-look-regression");
         return;

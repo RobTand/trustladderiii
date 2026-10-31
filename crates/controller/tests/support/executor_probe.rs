@@ -25,29 +25,51 @@ pub fn delivery(role: Role) -> Delivery {
         key: "router-probe".into(),
         epoch: 1,
         output: Output::Effect {
-            node: NodeId(0), seq: 1, kind: EffectKind::StartRun(role), head: None,
+            node: NodeId(0),
+            seq: 1,
+            kind: EffectKind::StartRun(role),
+            head: None,
         },
         generation: 1,
         head_sha: None,
-        repository: Repository { owner: "owner".into(), name: "sandbox".into(), installation: 3 },
-        issue: 12, pull_request: None, paths: vec![], attempt: 1, round: 0,
-        replanned: false, checks: None, job_generation: None, question: None,
-        marker_key: None, note: None, question_context: None, steering: None, request_text: None,
+        repository: Repository {
+            owner: "owner".into(),
+            name: "sandbox".into(),
+            installation: 3,
+        },
+        issue: 12,
+        pull_request: None,
+        paths: vec![],
+        attempt: 1,
+        round: 0,
+        replanned: false,
+        checks: None,
+        job_generation: None,
+        question: None,
+        marker_key: None,
+        note: None,
+        question_context: None,
+        steering: None,
+        request_text: None,
     }
 }
 
 pub fn assert_retire_delivery(router: &mut dyn Executor) {
     assert!(
-        matches!(router.retire_delivery(&delivery(Role::Make)),
-            Err(tl3_controller::Error::Invalid("retire_delivery forwarded"))),
+        matches!(
+            router.retire_delivery(&delivery(Role::Make)),
+            Err(tl3_controller::Error::Invalid("retire_delivery forwarded"))
+        ),
         "retire_delivery silently used Executor's default instead of the worker adapter"
     );
 }
 
 pub fn assert_look(router: &mut dyn Executor) {
     assert!(
-        matches!(router.look(&delivery(Role::Make)),
-            Err(tl3_controller::Error::Invalid("look forwarded"))),
+        matches!(
+            router.look(&delivery(Role::Make)),
+            Err(tl3_controller::Error::Invalid("look forwarded"))
+        ),
         "look silently used Executor's default instead of the worker adapter"
     );
 }
