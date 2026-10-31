@@ -749,7 +749,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             reviews[0]["inputs"]["head_sha"],
             reviews[2]["inputs"]["head_sha"]
         );
-        for pair in reviews.chunks_exact(2) {
+        for pair in reviews.as_chunks::<2>().0 {
             assert_eq!(pair[0]["model"]["name"], "review-primary");
             assert_eq!(pair[1]["model"]["name"], "review-backup");
             assert_eq!(pair[0]["resume_session"], false);
