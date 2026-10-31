@@ -49,6 +49,8 @@ pub enum Error {
     Transport,
     #[error("GitHub returned HTTP {status}")]
     Http { status: u16 },
+    #[error("GitHub refused an Actions request: {0}")]
+    ActionsForbidden(ActionsRefusal),
     #[error("GitHub rate limited requests; retry after {retry_after:?}")]
     RateLimited { retry_after: Duration },
     #[error("GitHub response did not match its schema")]
@@ -59,6 +61,40 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ActionsRefusal {
+    #[error("resource not accessible by integration")]
+    AppAccess,
+    #[error("workflow run is still in progress")]
+    RunInProgress,
+    #[error("workflow run is older than 30 days")]
+    RunExpired,
+    #[error("workflow or repository restrictions")]
+    Other,
+}
+
+impl ActionsRefusal {
+    fn from_message(message: &str) -> Self {
+        let message = message.trim().trim_end_matches('.').to_ascii_lowercase();
+        if message == "resource not accessible by integration" {
+            Self::AppAccess
+        } else if message.contains("already in progress")
+            || message.contains("is in progress")
+            || message.contains("currently running")
+            || message.contains("not completed")
+        {
+            Self::RunInProgress
+        } else if message.contains("older than 30 days")
+            || message.contains("more than 30 days")
+            || message.contains("created over a month ago")
+        {
+            Self::RunExpired
+        } else {
+            Self::Other
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +125,18 @@ impl Error {
         match self {
             Self::CatchUp { source, .. } => source.failure_class(),
             Self::RateLimited { .. } => FailureClass::Quota,
+            Self::ActionsForbidden(ActionsRefusal::AppAccess) => {
+                FailureClass::Permanent("actions_write_required")
+            }
+            Self::ActionsForbidden(ActionsRefusal::RunInProgress) => {
+                FailureClass::Transient("actions_run_in_progress")
+            }
+            Self::ActionsForbidden(ActionsRefusal::RunExpired) => {
+                FailureClass::Permanent("actions_run_expired")
+            }
+            Self::ActionsForbidden(ActionsRefusal::Other) => {
+                FailureClass::Permanent("actions_refused")
+            }
             Self::Http { status: 401 | 403 } => FailureClass::Permanent("permission"),
             Self::Http { status: 404 | 410 } => FailureClass::Permanent("not_found"),
             Self::Http { status: 422 } => FailureClass::Permanent("invalid_request"),
@@ -343,6 +391,14 @@ impl GitHub {
             {
                 throttle.blocked_until = Instant::now() + Duration::from_secs(1 << attempt.min(6));
                 continue;
+            }
+            if status == StatusCode::FORBIDDEN
+                && path.starts_with("repos/")
+                && path.split('/').nth(3) == Some("actions")
+            {
+                return Err(Error::ActionsForbidden(ActionsRefusal::from_message(
+                    value.get("message").and_then(Value::as_str).unwrap_or(""),
+                )));
             }
             return Err(Error::Http {
                 status: status.as_u16(),
