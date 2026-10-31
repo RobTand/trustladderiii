@@ -20,11 +20,20 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
+pub(super) fn session(
+    delivery: &Delivery,
+    store: &mut Store,
+    snapshot: &tl3_store::Snapshot,
+) -> Result<Option<Value>> {
+    let restarted =
+        crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize].review_restarted;
     Ok(store
         .worker_document(&delivery.node().0.to_string(), "reviewer_session")?
         .filter(|session| {
-            session["attempt"] == delivery.attempt && session["replanned"] == delivery.replanned
+            session["attempt"] == delivery.attempt
+                && session["replanned"] == delivery.replanned
+                && session["review_restarted"].as_bool().unwrap_or(false) == restarted
+                && session["out_of_room"] != true
         }))
 }
 
@@ -41,9 +50,9 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    let session = session(delivery, store)?;
+    let session = session(delivery, store, snapshot)?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
-    let mut base = if delivery.round == 1 {
+    let mut base = if delivery.round == 1 && session.is_some() {
         match run.reviewed_sha.as_deref() {
             Some(reviewed) => reviewed,
             None => session
@@ -160,6 +169,9 @@ pub(super) fn checkout(root: &Path, delivery: &Delivery) -> Result<()> {
 }
 
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<()> {
+    if reply["verdict"] == "out_of_room" {
+        return Ok(());
+    }
     if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
         return Err(Error::Invalid("review approval names a different head"));
     }

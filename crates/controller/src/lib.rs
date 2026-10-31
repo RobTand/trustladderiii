@@ -1861,6 +1861,8 @@ impl Controller {
                         "reviewer_session",
                         node.0.to_string(),
                         json!({"attempt": n.attempt, "replanned": n.replanned,
+                            "review_restarted": n.review_restarted,
+                            "out_of_room": reply["verdict"] == "out_of_room",
                             "generation": generation,
                             "head_sha": n.head.and_then(|head| snapshot.interned.iter()
                                 .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)

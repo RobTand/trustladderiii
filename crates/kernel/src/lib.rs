@@ -380,6 +380,9 @@ pub struct Node {
     /// The branch and worktree may exist.
     pub worktree: bool,
     pub rechecks: u8,
+    /// This attempt has used its fresh reviewer conversation after exhaustion.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub review_restarted: bool,
     pub credit: Credit,
 }
 
@@ -421,6 +424,7 @@ impl Node {
             had_pr: false,
             worktree: false,
             rechecks: 0,
+            review_restarted: false,
             credit: Credit {
                 ready: false,
                 start: 0,
@@ -1749,7 +1753,7 @@ fn accepts(w: &World, n: &Node, reply: &Reply) -> bool {
         (Phase::Reviewing, Reply::Approved { head }) => {
             n.head == Some(*head) && n.checked == Some(*head)
         }
-        (Phase::Reviewing, Reply::ChangesRequested) => true,
+        (Phase::Reviewing, Reply::ChangesRequested | Reply::ReviewerOutOfRoom) => true,
         (Phase::Rebasing, Reply::RebaseClean { .. }) => true,
         (Phase::Rebasing, Reply::RebaseNeedsChanges) => true,
         _ => false,
@@ -1826,6 +1830,7 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             if fits && !footprint.is_empty() && !must_split {
                 m.footprint = footprint;
                 m.attempt = 1;
+                m.review_restarted = false;
                 m.round = 0;
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
@@ -1872,7 +1877,14 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
             set_phase(m, Phase::Publishing);
         }
         Reply::ChangesRequested => failed_round(w, i, out),
-        Reply::ReviewerOutOfRoom => todo!("Q44 fresh start, then split"),
+        Reply::ReviewerOutOfRoom => {
+            if w.nodes[i].review_restarted {
+                out_of_room(w, i, out);
+            } else {
+                w.nodes[i].review_restarted = true;
+                recheck(w, i, Phase::Reviewing, out);
+            }
+        }
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
             m.head = Some(head);
@@ -1931,6 +1943,7 @@ fn next_rung(w: &mut World, i: usize, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     if m.attempt < 3 {
         m.attempt += 1;
+        m.review_restarted = false;
         m.round = 0;
         if m.credit.can_spend(1) {
             m.credit.spend(1);
@@ -2001,7 +2014,7 @@ fn plan_retry(w: &mut World, i: usize, out: &mut Outbox) {
     }
 }
 
-/// A new head is checked and reviewed again. The first few rechecks are free.
+/// A new head or a fresh reviewer uses the same free recheck allowance.
 fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
@@ -2019,7 +2032,11 @@ fn recheck(w: &mut World, i: usize, target: Phase, out: &mut Outbox) {
             w,
             i,
             QKind::OutOfCredit,
-            Cont::Ready(Resume::Checking),
+            Cont::Ready(if target == Phase::Reviewing {
+                Resume::Reviewing
+            } else {
+                Resume::Checking
+            }),
             1,
             out,
         );
@@ -2307,6 +2324,7 @@ fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer, out: &mut Outbox)
                 Answer::TryAgain => {
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
+                    m.review_restarted = false;
                     m.round = 0;
                     m.replanned = false;
                     go_on(

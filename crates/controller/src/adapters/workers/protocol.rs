@@ -124,6 +124,7 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
         "reviewer" if reply["verdict"] == "approve" => Reply::Approved {
             head: tl3_kernel::HeadId(0),
         },
+        "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
         "reviewer" => Reply::ChangesRequested,
         "planner" => {
             forecast(reply)?;

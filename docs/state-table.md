@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -175,7 +175,7 @@ Agreed with Rob on 2026-10-29, with the numbers below confirmed on 2026-10-30 an
 | A new attempt: the second gets a bigger budget, the third a different model | 1 |
 | A re-plan after the third attempt, once per leaf | 1 |
 | A conflict fix that changes code | 1 |
-| A recheck after a clean rebase, beyond the first `free_rechecks` (3 by default) for the leaf | 1 |
+| A recheck after a clean rebase or a fresh review after reviewer exhaustion, beyond the first `free_rechecks` (3 by default) for the leaf | 1 |
 | A footprint extension | 1 |
 | A restart, by an owner or by Rob | 1 |
 | Re-dividing, in slice two | 1 per child abandoned or added |
@@ -308,7 +308,7 @@ A node that spans several repos is admitted at once, because its plan must split
 The controller supplies the planner with these inputs, alongside the brief,
 goals and forecast settings:
 
-- `must_split`: true after a maker ran out of room, otherwise false. A leaf
+- `must_split`: true after a maker ran out of room or a fresh reviewer ran out of room, otherwise false. A leaf
   reply is rejected when it is true.
 - `findings`: everything learned before a re-plan, including failed checks and
   review findings, as a list of text reports. It is empty for initial planning.
@@ -375,12 +375,16 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 
 ### Reviewing(attempt, round)
 
-The review runs in its own session, independent of the maker and the planner. It can use the same type of agent or a different one. By default its model comes from a different family than the maker's (Q22). In round 1, the reviewer resumes its round-0 session.
+The review runs in its own session, independent of the maker and the planner. It can use the same type of agent or a different one. By default its model comes from a different family than the maker's (Q22). In round 1, the reviewer resumes its round-0 session. If it runs out of room, it gets one fresh conversation on the next model in `models.reviewer`, without resuming the exhausted session (Q44). Ordinary fix rounds keep the selected reviewer and its session. A new maker attempt starts with the default reviewer again.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Approved (head) | The head is the one that passed the checks | Publishing | Record the head and its tree as approved; start the publishing sequence |
 | Changes requested (findings, each tied to a measure) | | A failed round | |
+| Reviewer out of room | First time for this review; within `free_rechecks`, or credit at least 1 | Reviewing | Start a fresh conversation, without session resume, on the next reviewer model. Count it as a recheck: free up to `free_rechecks`, then spend 1. |
+| Reviewer out of room | First time for this review; beyond `free_rechecks`, and credit 0 | AwaitingRob(out of credit, continue to Ready(Reviewing)) | Release the slot and files; after funding, start the fresh review on the next reviewer model, without session resume |
+| Reviewer out of room | Again, on the fresh review; credit at least 1 | Planning, which must split | Spend 1; release the slot and files; set `must_split` true |
+| Reviewer out of room | Again, on the fresh review; credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files; preserve `must_split` true in the continuation |
 
 ### Publishing
 
@@ -399,7 +403,7 @@ When the last step confirms, the leaf moves to Queued.
 - **Round 1 fails, or the maker says it can't meet:** move to the next step below. Each step costs 1. Each new attempt runs in a fresh session, starting from the branch, with every finding so far.
   - After attempt 1: Making(attempt 2, round 0), with a bigger budget.
   - After attempt 2: Making(attempt 3, round 0), on the next model in the maker's ladder.
-  - After attempt 3, if the leaf hasn't been re-planned: release the slot and files, and go to Planning with every finding in the planner's `findings` input. `must_split` is false unless the maker ran out of room. The new plan starts again at attempt 1.
+  - After attempt 3, if the leaf hasn't been re-planned: release the slot and files, and go to Planning with every finding in the planner's `findings` input. `must_split` is false unless the maker or the fresh reviewer ran out of room. The new plan starts again at attempt 1.
   - After attempt 3 of a re-planned leaf: release the slot and files, and go to AwaitingRob(can't meet, continue to Ready(Making, new attempt)).
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 

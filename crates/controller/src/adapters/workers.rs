@@ -334,11 +334,17 @@ impl Supervisor {
             "reviewer" => &self.models.reviewer,
             _ => return Err(Error::Invalid("unsupported worker role")),
         };
+        let review_restarted = role == "reviewer"
+            && crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize]
+                .review_restarted;
         let model = if role == "reviewer" {
             let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
-            self.models
-                .reviewer_for(&maker.family)
-                .ok_or(Error::Invalid("reviewer needs a different model family"))?
+            let first = ladder
+                .iter()
+                .position(|model| !model.family.eq_ignore_ascii_case(&maker.family))
+                .ok_or(Error::Invalid("reviewer needs a different model family"))?;
+            // The default may be the last rung; the next entry wraps to the first.
+            &ladder[(first + usize::from(review_restarted)) % ladder.len()]
         } else {
             &ladder[rung.min(ladder.len() - 1)]
         };
@@ -383,9 +389,13 @@ impl Supervisor {
                     .join("sessions")
                     .join(&node)
                     .join(format!("plan-{}", u8::from(delivery.replanned)))
-                    .join(format!("reviewer-attempt-{}.json", delivery.attempt))
+                    .join(if review_restarted {
+                        format!("reviewer-attempt-{}-fresh.json", delivery.attempt)
+                    } else {
+                        format!("reviewer-attempt-{}.json", delivery.attempt)
+                    })
             );
-            let session = review::session(delivery, store)?;
+            let session = review::session(delivery, store, snapshot)?;
             if let Some(session) = &session {
                 request["last_accepted_generation"] = json!(session["generation"].as_u64().ok_or(
                     Error::Invalid("reviewer session has no accepted generation")

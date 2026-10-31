@@ -61,6 +61,18 @@
         "findings"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "const": "out_of_room"
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
