@@ -1,8 +1,0 @@
-[profile.circleci]
-test-threads = 4
-fail-fast = false
-
-[profile.circleci.junit]
-path = "junit.xml"
-store-success-output = false
-store-failure-output = true

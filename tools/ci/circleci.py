@@ -13,18 +13,6 @@ ROOT = check.ROOT
 RESULTS = ROOT / "test-results"
 
 
-def rust_filter(changed, packages, full=False):
-    if full or not changed:
-        return "all()"
-    selected = set()
-    for filename in changed:
-        owners = [name for name, directory in packages.items() if Path(filename).is_relative_to(directory)]
-        if not owners:
-            return "all()"
-        selected.update(owners)
-    return " | ".join(f"rdeps(={name})" for name in sorted(selected))
-
-
 def python_groups(files, projects):
     groups = {}
     for path in sorted(files):
@@ -47,48 +35,26 @@ def split(items, timing_type):
     return result.stdout.splitlines()
 
 
-def changed_files():
-    try:
-        check.run("git", "fetch", "origin", "main")
-        base = check.run("git", "merge-base", "HEAD", "origin/main", capture=True).strip()
-        return check.run("git", "diff", "--name-only", "--no-renames", base, "HEAD", capture=True).splitlines()
-    except subprocess.CalledProcessError:
-        # Missing history must increase coverage, never silently select nothing.
-        return []
-
-
-def rust(full):
-    files = check.tracked_files()
-    manifests = check.rust_manifests(files)
-    workspaces = {}
-    for manifest in manifests:
-        metadata = json.loads(check.run("cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", manifest, capture=True))
-        workspaces[metadata["workspace_root"]] = metadata
-    if not workspaces:
-        raise RuntimeError("No Rust projects discovered")
-    changed = [] if full else changed_files()
-    for index, (directory, metadata) in enumerate(sorted(workspaces.items())):
-        manifest = Path(directory) / "Cargo.toml"
-        packages = {p["name"]: Path(p["manifest_path"]).parent.relative_to(ROOT) for p in metadata["packages"] if p["id"] in metadata["workspace_members"]}
-        selection = rust_filter(changed, packages, full)
-        print(f"Rust selection: {selection}", flush=True)
-        if os.environ.get("CIRCLE_NODE_INDEX", "0") == "0":
-            check.run("cargo", "fmt", "--manifest-path", manifest, "--all", "--", "--check")
-            check.run("cargo", "clippy", "--manifest-path", manifest, "--workspace", "--all-targets", "--locked", "--", "-D", "warnings")
-        listing = json.loads(check.run("cargo", "nextest", "list", "--manifest-path", manifest, "--workspace", "--all-targets", "--locked", "-E", selection, "--message-format", "json", capture=True))
-        binaries = split(sorted(listing["rust-suites"]), "classname")
-        if not binaries:
-            print("No Rust binaries assigned to this node", flush=True)
-            continue
-        shard = " | ".join(f"binary_id(={binary})" for binary in binaries)
-        report = RESULTS / f"rust-{index}.xml"
-        config = ROOT / ".circleci" / "nextest.toml"
-        try:
-            check.run("cargo", "nextest", "run", "--manifest-path", manifest, "--config-file", config, "--profile", "circleci", "--workspace", "--all-targets", "--locked", "--no-fail-fast", "-E", f"({selection}) & ({shard})")
-        finally:
-            source = Path(metadata["target_directory"]) / "nextest" / "circleci" / "junit.xml"
-            if source.exists():
-                report.write_bytes(source.read_bytes())
+def rust():
+    shallow = check.run("git", "rev-parse", "--is-shallow-repository", capture=True).strip()
+    if shallow == "true":
+        check.run("git", "fetch", "--no-tags", "--unshallow", "origin")
+    check.run("git", "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    shallow = check.run("git", "rev-parse", "--is-shallow-repository", capture=True).strip()
+    if shallow != "false":
+        raise RuntimeError("The Rust budget gate requires full checkout history")
+    baseline = check.run("git", "rev-parse", "origin/main", capture=True).strip()
+    print(f"Rust budget checkout: shallow={shallow}, origin/main={baseline}", flush=True)
+    report = ROOT / "target" / "ci-test-times.json"
+    report.unlink(missing_ok=True)
+    check.rust(check.tracked_files())
+    timings = json.loads(report.read_text())
+    suite = ET.Element("testsuite", name="Rust", tests=str(len(timings["tests"])),
+                       time=str(timings["seconds"]))
+    for identifier, elapsed in sorted(timings["tests"].items()):
+        binary, _, name = identifier.partition("::")
+        ET.SubElement(suite, "testcase", classname=binary, name=name, time=str(elapsed))
+    ET.ElementTree(suite).write(RESULTS / "rust.xml", encoding="utf-8", xml_declaration=True)
 
 
 def python():
@@ -132,11 +98,10 @@ def python():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("language", choices=("rust", "python"))
-    parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
     RESULTS.mkdir(exist_ok=True)
     if args.language == "rust":
-        rust(args.full or os.environ.get("CIRCLE_BRANCH", "main") == "main" or os.environ.get("CIRCLE_BRANCH", "").startswith("mergify/merge-queue/"))
+        rust()
     else:
         python()
 
