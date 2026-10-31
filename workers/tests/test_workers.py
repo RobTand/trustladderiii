@@ -191,7 +191,11 @@ def test_only_tl3_prompt_and_no_tools_reach_model(request_doc, role, monkeypatch
     assert [message.type for message in messages] == ["system", "human"]
     system = messages[0].text
     expected = files("tl3_workers").joinpath("prompts", role + ".md").read_text()
-    assert system == expected + "\n\nReply with one JSON object matching this schema:\n" + json.dumps(schema(role + "-reply"), ensure_ascii=False)
+    proposal = copy.deepcopy(schema(role + "-reply"))
+    if role == "ingest":
+        del proposal["oneOf"][0]["properties"]["forecast"]
+        del proposal["$defs"]["forecast"]
+    assert system == expected + "\n\nReply with one JSON object matching this schema:\n" + json.dumps(proposal, ensure_ascii=False)
     assert request_doc["key_file"] not in system
     assert "key_file" not in messages[1].text.replace(request_doc["inputs"]["issue"]["body"], "")
     assert json.loads(messages[1].text) == request_doc["inputs"]
