@@ -48,11 +48,8 @@ def build(target):
     return binaries[0]
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mutant', choices=MUTANTS)
-    args = parser.parse_args()
-    name, (file, old, new, cases) = args.mutant, MUTANTS[args.mutant]
+def run_mutant(name):
+    file, old, new, cases = MUTANTS[name]
     path = ROOT / file
     original = path.read_text()
     if original.count(old) != 1:
@@ -79,6 +76,14 @@ def main():
                 raise RuntimeError(f'{name}/{case} did not kill the mutant with an assertion')
     finally:
         path.write_text(original)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mutant', choices=['all', *MUTANTS])
+    args = parser.parse_args()
+    for name in MUTANTS if args.mutant == 'all' else [args.mutant]:
+        run_mutant(name)
 
 
 if __name__ == '__main__':
