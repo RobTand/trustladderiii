@@ -937,7 +937,9 @@ thread.
 Authenticated servers use optional `[hindsight].api_key_file`. It contains the
 raw API key in an owner-only file. The sender loads it at runtime and sends a
 Bearer authorization header. A missing, insecure or unreadable file leaves the
-outbox pending. It does not block daemon startup or request progress. Worker
+outbox pending and never blocks request progress. The deployed unit loads the key
+as a systemd credential, so the file must exist for `tl3d` to start;
+`deploy.py check` reports it as the Hindsight credential. Worker
 requests carry only the file path in `hindsight_key_file`, outside model inputs;
 recall reads it at runtime and sends the same header. The deployed service loads
 `hindsight-key` through systemd's credentials directory. Neither the path nor key
