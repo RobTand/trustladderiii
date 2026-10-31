@@ -1,4 +1,6 @@
 use tl3_controller::executor::Output as Out;
+#[path = "github/notice_incidents.rs"]
+mod notice_incidents;
 #[path = "github/steering.rs"]
 mod steering;
 #[path = "../../store/tests/support/mod.rs"]
@@ -116,6 +118,10 @@ struct ApiState {
     new_delivery: bool,
     linked: Vec<Value>,
     lose_issue_reply: bool,
+    forbidden_question: bool,
+    question_status: Option<u16>,
+    rejected_question_posts: usize,
+    forbidden_filing: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -186,10 +192,27 @@ impl Respond for Api {
                 ResponseTemplate::new(202)
             }
 
-            ("GET", "/repos/owner/sandbox/issues/12/comments") => {
+            ("GET", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path
+                        .rsplit('/')
+                        .nth(1)
+                        .is_some_and(|issue| issue.parse::<u64>().is_ok())
+                    && path.ends_with("/comments") =>
+            {
                 ResponseTemplate::new(200).set_body_json(json!(&state.comments))
             }
-            ("POST", "/repos/owner/sandbox/issues/12/comments") => {
+            ("POST", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && path.ends_with("/comments") =>
+            {
+                if (state.forbidden_question || state.question_status.is_some())
+                    && original_path.contains("/sandbox/")
+                    && String::from_utf8_lossy(&request.body).contains("recommend option")
+                {
+                    state.rejected_question_posts += 1;
+                    return ResponseTemplate::new(state.question_status.unwrap_or(403));
+                }
                 state.posts += 1;
                 let mut comment = fixture(true)["comment"].clone();
                 comment["id"] = json!(100 + state.posts as u64);
@@ -205,7 +228,7 @@ impl Respond for Api {
                 state.deletes += 1;
                 ResponseTemplate::new(204)
             }
-            ("PATCH", "/repos/owner/sandbox/issues/12") => {
+            ("PATCH", path) if path.starts_with("/repos/owner/sandbox/issues/") => {
                 state.closed = true;
                 let mut issue = fixture(false)["issue"].clone();
                 issue["state"] = json!("closed");
@@ -229,6 +252,9 @@ impl Respond for Api {
                 | "/repos/owner/tl3/pulls",
             ) => ResponseTemplate::new(200).set_body_json(json!([])),
             ("POST", "/repos/owner/sandbox/issues") => {
+                if state.forbidden_filing {
+                    return ResponseTemplate::new(403);
+                }
                 let payload: Value = serde_json::from_slice(&request.body).unwrap();
                 let mut issue = fixture(false)["issue"].clone();
                 issue["number"] = json!(1000 + state.linked.len());
@@ -336,12 +362,6 @@ impl Respond for Api {
                 } else {
                     json!({"check_suites": []})
                 }),
-            ("GET", path)
-                if path.starts_with("/repos/owner/sandbox/issues/1")
-                    && path.ends_with("/comments") =>
-            {
-                ResponseTemplate::new(200).set_body_json(json!([]))
-            }
             ("GET", path) if path.starts_with("/repos/owner/sandbox/issues/1") => {
                 let number: u64 = path.rsplit('/').next().unwrap().parse().unwrap();
                 ResponseTemplate::new(200)
@@ -470,7 +490,19 @@ fn main() {
         steering::merge_pending_child(&args);
         return;
     }
+    if args.get(1).is_some_and(|arg| arg == "--notice-retry-child") {
+        notice_incidents::child(&args);
+        return;
+    }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
+        notice_incidents::run(&mut database);
+        database.stop();
+        return;
+    }
+    notice_incidents::run(&mut database);
+    operations_and_delivery_log(&database.create("operations"));
+    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
         match scenario {
             "quote" => steering::dropped_change_quote(),
@@ -481,8 +513,6 @@ fn main() {
         database.stop();
         return;
     }
-    operations_and_delivery_log(&database.create("operations"));
-    println!("test operations_messages_and_missed_delivery_recovery ... ok");
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
@@ -791,6 +821,7 @@ fn delivery(notice: Notice) -> Delivery {
         request_text: None,
         checks: None,
         job_generation: None,
+        marker_key: None,
         note: None,
     }
 }
