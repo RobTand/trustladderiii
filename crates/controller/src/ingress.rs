@@ -497,7 +497,7 @@ enum WebhookMessage {
     Gap,
     Stop,
     ServerExit(Result<()>),
-    CaughtUp(tl3_store::Reader, Result<CatchUpBatch>),
+    CaughtUp(Box<tl3_store::Reader>, Result<CatchUpBatch>),
 }
 struct Control {
     sender: Sender<WebhookMessage>,
@@ -674,7 +674,7 @@ impl Source for WebhookReceiver {
                         retry_ready = true;
                     }
                     WebhookMessage::CaughtUp(reader, result) => {
-                        catch_up_reader = Some(reader);
+                        catch_up_reader = Some(*reader);
                         if let Some(thread) = catching_up.take() {
                             thread
                                 .join()

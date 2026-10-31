@@ -78,7 +78,7 @@ pub(super) fn fetch_catch_up(
         }))
         .unwrap_or(Err(Error::Invalid("GitHub catch-up panicked")));
         // Only the receipt loop inserts rows, so sequence order remains commit order.
-        let _ = sender.send(WebhookMessage::CaughtUp(reader, result));
+        let _ = sender.send(WebhookMessage::CaughtUp(Box::new(reader), result));
     })
 }
 
