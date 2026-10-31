@@ -126,7 +126,11 @@ fn read_wait(
         .and_then(|repository| repository.is_ancestor(&parent, &repository.head()?))
     {
         Ok(alive) => alive,
-        Err(tl3_worktrees::Error::Io | tl3_worktrees::Error::Spawn) if !checkout.try_exists()? => false,
+        Err(tl3_worktrees::Error::Io | tl3_worktrees::Error::Spawn)
+            if !checkout.try_exists()? =>
+        {
+            false
+        }
         Err(
             error @ (tl3_worktrees::Error::Spawn
             | tl3_worktrees::Error::Io
@@ -778,7 +782,13 @@ exit "$status"
             let checkout = f.root.path().join("checkout");
             crate::git_tests::git(
                 &f.path,
-                &["worktree", "add", "-b", "wait-race", checkout.to_str().unwrap()],
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "wait-race",
+                    checkout.to_str().unwrap(),
+                ],
             );
             checkout
         } else {
@@ -789,7 +799,10 @@ exit "$status"
         let result = read_wait(&client, runtime, &"a".repeat(64), &checkout);
         assert!(f.root.path().join("removed").exists());
         assert!(!checkout.try_exists().unwrap());
-        assert!(matches!(result.unwrap(), crate::executor::WaitRecord::Ended));
+        assert!(matches!(
+            result.unwrap(),
+            crate::executor::WaitRecord::Ended
+        ));
     }
 
     #[test]
