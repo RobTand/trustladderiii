@@ -84,3 +84,61 @@ pub(crate) fn summary(snapshot: &Snapshot, node: NodeId) -> Result<Option<String
         )
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tl3_store::{Epoch, Revision, WorldRow};
+
+    fn scope_summary(paths: &[String]) -> String {
+        let snapshot = Snapshot {
+            revision: Revision::ZERO,
+            epoch: Epoch::ZERO,
+            rows: vec![WorldRow {
+                table: "scope_trims".into(),
+                id: "0".into(),
+                value: json!({"removed_paths": paths}),
+                version: Revision::ZERO,
+                arrival: 0,
+            }],
+            pending_effects: vec![],
+            credit: vec![],
+            interned: vec![],
+        };
+        summary(&snapshot, NodeId(0)).unwrap().unwrap()
+    }
+
+    #[test]
+    fn scope_summary_caps_long_removal_lists_and_counts_omitted_paths() {
+        let paths: Vec<_> = (0..10_000)
+            .map(|i| format!("removed/{i:05}/__init__.py"))
+            .collect();
+        let text = scope_summary(&paths);
+        assert!(text.len() <= 8_192, "removal notice must leave comment room");
+        let listed = text.matches('`').count() / 2;
+        assert!(listed > 0 && listed < paths.len());
+        let prefix = paths[..listed]
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(
+            text,
+            format!(
+                "Changes not part of this request were removed: {prefix}, and {} more paths.",
+                paths.len() - listed
+            )
+        );
+    }
+
+    #[test]
+    fn scope_summary_caps_a_single_oversized_path_without_splitting_it() {
+        let paths = vec!["%FF".repeat(30_000)];
+        let text = scope_summary(&paths);
+        assert!(text.len() <= 8_192, "one long path must not overflow the cap");
+        assert_eq!(
+            text,
+            "Changes not part of this request were removed: 1 path, name omitted."
+        );
+    }
+}
