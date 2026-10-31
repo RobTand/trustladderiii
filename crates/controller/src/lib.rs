@@ -1805,14 +1805,14 @@ impl Controller {
                     let inputs = production::maker_inputs(&brief, &plan)?;
                     adapters::prismabuild::CheckRun {
                         repository: repository.clone(),
-                        base_sha: base_sha.clone(),
+                        base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
                         plan: serde_json::from_value(inputs["plan"]["checks"].clone())?,
                     }
                 };
                 run.repository = repository;
-                run.base_sha = base_sha;
+                run.base_sha = tl3_worktrees::CommitId::new(base_sha)?;
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
