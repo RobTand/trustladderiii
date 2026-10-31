@@ -1035,10 +1035,7 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
     let delivery = fixture.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = fixture.adapter().checkout(&delivery);
     drain(&mut c);
-    assert!(matches!(
-        c.world().unwrap().nodes[0].phase,
-        Phase::Making { .. }
-    ));
+    assert!(matches!(c.world().unwrap().nodes[0].phase, Phase::Making));
     std::fs::write(checkout.join("shared.txt"), "Interrupted tracked edit.\n").unwrap();
     std::fs::write(checkout.join("unfinished.txt"), "Keep this work.\n").unwrap();
     c.observe(
