@@ -1,6 +1,43 @@
 use super::*;
 use tl3_controller::ingress;
 
+struct HoldFix {
+    inner: Box<dyn Executor>,
+    hold: bool,
+    pending: Arc<Mutex<Option<Delivery>>>,
+}
+impl Executor for HoldFix {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if self.hold
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            )
+        {
+            *self.pending.lock().unwrap() = Some(delivery.clone());
+            return Ok(Completion::confirmed(vec![]));
+        }
+        self.inner.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if self.hold
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Make),
+                    ..
+                }
+            )
+        {
+            return Ok(Reconciliation::Pending);
+        }
+        self.inner.reconcile(delivery)
+    }
+}
+
 fn proposal(f: &Fixture, head: &str, body: &str) -> Value {
     json!({"number":17,"title":"An author's proposal","body":body,"labels":[{"name":"tl3"}],
         "user":{"id":7,"login":"author"},"state":"open","merged_at":null,"updated_at":"2026-10-31T00:00:00Z",
@@ -38,15 +75,22 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
     git(&f.source, &["checkout", "-b", "author"]);
+    let fixing = matches!(mode, "adoption-fix" | "adoption-extras");
+    let extras = mode == "adoption-extras";
     let author_head = commit(
         &f.source,
         "value.py",
-        if mode == "adoption-fix" {
+        if fixing {
             "def value(): return 3\n"
         } else {
             "def value(): return 2\n"
         },
     );
+    let author_head = if extras {
+        commit(&f.source, "extra.txt", "unrelated author addition\n")
+    } else {
+        author_head
+    };
     git(
         &f.source,
         &["push", f.remote.to_str().unwrap(), "HEAD:refs/pull/17/head"],
@@ -76,43 +120,52 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
     let maker_runs = Arc::new(Mutex::new(0));
+    let pending_fix = Arc::new(Mutex::new(None));
     let count = maker_runs.clone();
     let fixture = f.clone();
     let preserved = author_head.clone();
     let queue = root.path().join("queue/mode");
     registry.register(
         Upstream::Workers,
-        support::workers::Workers::new(
-            Some(Box::new(supervisor)),
-            adapters::workers::Fake::new(&root.path().join("fakes")),
-            vec![Role::Review],
-            move |d, completion| {
-                for o in &mut completion.observations {
-                    match o {
-                        Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
-                        Observation::Made { sha, .. } => {
-                            *count.lock().unwrap() += 1;
-                            assert_eq!(
-                                (d.attempt, d.round),
-                                (1, 1),
-                                "the adopted attempt gets its normal fix round"
-                            );
-                            let checkout = fixture.adapter().checkout(d);
-                            assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), preserved);
-                            *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
-                            assert_eq!(git(&checkout, &["merge-base", &preserved, sha]), preserved);
-                            fs::write(&queue, "done").unwrap();
+        HoldFix {
+            hold: extras,
+            pending: pending_fix.clone(),
+            inner: Box::new(support::workers::Workers::new(
+                Some(Box::new(supervisor)),
+                adapters::workers::Fake::new(&root.path().join("fakes")),
+                vec![Role::Review],
+                move |d, completion| {
+                    for o in &mut completion.observations {
+                        match o {
+                            Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                            Observation::Made { sha, .. } => {
+                                *count.lock().unwrap() += 1;
+                                assert_eq!(
+                                    (d.attempt, d.round),
+                                    (1, 1),
+                                    "the adopted attempt gets its normal fix round"
+                                );
+                                let checkout = fixture.adapter().checkout(d);
+                                assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), preserved);
+                                *sha =
+                                    commit(&checkout, "value.py", "def value():\n    return 2\n");
+                                assert_eq!(
+                                    git(&checkout, &["merge-base", &preserved, sha]),
+                                    preserved
+                                );
+                                fs::write(&queue, "done").unwrap();
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
-                }
-                if let Some(Observation::Made { sha, .. }) = completion.observations.first() {
-                    completion
-                        .observations
-                        .insert(0, check_observation(&fixture, d, sha.clone()));
-                }
-            },
-        ),
+                    if let Some(Observation::Made { sha, .. }) = completion.observations.first() {
+                        completion
+                            .observations
+                            .insert(0, check_observation(&fixture, d, sha.clone()));
+                    }
+                },
+            )),
+        },
     );
     registry.register(Upstream::Worktrees, f.adapter());
     registry.register(
@@ -120,7 +173,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         server.adapter(&root.path().join("github"), 0),
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
-    if mode == "adoption-fix" {
+    if fixing {
         fs::write(root.path().join("queue/mode"), "check_fail").unwrap();
     }
     registry.register(
@@ -189,6 +242,45 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .value["title"],
         "Fix the value"
     );
+    if extras {
+        drain(&mut c, &mut source, &mut store, Phase::Making);
+        let fixing = pending_fix.lock().unwrap().take().expect("first fix round");
+        assert_eq!((fixing.attempt, fixing.round), (1, 1));
+        *maker_runs.lock().unwrap() += 1;
+        let checkout = f.adapter().checkout(&fixing);
+        assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), author_head);
+        commit(&checkout, "value.py", "def value():\n    return 2\n");
+        fs::write(root.path().join("queue/mode"), "done").unwrap();
+        let trim = c
+            .trim_scope(
+                &f.adapter(),
+                &fixing,
+                &tl3_config::Planning::default().protected_paths,
+            )
+            .unwrap();
+        assert_eq!(
+            trim.removed_paths,
+            vec![PathBuf::from("extra.txt")],
+            "trim must compare from the ancestor"
+        );
+        let checkout = f.adapter().checkout(&fixing);
+        assert!(!checkout.join("extra.txt").exists());
+        assert!(!checkout.join("main-only.txt").exists());
+        c.observe(
+            "trimmed-plan",
+            check_observation(&f, &fixing, trim.head.as_str().into()),
+        )
+        .unwrap();
+        c.observe(
+            "trimmed-fix",
+            Observation::Made {
+                node: fixing.node(),
+                generation: fixing.generation,
+                sha: trim.head.as_str().into(),
+            },
+        )
+        .unwrap();
+    }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
     let d = f.delivery(EffectKind::Push, 100);
     let landed = f.head(&d);
@@ -196,10 +288,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         git(&f.repo, &["merge-base", &author_head, &landed]),
         author_head
     );
-    assert_eq!(
-        *maker_runs.lock().unwrap(),
-        usize::from(mode == "adoption-fix")
-    );
+    assert_eq!(*maker_runs.lock().unwrap(), usize::from(fixing));
     assert_eq!(c.world().unwrap().nodes[0].credit.balance(), 4);
     let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
         .unwrap()
@@ -209,7 +298,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert_eq!(reviews.len(), 1);
     assert_eq!(reviews[0]["inputs"]["check_base_sha"], check_base);
     let diff = reviews[0]["inputs"]["diff"].as_str().unwrap();
-    assert!(diff.contains(if mode == "adoption-fix" {
+    assert!(diff.contains(if fixing {
         "+    return 2"
     } else {
         "+def value(): return 2"
@@ -259,6 +348,21 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .unwrap()
             .contains("Your change was merged.")
     }));
+    if extras {
+        let summary = state
+            .comments
+            .iter()
+            .find(|comment| {
+                comment["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Changes not part of this request were removed:")
+            })
+            .expect("closing scope summary");
+        let text = summary["body"].as_str().unwrap();
+        assert!(text.contains("`extra.txt`"));
+        assert!(!text.contains("main-only.txt"));
+    }
     assert_eq!(state.proposed.as_ref().unwrap()["state"], "closed");
     assert_eq!(state.proposed_comments.len(), 1);
     assert!(

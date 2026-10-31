@@ -1690,3 +1690,34 @@ fn adoption_releases_pull_ref_without_losing_the_author_commit() {
     );
     assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), head);
 }
+
+#[test]
+fn adoption_scope_trim_excludes_main_only_progress() {
+    let f = Fixture::new();
+    let common = f.manager.head().unwrap();
+    write_commit(&f.repo, "main-only.txt", "main progress\n", "main progress");
+    let base = f.manager.head().unwrap();
+    git(&f.repo, ["checkout", "--detach", common.as_str()]);
+    write_commit(&f.repo, "shared.txt", "requested\n", "author change");
+    write_commit(&f.repo, "extra.txt", "unrelated\n", "author extra");
+    let author = f.manager.head().unwrap();
+    f.manager
+        .create_branch_from(&f.name, &base, &author)
+        .unwrap();
+    f.manager.create_worktree(&f.name, &f.worktree).unwrap();
+    let trim = f
+        .manager
+        .trim_scope(&f.name, &f.worktree, &["shared.txt".into()], &[])
+        .unwrap();
+    assert_eq!(
+        trim.removed_paths,
+        vec![PathBuf::from("extra.txt")],
+        "main-only changes are not request extras"
+    );
+    assert!(!f.worktree.join("extra.txt").exists());
+    assert!(
+        !f.worktree.join("main-only.txt").exists(),
+        "trimming must not import main's independent tree"
+    );
+    assert_eq!(f.manager.merge_base(&author, &trim.head).unwrap(), author);
+}

@@ -1425,7 +1425,12 @@ fn main() {
         );
         println!("test publishing_{mode} ... ok");
     }
-    for mode in ["adoption-pass", "adoption-fix", "adoption-negative"] {
+    for mode in [
+        "adoption-pass",
+        "adoption-fix",
+        "adoption-extras",
+        "adoption-negative",
+    ] {
         publishing_adoption::run(&database.create(&mode.replace('-', "_")), &python, mode);
         println!("test {mode} ... ok");
     }
