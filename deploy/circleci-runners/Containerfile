@@ -1,0 +1,19 @@
+# The existing native image supplies the same Rust and system dependencies as Actions.
+ARG BASE_IMAGE=localhost/tl3-ci-runner:phase1
+FROM ${BASE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip util-linux openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --break-system-packages uv==0.10.10
+COPY circleci-runner /usr/local/bin/circleci-runner
+COPY cargo-nextest /usr/local/bin/cargo-nextest
+COPY task.sh /usr/local/bin/circleci-task
+COPY entrypoint.sh /usr/local/bin/circleci-entrypoint
+RUN chmod 755 /usr/local/bin/circleci-* /usr/local/bin/cargo-nextest \
+    && mkdir -p /work /opt/circleci /run/circleci \
+    && chown runner:runner /work
+USER runner
+RUN uv python install 3.14
+USER root
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/circleci-entrypoint"]

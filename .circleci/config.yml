@@ -1,0 +1,77 @@
+version: 2.1
+
+parameters:
+  full:
+    type: boolean
+    default: false
+
+commands:
+  prepare:
+    steps:
+      - checkout
+      - run:
+          name: Verify isolated runner identity
+          command: |
+            test "$(id -u)" -ne 0
+            test ! -r /run/circleci/runner.yaml
+            test ! -d /mnt/shared/prismabuild-fleet
+            test -z "${CIRCLECI_RUNNER_API_AUTH_TOKEN:-}"
+            uv sync --locked --project workers --python 3.14
+
+executors:
+  fast:
+    machine: true
+    resource_class: robtand/fast-x64
+    environment: &limits
+      CARGO_BUILD_JOBS: '4'
+      RUST_TEST_THREADS: '4'
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      RAYON_NUM_THREADS: '1'
+      TOKIO_WORKER_THREADS: '1'
+      CARGO_TARGET_DIR: /home/runner/.cache/tl3-target
+  light:
+    machine: true
+    resource_class: robtand/slow-x64
+    environment: *limits
+
+jobs:
+  rust:
+    executor: fast
+    parallelism: 3
+    steps:
+      - prepare
+      - run:
+          name: Format, lint, and run Rust binaries by prior timing
+          command: |
+            args=()
+            if [ '<< pipeline.parameters.full >>' = true ]; then args+=(--full); fi
+            uv run --no-project --python 3.14 python tools/ci/circleci.py rust "${args[@]}"
+          no_output_timeout: 30m
+      - store_test_results:
+          path: test-results
+  python:
+    executor: light
+    parallelism: 2
+    steps:
+      - prepare
+      - run:
+          name: Build deployment test helper
+          command: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
+      - run:
+          name: Lint and run Python files by prior timing
+          command: |
+            export TL3_DEPLOY_HELPER="$CARGO_TARGET_DIR/debug/examples/tl3-deploy"
+            uv run --no-project --python 3.14 python tools/ci/circleci.py python
+          no_output_timeout: 30m
+      - store_test_results:
+          path: test-results
+
+workflows:
+  shadow:
+    jobs:
+      - rust:
+          name: CircleCI Rust
+      - python:
+          name: CircleCI Python

@@ -2,8 +2,10 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
 
 MODULE = Path(__file__).resolve().parents[1] / "circleci.py"
+sys.path.insert(0, str(MODULE.parent))
 spec = importlib.util.spec_from_file_location("tl3_circleci", MODULE)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
