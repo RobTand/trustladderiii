@@ -524,8 +524,15 @@ fn main() {
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
+    println!("test planner_stop ... ok");
+    database.stop();
+    drop(database);
+    println!("test supervisor_planner_fixture_cleanup ... ok");
+    let mut database = Database::start();
     maker::run(&mut database);
     database.stop();
+    drop(database);
+    println!("test maker_fixture_cleanup ... ok");
     println!("All required worker supervisor, planning and maker scenarios passed; no skips");
 }
 
