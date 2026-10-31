@@ -72,6 +72,12 @@ class FleetTests(unittest.TestCase):
         self.assertIn("a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697", containerfile)
         self.assertIn("5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4", containerfile)
 
+    def test_host_canaries_have_independent_concurrency_groups(self):
+        workflow = (test_runners.ROOT.parents[1] / ".github/workflows/light-checks.yml").read_text()
+        group = next(line for line in workflow.splitlines() if line.strip().startswith("group:"))
+        self.assertIn("inputs.runner_host", group,
+                      "dispatching another host must not cancel an active host canary")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
