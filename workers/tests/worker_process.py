@@ -78,3 +78,25 @@ def run_real_entrypoint(request, *, raw=None):
         input=json.dumps(request) if raw is None else raw,
         text=True, capture_output=True, timeout=45,
     )
+
+
+def fill_visible_fields(monkeypatch, fields):
+    """Model the fields advertised by the schema, including optional evidence."""
+    setup = '''
+class SchemaFollowingModel(FakeMessagesListChatModel):
+    def _generate(self, messages, **kwargs):
+        result = super()._generate(messages, **kwargs)
+        message = result.generations[0].message
+        reply = json.loads(message.content)
+        prompt = next(m.content for m in messages if m.type == 'system')
+        proposal = json.loads(prompt.rsplit('Reply with one JSON object matching this schema:\\n', 1)[1])
+        variant = next(v for v in proposal['oneOf']
+                       if v['properties']['kind']['const'] == reply['kind'])
+        for name, value in FIELDS.items():
+            if name in variant['properties']:
+                reply[name] = value
+        message.content = json.dumps(reply)
+        return result
+'''.replace('FIELDS', repr(fields))
+    monkeypatch.setattr(__import__(__name__), 'LAUNCH', LAUNCH.replace(
+        'model = FakeMessagesListChatModel(', setup + '\nmodel = SchemaFollowingModel('))
