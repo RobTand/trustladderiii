@@ -1,0 +1,17 @@
+[
+  {
+    "action": null,
+    "delivered_at": "2026-10-30T13:38:37.006Z",
+    "duration": 0.01,
+    "event": "ping",
+    "guid": "35130286-d467-11f1-9818-ec3509687ee3",
+    "id": 3851227417819480064,
+    "installation_id": null,
+    "redelivery": false,
+    "repository_id": null,
+    "status": "failed to connect to host",
+    "status_code": 502,
+    "throttled_at": null,
+    "url": ""
+  }
+]

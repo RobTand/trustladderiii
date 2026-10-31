@@ -1,0 +1,26 @@
+{
+  "run": {
+    "check_suite_id": 111502246987,
+    "conclusion": "success",
+    "head_sha": "1ee8d4c881c7350e9c75551bd03ea9dcd5d6bab1",
+    "id": 41131892893,
+    "status": "completed"
+  },
+  "jobs": [
+    {
+      "id": 124324601595,
+      "name": "Sandbox tests",
+      "status": "completed",
+      "conclusion": "success",
+      "labels": [
+        "self-hosted",
+        "linux",
+        "x64",
+        "tl3-sandbox-fleet"
+      ],
+      "runner_name": "tl3-sandbox-dl380g10-slot-2-1793395029-8075",
+      "started_at": "2026-10-30T21:33:14Z",
+      "completed_at": "2026-10-30T21:33:37Z"
+    }
+  ]
+}

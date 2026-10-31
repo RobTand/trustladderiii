@@ -79,6 +79,7 @@ fn fixture(root: &Path) -> Delivery {
         attempt: 1,
         round: 0,
         replanned: false,
+        marker_key: None,
         note: None,
         steering: None,
         request_text: None,
@@ -88,6 +89,9 @@ fn fixture(root: &Path) -> Delivery {
         checks: Some(CheckRun {
             repository: repo,
             base_sha: base,
+
+            reviewed_sha: None,
+            reproducing_unavailable: None,
             plan: vec![Check {
                 name: "value changes".into(),
                 kind: Kind::Demonstrating,

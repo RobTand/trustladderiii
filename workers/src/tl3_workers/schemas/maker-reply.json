@@ -7,6 +7,7 @@
       "properties": {
         "kind": {"const": "done"},
         "head": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "description": "Added by worker code. The model must omit this field."},
+        "reproductions": {"type": "array", "items": {"$ref": "#/$defs/reproduction"}},
         "self_check": {
           "type": "array", "minItems": 1,
           "items": {
@@ -53,5 +54,24 @@
       "required": ["kind"], "additionalProperties": false
     }
   ],
-  "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S"}}
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "reproduction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "finding_id": {"$ref": "#/$defs/text"},
+            "tests": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+          },
+          "required": ["finding_id", "tests"], "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {"finding_id": {"$ref": "#/$defs/text"}, "reason": {"$ref": "#/$defs/text"}},
+          "required": ["finding_id", "reason"], "additionalProperties": false
+        }
+      ]
+    }
+  }
 }

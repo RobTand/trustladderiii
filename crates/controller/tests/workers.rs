@@ -5,7 +5,6 @@ mod planning;
 mod prismabuild_fixture;
 #[path = "workers/retirement.rs"]
 mod retirement_review;
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 #[path = "fixtures/waits/mod.rs"]
 mod waits;
@@ -125,6 +124,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         replanned: false,
+        marker_key: None,
         note: None,
         checks: None,
         job_generation: None,
@@ -234,6 +234,16 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
 }
 
 fn main() {
+    if env::args().len() == 1 {
+        maker::router_regression(false);
+        maker::router_regression(true);
+    }
+
+    if let Some(mode) = env::args().nth(1).filter(|s| s.starts_with("--router-")) {
+        maker::router_regression(mode == "--router-look-regression");
+        return;
+    }
+
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--maker-rebase") {
         prepare_workers();

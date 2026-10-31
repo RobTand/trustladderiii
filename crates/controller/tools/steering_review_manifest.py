@@ -15,6 +15,7 @@ env = {
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
     "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
     "TL3_TEST_UV": "/home/rob/.local/bin/uv",
+    "TMPDIR": "/home/rob/tmp",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
 if args.suite == "unicode":
@@ -24,10 +25,10 @@ if args.suite == "unicode":
         "cargo test -p tl3-github --test messages --locked",
         "cargo build -p tl3-controller --example tl3-deploy --locked",
         'export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"',
-        "/home/rob/.local/bin/uv run --no-project --python 3.14+gil python tools/ci/check.py python",
+        "/usr/bin/python3.14 tools/ci/check.py python",
         "bash crates/controller/tools/verify.sh",
     ])
-    rows = [{**common, "tags": [host], "argv": ["bash", "-c", command]}
+    rows = [{**common, "cpus": 4, "tags": [host], "argv": ["bash", "-c", command]}
             for host in ("dl380g10", "sparky", "sparklina")]
 elif args.suite == "references":
     rows = [{**common, "tags": [host], "argv": ["bash", "-c", "cargo test -p tl3-controller --test writer_references --test writer_quote --test github --locked && cargo test -p tl3-github --test messages --locked"]}

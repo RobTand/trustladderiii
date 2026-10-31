@@ -439,6 +439,7 @@ fn permanent_incident_clear(settings: &tl3_config::Store) {
     impl Executor for Permanent {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
             Ok(Completion {
+                failure_class: None,
                 progress: None,
                 ack: tl3_kernel::Ack::Permanent,
                 observations: vec![],
@@ -673,6 +674,8 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             run: adapters::prismabuild::CheckRun {
                 repository: root.path().to_path_buf(),
                 base_sha: "b".repeat(40),
+                reviewed_sha: None,
+                reproducing_unavailable: None,
                 plan: vec![],
             },
         },
@@ -899,7 +902,10 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         .iter()
         .find(|r| r.table == "incidents" && r.value["open"] == true)
         .unwrap();
-    assert_eq!(incident.value["signature"], "Mergify:queue_unfinished");
+    assert_eq!(
+        incident.value["signature"],
+        serde_json::json!({"upstream":"Mergify", "class":"queue_unfinished"})
+    );
     let summary = incident.value["summary"].as_str().unwrap();
     assert!(
         summary.contains("GitHub merged the change at 2026-10-30T01:00:00Z"),

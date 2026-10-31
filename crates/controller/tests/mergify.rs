@@ -1,4 +1,3 @@
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -142,21 +141,36 @@ impl State {
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<State>>);
+impl support::github::Routes for State {
+    fn pulls(&self) -> Value {
+        json!([self.pull])
+    }
+    fn checks(&self, sha: &str) -> Value {
+        if sha == "dddddddddddddddddddddddddddddddddddddddd" {
+            self.merge_checks.clone()
+        } else {
+            self.checks()
+        }
+    }
+}
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
         let path = request.url.path();
         let method = request.method.as_str();
-        if path == "/app/installations/3/access_tokens" {
-            return ResponseTemplate::new(201).set_body_json(
-                json!({"token": "disposable", "expires_at": "2099-01-01T00:00:00Z"}),
-            );
+        if let Some(response) = support::github::access_token(path, 3, "disposable") {
+            return response;
         }
         if method == "GET" {
             state.reads += 1;
         }
         if state.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
+        }
+        if let Some(response) =
+            support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
+        {
+            return response;
         }
         match (method, path) {
             ("GET", "/repos/owner/sandbox/pulls/100") => {
@@ -187,12 +201,8 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(json!([]))
             }
             ("GET", "/repos/owner/sandbox/issues/100/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
-            ("GET", "/repos/owner/sandbox/pulls") => ResponseTemplate::new(200).set_body_json(json!([state.pull])),
             ("GET", "/repos/owner/sandbox/issues/events") => ResponseTemplate::new(200).set_body_json(json!(state.events)),
             ("GET", "/repos/owner/sandbox/issues" | "/repos/owner/sandbox/issues/comments") => ResponseTemplate::new(200).set_body_json(json!([])),
-            ("GET", path) if path.ends_with("/check-suites") => ResponseTemplate::new(200).set_body_json(json!({"check_suites":[]})),
-            ("GET", path) if path.ends_with("/check-runs") => ResponseTemplate::new(200).set_body_json(json!({"check_runs":
-                if path.contains("/commits/dddddddddddddddddddddddddddddddddddddddd/") { state.merge_checks.clone() } else {state.checks()} })),
             _ => panic!("unexpected API request {method} {path}"),
         }
     }
@@ -924,6 +934,7 @@ fn delivery() -> Delivery {
         round: 0,
         replanned: false,
         question: None,
+        marker_key: None,
         note: None,
         question_context: None,
         checks: None,
