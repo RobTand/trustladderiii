@@ -5,6 +5,7 @@ mod bell;
 mod support;
 #[path = "fixtures/waits/mod.rs"]
 mod waits;
+#[allow(dead_code)]
 mod worktree_fixture;
 use std::{
     cell::{Cell, RefCell},
