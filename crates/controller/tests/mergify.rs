@@ -2124,7 +2124,6 @@ fn main() {
     println!("test person actions ... ok");
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
-    database.stop();
     for mode in [
         "settles",
         "churn",
@@ -2138,5 +2137,6 @@ fn main() {
     for generic in [false, true] {
         reused_check_dequeues_twice(&database.create(&format!("reused_{generic}")), generic);
     }
+    database.stop();
     println!("64 Mergify scenarios passed; no skips; no live upstream calls");
 }
