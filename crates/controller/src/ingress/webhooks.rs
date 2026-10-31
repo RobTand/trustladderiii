@@ -139,14 +139,14 @@ impl Notifications {
         match &mut *self.0.lock().expect("webhook notifications") {
             WakeTarget::Pending(pending) => *pending = true,
             WakeTarget::Registered(sender) => {
-                let _ = sender.send(Input::Wake);
+                let _ = sender.send(Input::GitHubWake);
             }
         }
     }
     fn register(&self, sender: Sender<Input>) {
         let mut target = self.0.lock().expect("webhook notifications");
         if matches!(*target, WakeTarget::Pending(true)) {
-            let _ = sender.send(Input::Wake);
+            let _ = sender.send(Input::GitHubWake);
         }
         *target = WakeTarget::Registered(sender);
     }

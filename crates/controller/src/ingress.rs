@@ -69,7 +69,7 @@ impl Sources {
     pub fn run(self, controller: &mut Controller) -> Result<()> {
         drop(self.sender);
         drop(self.exit_sender);
-        drain(controller)?;
+        drain_on_wake(controller)?;
         while controller.drive_once()? {}
         controller.look_now()?;
         while controller.drive_once()? {}
@@ -79,6 +79,8 @@ impl Sources {
                     Ok(input) => input,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         controller.look_due()?;
+                        // Retry deferred deliveries on the existing allowance look, without a new timer.
+                        drain_on_wake(controller)?;
                         while controller.drive_once()? {}
                         continue;
                     }
@@ -92,7 +94,7 @@ impl Sources {
             for exit in self.exits.try_iter() {
                 exit?;
             }
-            drain(controller)?;
+            drain_on_wake(controller)?;
             apply(controller, input)?;
             controller.look_due()?;
             while controller.drive_once()? {}
@@ -119,6 +121,10 @@ impl Source for Stdin {
 pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
     match input {
         Input::Wake => {}
+        Input::GitHubWake => {
+            controller.retry_held_effects(crate::executor::Upstream::GitHub);
+            controller.retry_held_effects(crate::executor::Upstream::Mergify);
+        }
         Input::Look { key } => controller.look_key(&key)?,
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
@@ -194,6 +200,21 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
 
 /// Replays use the same intake and observation keys after a crash before consumption.
 pub fn drain(controller: &mut Controller) -> Result<()> {
+    drain_pending(controller).map(|_| ())
+}
+
+fn drain_on_wake(controller: &mut Controller) -> Result<()> {
+    // Bound same-wake retries; persistent failures wait for the next existing input or look.
+    for _ in 0..3 {
+        if !drain_pending(controller)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn drain_pending(controller: &mut Controller) -> Result<bool> {
+    let mut deferred = false;
     let names: Vec<_> = controller
         .github_translators
         .iter()
@@ -222,7 +243,7 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
             controller.github_translators[index].name
         );
         let mut cursor = controller.store.translator_cursor(&name)?;
-        loop {
+        'pending: loop {
             let deliveries = controller.store.ingress_after(cursor)?;
             if deliveries.is_empty() {
                 break;
@@ -233,9 +254,26 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
                     if snapshot.is_none() {
                         snapshot = Some(controller.store.load()?);
                     }
-                    let inputs = controller.github_translators[index]
+                    let inputs = match controller.github_translators[index]
                         .translator
-                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))?;
+                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))
+                    {
+                        Ok(inputs) => inputs,
+                        Err(Error::Permanent { class, source }) => {
+                            eprintln!(
+                                "discarding permanent observation failure for {name}, delivery {} ({}): {class}: {source}",
+                                stored.delivery_key, stored.event_name
+                            );
+                            Vec::new()
+                        }
+                        Err(error @ (Error::Adapter(_) | Error::Quota { .. })) => {
+                            eprintln!("observation translation failed for {name}: {error}");
+                            // Keep this delivery at the cursor for a bounded retry or the next look.
+                            deferred = true;
+                            break 'pending;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     for input in inputs {
                         apply(controller, input)?;
                     }
@@ -247,7 +285,7 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(deferred)
 }
 
 fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {
@@ -444,22 +482,31 @@ impl CatchUp {
                 })
                 .map(|entry| entry.value.clone())
                 .collect();
-            let result = runtime.block_on(client.catch_up(
-                &[ServedRepo {
-                    full_name: name.clone(),
-                    tracked_heads,
-                }],
-                since,
-            ))?;
+            let result = runtime
+                .block_on(client.catch_up(
+                    &[ServedRepo {
+                        full_name: name.clone(),
+                        tracked_heads,
+                    }],
+                    since,
+                ))
+                .map_err(|error| Error::Adapter(Box::new(error)))?;
             cursor = Some(cursor.map_or(result.next_cursor, |old: DateTime<Utc>| {
                 old.min(result.next_cursor)
             }));
             for mut changes in result.repositories {
                 for (number, _) in &changes.labels {
                     if !changes.issues.iter().any(|issue| issue.number == *number) {
-                        changes
-                            .issues
-                            .push(runtime.block_on(client.issue(&name, *number))?);
+                        changes.issues.push(
+                            runtime
+                                .block_on(client.issue(&name, *number))
+                                .map_err(|error| {
+                                    Error::Adapter(Box::new(tl3_github::Error::CatchUp {
+                                        endpoint: format!("repos/{name}/issues/{number}"),
+                                        source: Box::new(error),
+                                    }))
+                                })?,
+                        );
                     }
                 }
                 for comment in &changes.comments {
@@ -488,7 +535,7 @@ impl CatchUpBatch {
         if let Some(cursor) = self.cursor {
             store.receive_catch_up("github-catch-up", &self.deliveries, &json!(cursor))?;
         }
-        Ok(self.deliveries.iter().map(|_| Input::Wake).collect())
+        Ok(self.deliveries.iter().map(|_| Input::GitHubWake).collect())
     }
 }
 
@@ -681,13 +728,11 @@ impl WebhookReceiver {
                         let previous = std::mem::replace(&mut state, webhooks::FetchState::Idle);
                         let wanted = matches!(&previous, webhooks::FetchState::Wanted(Some(_)));
                         previous.join()?;
-                        match result.and_then(|batch| batch.persist(&mut store)) {
-                            Ok(_) => notifications.wake(),
-                            Err(error) => {
-                                eprintln!("GitHub catch-up failed: {error}");
-                                state = webhooks::FetchState::Wanted(None);
-                            }
+                        if let Err(error) = result.and_then(|batch| batch.persist(&mut store)) {
+                            eprintln!("GitHub catch-up failed: {error}");
+                            state = webhooks::FetchState::Wanted(None);
                         }
+                        notifications.wake();
                         if wanted && let Some(catch_up) = &catch_up {
                             state.request(|| {
                                 webhooks::fetch_catch_up(
