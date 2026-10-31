@@ -1252,6 +1252,9 @@ pub(crate) fn incident_summary(
         }
         "not_found" => "could not find the requested resource",
         "invalid_request" => "rejected the request",
+        "unrebased_head" => {
+            "refused to publish because the checked head conflicts with current main"
+        }
         "dirty_worktree" => "has uncommitted or untracked files",
         "invalid_branch" => "rejected an invalid branch name",
         "invalid_commit" => "rejected an invalid commit id",
