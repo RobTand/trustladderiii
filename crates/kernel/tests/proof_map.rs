@@ -67,7 +67,7 @@ fn every_event_and_phase_has_a_proof() {
         "proven but not on the map: {unmapped:?}"
     );
     println!(
-        "{} proofs, one per event variant and two per phase",
+        "{} proofs, covering every event variant and phase",
         proven.len()
     );
 }

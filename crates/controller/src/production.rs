@@ -7,6 +7,7 @@ pub struct Registration {
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: adapters::prismabuild::Source,
     pub mergify: adapters::mergify::Translator,
+    pub adoption: crate::adoption::Translator,
 }
 
 pub fn register(config: &tl3_config::Config) -> Result<Registration> {
@@ -129,6 +130,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?,
     );
     let mergify = adapters::mergify::Translator::new(clients.clone())?;
+    let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
     let webhooks = Webhooks::bind(
         listen,
         Store::open(&config.store)?,
@@ -142,6 +144,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         workers,
         bell,
         mergify,
+        adoption,
     })
 }
 

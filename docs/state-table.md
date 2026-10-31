@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44 and Q45. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -133,7 +133,7 @@ Every rule above is a safety property, except the progress witness. Liveness und
 
 | Kind | Examples | Rule |
 |---|---|---|
-| **Request** | An issue labelled `tl3` by Rob, in a repo TL3 serves | Creates a request whose root starts in Ingesting. Labels added by anyone else are ignored. Rob may allow other people later (Q2). |
+| **Request** | An issue labelled `tl3` by Rob, or a same-repo proposed PR labelled by Rob for adoption (Q45), in a repo TL3 serves | Creates a request whose root starts in Ingesting. Labels added by anyone else are ignored. Rob may allow other people later (Q2). |
 | **Reply** | A run's verdict: ingest done, audit verdict, plan, maker done, checks done, review verdict, decision, rebase result | Carries its operation id: node, generation and kind. A reply is stale unless it matches the node's current operation. A reply that breaks its schema, or names the wrong commit, counts as a failed run. |
 | **Acknowledgement** | An effect confirmed, failed retryably, or failed permanently | Applied to the effect by its key, whatever the node's current operation is, so a late confirmation always settles its effect. The node acts on it only if it's waiting on that effect. |
 | **Fact** | Child closed or escalated, dependency delivered or abandoned, PR merged, PR closed or dequeued by a person, a push by someone other than TL3, incident cleared | Never stale and never dropped. It updates facts in any phase, and settle applies whatever it enables. |
@@ -151,6 +151,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 - **Measures:** each with its lineage and status: unmet, provisionally met, or confirmed met.
 - **Escalations:** the frozen batch, and the queue behind it.
 - **PR:** every PR number the node has used, the base commit, the current head, and every head that passed checks and review, with its tree.
+- **Adoption:** the proposed head supplied with the request, and the adopted bit, which never resets (Q45).
 - **Merge:** once observed, the merged head and tree.
 - **Operation:** the generation, attempt and round, and whether the leaf has been re-planned. It also records the failure count and the incidents across the operation's whole lineage of generations.
 - **Effect sequence:** the phase's remaining effects, and which one is in flight.
@@ -271,7 +272,11 @@ Each table lists only the events its phase acts on. Anything else is either a st
 
 A phase's effects run as a sequence. The kernel emits the first effect, then emits each following one when the one before it confirms.
 
-**A request starts** when Rob labels an issue `tl3` (Q2). The request's root starts in Ingesting, and the kernel requests an ingest run.
+**A request starts** when Rob labels an issue `tl3` (Q2). Q45 also permits a
+proposed PR to seed the request. In #143, only Rob's `tl3` label on a same-repo
+PR qualifies. **Confirmed by Rob, 2026-10-31:** its closing keyword
+must identify exactly one issue. The issue supplies the goals. The root starts
+in Ingesting and requests an ingest run, retaining the proposed head.
 
 ### Ingesting (root)
 
@@ -340,7 +345,8 @@ In slice one, the gate grants first come, first served. A grant moves the leaf s
 
 | Resume point | Next | Effects, in order |
 |---|---|---|
-| Fresh | Making(attempt 1, round 0) | Create the branch from main if it's missing, recording the base commit; create the worktree if it's missing; start the maker run |
+| Fresh, without a proposed head | Making(attempt 1, round 0) | Create the branch from main if it's missing, recording the base commit; create the worktree if it's missing; start the maker run |
+| Fresh, with an unadopted proposed head (Q45) | Making(attempt 1, round 0) | Fetch the pinned pull head; create TL3's branch there, recording the main base and a separate start ref; prepare the worktree |
 | Making(attempt, round) | That Making | Create the worktree if it's missing; start or resume the maker run |
 | Checking | Checking | Bring the worktree up to the branch's head; submit the check job |
 | Reviewing | Reviewing | Start the review run |
@@ -359,12 +365,21 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
+| Worktree preparation confirms (Q45) | Proposed head present and not yet adopted | Checking | Mark adopted; set head to the proposed head; clear checked head; submit checks. Keep attempt, round and credit unchanged; do not start a maker. |
+| Worktree preparation confirms | No proposed head, or already adopted | Making at the next step | Start or resume the maker run |
 | Maker done (a commit, and its own check that every measure is met) | | Checking | Submit the check job |
 | Maker needs more files (a list) | Credit at least 1, and the forecast with the new files still fits | Ready(the same Making) | Spend 1; record the larger footprint; release the slot and files. The worktree and session stay. |
 | Maker needs more files | Otherwise | As for out of room | |
 | Maker can't meet, with a report | | The next attempt, as for a failed round 1 | |
 | Maker out of room | Credit at least 1 | Planning, which must split | Spend 1; release the slot and files |
 | Maker out of room | Credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files |
+
+**Confirmed by Rob, 2026-10-31:** the proposed head never changes; it
+is pinned at label time. The adopted bit can only become true and is
+never reset, including on a re-plan. Repeated preparations cannot readopt the
+original head. Adoption holds the normal slot and footprint, uses no agent pool
+slot, and earns or spends no maker credit. Subsequent fixes use the existing
+failed-round rules.
 
 ### Checking(attempt, round)
 

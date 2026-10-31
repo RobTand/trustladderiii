@@ -369,6 +369,10 @@ pub struct Node {
     pub fx_incidents: u8,
     pub waiting_incident: bool,
     pub incident_needs_rob: bool,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub proposed: Option<HeadId>,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub adopted: bool,
     pub head: Option<HeadId>,
     /// The head that passed its checks.
     pub checked: Option<HeadId>,
@@ -416,6 +420,8 @@ impl Node {
             fx_incidents: 0,
             waiting_incident: false,
             incident_needs_rob: false,
+            proposed: None,
+            adopted: false,
             head: None,
             checked: None,
             approved: None,
@@ -676,6 +682,10 @@ pub enum Command {
 pub enum Event {
     NewRequest {
         repo: RepoId,
+    },
+    NewAdoption {
+        repo: RepoId,
+        head: HeadId,
     },
     Reply {
         node: NodeId,
@@ -1466,6 +1476,7 @@ pub enum Broken {
 pub fn proof_of_event(event: &Event) -> &'static str {
     match event {
         Event::NewRequest { .. } => "apply_new_request",
+        Event::NewAdoption { .. } => "apply_new_adoption",
         Event::Reply { reply, .. } => match reply {
             Reply::IngestDone { .. } => "apply_ingest_done",
             Reply::IngestEarlyEnd(_) => "apply_ingest_early_end",
@@ -1523,22 +1534,27 @@ pub fn proof_of_event(event: &Event) -> &'static str {
 
 /// The Kani proofs that cover each phase: settle's internal transitions, and
 /// progress. Exhaustive for the same reason.
-pub fn proofs_of_phase(phase: Phase) -> [&'static str; 2] {
+pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
     match phase {
-        Phase::Ingesting => ["advance_ingesting", "progress_from_ingesting"],
-        Phase::Auditing => ["advance_auditing", "progress_from_auditing"],
-        Phase::Unplanned => ["advance_unplanned", "progress_from_unplanned"],
-        Phase::Planning { .. } => ["advance_planning", "progress_from_planning"],
-        Phase::Ready(_) => ["advance_ready", "progress_from_ready"],
-        Phase::Making => ["advance_making", "progress_from_making"],
-        Phase::Checking => ["advance_checking", "progress_from_checking"],
-        Phase::Reviewing => ["advance_reviewing", "progress_from_reviewing"],
-        Phase::Publishing => ["advance_publishing", "progress_from_publishing"],
-        Phase::Queued => ["advance_queued", "progress_from_queued"],
-        Phase::Rebasing => ["advance_rebasing", "progress_from_rebasing"],
-        Phase::AwaitingRob => ["advance_awaiting_rob", "progress_from_awaiting_rob"],
-        Phase::Stopping(_) => ["advance_stopping", "progress_from_stopping"],
-        Phase::Closed(_) => ["advance_closed", "progress_from_closed"],
+        Phase::Ingesting => &["advance_ingesting", "progress_from_ingesting"],
+        Phase::Auditing => &["advance_auditing", "progress_from_auditing"],
+        Phase::Unplanned => &["advance_unplanned", "progress_from_unplanned"],
+        Phase::Planning { .. } => &["advance_planning", "progress_from_planning"],
+        Phase::Ready(_) => &["advance_ready", "progress_from_ready"],
+        Phase::Making => &[
+            "advance_making",
+            "progress_from_making",
+            "apply_adoption_at_most_once",
+            "apply_adoption_has_no_maker_credit",
+        ],
+        Phase::Checking => &["advance_checking", "progress_from_checking"],
+        Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
+        Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
+        Phase::Queued => &["advance_queued", "progress_from_queued"],
+        Phase::Rebasing => &["advance_rebasing", "progress_from_rebasing"],
+        Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
+        Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
+        Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
     }
 }
 // proof map end
@@ -1575,6 +1591,13 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
+        Event::NewAdoption { repo, head } => {
+            if repo.index().is_some_and(|r| r < w.gates.len()) {
+                let mut node = Node::new(repo);
+                node.proposed = Some(head);
+                w.nodes.push(node);
+            }
+        }
         Event::NewRequest { repo } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
                 w.nodes.push(Node::new(repo));
@@ -2082,7 +2105,17 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
         && let Some(Item::Do(k) | Item::Teardown(k)) = m.current()
         && k == kind
     {
-        m.pos += 1;
+        if kind == EffectKind::PrepareWorktree
+            && !m.adopted
+            && let Some(head) = m.proposed
+        {
+            m.adopted = true;
+            m.head = Some(head);
+            m.checked = None;
+            set_phase(m, Phase::Checking);
+        } else {
+            m.pos += 1;
+        }
     }
 }
 

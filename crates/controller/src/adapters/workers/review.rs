@@ -64,6 +64,11 @@ pub(super) fn inputs(
         // Rebasing moves the check base beyond the previously reviewed history.
         base = run.base_sha.clone();
     }
+    let base = if base == run.base_sha {
+        repository.merge_base(&base, &head_id)?
+    } else {
+        base
+    };
     let node = delivery.node().0.to_string();
     let report = snapshot
         .rows
@@ -81,7 +86,8 @@ pub(super) fn inputs(
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     if base != run.base_sha {
-        let scope_diff = repository.diff(&run.base_sha, &head_id)?;
+        let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
+        let scope_diff = repository.diff(&scope_base, &head_id)?;
         if scope_diff.len() > 512 * 1024 {
             return Err(Error::Invalid("scope diff exceeds the input bound"));
         }
@@ -276,6 +282,50 @@ mod hostile_tests {
             },
         );
     }
+    #[test]
+    fn adopted_scope_evidence_excludes_main_only_progress() {
+        use crate::git_tests::git;
+        let f = Repo::new();
+        git(&f.path, &["checkout", "--detach", &f.base]);
+        fs::write(f.path.join("main-only.txt"), "main progress\n").unwrap();
+        git(&f.path, &["add", "."]);
+        git(&f.path, &["commit", "-qm", "main progress"]);
+        let check_base = git(&f.path, &["rev-parse", "HEAD"]);
+        let mut delivery = f.delivery();
+        delivery.checks.as_mut().unwrap().base_sha = CommitId::new(&check_base).unwrap();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("adopted_scope")).unwrap();
+        store.put_worker_materials("0", &json!({})).unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Update the readme", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":check_base, "results":[]});
+        let value = inputs(&delivery, &mut store, &snapshot, None).unwrap();
+        let scope = value
+            .get("scope_diff")
+            .unwrap_or(&value["diff"])
+            .as_str()
+            .unwrap();
+        assert!(scope.contains("README.md"));
+        assert!(
+            !scope.contains("main-only.txt"),
+            "main progress must not become scope evidence: {scope}"
+        );
+    }
+
     #[test]
     fn hostile_review_checkout() {
         crate::git_tests::hostile(

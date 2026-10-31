@@ -133,6 +133,10 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
         Input::LabelledIssue(issue) => {
             controller.intake(issue)?;
         }
+        Input::ProposedIssue { issue, proposed } => {
+            controller.intake_proposed(issue, Some(proposed))?;
+        }
+        Input::AdoptionClarification(question) => controller.queue_adoption_question(question)?,
         Input::Observation { key, observation } => controller.observe(&key, observation)?,
     }
     Ok(())

@@ -48,6 +48,41 @@ fn binding(delivery: &Delivery, pull: &PullRequest) -> Completion {
 }
 
 impl Adapter {
+    pub(super) fn close_original(&self, delivery: &Delivery) -> Result<()> {
+        if !matches!(
+            delivery.output,
+            Out::Notice {
+                notice: tl3_kernel::Notice::Summary(tl3_kernel::Outcome::Merged),
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        let Some(proposed) = &delivery.proposed else {
+            return Ok(());
+        };
+        let number = delivery
+            .pull_request
+            .ok_or(Error::Invalid("merged adoption has no landed pull request"))?;
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let landed = self.runtime.block_on(client.pull_request(&repo, number))?;
+        if landed.merged_at.is_none() {
+            return Err(Error::Invalid(
+                "original can close only after TL3 pull request merged",
+            ));
+        }
+        self.runtime.block_on(client.post_comment(&repo, proposed.number, &format!("{}:original", delivery.key), &format!("Completed in https://github.com/{repo}/pull/{number}. This pull request is superseded.")))?;
+        let original = self
+            .runtime
+            .block_on(client.pull_request(&repo, proposed.number))?;
+        if original.state != "closed" && original.merged_at.is_none() {
+            self.runtime
+                .block_on(client.close_pull_request(&repo, proposed.number))?;
+        }
+        Ok(())
+    }
+
     fn branch_pr(
         &self,
         client: &GitHub,
@@ -120,10 +155,18 @@ impl Adapter {
                         head: branch.as_str().into(),
                         base: "main".into(),
                         body: format!(
-                            "Implements the request in issue {}.\n\n{}",
-                            delivery.issue,
-                            GitHub::marker(&delivery.key)
-                        ),
+                                "Implements the request in issue {}.{}\n\n{}",
+                                delivery.issue,
+                                delivery
+                                    .proposed
+                                    .as_ref()
+                                    .map(|proposed| format!(
+                                        "\n\nCompletes https://github.com/{repo}/pull/{}.",
+                                        proposed.number
+                                    ))
+                                    .unwrap_or_default(),
+                                GitHub::marker(&delivery.key)
+                            ),
                     },
                 ))?;
                 Ok(binding(delivery, &pull))
