@@ -219,7 +219,7 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
             controller.github_translators[index].name
         );
         let mut cursor = controller.store.translator_cursor(&name)?;
-        loop {
+        'pending: loop {
             let deliveries = controller.store.ingress_after(cursor)?;
             if deliveries.is_empty() {
                 break;
@@ -230,9 +230,22 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
                     if snapshot.is_none() {
                         snapshot = Some(controller.store.load()?);
                     }
-                    let inputs = controller.github_translators[index]
+                    let inputs = match controller.github_translators[index]
                         .translator
-                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))?;
+                        .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))
+                    {
+                        Ok(inputs) => inputs,
+                        Err(
+                            error @ (Error::Adapter(_)
+                            | Error::Quota { .. }
+                            | Error::Permanent { .. }),
+                        ) => {
+                            eprintln!("observation translation failed for {name}: {error}");
+                            // Keep this delivery at the cursor for the next event or look.
+                            break 'pending;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     for input in inputs {
                         apply(controller, input)?;
                     }

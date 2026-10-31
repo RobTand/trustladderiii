@@ -222,8 +222,7 @@ impl Adapter {
         let repo = full_name(&delivery.repository);
         let state = self
             .runtime
-            .block_on(Mergify::new(github.clone()).read(&repo, number, head))
-            .map_err(adapter_error)?;
+            .block_on(read_queue(github, &repo, number, head))?;
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
         }
@@ -455,6 +454,22 @@ fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
             .ok_or(Error::Invalid("enqueue needs an approved head"))?,
     ))
 }
+async fn read_queue(
+    github: &GitHub,
+    repo: &str,
+    number: u64,
+    head: &str,
+) -> Result<tl3_mergify::Observation> {
+    let mergify = Mergify::new(github.clone());
+    let mut retries = 2;
+    loop {
+        match mergify.read(repo, number, head).await {
+            Err(tl3_mergify::Error::ChangedDuringRead) if retries > 0 => retries -= 1,
+            result => return result.map_err(adapter_error),
+        }
+    }
+}
+
 fn adapter_error(error: tl3_mergify::Error) -> Error {
     match error {
         tl3_mergify::Error::GitHub(error) => error.into(),
@@ -769,10 +784,12 @@ impl Translator {
         Ok(facts.into_iter().map(QueueFact::input).collect())
     }
     fn look(&self, github: &GitHub, repo: &Repository, item: &Tracked) -> Result<Vec<QueueFact>> {
-        let state = self
-            .runtime
-            .block_on(Mergify::new(github.clone()).read(&full_name(repo), item.number, &item.head))
-            .map_err(adapter_error)?;
+        let state = self.runtime.block_on(read_queue(
+            github,
+            &full_name(repo),
+            item.number,
+            &item.head,
+        ))?;
         self.runtime
             .block_on(queue_facts(github, repo, &state, &item.approved))
     }
