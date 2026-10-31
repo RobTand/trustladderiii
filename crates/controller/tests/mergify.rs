@@ -2138,27 +2138,24 @@ impl ingress::GitHubTranslator for ReviewTranslator {
             if webhook.id == "poison" {
                 return Err(tl3_github::Error::Http { status: 403 }.into());
             }
-            if let Some((lazy, done)) = &self.retry {
-                if webhook.id == "deferred" {
-                    let lazy = *lazy;
-                    let done = done.clone();
-                    self.retry = Some((lazy, done.clone()));
-                    if self.state.lock().unwrap().checks == fixture("running", "checks") {
-                        self.state.lock().unwrap().checks = fixture("waiting", "checks");
-                        return Err(tl3_controller::Error::Adapter(Box::new(if lazy {
-                            tl3_mergify::Error::MergeabilityPending
-                        } else {
-                            tl3_mergify::Error::ChangedDuringRead
-                        })));
-                    }
-                    self.state.lock().unwrap().checks = fixture("interrupted", "checks");
-                    let result =
-                        ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot);
-                    if result.is_ok() {
-                        let _ = done.send(());
-                    }
-                    return result;
+            if let Some((lazy, done)) = &self.retry
+                && webhook.id == "deferred"
+            {
+                if self.state.lock().unwrap().checks == fixture("running", "checks") {
+                    self.state.lock().unwrap().checks = fixture("waiting", "checks");
+                    return Err(tl3_controller::Error::Adapter(Box::new(if *lazy {
+                        tl3_mergify::Error::MergeabilityPending
+                    } else {
+                        tl3_mergify::Error::ChangedDuringRead
+                    })));
                 }
+                self.state.lock().unwrap().checks = fixture("interrupted", "checks");
+                let result =
+                    ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot);
+                if result.is_ok() {
+                    let _ = done.send(());
+                }
+                return result;
             }
         }
         ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot)

@@ -69,7 +69,7 @@ impl Sources {
     pub fn run(self, controller: &mut Controller) -> Result<()> {
         drop(self.sender);
         drop(self.exit_sender);
-        drain(controller)?;
+        drain_on_wake(controller)?;
         while controller.drive_once()? {}
         controller.look_now()?;
         while controller.drive_once()? {}
@@ -80,7 +80,7 @@ impl Sources {
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         controller.look_due()?;
                         // Retry deferred deliveries on the existing allowance look, without a new timer.
-                        drain(controller)?;
+                        drain_on_wake(controller)?;
                         while controller.drive_once()? {}
                         continue;
                     }
@@ -94,7 +94,7 @@ impl Sources {
             for exit in self.exits.try_iter() {
                 exit?;
             }
-            drain(controller)?;
+            drain_on_wake(controller)?;
             apply(controller, input)?;
             controller.look_due()?;
             while controller.drive_once()? {}
@@ -200,6 +200,21 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
 
 /// Replays use the same intake and observation keys after a crash before consumption.
 pub fn drain(controller: &mut Controller) -> Result<()> {
+    drain_pending(controller).map(|_| ())
+}
+
+fn drain_on_wake(controller: &mut Controller) -> Result<()> {
+    // Bound same-wake retries; persistent failures wait for the next existing input or look.
+    for _ in 0..3 {
+        if !drain_pending(controller)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn drain_pending(controller: &mut Controller) -> Result<bool> {
+    let mut deferred = false;
     let names: Vec<_> = controller
         .github_translators
         .iter()
@@ -253,7 +268,8 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
                         }
                         Err(error @ (Error::Adapter(_) | Error::Quota { .. })) => {
                             eprintln!("observation translation failed for {name}: {error}");
-                            // Keep this delivery at the cursor for the next event or look.
+                            // Keep this delivery at the cursor for a bounded retry or the next look.
+                            deferred = true;
                             break 'pending;
                         }
                         Err(error) => return Err(error),
@@ -269,7 +285,7 @@ pub fn drain(controller: &mut Controller) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(deferred)
 }
 
 fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {
