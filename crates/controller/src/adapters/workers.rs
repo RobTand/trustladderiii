@@ -120,6 +120,7 @@ pub struct Supervisor {
     worktrees: PathBuf,
     tests: tl3_config::PrismaBuild,
     hindsight: tl3_config::Hindsight,
+    memory: crate::memory::Feed,
 }
 
 impl Supervisor {
@@ -154,6 +155,7 @@ impl Supervisor {
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),
             hindsight: config.hindsight.clone(),
+            memory: crate::memory::Feed::start(config.store.clone(), config.hindsight.clone()),
         })
     }
 
@@ -356,6 +358,7 @@ impl Supervisor {
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
             "role": role, "model": self.models.worker_model(model), "key_file": self.models.key_file,
             "inputs": inputs, "worktree": worktree,
+            "hindsight_key_file": self.hindsight.api_key_file,
             "trace": {
                 "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
                 "issue": delivery.issue, "request": node,
@@ -505,6 +508,26 @@ impl Supervisor {
     fn retire_run(&self, key: &str, store: &mut Store) -> Result<()> {
         let root = self.root(key);
         stop_attempt(&root)?;
+        if let Ok(entries) = fs::read_dir(&root) {
+            for entry in entries {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("attempt-"))
+                {
+                    match crate::memory::queue_attempt(store, key, &entry.path()) {
+                        Ok(()) => {}
+                        Err(Error::Invalid(_) | Error::Json(_)) => {
+                            eprintln!(
+                                "Hindsight memory record dropped for worker {key}; retirement continues"
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+        }
         match fs::remove_dir_all(&root) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -623,6 +646,11 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
+        request["memory"] = json!({
+            "summary_file": attempt.join("memory.json"),
+            "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+            "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
+        });
         let mut command = Command::new(&self.settings.python);
         isolate_credentials(&attempt, &mut request, &mut command)?;
         write(&attempt.join("request.json"), &request)?;
@@ -741,6 +769,7 @@ impl Executor for Supervisor {
     }
 
     fn retire(&mut self, store: &mut Store) -> Result<()> {
+        let mut failure = None;
         for key in store.retired_workers()? {
             if let Err(error) = self.retire_run(&key, store) {
                 if matches!(
@@ -751,9 +780,17 @@ impl Executor for Supervisor {
                     self.active.remove_key(&key);
                 }
                 eprintln!("worker retirement retained {key}: {error}");
+                if matches!(error, Error::Store(_)) && failure.is_none() {
+                    failure = Some(error);
+                }
             }
         }
-        self.retire_sessions(store)
+        self.memory.wake();
+        self.retire_sessions(store)?;
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
