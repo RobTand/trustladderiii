@@ -43,6 +43,37 @@ pub fn identity() -> Repository {
     }
 }
 
+pub fn age_scratch(repo: &Path, reference: &str) {
+    let tree = git(repo, &["rev-parse", &format!("{reference}^{{tree}}")]);
+    let output = Command::new("git")
+        .current_dir(repo)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
+        .args([
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@localhost",
+            "commit-tree",
+            &tree,
+            "-m",
+            "Old scratch",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let commit = String::from_utf8(output.stdout).unwrap();
+    git(repo, &["update-ref", reference, commit.trim()]);
+}
+
 pub struct Fixture {
     pub root: PathBuf,
     pub repo: PathBuf,

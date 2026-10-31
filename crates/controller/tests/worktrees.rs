@@ -1191,8 +1191,39 @@ fn scratch_removal_crashes() {
     println!("test scratch_removal_crashes ... ok");
 }
 
+fn scratch_housekeeping_does_not_block_prepare(kind: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let reference = "refs/tl3/scratch/bad";
+    if kind == "invalid" {
+        let blob = git(&f.repo, &["hash-object", "-w", "--stdin"]);
+        git(&f.repo, &["update-ref", reference, &blob]);
+    } else {
+        git(&f.repo, &["update-ref", reference, "main"]);
+        worktree_fixture::age_scratch(&f.repo, reference);
+        fs::write(f.repo.join("refs/tl3/scratch/bad.lock"), "fixture lock").unwrap();
+    }
+    let head = git(&f.repo, &["rev-parse", reference]);
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    let completion = f.adapter().execute(&prepare);
+    assert!(
+        completion.is_ok(),
+        "scratch housekeeping must not block Prepare: {completion:?}"
+    );
+    assert!(f.adapter().checkout(&prepare).join("shared.txt").exists());
+    assert_eq!(git(&f.repo, &["rev-parse", reference]), head);
+    println!("test scratch_housekeeping_{kind}_does_not_block_prepare ... ok");
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if let Some(kind) = args
+        .get(1)
+        .and_then(|arg| arg.strip_prefix("--scratch-prune="))
+    {
+        scratch_housekeeping_does_not_block_prepare(kind);
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--smudge") {
         let mut socket = UnixStream::connect(&args[2]).unwrap();
         socket.write_all(&[1]).unwrap();
@@ -1208,6 +1239,8 @@ fn main() {
         killed_git_add();
         return;
     }
+    scratch_housekeeping_does_not_block_prepare("invalid");
+    scratch_housekeeping_does_not_block_prepare("locked");
     dirty_writes_are_permanent();
     scratch_removal_crashes();
     crashes();
