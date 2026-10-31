@@ -117,10 +117,18 @@ fn lifecycle() {
         "normal fixture drop left its scratch folder"
     );
     let stale = leftover("tl3-store-pg-killed", &format!("{}\n", dead_pid()));
+    let interrupted = leftover("tl3-store-pg-interrupted-setup", "");
+    fs::remove_file(interrupted.join("data/postmaster.pid")).unwrap();
+    fs::write(interrupted.join("fixture.pid"), format!("{}\n", dead_pid())).unwrap();
+    old(&interrupted);
     let (database, root) = fixture();
     drop(database);
     assert!(!root.exists(), "next fixture left its own scratch folder");
     assert!(!stale.exists(), "next fixture did not reap the killed run");
+    assert!(
+        !interrupted.exists(),
+        "next fixture did not reap interrupted initialization"
+    );
     assert_eq!(
         fs::read_dir(std::env::temp_dir()).unwrap().count(),
         0,
@@ -129,6 +137,15 @@ fn lifecycle() {
 }
 
 fn concurrent() {
+    let cache =
+        PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).join("tl3-test-postgres");
+    fs::create_dir_all(cache.join("installing/binaries/17.4.0/bin")).unwrap();
+    fs::write(
+        cache.join("installing/binaries/17.4.0/bin/postgres"),
+        "incomplete install",
+    )
+    .unwrap();
+    fs::write(cache.join("install.lock"), format!("{}\n", dead_pid())).unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let threads: Vec<_> = (0..2)
         .map(|_| {
@@ -151,8 +168,6 @@ fn concurrent() {
         outcomes.into_iter().all(|r| r.is_ok()),
         "concurrent fixture failed"
     );
-    let cache =
-        PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).join("tl3-test-postgres");
     let installs: Vec<_> = fs::read_dir(&cache)
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -170,7 +185,12 @@ fn concurrent() {
 
 fn safety() {
     let (live_database, live) = fixture();
+    live_database.stop();
     old(&live);
+    let legacy_live = leftover(
+        "tl3-store-pg-live-postmaster",
+        &format!("{}\n", std::process::id()),
+    );
     let malformed = leftover("tl3-store-pg-malformed", "not a pid\n");
     let zero = leftover("tl3-store-pg-zero", "0\n");
     let negative = leftover("tl3-store-pg-negative", "-1\n");
@@ -193,6 +213,7 @@ fn safety() {
     assert!(!root.exists());
     for path in [
         &live,
+        &legacy_live,
         &malformed,
         &zero,
         &negative,
