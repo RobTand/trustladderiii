@@ -235,6 +235,12 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
     );
 }
 
+fn finish_fixture(database: Database, group: &str) {
+    database.stop();
+    drop(database);
+    println!("test {group}_fixture_cleanup ... ok");
+}
+
 fn main() {
     if env::args().len() == 1 {
         maker::router_regression(false);
@@ -459,6 +465,8 @@ fn main() {
     }
     simulation(&database.create("workers_sim"));
     println!("test real_ingest_audit_reaches_unplanned_and_posts_goals ... ok");
+    finish_fixture(database, "ingest_audit");
+    let mut database = Database::start();
     killed_worker(&database.create("workers_kill"));
     println!("test sigkill_worker_retry_is_idempotent_by_key ... ok");
     kernel_retries_killed_worker(&database.create("workers_kernel_retry"));
@@ -468,6 +476,8 @@ fn main() {
     killed_controller(&database.create("controller_kill"), "blocked");
     killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
     println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
+    finish_fixture(database, "worker_restart");
+    let mut database = Database::start();
     invalid_replies(&database.create("workers_invalid"));
     println!("test schema_missing_nonzero_and_duplicate_replies_fail ... ok");
     stop_and_exit_gate(&database.create("workers_stop"));
@@ -484,6 +494,8 @@ fn main() {
     println!("test supervisor_death_keeps_live_worker_and_discards_unrecorded_exit ... ok");
     fake_stop(&database.create("workers_fake_stop"));
     println!("test stop_run_reaches_fake_delivery_and_uses_active_node_index ... ok");
+    finish_fixture(database, "worker_reply");
+    let mut database = Database::start();
     event_source(&database.create("workers_events"));
     println!("test source_run_wakes_on_new_run_output_and_exit_without_polling ... ok");
     bounded_startup(&database.create("workers_bounded"));
@@ -496,6 +508,8 @@ fn main() {
     retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
+    finish_fixture(database, "worker_memory");
+    let mut database = Database::start();
     retirement_review::summaries_and_states(&database.create("retirement_summaries"));
     println!("test retirement_states_keep_one_summary_until_closure ... ok");
     retirement_review::blocked_identities(&database.create("retirement_blocked"));
@@ -512,6 +526,8 @@ fn main() {
     println!("test confirmed_absence_reports_one_failure_and_retries_with_new_key ... ok");
     overflow(&database.create("workers_overflow"));
     println!("test inotify_overflow_rescans_active_runs_and_keeps_ingress_alive ... ok");
+    finish_fixture(database, "worker_retirement");
+    let mut database = Database::start();
     for mode in [
         "normal",
         "plan-split",
@@ -524,8 +540,11 @@ fn main() {
     }
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
+    println!("test planner_stop ... ok");
+    finish_fixture(database, "worker_planning");
+    let mut database = Database::start();
     maker::run(&mut database);
-    database.stop();
+    finish_fixture(database, "maker");
     println!("All required worker supervisor, planning and maker scenarios passed; no skips");
 }
 

@@ -313,27 +313,23 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         );
         while flow.controller.drive_once().unwrap() {}
     };
-    if new_edits {
-        assert!(
-            matches!(&observation, Observation::WorkerReply { reply, .. } if reply["kind"] == "done"),
-            "{observation:?}"
+    assert!(
+        matches!(&observation, Observation::WorkerReply { reply, .. } if reply["kind"] == "done"),
+        "{observation:?}"
+    );
+    let resolved = git(&flow.worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(resolved, head);
+    let main = git(&flow.remote, &["rev-parse", "main"]);
+    assert_eq!(git(&flow.worktree, &["merge-base", &resolved, &main]), main);
+    assert!(git(&flow.worktree, &["status", "--porcelain"]).is_empty());
+    if !new_edits {
+        // The recorded maker resolves the markers by keeping its leaf's existing content.
+        assert_eq!(
+            git(&flow.worktree, &["rev-parse", "HEAD^{tree}"]),
+            git(&flow.worktree, &["rev-parse", &format!("{head}^{{tree}}")])
         );
-        assert_ne!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
-    } else {
-        assert!(
-            matches!(
-                &observation,
-                Observation::Kernel(Event::Reply {
-                    reply: Reply::RunFailed,
-                    ..
-                })
-            ),
-            "{observation:?}"
-        );
-        assert_eq!(git(&flow.worktree, &["rev-parse", "HEAD"]), head);
         let runs = requests(&flow.config);
-        let run = &runs[1];
-        assert_eq!(run["operation"]["generation"], revisit.generation);
+        assert_eq!(runs[1]["operation"]["generation"], revisit.generation);
     }
     observe(
         &mut flow.controller,
@@ -342,9 +338,7 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         &flow.worktree,
         &flow.base,
     );
-    if new_edits {
-        flow.until(|phase| phase == Phase::Checking);
-    }
+    flow.until(|phase| phase == Phase::Checking);
     flow.controller
         .observe(
             "stop-rebase-fixture",
