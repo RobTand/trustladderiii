@@ -100,9 +100,7 @@ def _commit(request, starting_head):
         _git(request, "commit", "--quiet", "--no-gpg-sign", "-m",
              f"TL3 maker attempt {inputs['attempt']}, round {inputs['round']}")
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
-    if head == starting_head:
-        raise ValueError("done requires code changes")
-    return head
+    return head if head != starting_head else None
 
 
 def run(model, request, worktree, emit):
@@ -137,46 +135,58 @@ def run(model, request, worktree, emit):
     if session and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
-    stream = agent.stream(
-        {"messages": history},
-        config={"callbacks": [characters]},
-        stream_mode="updates",
-    )
-    exhausted = False
-    try:
-        for update in stream:
-            for result in update.values():
-                if not isinstance(result, dict):
-                    continue
-                for message in result.get("messages", []):
-                    history.append(message)
-                    if isinstance(message, AIMessage):
-                        emit({"event": "progress", "unit": "model_turn"})
-                        if out_of_room(message, inputs["context_size"], characters.prompt):
-                            exhausted = True
-                            break
-                        last_message = message
-                    elif isinstance(message, ToolMessage):
-                        emit({"event": "progress", "unit": "tool_result"})
+    for completion in range(2):
+        last_message = None
+        stream = agent.stream(
+            {"messages": history},
+            config={"callbacks": [characters]},
+            stream_mode="updates",
+        )
+        exhausted = False
+        try:
+            for update in stream:
+                for result in update.values():
+                    if not isinstance(result, dict):
+                        continue
+                    for message in result.get("messages", []):
+                        history.append(message)
+                        if isinstance(message, AIMessage):
+                            emit({"event": "progress", "unit": "model_turn"})
+                            if out_of_room(message, inputs["context_size"], characters.prompt):
+                                exhausted = True
+                                break
+                            last_message = message
+                        elif isinstance(message, ToolMessage):
+                            emit({"event": "progress", "unit": "tool_result"})
+                    if exhausted:
+                        break
                 if exhausted:
                     break
-            if exhausted:
-                break
-    finally:
-        stream.close()
-    if exhausted:
-        return {"kind": "out_of_room"}
-    if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
-        raise ValueError("missing final maker reply")
-    reply = read_json(last_message.text)
-    Draft202012Validator(proposal).validate(reply)
-    if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
-        reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
-    _check_reply(inputs, reply)
-    json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
-    if reply["kind"] == "done":
-        reply["head"] = _commit(request, starting_head)
-    elif reply["kind"] == "needs_files" and "fit_tokens" in inputs:
+        finally:
+            stream.close()
+        if exhausted:
+            return {"kind": "out_of_room"}
+        if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
+            raise ValueError("missing final maker reply")
+        reply = read_json(last_message.text)
+        Draft202012Validator(proposal).validate(reply)
+        if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
+            reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
+        _check_reply(inputs, reply)
+        json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if reply["kind"] != "done":
+            break
+        head = _commit(request, starting_head)
+        if head is not None:
+            reply["head"] = head
+            break
+        if completion == 1:
+            reply = {"kind": "cant_meet", "report": "no code change was made"}
+            break
+        history.append(HumanMessage(content=(
+            "done requires code changes; if no code change can satisfy the failing checks, "
+            "reply cant_meet with a report that names them")))
+    if reply["kind"] == "needs_files" and "fit_tokens" in inputs:
         # Bound file tokens by UTF-8 bytes and reserve 32k for tools/history.
         size = len(json.dumps(inputs, ensure_ascii=False).encode()) + 32000
         for path in set(inputs["plan"]["files"]) | {item["path"] for item in reply["files"]}:
