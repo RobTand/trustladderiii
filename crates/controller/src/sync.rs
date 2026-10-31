@@ -6,7 +6,7 @@ pub(crate) use loom::sync::{Arc, Mutex};
 pub(crate) use std::sync::atomic;
 #[cfg(loom)]
 pub(crate) mod thread {
-    pub(crate) use loom::thread::yield_now;
+    pub(crate) use loom::thread::{JoinHandle, yield_now};
     pub(crate) fn spawn<T: Send + 'static>(
         f: impl FnOnce() -> T + Send + 'static,
     ) -> loom::thread::JoinHandle<T> {

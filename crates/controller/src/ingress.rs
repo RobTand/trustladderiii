@@ -554,7 +554,13 @@ impl WebhookReceiver {
             store,
             bootstrap,
             secret,
-            catch_up: catch_up.map(|fetcher| Arc::new(fetcher) as Arc<dyn webhooks::Fetcher>),
+            catch_up: catch_up.map(|fetcher| {
+                let fetcher: std::sync::Arc<dyn webhooks::Fetcher> = std::sync::Arc::new(fetcher);
+                // Loom cannot coerce Arc<CatchUp> to an unsized trait object.
+                #[cfg(loom)]
+                let fetcher = Arc::from_std(fetcher);
+                fetcher
+            }),
             catch_up_reader,
         })
     }
