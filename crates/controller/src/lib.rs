@@ -55,6 +55,12 @@ pub enum Error {
     Invalid(&'static str),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
+    #[error("upstream permanently failed: {class}")]
+    Permanent {
+        class: &'static str,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
 }
@@ -63,7 +69,25 @@ impl From<tl3_github::Error> for Error {
     fn from(error: tl3_github::Error) -> Self {
         match error {
             tl3_github::Error::RateLimited { retry_after } => Self::Quota { retry_after },
-            error => Self::Adapter(Box::new(error)),
+            error => match error.failure_class() {
+                tl3_github::FailureClass::Permanent(class) => Self::Permanent {
+                    class,
+                    source: Box::new(error),
+                },
+                _ => Self::Adapter(Box::new(error)),
+            },
+        }
+    }
+}
+
+impl From<tl3_worktrees::Error> for Error {
+    fn from(error: tl3_worktrees::Error) -> Self {
+        match error.permanent_class() {
+            Some(class) => Self::Permanent {
+                class,
+                source: Box::new(error),
+            },
+            None => Self::Adapter(Box::new(error)),
         }
     }
 }
@@ -573,6 +597,10 @@ impl Controller {
                             self.complete(&effect.key, completion)?;
                             return Ok(true);
                         }
+                        Err(Error::Permanent { class, .. }) => {
+                            self.complete(&effect.key, Completion::permanent(class))?;
+                            return Ok(true);
+                        }
                         Err(error) => {
                             // A transport error is not an upstream acknowledgement.
                             eprintln!("adapter execute failed for {}: {error}", effect.key);
@@ -846,6 +874,11 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
+        if completion.ack == Ack::Permanent
+            && let Some(class) = completion.failure_class.as_deref()
+        {
+            self.failure_allowance(&snapshot, key, class, &mut commit)?;
+        }
         if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
             // A terminal failed attempt was found. Return to the sending state
             // through the effect machine before recording its failure.
