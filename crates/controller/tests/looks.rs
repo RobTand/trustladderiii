@@ -1086,6 +1086,15 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
 }
 
 fn main() {
+    if let Some(case) = std::env::args()
+        .nth(1)
+        .and_then(|s| s.strip_prefix("--effect-http=").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        effect_http_failure(&db.create("effect_http"), &case);
+        db.stop();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--request-incident-clear") {
         let mut db = support::Database::start();
         permanent_incident_clear_at(&db.create("request_clear"), true);
@@ -1148,6 +1157,9 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
+    for case in ["brief", "persistent", "forbidden", "webhooks"] {
+        effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
+    }
     for name in [
         "missing_wait",
         "unknown_owner",
@@ -1702,4 +1714,135 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
         !path.exists(),
         "{case} deletes the durable wait subscription"
     );
+}
+
+struct HttpEffect {
+    fake: adapters::github::Fake,
+    calls: Rc<Cell<usize>>,
+    status: u16,
+    brief: bool,
+}
+impl Executor for HttpEffect {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::OpenPr,
+                ..
+            }
+        ) {
+            self.calls.set(self.calls.get() + 1);
+            if !self.brief || self.calls.get() == 1 {
+                return Err(tl3_github::Error::Http {
+                    status: self.status,
+                }
+                .into());
+            }
+        }
+        self.fake.execute(d)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(d)
+    }
+    fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
+        Ok(match self.reconcile(d)? {
+            Reconciliation::Found(c) => Look::Found(c),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
+}
+
+fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("http-github")).unwrap();
+    let clock = FakeClock::new();
+    let calls = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        HttpEffect {
+            fake: adapters::github::Fake::new(&root.path().join("http-github")),
+            calls: calls.clone(),
+            status: if case == "forbidden" { 403 } else { 404 },
+            brief: case == "brief",
+        },
+    );
+    assert_eq!(calls.get(), 1);
+    if case != "forbidden" {
+        let first = c
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .into_iter()
+            .find(|e| e.payload["output"]["Effect"]["kind"] == "OpenPr")
+            .expect("the first effect 404 must stay pending for a look");
+        assert_eq!(first.state, EffectState::Uncertain);
+        assert_eq!(c.world().unwrap().nodes[0].fx_failures, 0);
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents")
+        );
+        if case == "webhooks" {
+            for index in 0..3 {
+                let mut issue = labelled();
+                issue.delivery = format!("duplicate-webhook-{index}");
+                c.intake(issue).unwrap();
+                tl3_controller::ingress::apply(&mut c, tl3_controller::cli::Input::GitHubWake)
+                    .unwrap();
+                drain(&mut c);
+                assert_eq!(
+                    calls.get(),
+                    1,
+                    "webhooks and GitHub wakes must not release a held 404 before its look"
+                );
+            }
+        }
+        c.look_key(&first.key).unwrap();
+        assert_eq!(c.world().unwrap().nodes[0].fx_failures, 1);
+        drain(&mut c);
+        assert_eq!(calls.get(), 2, "404 gets exactly one retry");
+    }
+    if case == "brief" {
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(tl3_kernel::Outcome::Merged)
+        );
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents")
+        );
+    } else {
+        let snapshot = c.snapshot().unwrap();
+        let allowance = snapshot
+            .rows
+            .iter()
+            .find(|r| {
+                r.table == "allowances"
+                    && r.value["delivery"]["output"]["Effect"]["kind"] == "OpenPr"
+                    && r.value["failure"]
+                        == if case == "forbidden" {
+                            "permission"
+                        } else {
+                            "not_found"
+                        }
+            })
+            .expect("the final HTTP failure must retain its permanent class");
+        let key = allowance.value["delivery"]["key"].as_str().unwrap();
+        assert_eq!(c.effect(key).unwrap().unwrap().state, EffectState::Failed);
+    }
+    let before = calls.get();
+    for _ in 0..5 {
+        assert!(!c.drive_once().unwrap(), "terminal failure must not loop");
+    }
+    assert_eq!(calls.get(), before);
+    println!("test effect_http_{case} ... ok");
 }

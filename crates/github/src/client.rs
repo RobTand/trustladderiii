@@ -1037,3 +1037,24 @@ fn rate_delay(headers: &HeaderMap, attempt: u32) -> Duration {
             .unwrap_or(60 * (1 << attempt.min(6))),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_failure_is_permanent_setup() {
+        assert_eq!(
+            Error::Config("invalid RSA PEM").failure_class(),
+            FailureClass::Permanent("setup")
+        );
+    }
+
+    #[test]
+    fn jwt_failure_is_permanent_permission() {
+        assert_eq!(
+            Error::Jwt.failure_class(),
+            FailureClass::Permanent("permission")
+        );
+    }
+}

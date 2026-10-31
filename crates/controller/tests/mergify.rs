@@ -1626,7 +1626,7 @@ fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
     println!("test rate_limited_read_defers_quota_{status} ... ok");
 }
 
-fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str) {
+fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str, look_404: bool) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
@@ -1648,30 +1648,71 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
             label: "tl3".into(),
         })
         .unwrap();
-    for _ in 0..300 {
-        if !controller
-            .drive_once_with(|boundary, key| {
-                if boundary == Boundary::BeforeDispatch {
-                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
-                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
-                    if matches!(
-                        delivery.output,
-                        Out::Effect {
-                            kind: EffectKind::Enqueue,
-                            ..
+    let attempts = std::cell::Cell::new(0);
+    let settle = |controller: &mut Controller| {
+        for _ in 0..300 {
+            if !controller
+                .drive_once_with(|boundary, key| {
+                    if boundary == Boundary::BeforeDispatch {
+                        let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                        let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                        if matches!(
+                            delivery.output,
+                            Out::Effect {
+                                kind: EffectKind::Enqueue,
+                                ..
+                            }
+                        ) {
+                            attempts.set(attempts.get() + 1);
+                            let mut state = api.state.lock().unwrap();
+                            state.pull["head"]["sha"] = json!(delivery.head_sha);
+                            state.http_failure = Some(status);
                         }
-                    ) {
-                        let mut state = api.state.lock().unwrap();
-                        state.pull["head"]["sha"] = json!(delivery.head_sha);
-                        state.http_failure = Some(status);
                     }
-                }
-            })
-            .unwrap()
-        {
-            break;
+                })
+                .unwrap()
+            {
+                break;
+            }
         }
+    };
+    settle(&mut controller);
+    if status == 404 {
+        let snapshot = controller.snapshot().unwrap();
+        let pending = snapshot
+            .pending_effects
+            .iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
+            .expect("the first enqueue 404 must be held");
+        assert_eq!(pending.state, tl3_store::EffectState::Uncertain);
+        assert!(!snapshot.rows.iter().any(|row| row.table == "incidents"));
+        if !look_404 {
+            api.state.lock().unwrap().http_failure = None;
+        }
+        for _ in 0..3 {
+            ingress::apply(&mut controller, tl3_controller::cli::Input::GitHubWake).unwrap();
+            settle(&mut controller);
+            assert_eq!(
+                attempts.get(),
+                1,
+                "GitHub wakes must preserve the enqueue 404 hold"
+            );
+            assert_eq!(controller.world().unwrap().nodes[0].fx_failures, 0);
+            assert_eq!(
+                controller.effect(&pending.key).unwrap().unwrap().state,
+                tl3_store::EffectState::Uncertain
+            );
+        }
+        controller.look_key(&pending.key).unwrap();
+        assert_eq!(controller.world().unwrap().nodes[0].fx_failures, 1);
+        api.state.lock().unwrap().http_failure = Some(status);
+        settle(&mut controller);
     }
+    assert_eq!(
+        attempts.get(),
+        if status == 404 { 2 } else { 1 },
+        "exactly one 404 retry"
+    );
     let snapshot = controller.snapshot().unwrap();
     let incident = snapshot
         .rows
@@ -1695,7 +1736,7 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
             .any(|row| row.value["failure"] == class)
     );
     assert_eq!(api.state.lock().unwrap().posts, 0);
-    println!("test permanent_github_read_{status} ... ok");
+    println!("test permanent_github_read_{status}_look_404_{look_404} ... ok");
 }
 
 fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
@@ -1816,6 +1857,17 @@ fn main() {
         database.stop();
         return;
     }
+    if std::env::args().nth(1).as_deref() == Some("--persistent-404-look") {
+        let mut database = support::Database::start();
+        permanent_github_read(
+            &database.create("persistent_404_look"),
+            404,
+            "not_found",
+            true,
+        );
+        database.stop();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--permanent-github-read") {
         let mut database = support::Database::start();
         for (status, class) in [
@@ -1829,6 +1881,7 @@ fn main() {
                 &database.create(&format!("permanent_{status}")),
                 status,
                 class,
+                false,
             );
         }
         database.stop();
@@ -1861,9 +1914,16 @@ fn main() {
             &database.create(&format!("permanent_{status}")),
             status,
             class,
+            false,
         );
     }
     failed_catch_up_retries_held_enqueue(&database.create("failed_catchup_wake"));
+    permanent_github_read(
+        &database.create("persistent_404_look"),
+        404,
+        "not_found",
+        true,
+    );
     in_progress_confirms_enqueue(&database.create("progress"));
     late_merge_after_close(&database.create("late_webhook"), true);
     late_merge_after_close(&database.create("late_catchup"), false);
@@ -1909,5 +1969,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("45 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("47 Mergify scenarios passed; no skips; no live upstream calls");
 }
