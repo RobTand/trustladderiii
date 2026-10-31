@@ -343,6 +343,12 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--gate-wire") {
+        invalid_replies(&database.create("gate_invalid"));
+        stop_and_exit_gate(&database.create("gate_stop"));
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-wait") {
         maker::declared_wait(&database.create("maker_declared_wait"));
         println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");

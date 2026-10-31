@@ -503,6 +503,25 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    if let Some(case) = args.get(1).and_then(|arg| arg.strip_prefix("--gate-case=")) {
+        let settings = database.create("gate_case");
+        match case {
+            "commands" => steering::commands(&settings),
+            "answers" => steering::answers(&settings),
+            "replacement" => steering::replacement(&settings),
+            "correction" => steering::correction(&settings),
+            "queued_pause" => steering::queued_pause(&settings),
+            "answer_recovery" => steering::answer_recovery(&settings),
+            "classifier_failures" => steering::classifier_failures(&settings),
+            "concurrent_requests" => steering::concurrent_requests(&settings),
+            "guidance" => steering::guidance(&settings),
+            "credit" => steering::credit(&settings),
+            "answer_replacement" => steering::answer_replacement(&settings),
+            _ => panic!("unknown gate case: {case}"),
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
         startup_ack::run(&mut database);
         database.stop();
