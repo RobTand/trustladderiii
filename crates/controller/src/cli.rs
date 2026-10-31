@@ -13,6 +13,11 @@ pub enum Input {
         key: String,
     },
     LabelledIssue(LabelledIssue),
+    ProposedIssue {
+        issue: LabelledIssue,
+        proposed: crate::adoption::ProposedPullRequest,
+    },
+    AdoptionClarification(crate::adoption::Clarification),
     Observation {
         key: String,
         observation: Observation,
@@ -225,6 +230,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     )?;
     controller.set_allowances(config.allowances.clone());
     controller.register_github_translator("mergify", registration.mergify);
+    controller.register_github_translator("adoption", registration.adoption);
     eprintln!(
         "GitHub webhooks listening on {}",
         registration.webhooks.address()

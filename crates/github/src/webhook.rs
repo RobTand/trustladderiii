@@ -249,6 +249,12 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             after: field(&value, "after")?,
             actor: field(&value, "sender")?,
         },
+        ("pull_request", "labeled") => Event::PullRequestLabeled {
+            context,
+            pull_request: field(&value, "pull_request")?,
+            label: field(&value, "label")?,
+            actor: field(&value, "sender")?,
+        },
         ("pull_request", "unlabeled") => Event::PullRequestUnlabeled {
             context,
             pull_request: field(&value, "pull_request")?,

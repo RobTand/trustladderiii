@@ -75,6 +75,9 @@ pub(super) fn inputs(
             base = &run.base_sha;
         }
     }
+    let ancestor = String::from_utf8(git(&run.repository, &["merge-base", base, head])?)
+        .map_err(|_| Error::Invalid("invalid review ancestor"))?;
+    let base = ancestor.trim();
     let node = delivery.node().0.to_string();
     let report = snapshot
         .rows

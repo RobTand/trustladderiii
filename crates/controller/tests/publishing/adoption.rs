@@ -152,6 +152,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         server.api.state.lock().unwrap().proposed.as_mut().unwrap()["body"] = json!("Almost done.");
         label(&mut c, &server, settings, 1, "no-keyword");
+        while c.drive_once().unwrap() {}
         label(&mut c, &server, settings, 1, "no-keyword-again");
         assert!(c.world().unwrap().nodes.is_empty());
         let state = server.api.state.lock().unwrap();

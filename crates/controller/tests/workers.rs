@@ -132,6 +132,7 @@ fn delivery() -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        proposed: None,
     }
 }
 fn root_for(config: &tl3_config::Config, key: &str) -> PathBuf {

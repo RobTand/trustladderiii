@@ -826,6 +826,7 @@ fn delivery(notice: Notice) -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        proposed: None,
         checks: None,
         job_generation: None,
         marker_key: None,

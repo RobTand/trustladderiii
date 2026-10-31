@@ -182,6 +182,24 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn intake_question(
+        &mut self,
+        question: &crate::adoption::Clarification,
+        epoch: i64,
+    ) -> Result<()> {
+        if epoch < self.epoch {
+            return Err(Error::Invalid("GitHub intake epoch is fenced"));
+        }
+        self.records.fence(epoch)?;
+        self.epoch = epoch;
+        let client = self
+            .clients
+            .get(&question.repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!("{}/{}", question.repository.owner, question.repository.name);
+        self.runtime.block_on(client.post_comment(&repo, question.number, &question.key(), "Which one issue should this pull request complete? Please add its closing keyword to the description and apply the tl3 label again."))?;
+        Ok(())
+    }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let client = self.client(delivery)?;
         let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -342,6 +360,9 @@ impl Executor for Adapter {
                         }
                         Err(_) => return Ok(Reconciliation::Pending),
                     }
+                }
+                if self.close_original(delivery).is_err() {
+                    return Ok(Reconciliation::Pending);
                 }
                 Ok(Reconciliation::Found(Completion::confirmed(vec![])))
             }
@@ -635,6 +656,7 @@ impl Adapter {
             self.runtime
                 .block_on(client.close_issue(&repo, delivery.issue, reason))?;
         }
+        self.close_original(delivery)?;
         Ok(Completion::confirmed(vec![]))
     }
 }

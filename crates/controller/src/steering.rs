@@ -122,6 +122,7 @@ impl Controller {
                     note: None,
                     question_context: None,
                     request_text: binding.source,
+                    proposed: None,
                     steering: Some(Task::ReplacementDropped { text, outcome }),
                 },
             );
@@ -212,6 +213,7 @@ impl Controller {
             note: None,
             question_context: None,
             request_text: binding.source,
+            proposed: None,
             steering: Some(Task::Classify {
                 comment_key: row.id.clone(),
                 inputs,
@@ -589,7 +591,7 @@ impl Controller {
         let repository = self.intake_repository(&labelled).ok_or(Error::Invalid(
             "linked request is not authorized for intake",
         ))?;
-        let event = self.prepare_intake(snapshot, &labelled, repository.clone(), commit)?;
+        let event = self.prepare_intake(snapshot, &labelled, repository.clone(), None, commit)?;
         // Intake owns the saved text and link for same-issue replacements.
         if issue.number == old.issue {
             return Ok(event);

@@ -109,6 +109,7 @@ fn replay(name: &str) -> Vec<bool> {
         job_generation: None,
         steering: None,
         request_text: None,
+        proposed: None,
     };
     let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else {
         panic!("recorded merged PR must produce merge evidence");

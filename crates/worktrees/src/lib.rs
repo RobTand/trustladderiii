@@ -242,7 +242,10 @@ impl Worktrees {
         if !self.initializing(path)? {
             return Ok(false);
         }
-        let Some(base) = self.resolve_optional(&name.base_ref())? else {
+        let Some(base) = self
+            .resolve_optional(&format!("refs/tl3/starts/{}", name.as_str()))?
+            .or(self.resolve_optional(&name.base_ref())?)
+        else {
             return Ok(false);
         };
         Ok(self.resolve_optional(&name.reference())?.as_ref() == Some(&base))
@@ -455,26 +458,88 @@ impl Worktrees {
         Ok(true)
     }
 
-    /// Fetches only main, with the same credential and transport policy as pushes.
+    /// Fetch the base repository's pull ref and retain the label-time commit.
     pub fn fetch_pull_head(
         &self,
-        _remote: &Remote,
-        _token: Option<&InstallationToken>,
-        _number: u64,
-        _pinned: &CommitId,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+        number: u64,
+        pinned: &CommitId,
     ) -> Result<CommitId, Error> {
-        todo!("Q45 pinned pull fetch")
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if number == 0 {
+            return Err(Error::Response);
+        }
+        let reference = format!("refs/tl3/pulls/{number}");
+        if self.resolve_optional(&reference)?.is_some()
+            && self.resolve_optional(pinned.as_str())?.is_some()
+        {
+            return Ok(pinned.clone());
+        }
+        self.network(
+            "fetch pull head",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!("+refs/pull/{number}/head:{reference}")),
+            ],
+            remote.credentials(token),
+        )?;
+        if self.resolve_optional(pinned.as_str())?.is_none() {
+            // A force-push can remove the label-time head from the current pull history.
+            self.network(
+                "fetch pinned pull commit",
+                [
+                    OsStr::new("fetch"),
+                    OsStr::new("--no-tags"),
+                    OsStr::new("--no-auto-maintenance"),
+                    OsStr::new("--no-write-fetch-head"),
+                    OsStr::new("--"),
+                    &remote.0,
+                    OsStr::new(pinned.as_str()),
+                ],
+                remote.credentials(token),
+            )?;
+        }
+        self.resolve(pinned.as_str())?;
+        self.update_refs(&format!("update {reference} {}\n", pinned.as_str()))?;
+        Ok(pinned.clone())
     }
 
+    /// Atomically record a new branch, its comparison base, and its author start.
     pub fn create_branch_from(
         &self,
-        _name: &BranchName,
-        _base: &CommitId,
-        _start: &CommitId,
+        name: &BranchName,
+        base: &CommitId,
+        start: &CommitId,
     ) -> Result<Branch, Error> {
-        todo!("Q45 branch start")
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let start_ref = format!("refs/tl3/starts/{}", name.as_str());
+        match (
+            self.resolve_optional(&name.reference())?,
+            self.resolve_optional(&name.base_ref())?,
+            self.resolve_optional(&start_ref)?,
+        ) {
+            (None, None, None) => self.update_refs(&format!(
+                "create {} {}\ncreate {} {}\ncreate {start_ref} {}\n",
+                name.reference(),
+                start.as_str(),
+                name.base_ref(),
+                base.as_str(),
+                start.as_str()
+            ))?,
+            (Some(_), Some(_), Some(existing)) if existing == *start => {}
+            _ => return Err(Error::Recovery),
+        }
+        self.create_branch_locked(name)
     }
 
+    /// Fetches only main, with the same credential and transport policy as pushes.
     pub fn fetch_main(
         &self,
         remote: &Remote,
@@ -858,9 +923,10 @@ impl Worktrees {
             return Err(Error::WorktreeOccupied);
         }
         self.update_refs(&format!(
-            "delete {}\ndelete {}\n",
+            "delete {}\ndelete {}\ndelete refs/tl3/starts/{}\n",
             name.reference(),
-            name.base_ref()
+            name.base_ref(),
+            name.as_str()
         ))
     }
 

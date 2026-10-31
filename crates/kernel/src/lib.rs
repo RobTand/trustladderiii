@@ -1583,7 +1583,13 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
-        Event::NewAdoption { .. } => todo!("Q45 adoption intake"),
+        Event::NewAdoption { repo, head } => {
+            if repo.index().is_some_and(|r| r < w.gates.len()) {
+                let mut node = Node::new(repo);
+                node.proposed = Some(head);
+                w.nodes.push(node);
+            }
+        }
         Event::NewRequest { repo } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
                 w.nodes.push(Node::new(repo));
@@ -2074,7 +2080,17 @@ fn confirmed(m: &mut Node, kind: EffectKind) {
         && let Some(Item::Do(k) | Item::Teardown(k)) = m.current()
         && k == kind
     {
-        m.pos += 1;
+        if kind == EffectKind::PrepareWorktree
+            && !m.adopted
+            && let Some(head) = m.proposed
+        {
+            m.adopted = true;
+            m.head = Some(head);
+            m.checked = None;
+            set_phase(m, Phase::Checking);
+        } else {
+            m.pos += 1;
+        }
     }
 }
 

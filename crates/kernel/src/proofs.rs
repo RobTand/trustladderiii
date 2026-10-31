@@ -34,7 +34,7 @@ fn small(n: &Node) -> bool {
         && n.next_seq < LIMIT
         && n.last_cmd < LIMIT
         && n.repo.0 < 2
-        && [n.head, n.checked, n.approved, n.merged]
+        && [n.proposed, n.head, n.checked, n.approved, n.merged]
             .into_iter()
             .flatten()
             .all(|h| h.0 < 8)
@@ -123,6 +123,8 @@ fn check_nodes(before: &World, after: &World) {
     while i < before.nodes.len() {
         let b = &before.nodes[i];
         let n = &after.nodes[i];
+        assert!(n.proposed == b.proposed);
+        assert!(!b.adopted || n.adopted);
         // Effect keys only move forward.
         assert!(n.next_seq >= b.next_seq);
         // Closed is final. Only a late merge changes it, from Stopped or Replaced to Merged.

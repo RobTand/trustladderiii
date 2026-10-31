@@ -220,7 +220,13 @@ impl Supervisor {
                     let output = Command::new("git")
                         .arg("-C")
                         .arg(&checkout)
-                        .args(["rev-parse", "HEAD"])
+                        .args([
+                            "rev-parse",
+                            &format!(
+                                "refs/tl3/bases/{}",
+                                super::worktrees::Real::branch(delivery)?.as_str()
+                            ),
+                        ])
                         .output()?;
                     if !output.status.success() {
                         return Err(Error::Invalid("maker checkout has no base"));

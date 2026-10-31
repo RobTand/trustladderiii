@@ -438,7 +438,7 @@ Prepare pins its creation base before writing refs. Git keeps an administrative
 lock at `<common-git-dir>/worktrees/<id>/locked` with reason `initializing\n`
 while `worktree add` populates files, then removes it on success. Any key may
 repair an interrupted checkout only while that lock exists and the branch head
-equals the durable base ref. Repair resets to the branch, verifies the files,
+equals the durable start ref, or the base ref for an ordinary branch. Repair resets to the branch, verifies the files,
 then unlocks. A newer fetched main does not replace the durable base.
 Without the initializing lock, Prepare verifies registration and branch without
 changing files, even when an older unfinished key reconciles later. Maker commits,
@@ -446,7 +446,7 @@ edits and untracked files survive every re-entry to Making. The next maker sees
 leftover files through `git status`.
 
 Remove records a clean preflight before deletion begins. Git's initializing lock
-plus head equal to the durable base also proves that no maker ran. Partial
+plus head equal to the durable start, or base for an ordinary branch, also proves that no maker ran. Partial
 tracked files from a killed checkout are safe to remove under this rule.
 Remove reads this evidence directly, so its work does not grow with the journal
 and unrelated unreadable records cannot block it. Git retains the initializing
@@ -464,3 +464,26 @@ Keep the Git journal with its repository, and terminate the controller's whole
 service process group before a replacement takes ownership. Concurrent external
 Git writers and maintenance are outside repository ownership. This adapter adds
 no SQL schema or kernel transition.
+
+
+### Proposed PR intake (Q45)
+
+The adoption translator reads only authenticated `pull_request.labeled` evidence
+from Rob in a served repository. A single local closing keyword selects the
+issue. The request stores the PR number, label-time head and head repository;
+issue intake's once-per-issue rule still applies. Forks and catch-up are later
+work. Goals and accepted plans continue to come from the issue.
+
+A rejected ambiguous label has no kernel node. Its fixed clarification is first
+committed to the `adoption_questions` outbox. The GitHub adapter fences the epoch
+and reconciles the stable repository/PR marker before posting. The controller
+records completion; replay after an interrupted post finds the same comment.
+The completed row suppresses duplicate questions for that PR.
+
+For adoption, branch creation atomically records the author start in
+`refs/tl3/starts/<branch>` separately from `refs/tl3/bases/<branch>`. Preparation
+reports that durable base before check dispatch. Checks compare against it;
+review uses an ancestor of the checked head. Fixes keep the same branch.
+After TL3's PR merges, summary delivery also reconciles a fixed note and closes
+the original PR. It verifies the landed PR's merge before doing so. A failed or
+stopped request continues to close only TL3's own PR.
