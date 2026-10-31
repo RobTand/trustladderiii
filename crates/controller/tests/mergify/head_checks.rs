@@ -203,13 +203,13 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().deletes,
-        1,
-        "remove the existing label before re-adding it"
+        0,
+        "a queue command does not remove the existing label"
     );
     assert_eq!(
         api.state.lock().unwrap().posts,
         2,
-        "the retry must cause a real label transition"
+        "the retry must send a real queue command"
     );
     if lag {
         assert_eq!(

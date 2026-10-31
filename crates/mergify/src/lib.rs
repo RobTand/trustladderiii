@@ -7,6 +7,7 @@ use tl3_github::{CheckRun, GitHub, PullRequest};
 pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
 pub const MERGIFY_APP_ID: u64 = 10562;
 pub const QUEUE_LABEL: &str = "tl3-queue";
+pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueState {
@@ -27,6 +28,7 @@ pub struct Observation {
     pub state: QueueState,
     pub check: Option<CheckRun>,
     pub unapproved_merge: bool,
+    pub dequeue_rule_concluded: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -63,6 +65,27 @@ impl Mergify {
             return Err(Error::PullRequestClosed);
         }
         self.github.add_label(repo, number, QUEUE_LABEL).await?;
+        Ok(())
+    }
+
+    /// The queue command resets a previously dequeued PR; label presence cannot do that.
+    pub async fn requeue(
+        &self,
+        repo: &str,
+        number: u64,
+        approved_head: &str,
+        effect_key: &str,
+    ) -> Result<(), Error> {
+        let pull = self.github.pull_request(repo, number).await?;
+        if pull.head.sha != approved_head {
+            return Err(Error::HeadChanged);
+        }
+        if pull.state != "open" || pull.merged_at.is_some() {
+            return Err(Error::PullRequestClosed);
+        }
+        self.github
+            .post_command_comment(repo, number, effect_key, "@mergifyio queue")
+            .await?;
         Ok(())
     }
 
@@ -135,6 +158,28 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
             reported
         }
     };
+    let dequeue_rule_concluded = check.as_ref().is_some_and(|queue| {
+        checks
+            .iter()
+            .filter(|rule| {
+                rule.head_sha == pull_request.head.sha
+                    && rule.name == QUEUE_RULE_CHECK
+                    && rule
+                        .app
+                        .as_ref()
+                        .is_some_and(|app| app.id == MERGIFY_APP_ID && app.slug == "mergify")
+            })
+            .max_by_key(|rule| rule.id)
+            .is_some_and(|rule| {
+                rule.status == "completed"
+                    && rule.conclusion.is_some()
+                    && rule.completed_at.is_some_and(|finished| {
+                        queue
+                            .completed_at
+                            .is_none_or(|dequeued| finished >= dequeued)
+                    })
+            })
+    });
     let unapproved_merge =
         pull_request.merged_at.is_some() && pull_request.head.sha != approved_head;
     Observation {
@@ -142,6 +187,7 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
         state,
         check,
         unapproved_merge,
+        dequeue_rule_concluded,
     }
 }
 

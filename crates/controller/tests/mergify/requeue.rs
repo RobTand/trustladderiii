@@ -88,7 +88,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.lag = true;
         state.command_lost_response = mode == "lost-response";
     }
-    controller.look_key(&key).unwrap();
+    ingress::apply(&mut controller, tl3_controller::cli::Input::GitHubWake).unwrap();
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().requeues,

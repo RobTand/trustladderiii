@@ -1860,7 +1860,7 @@ fn executor_recovery() {
     let posts = api.state.lock().unwrap().posts;
     api.state.lock().unwrap().lag = false;
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
-    assert_eq!(api.state.lock().unwrap().deletes, 1);
+    assert_eq!(api.state.lock().unwrap().deletes, 0);
     assert_eq!(
         api.state.lock().unwrap().posts,
         posts + 1,
