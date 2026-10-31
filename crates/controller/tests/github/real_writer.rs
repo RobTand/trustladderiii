@@ -35,7 +35,11 @@ pub(super) fn run(mode: &str) {
     config.workers.python = package.join(".venv/bin/python");
     config.workers.command = vec![
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/worker_model.py")
+            .join(if mode == "multiline" {
+                "tests/worker_model.py"
+            } else {
+                "tests/worker_transport.py"
+            })
             .to_str()
             .unwrap()
             .into(),
@@ -119,5 +123,42 @@ pub(super) fn run(mode: &str) {
         }),
         "unexpected posted reply: {body}"
     );
-    println!("test real_writer_{mode} ... ok");
+    if mode == "multiline" {
+        println!("test real_worker_contract_writer ... ok");
+    } else {
+        println!("test writer_transport_{mode} ... ok");
+    }
+}
+
+pub(super) fn classifier_contract() {
+    let root = tempfile::tempdir().unwrap();
+    let key = root.path().join("fixture-key");
+    fs::write(&key, "fixture-only").unwrap();
+    let request = json!({
+        "protocol": 1, "operation": {"node": 0, "generation": 0, "kind": "classifier"},
+        "role": "classifier", "model": {"base_url": "http://model.invalid/v1", "name": "fixture", "effort": null, "budget_tokens": 1000},
+        "key_file": key, "worktree": root.path(),
+        "inputs": {"comment": {"author": "owner", "body": "Please pause"}, "state": {"phase": "Making", "closed": false}}
+    });
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers");
+    let mut child = Command::new(package.join(".venv/bin/python"))
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/worker_model.py"))
+        .arg("normal")
+        .arg(root.path().join("entered"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    serde_json::to_writer(child.stdin.take().unwrap(), &request).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let events: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|event| event["event"] == "reply"
+        && event["role"] == "classifier"
+        && event["reply"]["kind"] == "pause"));
+    println!("test real_worker_contract_classifier ... ok");
 }
