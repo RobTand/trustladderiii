@@ -14,10 +14,19 @@ pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<V
         }))
 }
 
+pub(super) fn resumes(delivery: &Delivery, session: Option<&Value>, restarted: bool) -> bool {
+    delivery.round == 1
+        && session.is_some_and(|session| {
+            session["review_restarted"].as_bool().unwrap_or(false) == restarted
+                && session["out_of_room"] != true
+        })
+}
+
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
     snapshot: &tl3_store::Snapshot,
+    session: Option<&Value>,
 ) -> Result<Value> {
     let run = delivery
         .checks
@@ -27,9 +36,8 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    let session = session(delivery, store)?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
-    let mut base = if delivery.round == 1 {
+    let mut base = if delivery.round == 1 && session.is_some() {
         match &run.reviewed_sha {
             Some(reviewed) => reviewed.clone(),
             None => session
@@ -139,6 +147,9 @@ pub(crate) struct BlockingFinding {
 }
 
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<BlockingFinding>> {
+    if reply["verdict"] == "out_of_room" {
+        return Ok(vec![]);
+    }
     if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
         return Err(Error::Invalid("review approval names a different head"));
     }
@@ -164,6 +175,15 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<Blocki
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exhaustion_has_no_blocking_findings() {
+        assert!(
+            validate_reply(&json!({"verdict":"out_of_room"}), &json!({}))
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn approval_and_blockers_must_match_supplied_evidence() {
@@ -215,7 +235,7 @@ mod hostile_tests {
                     .unwrap();
                 report.id = format!("0:{}", f.head);
                 report.value = json!({"base_sha":f.base,"results":[]});
-                let value = inputs(&f.delivery(), &mut store, &snapshot).unwrap();
+                let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
                 assert!(
                     value["diff"]
                         .as_str()
