@@ -60,6 +60,8 @@ pub enum Error {
     WorktreeOccupied,
     #[error("worktree has uncommitted or untracked files")]
     DirtyWorktree,
+    #[error("refusing to publish a head that does not contain current main")]
+    UnrebasedHead,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
 }
@@ -78,6 +80,7 @@ impl Error {
             Self::WorktreeOccupied => Some("worktree_occupied"),
             Self::DirtyWorktree => Some("dirty_worktree"),
             Self::Recovery => Some("worktree_recovery"),
+            Self::UnrebasedHead => Some("unrebased_head"),
             // A Git exit alone cannot distinguish a lock or network failure.
             Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
         }
@@ -765,6 +768,90 @@ impl Worktrees {
             ],
             token,
         )?;
+        Ok(())
+    }
+
+    /// Resume only a merge onto this effect's recorded main, never another operation's merge.
+    pub fn merge_resolution(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+    ) -> Result<Option<Vec<PathBuf>>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_checkout(path, name)?;
+        self.merge_resolution_locked(path, target)
+    }
+
+    fn merge_resolution_locked(
+        &self,
+        path: &Path,
+        target: &CommitId,
+    ) -> Result<Option<Vec<PathBuf>>, Error> {
+        let output = self.run(
+            path,
+            "merge state path",
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "MERGE_HEAD",
+            ],
+        )?;
+        let marker = path_line(&output.stdout)?;
+        let head = match fs::read_to_string(marker) {
+            Ok(head) => head,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(Error::Io),
+        };
+        if head.trim() != target.as_str() {
+            return Err(Error::WorktreeOccupied);
+        }
+        let output = self.run(
+            path,
+            "merge conflicts",
+            ["diff", "--name-only", "--diff-filter=U", "-z", "--"],
+        )?;
+        Ok(Some(paths(&output.stdout)))
+    }
+
+    /// Leave both sides in the index and conflict markers in the maker's checkout.
+    /// The maker's merge commit, rather than a commit on the old base, completes integration.
+    pub fn prepare_merge_resolution(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        target: &CommitId,
+    ) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.verify_checkout(path, name)?;
+        if self.merge_resolution_locked(path, target)?.is_none() {
+            self.require_clean(path)?;
+            let output = self.execute(
+                path,
+                [
+                    "merge",
+                    "--no-commit",
+                    "--no-ff",
+                    "--no-autostash",
+                    target.as_str(),
+                ],
+                None,
+                None,
+            )?;
+            if self.merge_resolution_locked(path, target)?.is_none() {
+                return Err(git_error("prepare conflict resolution", &output));
+            }
+        }
+        let base = self.create_branch_locked(name)?.base;
+        if base != *target {
+            self.update_refs(&format!(
+                "update {} {} {}\n",
+                name.base_ref(),
+                target.as_str(),
+                base.as_str()
+            ))?;
+        }
         Ok(())
     }
 

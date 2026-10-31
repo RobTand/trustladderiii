@@ -138,8 +138,6 @@ fn workers(
                         } else if add_add {
                             fs::create_dir_all(checkout.join("pkg")).unwrap();
                             if fixture.source.join("pkg/new.py").exists() {
-                                let target = git(&fixture.remote, &["rev-parse", "main"]);
-                                git(&checkout, &["rebase", "-X", "theirs", &target]);
                                 *sha = commit(&checkout, "pkg/new.py", "def leaf(): return 2\n");
                             } else {
                                 fs::write(checkout.join("pkg/new.py"), "def leaf(): return 1\n")

@@ -2108,6 +2108,29 @@ impl Controller {
                     head: self.head(node, &sha)?,
                 },
             },
+            Observation::RebaseConflict {
+                node,
+                generation,
+                head,
+                target,
+                files,
+            } => {
+                let current = &world.nodes[node.0 as usize];
+                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                {
+                    return Ok(None);
+                }
+                commit.rows.push(put(
+                    "rebase_conflicts",
+                    node.0.to_string(),
+                    json!({"head": head, "target": target, "files": files}),
+                ));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RebaseNeedsChanges,
+                }
+            }
             Observation::Rebased {
                 node,
                 generation,
@@ -2342,7 +2365,8 @@ fn observation_upstream(
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
-        Observation::Rebased { .. }
+        Observation::RebaseConflict { .. }
+        | Observation::Rebased { .. }
         | Observation::ScratchSaved { .. }
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {

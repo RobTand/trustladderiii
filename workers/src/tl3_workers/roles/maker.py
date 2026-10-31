@@ -95,7 +95,8 @@ def _commit(request, starting_head):
     diff = _git(request, "diff", "--cached", "--quiet", "--no-ext-diff", "HEAD", "--", check=False)
     if diff.returncode not in (0, 1):
         raise ValueError("could not inspect staged changes")
-    if diff.returncode == 1:
+    merge = _git(request, "rev-parse", "--verify", "MERGE_HEAD", check=False)
+    if diff.returncode == 1 or merge.returncode == 0:
         inputs = request["inputs"]
         _git(request, "commit", "--quiet", "--no-gpg-sign", "-m",
              f"TL3 maker attempt {inputs['attempt']}, round {inputs['round']}")

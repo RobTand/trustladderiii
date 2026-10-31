@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
 };
-use tl3_kernel::{EffectKind, Event, Reply};
+use tl3_kernel::EffectKind;
 use tl3_worktrees::{BranchName, CommitId, InstallationToken, RebaseResult, Remote, Worktrees};
 
 pub struct Fake(Records);
@@ -436,6 +436,13 @@ impl Served {
                     .verify_removal_clean(branch, checkout)
                     .map_err(adapter)?;
                 let head = CommitId::new(head).map_err(adapter)?;
+                let main = self
+                    .git
+                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .map_err(adapter)?;
+                if !self.git.is_ancestor(&main, &head).map_err(adapter)? {
+                    return Err(tl3_worktrees::Error::UnrebasedHead.into());
+                }
                 let expected = expected
                     .as_ref()
                     .map(CommitId::new)
@@ -469,7 +476,20 @@ impl Served {
                 let Some((head, base)) = self.git.branch_state(branch).map_err(adapter)? else {
                     return Ok(None);
                 };
-                let result = if base == target {
+                let resolution = self
+                    .git
+                    .merge_resolution(branch, checkout, &target)
+                    .map_err(adapter)?;
+                let result = if let Some(files) = resolution {
+                    if writable {
+                        self.git
+                            .prepare_merge_resolution(branch, checkout, &target)
+                            .map_err(adapter)?;
+                    } else if base != target {
+                        return Ok(None);
+                    }
+                    RebaseResult::Conflicted { head, files }
+                } else if base == target {
                     // Finish any checkout restoration interrupted after the atomic ref update.
                     if writable {
                         self.git.recover_rebase(branch, checkout).map_err(adapter)?;
@@ -528,12 +548,37 @@ impl Served {
                             sha: head.as_str().into(),
                         });
                     }
-                    RebaseResult::Conflicted { .. } => {
-                        observations.push(Observation::Kernel(Event::Reply {
+                    RebaseResult::Conflicted { head, files } => {
+                        if !writable {
+                            return Ok(None);
+                        }
+                        self.git
+                            .prepare_merge_resolution(branch, checkout, &target)
+                            .map_err(adapter)?;
+                        if let Some(mut run) = record.delivery.checks.clone() {
+                            reproducing::rebase(
+                                self.git.common_directory(),
+                                branch,
+                                &mut run,
+                                target.as_str(),
+                            );
+                            run.base_sha = target.clone();
+                            observations.push(Observation::CheckPlan {
+                                node: record.delivery.node(),
+                                sha: head.as_str().into(),
+                                run,
+                            });
+                        }
+                        observations.push(Observation::RebaseConflict {
                             node: record.delivery.node(),
                             generation: record.delivery.generation,
-                            reply: Reply::RebaseNeedsChanges,
-                        }))
+                            head: head.as_str().into(),
+                            target: target.as_str().into(),
+                            files: files
+                                .iter()
+                                .map(|path| path.to_string_lossy().into_owned())
+                                .collect(),
+                        });
                     }
                 }
             }

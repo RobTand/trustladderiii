@@ -247,7 +247,10 @@ fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
     assert!(
         git(
             &f.remote,
-            &["for-each-ref", Real::branch(&push).unwrap().as_str()]
+            &[
+                "for-each-ref",
+                &format!("refs/heads/{}", Real::branch(&push).unwrap().as_str())
+            ]
         )
         .is_empty()
     );

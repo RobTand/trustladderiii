@@ -233,19 +233,20 @@ fn conflicts() {
         let completion = found(f.adapter().reconcile(&rebase).unwrap());
         assert!(matches!(
             completion.observations.as_slice(),
-            [Observation::Kernel(Event::Reply {
-                reply: Reply::RebaseNeedsChanges,
-                ..
-            })]
+            [Observation::RebaseConflict { files, .. }] if files == &["shared.txt"]
         ));
         assert_eq!(f.head(&rebase), push.head_sha.unwrap());
         let checkout = f.adapter().checkout(&rebase);
+        assert!(git(&checkout, &["status", "--porcelain"]).contains("UU shared.txt"));
+        assert_eq!(
+            git(&checkout, &["rev-parse", "MERGE_HEAD"]),
+            git(&f.remote, &["rev-parse", "main"])
+        );
+        let conflict = fs::read_to_string(checkout.join("shared.txt")).unwrap();
         assert!(
-            git(
-                &checkout,
-                &["status", "--porcelain", "--untracked-files=all"]
-            )
-            .is_empty()
+            conflict.contains("<<<<<<<")
+                && conflict.contains("leaf change")
+                && conflict.contains("main advance")
         );
         assert_eq!(
             git(&checkout, &["symbolic-ref", "--short", "HEAD"]),
