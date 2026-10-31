@@ -1971,20 +1971,16 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
             needs_changes |= snapshot.rows.iter().any(|row| {
                 row.table == "inbox"
                     && serde_json::from_value::<Observation>(row.value.clone()).is_ok_and(
-                        |observation| {
-                            matches!(
-                                observation,
-                                Observation::Kernel(Event::Reply {
-                                    reply: tl3_kernel::Reply::RebaseNeedsChanges,
-                                    ..
-                                })
-                            )
-                        },
+                        |observation| matches!(observation, Observation::RebaseConflict { .. }),
                     )
             });
             if needs_changes {
                 assert_eq!(Some(fixture.head(&prepare)), original);
-                assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+                assert!(git(&checkout, &["status", "--porcelain"]).contains("UU shared.txt"));
+                assert_eq!(
+                    git(&checkout, &["rev-parse", "MERGE_HEAD"]),
+                    git(&fixture.remote, &["rev-parse", "main"])
+                );
             }
         }
         if needs_changes && world.nodes[0].phase == Phase::Making {
@@ -1994,6 +1990,15 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
                 queued_attempt_round
             );
             assert_eq!(world.nodes[0].credit.balance(), queued_credit - 1);
+        }
+        if pushed && world.nodes[0].phase == Phase::Checking && conflict {
+            let head = fixture.head(&prepare);
+            let main = git(&fixture.remote, &["rev-parse", "main"]);
+            assert_eq!(
+                git(&fixture.repo, &["merge-base", &head, &main]),
+                main,
+                "a conflict maker must finish integration onto main"
+            );
         }
         if pushed && world.nodes[0].phase == Phase::Checking && !conflict {
             let head = fixture.head(&prepare);
