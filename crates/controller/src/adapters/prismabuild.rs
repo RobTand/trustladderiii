@@ -717,6 +717,81 @@ mod git_tests {
         ));
     }
     #[test]
+    fn checkout_disappears_during_open_ends_wait() {
+        disappearing_checkout(
+            "adapters::prismabuild::git_tests::checkout_disappears_during_open_ends_wait",
+            false,
+        );
+    }
+
+    #[test]
+    fn checkout_disappears_before_head_spawn_ends_wait() {
+        disappearing_checkout(
+            "adapters::prismabuild::git_tests::checkout_disappears_before_head_spawn_ends_wait",
+            true,
+        );
+    }
+
+    fn disappearing_checkout(name: &str, linked: bool) {
+        use std::{os::unix::fs::PermissionsExt, process::Command};
+        if std::env::var_os("TL3_VANISH_WAIT_CHILD").is_none() {
+            let bin = tempfile::tempdir().unwrap();
+            let git = bin.path().join("git");
+            fs::write(
+                &git,
+                r#"#!/bin/sh
+/usr/bin/git "$@"
+status=$?
+if [ "$status" -eq 0 ]; then
+    for arg do
+        if [ "$arg" = "--git-common-dir" ]; then
+            checkout=$(/bin/pwd)
+            : > "${checkout%/*}/removed"
+            /bin/rm -rf -- "$checkout"
+        fi
+    done
+fi
+exit "$status"
+"#,
+            )
+            .unwrap();
+            fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+            let mut paths = vec![bin.path().to_path_buf()];
+            paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+            let result = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env("TL3_VANISH_WAIT_CHILD", "1")
+                .env("PATH", std::env::join_paths(paths).unwrap())
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{name}:\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let f = Repo::new();
+        let checkout = if linked {
+            let checkout = f.root.path().join("checkout");
+            crate::git_tests::git(
+                &f.path,
+                &["worktree", "add", "-b", "wait-race", checkout.to_str().unwrap()],
+            );
+            checkout
+        } else {
+            f.path.clone()
+        };
+        let client = wait_client(f.root.path(), &f.head);
+        let runtime = crate::executor::runtime().unwrap();
+        let result = read_wait(&client, runtime, &"a".repeat(64), &checkout);
+        assert!(f.root.path().join("removed").exists());
+        assert!(!checkout.try_exists().unwrap());
+        assert!(matches!(result.unwrap(), crate::executor::WaitRecord::Ended));
+    }
+
+    #[test]
     fn hostile_read_wait() {
         crate::git_tests::hostile(
             "adapters::prismabuild::git_tests::hostile_read_wait",
