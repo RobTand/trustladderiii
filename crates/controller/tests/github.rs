@@ -602,7 +602,9 @@ fn main() {
     println!("test source_failures ... ok");
     {
         let mut reconnect = support::Database::start();
-        delivery_reconnects(&reconnect.create("reconnect"), &mut reconnect);
+        let mut settings = reconnect.create("reconnect");
+        settings.connect_timeout_secs = 1;
+        delivery_reconnects(&settings, &mut reconnect);
         reconnect.stop();
     }
     println!("test delivery_reconnects ... ok");
