@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("suite", choices=("red", "hosts", "python", "workspace", "all"))
+parser.add_argument("suite", choices=("red", "hosts", "python", "workspace", "all", "fix-round"))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 env = {
@@ -16,7 +16,7 @@ env = {
     "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
     "TL3_TEST_UV": "/home/rob/.local/bin/uv", "TMPDIR": "/home/rob/tmp",
 }
-common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env}
+common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env, "priority": -10}
 rows = []
 if args.suite == "red":
     rows.append({**common, "anywhere": True,
@@ -36,4 +36,14 @@ export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"
 if args.suite in {"workspace", "all"}:
     rows.append({**common, "anywhere": True,
                  "argv": ["bash", "crates/controller/tools/verify.sh"]})
+if args.suite == "fix-round":
+    for host in ("dl380g10", "sparky"):
+        python = "/usr/bin/python3.14" if host == "dl380g10" else "3.14+gil"
+        rows.append({**common, "tags": [host], "argv": ["bash", "-ec", f"""
+cargo test --locked -p tl3-worktrees
+cargo test --locked -p tl3-controller --lib --test scope --test publishing --test writer_quote
+cargo build --locked -p tl3-controller --example tl3-deploy
+export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"
+"$TL3_TEST_UV" run --locked --project workers --python {python} pytest -q workers/tests/test_reviewer.py workers/tests/test_writer.py --basetemp "$PWD/scope-pytest"
+"""]})
 print(json.dumps(rows, indent=2))

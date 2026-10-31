@@ -1305,3 +1305,6 @@ Generate the verification campaign with
 outside the checkout, and submit it through `pbcampaign.py`. It includes the
 worktrees suite and controller scope scenarios on all three hosts, reviewer and
 writer Python tests with the deployment helper, and `tools/verify.sh`.
+For a scope fix round, `fix-round` generates the worktrees, scope, publishing,
+reviewer and writer suites on dl380g10 and sparky. After those pass, submit the
+`workspace` action at the same commit.
