@@ -287,6 +287,31 @@ pub struct PrismaBuild {
 pub struct Hindsight {
     pub endpoint: Url,
     pub bank: String,
+    #[serde(default)]
+    pub api_key_file: Option<PathBuf>,
+}
+
+impl Hindsight {
+    /// Memory delivery validates and reads this only on its background thread.
+    pub fn retain_key(&self) -> Result<Option<String>, Error> {
+        let Some(path) = &self.api_key_file else {
+            return Ok(None);
+        };
+        validate_secret_file("hindsight.api_key_file", path)?;
+        let key = fs::read_to_string(path).map_err(|source| Error::File {
+            field: "hindsight.api_key_file".into(),
+            path: path.clone(),
+            source,
+        })?;
+        let key = key.trim();
+        if key.is_empty() || !key.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(invalid(
+                "hindsight.api_key_file",
+                "must contain one nonempty API key",
+            ));
+        }
+        Ok(Some(key.to_owned()))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -513,6 +538,9 @@ impl Config {
         }
         endpoint("models.base_url", &self.models.base_url)?;
         endpoint("hindsight.endpoint", &self.hindsight.endpoint)?;
+        if let Some(path) = &self.hindsight.api_key_file {
+            absolute("hindsight.api_key_file", path)?;
+        }
         if self.hindsight.bank.trim().is_empty() {
             return Err(invalid("hindsight.bank", "must not be empty"));
         }

@@ -13,6 +13,7 @@ UMask=0077
 LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
 LoadCredential=github-app.json:%h/.config/tl3/github-app.json
 LoadCredential=model-key:%h/.config/tl3/secrets/model-key
+LoadCredential=hindsight-key:%h/.config/tl3/secrets/hindsight-key
 RuntimeDirectory=tl3d
 RuntimeDirectoryMode=0700
 Environment=TIKTOKEN_CACHE_DIR=%h/.local/share/tl3/tiktoken
