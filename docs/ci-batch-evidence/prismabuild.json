@@ -226,5 +226,43 @@
       "path": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/1139a5135cf328feab5e6c7ce12944e01bf6b37f59322cfd7672396a74c857ce/d78d80fa27b05d7c4ebb0711ccc3dd8b59d01445d05279ba693b67d9c6799805/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
       "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
     }
+  },
+  {
+    "action_key": "1f10818ae336b5cfa152b1d157c134ba4bac7309c1a006f7784076c0503b7503",
+    "host": "dl380g10",
+    "status": "executed",
+    "exit_code": 0,
+    "succeeded": true,
+    "verified": true,
+    "receipt_sha256": "3c1e2fba3cd14dae3747ffd0247a047ce003ab0750d03685364cf8b528c07b91",
+    "stdout": {
+      "bytes": 97357,
+      "path": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/1f10818ae336b5cfa152b1d157c134ba4bac7309c1a006f7784076c0503b7503/91429870161030f50f02170d0f476e568463a1496a886dc67d84ac47cbfec380/00000001.stdout.c33f7b376358516b205cde67ab8e9961c547878ecb452f9bb154c637cac3764e.log",
+      "sha256": "c33f7b376358516b205cde67ab8e9961c547878ecb452f9bb154c637cac3764e"
+    },
+    "stderr": {
+      "bytes": 46,
+      "path": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/1f10818ae336b5cfa152b1d157c134ba4bac7309c1a006f7784076c0503b7503/91429870161030f50f02170d0f476e568463a1496a886dc67d84ac47cbfec380/00000001.stderr.e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c.log",
+      "sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+    }
+  },
+  {
+    "action_key": "aaa82a193302597a81efe8d6016539ff6c79d216a50e761adc4414628e3070ac",
+    "host": "sparky",
+    "status": "executed",
+    "exit_code": 0,
+    "succeeded": true,
+    "verified": true,
+    "receipt_sha256": "ad14747e0b6f2ba8eaf7f12ce6e61999c77c6a9ee70e8f37bed6a04ee1a68c7f",
+    "stdout": {
+      "bytes": 3010,
+      "path": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/aaa82a193302597a81efe8d6016539ff6c79d216a50e761adc4414628e3070ac/ca16387e6dc494acd714672f67842ea0d00930ceb23c663bea4a1d66e8ff8f28/00000001.stdout.4bb623447d850e2e38e9baf6fe19e4d4ebff3e6447e2b5414b8053280ec447f4.log",
+      "sha256": "4bb623447d850e2e38e9baf6fe19e4d4ebff3e6447e2b5414b8053280ec447f4"
+    },
+    "stderr": {
+      "bytes": 43,
+      "path": "/mnt/shared/prismabuild-fleet/pb-queue/attempts/aaa82a193302597a81efe8d6016539ff6c79d216a50e761adc4414628e3070ac/ca16387e6dc494acd714672f67842ea0d00930ceb23c663bea4a1d66e8ff8f28/00000001.stderr.6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f.log",
+      "sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+    }
   }
 ]
