@@ -101,6 +101,34 @@ class HostedTests(unittest.TestCase):
             self.assertEqual(sum('unittest' in args for args, _ in calls), 2)
             self.assertEqual(sum('pytest' in args for args, _ in calls), 2)
 
+    def test_dependency_cache_is_prepared_before_timed_tests(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / 'prepared'
+            fixture = root / 'fixture.py'
+            fixture.write_text(
+                'import sys\nfrom pathlib import Path\n'
+                f'marker = Path({str(marker)!r})\n'
+                'if "--prepare-cache" in sys.argv:\n'
+                '    marker.write_text("ready")\n'
+                '    raise SystemExit(0)\n'
+                'if not marker.exists():\n'
+                '    raise SystemExit("dependency cache was not prepared")\n'
+                'print("test lifecycle ... ok")\n')
+            policy = root / rust_gate.POLICY
+            policy.parent.mkdir(parents=True)
+            policy.write_text(json.dumps({'seconds': 10, 'slow': {}}))
+            binary = {'name': 'tl3-store/fixture_lifecycle', 'custom': True,
+                      'command': [sys.executable, str(fixture)]}
+            with patch.object(rust_gate, 'ROOT', root), \
+                 patch.object(rust_gate, 'baseline_policy', return_value={'seconds': 10, 'slow': {}}), \
+                 patch.object(rust_gate, 'collect_binaries', return_value=[binary]):
+                report = rust_gate.test_workspace(Path('Cargo.toml'), shard=(0, 1))
+            self.assertTrue(marker.exists())
+            self.assertEqual(set(report['tests']),
+                             {'tl3-store/fixture_lifecycle::lifecycle', 'tl3-store/fixture_lifecycle::__tail__'})
+            self.assertGreaterEqual(report['setup_seconds'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
