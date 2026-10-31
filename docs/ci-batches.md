@@ -85,6 +85,12 @@ These runs used physical cores and do not establish CI's SMT performance.
 Terminal records and CAS receipt references are in
 `ci-batch-evidence/prismabuild.json`.
 
+After merging integration PR #124, the expanded 789-test worker suite passed
+on dl380g10 in 247.40s, sparky in 77.24s, and sparklina in 77.71s. The full
+Python check passed in 387.12s, including 99 harness tests, all worker tests,
+and standalone suites. It skipped the same optional ShellCheck test. That
+test and its scripts are unchanged from the earlier scoped ShellCheck pass.
+
 Rust already uses `RUST_TEST_THREADS=4` and `CARGO_BUILD_JOBS=4`. Cargo runs
 integration executables in sequence, including custom `harness = false`
 executables. Several run `uv sync` against the same `workers/.venv` and then
