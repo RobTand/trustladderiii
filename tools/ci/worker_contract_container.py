@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='tl3-contract-home-') as home:
         '--mount', f'type=bind,src={root},dst={root}',
         '--mount', f'type=bind,src={home},dst=/tmp/contract-home',
         '--mount', 'type=bind,src=/home/rob/.local/bin/uv,dst=/usr/local/bin/uv,readonly',
+        '--mount', 'type=bind,src=/home/rob/.local/share/uv/python/cpython-3.14.4-linux-aarch64-gnu,dst=/opt/python,readonly',
         '--workdir', str(root), '--env', 'HOME=/tmp/contract-home',
         '--env', 'RUSTUP_HOME=/home/runner/.rustup',
         '--env', 'CARGO_HOME=/tmp/contract-home/.cargo',
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='tl3-contract-home-') as home:
         '--env', 'OMP_NUM_THREADS=1', '--env', 'MKL_NUM_THREADS=1',
         '--env', 'OPENBLAS_NUM_THREADS=1', '--env', 'RAYON_NUM_THREADS=1',
         '--env', 'TOKIO_WORKER_THREADS=1', image, '-ec',
-        'export PATH=/home/runner/.cargo/bin:/usr/local/bin:/usr/bin:/bin\n'
+        'export PATH=/opt/python/bin:/home/runner/.cargo/bin:/usr/local/bin:/usr/bin:/bin\n'
         'cargo test --locked -p tl3-controller --test workers -- --maker-reproducing-rebase',
     ]
     subprocess.run(command, check=True)
