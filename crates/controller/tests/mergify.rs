@@ -2115,7 +2115,220 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
     println!("test failed_catch_up_retries_held_enqueue ... ok");
 }
 
+struct AwaitTranslation(mpsc::Receiver<()>);
+impl Source for AwaitTranslation {
+    fn run(self, _sender: mpsc::Sender<tl3_controller::cli::Input>) -> tl3_controller::Result<()> {
+        self.0.recv_timeout(Duration::from_secs(10)).map_err(|_| {
+            tl3_controller::Error::Invalid("deferred delivery never retried without new input")
+        })
+    }
+}
+struct ReviewTranslator {
+    inner: Translator,
+    state: Arc<Mutex<State>>,
+    retry: Option<(bool, mpsc::Sender<()>)>,
+}
+impl ingress::GitHubTranslator for ReviewTranslator {
+    fn translate(
+        &mut self,
+        delivery: &ingress::GitHubDelivery,
+        snapshot: &tl3_store::Snapshot,
+    ) -> tl3_controller::Result<Vec<tl3_controller::cli::Input>> {
+        if let ingress::GitHubDelivery::Webhook(webhook) = delivery {
+            if webhook.id == "poison" {
+                return Err(tl3_github::Error::Http { status: 403 }.into());
+            }
+            if let Some((lazy, done)) = &self.retry {
+                if webhook.id == "deferred" {
+                    let lazy = *lazy;
+                    let done = done.clone();
+                    self.retry = Some((lazy, done.clone()));
+                    if self.state.lock().unwrap().checks == fixture("running", "checks") {
+                        self.state.lock().unwrap().checks = fixture("waiting", "checks");
+                        return Err(tl3_controller::Error::Adapter(Box::new(if lazy {
+                            tl3_mergify::Error::MergeabilityPending
+                        } else {
+                            tl3_mergify::Error::ChangedDuringRead
+                        })));
+                    }
+                    self.state.lock().unwrap().checks = fixture("interrupted", "checks");
+                    let result =
+                        ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot);
+                    if result.is_ok() {
+                        let _ = done.send(());
+                    }
+                    return result;
+                }
+            }
+        }
+        ingress::GitHubTranslator::translate(&mut self.inner, delivery, snapshot)
+    }
+}
+fn review_controller(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    retry: Option<(bool, mpsc::Sender<()>)>,
+) -> Controller {
+    let mut registry = adapters::simulation(root).unwrap();
+    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    c.register_github_translator(
+        "mergify",
+        ReviewTranslator {
+            inner: Translator::new(api.clients()).unwrap(),
+            state: api.state.clone(),
+            retry,
+        },
+    );
+    c
+}
+fn store_review_event(settings: &tl3_config::Store, api: &Server, id: &str, number: u64) {
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["check_run"] = api.state.lock().unwrap().queue_check();
+    body["check_run"]["pull_requests"] = json!([{ "number": number }]);
+    Store::open(settings)
+        .unwrap()
+        .receive_ingress(
+            "github-webhook",
+            id,
+            "check_run",
+            &serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+}
+fn deferred_source_loop(settings: &tl3_config::Store, lazy: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    drop(queued(settings, &api, root.path(), true));
+    let (done, received) = mpsc::channel();
+    let mut c = review_controller(settings, &api, root.path(), Some((lazy, done)));
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.github_mergify.silence_secs = 1;
+    c.set_allowances(allowances);
+    store_review_event(settings, &api, "deferred", 100);
+    let mut sources = ingress::Sources::default();
+    sources.register(AwaitTranslation(received));
+    assert!(
+        sources.run(&mut c).is_ok(),
+        "Sources::run must retry a deferred delivery without another event"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    assert_eq!(api.state.lock().unwrap().posts, 2);
+    println!("test deferred_source_loop_lazy_{lazy} ... ok");
+}
+fn permanent_delivery_does_not_block(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    drop(queued(settings, &api, root.path(), true));
+    let mut c = review_controller(settings, &api, root.path(), None);
+    api.state.lock().unwrap().checks = fixture("interrupted", "checks");
+    store_review_event(settings, &api, "poison", 101);
+    store_review_event(settings, &api, "healthy", 100);
+    ingress::drain(&mut c).unwrap();
+    while c.drive_once().unwrap() {}
+    let mut store = Store::open(settings).unwrap();
+    let cursor = store
+        .translator_cursor("github-translator:mergify")
+        .unwrap();
+    assert!(
+        store.ingress_after(cursor).unwrap().is_empty(),
+        "a permanent error on PR 101 must not pin later PR 100 at the translator cursor"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    println!("test permanent_delivery_does_not_block ... ok");
+}
+fn command_dequeue_pauses(settings: &tl3_config::Store, title: bool) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut c = queued(settings, &api, root.path(), true);
+    {
+        let mut state = api.state.lock().unwrap();
+        state.queue_check_mut()["output"] = if title {
+            json!({"title":"Dequeued — pull request manually dequeued", "summary":null, "text":null})
+        } else {
+            fixture("manual", "checks")[0]["output"].clone()
+        };
+        state.queue_check_mut()["status"] = json!("completed");
+        state.queue_check_mut()["conclusion"] = json!("neutral");
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+    }
+    drain(&mut c);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        1,
+        "a manual dequeue must not re-enqueue even with the queue label present"
+    );
+    assert!(
+        c.world().unwrap().nodes[0].paused,
+        "manual dequeue pauses through the existing person-dequeue rule"
+    );
+    assert_eq!(queue_facts(&mut c).len(), 1);
+    println!("test command_dequeue_pauses_title_{title} ... ok");
+}
+fn legacy_intent_ignores_completed_at() {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let d = delivery();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.pull["head"]["sha"] = json!(d.head_sha);
+        state.checks = fixture("interrupted", "checks");
+        state.queue_check_mut()["completed_at"] = json!("2026-10-31T16:31:59Z");
+        state.label = true;
+    }
+    let mut before = api.state.lock().unwrap().queue_check();
+    before.as_object_mut().unwrap().remove("completed_at");
+    let intent = root
+        .path()
+        .join(format!("{}.intent", hex::encode(d.key.as_bytes())));
+    std::fs::write(
+        intent,
+        serde_json::to_vec(&json!({"before":before,"last_event":0})).unwrap(),
+    )
+    .unwrap();
+    let mut adapter = api.adapter(root.path(), 1);
+    assert!(
+        matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending),
+        "completed_at added after deploy must not confirm a stale terminal check"
+    );
+    api.state.lock().unwrap().queue_check_mut()["output"]["title"] =
+        json!("Dequeued — checks interrupted");
+    assert!(
+        matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Found(_)),
+        "a real output transition still confirms the enqueue"
+    );
+    println!("test legacy_intent_ignores_completed_at ... ok");
+}
+
 fn main() {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--review-").map(str::to_owned))
+    {
+        if mode == "legacy" {
+            legacy_intent_ignores_completed_at();
+            return;
+        }
+        let mut database = support::Database::start();
+        match mode.as_str() {
+            "race" | "lazy" => {
+                deferred_source_loop(&database.create("source_loop"), mode == "lazy")
+            }
+            "permanent" => {
+                permanent_delivery_does_not_block(&database.create("permanent_delivery"))
+            }
+            "manual" | "manual-title" => {
+                command_dequeue_pauses(&database.create("manual_dequeue"), mode == "manual-title")
+            }
+            _ => panic!("unknown review regression"),
+        }
+        database.stop();
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--reused-check") {
         let mut database = support::Database::start();
         let generic = std::env::args().nth(2).as_deref() == Some("generic");
@@ -2316,6 +2529,14 @@ fn main() {
     for generic in [false, true] {
         reused_check_dequeues_twice(&database.create(&format!("reused_{generic}")), generic);
     }
+    for lazy in [false, true] {
+        deferred_source_loop(&database.create(&format!("source_loop_{lazy}")), lazy);
+    }
+    permanent_delivery_does_not_block(&database.create("permanent_delivery"));
+    for title in [false, true] {
+        command_dequeue_pauses(&database.create(&format!("manual_dequeue_{title}")), title);
+    }
+    legacy_intent_ignores_completed_at();
     database.stop();
-    println!("66 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("72 Mergify scenarios passed; no skips; no live upstream calls");
 }

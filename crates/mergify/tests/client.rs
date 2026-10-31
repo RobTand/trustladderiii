@@ -560,3 +560,31 @@ fn a_timed_out_queue_check_is_an_infrastructure_failure_without_a_known_title() 
         state.check.as_ref().unwrap()
     ));
 }
+
+#[test]
+fn documented_manual_dequeue_is_not_a_retry_or_conflict() {
+    let (mut pr, _) = recorded("running");
+    pr.mergeable = Some(false);
+    pr.mergeable_state = Some("dirty".into());
+    let mut check: CheckRun =
+        serde_json::from_value(fixture("manual", "checks")[0].clone()).unwrap();
+    check.head_sha = pr.head.sha.clone();
+    for title_only in [false, true] {
+        if title_only {
+            let output = check.output.as_mut().unwrap();
+            output.summary = None;
+            output.title = Some("Dequeued — pull request manually dequeued".into());
+        }
+        let state = observe(pr.clone(), &[check.clone()], &pr.head.sha).state;
+        assert!(
+            !matches!(
+                state,
+                QueueState::Dequeued
+                    | QueueState::FailedCi
+                    | QueueState::Conflict
+                    | QueueState::Unknown
+            ),
+            "a documented manual dequeue must report a person stop, even on a dirty PR"
+        );
+    }
+}
