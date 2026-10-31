@@ -81,3 +81,17 @@ def test_existing_named_test_is_protected(chunked_repo, kind, edit):
     assert result.verdict == Verdict.FAIL
     assert result.tests[0].message == (
         f'Restore the existing test `{TEST}`; existing tests may not be changed to satisfy a check.')
+
+
+def test_many_parametrized_cases_keep_a_complete_report(chunked_repo, tmp_path, monkeypatch):
+    repo, _ = chunked_repo
+    path = repo / 'tests/test_sequences.py'
+    path.write_text(SOURCE.replace('[0, -1]', str(list(range(-12, 0)))))
+    monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
+    class Progress:
+        def commit(self, test):
+            pass
+    outcomes = execution.run_tree(repo, execution.Container('sha256:' + '1' * 64),
+                                  (TEST,), tmp_path / 'report.jsonl', Progress())
+    assert outcomes == {TEST: Outcome.PASSED}
