@@ -135,7 +135,10 @@ impl State {
         for check in checks.as_array_mut().unwrap() {
             check["head_sha"] = self.pull["head"]["sha"].clone();
         }
-        checks.as_array_mut().unwrap().extend(self.head_checks.clone());
+        checks
+            .as_array_mut()
+            .unwrap()
+            .extend(self.head_checks.clone());
         checks
     }
     fn queue_check(&self) -> Value {
@@ -2351,7 +2354,10 @@ fn legacy_intent_ignores_completed_at() {
 }
 
 fn main() {
-    if let Some(mode) = std::env::args().nth(1).and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned)) {
+    if let Some(mode) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned))
+    {
         let mut database = support::Database::start();
         if mode.starts_with("label-") {
             head_checks::label_present(&database.create("head_label"), mode == "label-lag");
@@ -2580,7 +2586,16 @@ fn main() {
             lazy,
         );
     }
-    for mode in ["cancelled", "timed_out", "startup_failure", "failure", "permission", "restart", "otherhead", "optional"] {
+    for mode in [
+        "cancelled",
+        "timed_out",
+        "startup_failure",
+        "failure",
+        "permission",
+        "restart",
+        "otherhead",
+        "optional",
+    ] {
         head_checks::scenario(&database.create(&format!("head_{mode}")), mode);
     }
     for lag in [false, true] {

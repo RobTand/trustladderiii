@@ -1247,6 +1247,9 @@ pub(crate) fn incident_summary(
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
+        "actions_write_required" => {
+            "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
+        }
         "not_found" => "could not find the requested resource",
         "invalid_request" => "rejected the request",
         "dirty_worktree" => "has uncommitted or untracked files",

@@ -1319,3 +1319,27 @@ writer Python tests with the deployment helper, and `tools/verify.sh`.
 For a scope fix round, `fix-round` generates the worktrees, scope, publishing,
 reviewer and writer suites on dl380g10 and sparky. After those pass, submit the
 `workspace` action at the same commit.
+
+### Required head checks before queue retry
+
+The enqueue adapter reads the base branch's active ruleset requirements. It matches
+each required check's name and App ID against the latest GitHub Actions check on
+the approved PR head. Cancelled, timed-out, and startup failures rerun their workflow
+before re-enqueueing. A `failure` needs explicit runner-failure annotations to take
+that path; ordinary test failures enter the existing fix round. A generic GitHub
+merge refusal uses the same evidence. Optional checks and older heads are excluded.
+
+Each rerun records its run ID and attempt before the POST. Recovery reads GitHub's
+`run_attempt` after an uncertain response instead of repeating the POST. An
+unresolved write stays pending for the existing looks and incident machinery.
+The kernel's existing infrastructure retry bound still applies.
+
+A fresh enqueue removes an existing queue label before adding it again, including
+when Mergify's queue check has returned to ready after a dequeue. Acceptance still
+requires Mergify's queue evidence. A label write alone leaves the effect pending;
+missing acceptance raises the usual incident. Missing Actions permission raises a
+setup incident naming **Actions: Read and write**; see
+[App setup](../../deploy/github-app/README.md#workflow-rerun-permission).
+
+Run `bash crates/controller/tools/verify-head-checks.sh` through PrismaBuild for the
+focused D4 scenarios. The Mergify and publishing suites cover the surrounding flow.
