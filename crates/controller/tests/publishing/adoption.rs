@@ -70,6 +70,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         "merged".into(),
     ];
     config.models.key_file = root.path().join("fixture-key");
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     fs::write(&config.models.key_file, "fixture").unwrap();
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut source = supervisor.source();
@@ -98,7 +99,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
                             );
                             let checkout = fixture.adapter().checkout(d);
                             assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), preserved);
-                            *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                            *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
                             assert_eq!(git(&checkout, &["merge-base", &preserved, sha]), preserved);
                             fs::write(&queue, "done").unwrap();
                         }
@@ -199,7 +200,11 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert_eq!(reviews.len(), 1);
     assert_eq!(reviews[0]["inputs"]["check_base_sha"], check_base);
     let diff = reviews[0]["inputs"]["diff"].as_str().unwrap();
-    assert!(diff.contains("+def value(): return 2"));
+    assert!(diff.contains(if mode == "adoption-fix" {
+        "+    return 2"
+    } else {
+        "+def value(): return 2"
+    }));
     assert!(
         !diff.contains("main-only.txt"),
         "review must use an ancestor comparison base"
