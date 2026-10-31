@@ -87,7 +87,7 @@ class HostedTests(unittest.TestCase):
         files = [Path(n) for n in ['workers/pyproject.toml', 'workers/tests/test_worker.py',
                                    'harness/pyproject.toml', 'harness/tests/test_harness.py',
                                    'tools/test_tool.py', 'deploy/test_deploy.py']]
-        projects = {Path('workers'): {}, Path('harness'): {}}
+        projects = {Path('workers'): {'project': {}}, Path('harness'): {'project': {}}}
         with patch.object(check, 'python_projects', return_value=projects):
             expected = {'project:workers', 'project:harness', 'unittest:tools', 'unittest:deploy'}
             groups = hosted.python_partition(files, 2)
