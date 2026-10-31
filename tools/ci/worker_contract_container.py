@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='tl3-contract-home-') as home:
         'cargo test --locked -p tl3-controller --test workers --no-run\n'
         f'for iteration in $(seq 1 {repetitions}); do\n'
         '  echo "Real maker/reviewer replay $iteration"\n'
-        '  target/debug/deps/workers-* --maker-reproducing-rebase\n'
+        '  cargo test --locked -p tl3-controller --test workers -- --maker-reproducing-rebase\n'
         'done',
     ]
     subprocess.run(command, check=True)
