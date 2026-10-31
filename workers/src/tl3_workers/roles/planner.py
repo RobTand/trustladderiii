@@ -5,6 +5,9 @@ from pathlib import PurePosixPath
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster
 from tl3_harness import Check, Kind
+from tl3_harness.trees import test_function_source
+from tl3_workers.tools import Worktree
+from tl3_workers.forecast import MAX_FILE_BYTES
 
 
 def check_reply(inputs, reply):
@@ -33,6 +36,17 @@ def check_reply(inputs, reply):
                     Check("planned", Kind(check["kind"]), (node_id,))
                 except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
+                    continue
+                if check["kind"] in {"regression", "behavior-preserving"}:
+                    try:
+                        with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
+                            source = stream.read(MAX_FILE_BYTES + 1)
+                        exists = (len(source) <= MAX_FILE_BYTES and
+                                  test_function_source(source, node_id) is not None)
+                    except (OSError, ValueError, UnicodeError):
+                        exists = False
+                    if not exists:
+                        violations.append(f"Existing check must name a test defined at the base: {node_id}")
             cited = set(check["goal_ids"])
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")

@@ -62,7 +62,14 @@ production files. The harness rejects changes to pytest configuration,
 `conftest.py` into the demonstrating base. The caller must keep its installed
 harness and the served checkout separate.
 
-Test selectors are exact pytest node IDs, including parameter IDs when needed.
+Test selectors name pytest functions or methods, optionally with parameter IDs.
+A bare function or method selects all its parametrized cases, as pytest does.
+Its outcome is passed only when every case passes, otherwise the first failing
+case's outcome in collection order. No matching cases means uncollected.
+Regression and behavior-preserving checks must name functions defined at the
+base. The planner checks those definitions statically. The harness fails the
+round if the head edits or deletes a named existing function, including its
+decorators, and tells the maker to restore it.
 The harness collects the named files and selects the named items itself. It
 disables automatic third-party plugin loading. Dependencies and any plugins
 explicitly required by repository settings belong in the trusted image.

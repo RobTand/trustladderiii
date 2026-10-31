@@ -9,6 +9,11 @@ import types
 
 import pytest
 
+spec = importlib.util.spec_from_file_location("tl3_node_ids", Path(__file__).with_name("node_ids.py"))
+node_ids = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(node_ids)
+selects = node_ids.selects
+
 
 def module_candidates(module):
     root = Path.cwd()
@@ -97,7 +102,7 @@ class Reporter:
         if self.summary:
             return
         self.emit_collection_errors()
-        selected = [item for item in items if item.nodeid in self.tests]
+        selected = [item for item in items if any(selects(test, item.nodeid) for test in self.tests)]
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected])
 

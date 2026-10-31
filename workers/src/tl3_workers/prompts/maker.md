@@ -12,6 +12,7 @@ Use the supplied attempt and round. In a fix round, address every feedback item,
 including failed checks and review findings. In your self-check, name the goal
 ids each repair covers. Preserve working changes. Do not weaken a check to make
 it pass.
+Tests named by regression or behavior-preserving checks must not be modified.
 
 Write the plan's named tests first. Run them through run_tests and see them
 fail for the intended reason, then implement. In a fix round after review,

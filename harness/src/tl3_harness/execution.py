@@ -8,9 +8,10 @@ import subprocess
 import tempfile
 import time
 
-from .model import Check, Kind, Outcome, Result, judge
+from .model import Check, Kind, Outcome, Result, Verdict, judge
+from dataclasses import replace
 from .report import InvalidReport, decode, parse
-from .trees import added_names, commit, configuration, export, is_test, test_edits, validate_configuration
+from .trees import changed_existing_tests, added_names, commit, configuration, export, is_test, test_edits, validate_configuration
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
@@ -87,13 +88,14 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
     records = []
     invalid = False
+    record_limit = 4 * len(tests) + 16
     # The container gets no writable report mount or PB token. Its event stream
     # is journalled and parsed by this host process, outside the checkout.
     with report.open("wb") as journal, tempfile.TemporaryFile() as errors:
         with subprocess.Popen(container_command(tree, container, tests), stdout=subprocess.PIPE,
                               stderr=errors) as child:
             while line := child.stdout.readline(65537):
-                if len(line) > 65536 or len(records) > 4 * len(tests) + 16:
+                if len(line) > 65536 or len(records) > record_limit:
                     invalid = True
                     child.terminate()
                     break
@@ -107,6 +109,8 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                     child.terminate()
                     break
                 records.append(record)
+                if record.get("event") == "collection" and isinstance(record.get("tests"), list):
+                    record_limit = 4 * len(record["tests"]) + 16
                 if record.get("event") == "phase" and record.get("when") == "teardown":
                     progress.commit(record.get("test", ""))
             exit_code = child.wait()
@@ -151,6 +155,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests))
+        changed = changed_existing_tests(old, new, ordinary)
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
         progress = Progress()
@@ -181,8 +186,17 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         after = run_tree(new, container, tests, root / "head.jsonl", progress, messages=messages)
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
-        return tuple(judge(check, comparisons[check.kind], after, messages=messages)
-                     for check in plan)
+        results = []
+        for check in plan:
+            result = judge(check, comparisons[check.kind], after, messages=messages)
+            if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
+                protected = tuple(replace(test, passed=False, message=(
+                    f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check."))
+                    if test.test in changed else test for test in result.tests)
+                if any(test.test in changed for test in result.tests):
+                    result = replace(result, verdict=Verdict.FAIL, tests=protected)
+            results.append(result)
+        return tuple(results)
 
 
 def result_json(results: tuple[Result, ...]) -> str:

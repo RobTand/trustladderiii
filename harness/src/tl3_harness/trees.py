@@ -96,3 +96,43 @@ def validate_configuration(base: Path, head: Path):
         old, new = base / name, head / name
         if (old.read_bytes() if old.exists() else None) != (new.read_bytes() if new.exists() else None):
             raise ValueError(f"test configuration changed: {name}")
+
+
+def test_function_source(source: str, node_id: str) -> str | None:
+    """Find a function or class method without importing repository code."""
+    _, names = node_id.split("::", 1)
+    names = names.split("[", 1)[0].split("::")
+    try:
+        body = ast.parse(source).body
+    except (SyntaxError, ValueError):
+        return None
+    for index, name in enumerate(names):
+        matches = [node for node in body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                   and node.name == name]
+        if len(matches) != 1:
+            return None
+        node = matches[0]
+        if index < len(names) - 1:
+            if not isinstance(node, ast.ClassDef):
+                return None
+            body = node.body
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    start = min([node.lineno, *(item.lineno for item in node.decorator_list)])
+    return "".join(source.splitlines(keepends=True)[start - 1:node.end_lineno])
+
+
+def changed_existing_tests(base: Path, head: Path, tests: tuple[str, ...]) -> set[str]:
+    changed = set()
+    for test in tests:
+        path = test.split("::", 1)[0]
+        def read(tree):
+            try:
+                return test_function_source((tree / path).read_text(), test)
+            except (OSError, UnicodeError):
+                return None
+        before = read(base)
+        if before is not None and before != read(head):
+            changed.add(test)
+    return changed

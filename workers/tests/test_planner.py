@@ -17,9 +17,9 @@ LEAF = {
     "checks": [
         {"kind": "demonstrating", "node_ids": ["tests/test_greeting.py::test_hello"],
          "goal_ids": [0]},
-        {"kind": "behavior-preserving", "node_ids": ["tests/test_greeting.py::test_api"],
+        {"kind": "behavior-preserving", "node_ids": ["tests/test_existing.py::test_api"],
          "goal_ids": [1]},
-        {"kind": "regression", "node_ids": ["tests/test_greeting.py::test_existing"],
+        {"kind": "regression", "node_ids": ["tests/test_existing.py::test_existing"],
          "goal_ids": [0, 1]},
     ],
     "no_design_questions": True,
@@ -68,6 +68,9 @@ def planner_request(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "greeting.py").write_text("hello world\n")
+    (worktree / "tests").mkdir()
+    (worktree / "tests/test_existing.py").write_text(
+        "def test_api(): assert True\ndef test_existing(): assert True\n")
     return {
         "protocol": 1,
         "operation": {"node": 1, "generation": 0, "kind": "planning"},
@@ -490,7 +493,7 @@ def test_planner_checks_base_test_definitions(planner_request, monkeypatch, kind
     from tl3_workers.forecast import Forecaster
 
     root = Path(planner_request['worktree'])
-    (root / 'tests').mkdir()
+    (root / 'tests').mkdir(exist_ok=True)
     source = (Path(__file__).parents[2] / 'harness/tests/fixtures/chunked_test.py').read_text()
     (root / 'tests/test_sequences.py').write_text(source)
     monkeypatch.chdir(root)
