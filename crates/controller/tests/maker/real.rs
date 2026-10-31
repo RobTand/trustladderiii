@@ -396,7 +396,10 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
         flow.until(|phase| phase == Phase::Queued);
         // Reconciliation can consume a reply before its source message is received.
         let request = requests(&flow.config).pop().unwrap();
-        let reply = store.worker_document("0", "maker_replies").unwrap().unwrap();
+        let reply = store
+            .worker_document("0", "maker_replies")
+            .unwrap()
+            .unwrap();
         observe(
             &mut flow.controller,
             "delayed-maker-source-reply",
