@@ -33,6 +33,14 @@ Existing budget entries are unchanged. Each Rust shard uploads its measured
 per-test timings as an artifact. Every runner uses at most four Cargo or
 test processes, with native library thread counts bounded to one.
 
+Before timed tests, the fixture helper installs the pinned Postgres archive
+once. Its setup duration is reported separately. Every real scenario still
+creates its own fresh database and retains its original assertions and time
+budget. The archive cache is scoped by architecture and fixture source hash.
+This keeps first-use downloads and installation lock contention out of the
+first native test's duration, just as worker dependency installation happens
+before test timing. The main warmer populates this cache too.
+
 The main-branch cache warmer builds dependencies for both architectures
 without running tests. It also caches the pinned Kani compiler and its Rust
 toolchain so later proof compilation avoids setup. Rust caches use an architecture-specific shared key

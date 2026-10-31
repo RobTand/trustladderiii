@@ -42,8 +42,13 @@ jobs:
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
           shared-key: hosted-${{ runner.arch }}
-      - name: Build test dependencies without running tests
-        run: cargo test --workspace --all-targets --locked --no-run
+      - name: Cache embedded Postgres test dependency
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          key: postgres-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/store/tests/support/mod.rs', 'crates/store/tests/support/cache.rs') }}
+          path: ~/.cache/tl3-test-postgres
+      - name: Build targets and prepare test dependencies without running suites
+        run: python3 tools/ci/rust_gate.py --prepare-only
       - name: Build deployment helper without running tests
         run: cargo build --locked -p tl3-controller --example tl3-deploy
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3

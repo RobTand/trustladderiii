@@ -101,6 +101,11 @@ jobs:
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
           shared-key: hosted-${{ runner.arch }}
+      - name: Cache embedded Postgres test dependency
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          key: postgres-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/store/tests/support/mod.rs', 'crates/store/tests/support/cache.rs') }}
+          path: ~/.cache/tl3-test-postgres
       - name: Run assigned binaries and enforce every test budget
         run: python tools/ci/rust_gate.py --shard '${{ matrix.index }}/${{ matrix.total }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
