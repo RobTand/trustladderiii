@@ -755,10 +755,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");
         }
-        assert!(
-            c.drive_once().unwrap(),
-            "PR_DEQUEUED must yield a Conflict fact"
-        );
+        for _ in 0..10 {
+            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+                break;
+            }
+            assert!(
+                c.drive_once().unwrap(),
+                "PR_DEQUEUED must yield a Conflict fact"
+            );
+        }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         let mut saw_maker_fallback = false;
         for _ in 0..100 {

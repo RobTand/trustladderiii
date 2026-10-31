@@ -38,6 +38,8 @@ pub enum Error {
     PullRequestClosed,
     #[error("pull request changed during observation; read it again")]
     ChangedDuringRead,
+    #[error("GitHub has not computed mergeability; read it on the next look")]
+    MergeabilityPending,
 }
 
 #[derive(Clone)]
@@ -79,7 +81,17 @@ impl Mergify {
         if before != after {
             return Err(Error::ChangedDuringRead);
         }
-        Ok(observe(after, &checks, approved_head))
+        let observation = observe(after, &checks, approved_head);
+        if observation.state == QueueState::Dequeued
+            && observation.pull_request.mergeable != Some(true)
+            && matches!(
+                observation.pull_request.mergeable_state.as_deref(),
+                None | Some("unknown")
+            )
+        {
+            return Err(Error::MergeabilityPending);
+        }
+        Ok(observation)
     }
 }
 
@@ -113,6 +125,11 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
         // GitHub's merge record wins over a queue report, including a delayed one.
         if reported == QueueState::Merged {
             QueueState::Unknown
+        } else if reported == QueueState::Dequeued
+            && (pull_request.mergeable == Some(false)
+                || pull_request.mergeable_state.as_deref() == Some("dirty"))
+        {
+            QueueState::Conflict
         } else {
             reported
         }

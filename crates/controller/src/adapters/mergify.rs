@@ -516,6 +516,11 @@ async fn queue_facts(
                 head: pull.head.sha.clone(),
                 infra: tl3_mergify::ci_is_infrastructure(check),
             }),
+            QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
+                check: check.id,
+                head: pull.head.sha.clone(),
+                infra: true,
+            }),
             QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
                 check: check.id,
                 head: pull.head.sha.clone(),
