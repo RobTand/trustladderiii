@@ -261,6 +261,20 @@ impl Supervisor {
                     inputs["feedback"] = feedback;
                 }
             }
+            if let Some(conflict) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "rebase_conflicts" && row.id == node)
+                .map(|row| &row.value)
+                && conflict["head"].as_str() == delivery.head_sha.as_deref()
+            {
+                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
+                feedback.as_array_mut().ok_or(Error::Invalid("invalid maker feedback"))?.push(json!({
+                    "kind":"failed_check", "goal_ids":[],
+                    "report":crate::findings::clipped(&format!("Resolve the merge onto main {} in these files: {}. The checkout contains the pending merge, both sides in the index, and conflict markers. Preserve the request and upstream changes. Complete the resolution; worker code commits the merge. Do not abort the merge or return to the old base.", conflict["target"], conflict["files"]), crate::findings::MAX_REPORT_CHARS)
+                }));
+                inputs["feedback"] = feedback;
+            }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
             inputs.as_object_mut().unwrap().remove("reviewed_sha");
