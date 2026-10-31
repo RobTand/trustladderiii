@@ -102,7 +102,16 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
         Ok(result)
     }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        self.backend(delivery).reconcile_cancellation(delivery)
+        if self.is_real(delivery) {
+            return self.backend(delivery).reconcile_cancellation(delivery);
+        }
+        let mut result = self.fake.reconcile_cancellation(delivery)?;
+        if self.transform_reconciled
+            && let Reconciliation::Found(completion) = &mut result
+        {
+            (self.fake_completion)(delivery, completion);
+        }
+        Ok(result)
     }
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         self.backend(delivery).look(delivery)
