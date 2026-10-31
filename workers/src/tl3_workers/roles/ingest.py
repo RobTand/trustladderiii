@@ -23,6 +23,7 @@ ROLE = Role(
     prompt="ingest.md",
     input_schema="ingest-input",
     reply_schema="ingest-reply",
+    code_only_fields=("forecast",),
     tools={},
     check_reply=check_memory_ids,
 )

@@ -1,4 +1,4 @@
-#[path = "../../store/tests/support/mod.rs"]
+mod prismabuild_fixture;
 mod support;
 mod worktree_fixture;
 
@@ -30,7 +30,6 @@ use tl3_controller::{
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
 use tl3_kernel::{EffectKind, NodeId, Outcome, Phase, Role};
-use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 use tl3_store::{Commit, RowChange, Store};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use worktree_fixture::{Fixture, commit, git};
@@ -85,61 +84,38 @@ fn check_observation(f: &Fixture, d: &Delivery, head: String) -> Observation {
         run: check_plan(f, base(f, d)),
     }
 }
-struct Workers {
-    real: Supervisor,
-    fake: adapters::workers::Fake,
+fn workers(
+    real: impl Executor + 'static,
+    fake: impl Executor + 'static,
     fixture: Arc<Fixture>,
-}
-impl Executor for Workers {
-    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
-        if matches!(
-            d.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Review) | EffectKind::StopRun,
-                ..
-            }
-        ) {
-            return self.real.execute(d);
-        }
-        let mut c = self.fake.execute(d)?;
-        for o in &mut c.observations {
-            match o {
-                Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
-                Observation::Made { sha, .. } => {
-                    let checkout = self.fixture.adapter().checkout(d);
-                    if fs::read_to_string(checkout.join("value.py")).unwrap()
-                        == "def value(): return 2\n"
-                    {
-                        *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
-                    } else {
-                        *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+) -> impl Executor {
+    support::workers::Workers::new(
+        Some(Box::new(real)),
+        fake,
+        vec![Role::Review],
+        move |d, c| {
+            for o in &mut c.observations {
+                match o {
+                    Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                    Observation::Made { sha, .. } => {
+                        let checkout = fixture.adapter().checkout(d);
+                        if fs::read_to_string(checkout.join("value.py")).unwrap()
+                            == "def value(): return 2\n"
+                        {
+                            *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
+                        } else {
+                            *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-        if let Some(Observation::Made { sha, .. }) = c.observations.first() {
-            c.observations
-                .insert(0, check_observation(&self.fixture, d, sha.clone()));
-        }
-        Ok(c)
-    }
-    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if matches!(
-            d.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Review) | EffectKind::StopRun,
-                ..
+            if let Some(Observation::Made { sha, .. }) = c.observations.first() {
+                c.observations
+                    .insert(0, check_observation(&fixture, d, sha.clone()));
             }
-        ) {
-            self.real.reconcile(d)
-        } else {
-            self.fake.reconcile(d)
-        }
-    }
-    fn retire(&mut self, s: &mut Store) -> tl3_controller::Result<()> {
-        self.real.retire(s)
-    }
+        },
+    )
 }
 
 struct State {
@@ -218,14 +194,49 @@ impl Writer for PublishingWriter {
         FakeWriter.draft(key, input)
     }
 }
+impl support::github::Routes for State {
+    fn pulls(&self) -> Value {
+        json!(self.pull.iter().collect::<Vec<_>>())
+    }
+    fn checks(&self, sha: &str) -> Value {
+        let mut checks: Vec<_> = self
+            .checks
+            .iter()
+            .filter(|c| c["head_sha"] == sha)
+            .cloned()
+            .collect();
+        if self.labels && self.pull.as_ref().is_some_and(|p| p["head"]["sha"] == sha) {
+            checks.push(recorded_check(self.queue_fixture, &json!(sha)));
+        }
+        json!(checks)
+    }
+    fn checks_mut(&mut self) -> Option<&mut Vec<Value>> {
+        Some(&mut self.checks)
+    }
+    fn check_posted(&mut self) {
+        self.operations.push("approve".into());
+    }
+    fn pull_mut(&mut self) -> Option<&mut Value> {
+        self.pull.as_mut()
+    }
+    fn pull_patched(&mut self, body: &Value) {
+        if body["state"] == "open" {
+            self.reopens += 1;
+        } else {
+            self.closes += 1;
+        }
+    }
+    fn created_status(&self) -> u16 {
+        200
+    }
+}
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
         let mut s = self.state.lock().unwrap();
         let method = r.method.as_str();
         let path = r.url.path();
-        if path == "/app/installations/1/access_tokens" {
-            return ResponseTemplate::new(201)
-                .set_body_json(json!({"token":"disposable", "expires_at":"2099-01-01T00:00:00Z"}));
+        if let Some(response) = support::github::access_token(path, 1, "disposable") {
+            return response;
         }
         if s.fail_reads && method == "GET" {
             return ResponseTemplate::new(503);
@@ -245,109 +256,86 @@ impl Respond for Api {
         let prefix = "/repos/RobTand/tl3-sandbox";
         let path = path.strip_prefix(prefix).unwrap_or(path);
         let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
-        let response = match (method, path) {
-            ("GET", "/pulls") => json!(s.pull.iter().collect::<Vec<_>>()),
-            ("POST", "/pulls") => {
-                s.opens += 1;
-                s.operations.push("open".into());
-                let head = git(
-                    &self.fixture.remote,
-                    &["rev-parse", body["head"].as_str().unwrap()],
-                );
-                let base = git(&self.fixture.remote, &["rev-parse", "main"]);
-                s.pull = Some(
-                    json!({"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
+        let response = if let Some(response) =
+            support::github::respond(r, r.url.path(), prefix, &mut *s)
+        {
+            response
+        } else {
+            let value = match (method, path) {
+                ("POST", "/pulls") => {
+                    s.opens += 1;
+                    s.operations.push("open".into());
+                    let head = git(
+                        &self.fixture.remote,
+                        &["rev-parse", body["head"].as_str().unwrap()],
+                    );
+                    let base = git(&self.fixture.remote, &["rev-parse", "main"]);
+                    s.pull = Some(
+                        json!({"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
                     "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
-                );
-                s.pull.clone().unwrap()
-            }
-            ("GET", "/pulls/100") => {
-                if let Some(pull) = &mut s.pull
-                    && pull["state"] == "open"
-                {
-                    pull["head"]["sha"] = json!(git(
-                        &self.fixture.remote,
-                        &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
-                    ));
-                }
-                s.pull.clone().unwrap()
-            }
-            ("PATCH", "/pulls/100") => {
-                if body["state"] == "open" {
-                    s.reopens += 1;
-                } else {
-                    s.closes += 1;
-                }
-                s.pull.as_mut().unwrap()["state"] = body["state"].clone();
-                s.pull.clone().unwrap()
-            }
-            ("GET", "/issues/42" | "/issues/100") => {
-                json!({"number":42,"title":"Fix the value", "body":"Return two.","state":if s.closed {"closed"} else {"open"},"updated_at":"2026-10-30T00:00:00Z","labels":if s.labels {json!([{"name":"tl3-queue"}])} else {json!([])},"pull_request":null})
-            }
-            ("PATCH", "/issues/42") => {
-                s.closed = true;
-                s.operations.push("close-issue".into());
-                json!({"number":42,"title":"Fix the value","body":"Return two.","state":"closed","updated_at":"2026-10-30T00:00:00Z"})
-            }
-            ("GET", "/issues/42/comments") => json!(s.comments),
-            ("POST", "/issues/42/comments") => {
-                if body["body"]
-                    .as_str()
-                    .unwrap()
-                    .contains("Your change was merged.")
-                {
-                    assert!(
-                        git(&self.fixture.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty()
                     );
+                    s.pull.clone().unwrap()
                 }
-                s.operations.push("comment".into());
-                let c = json!({"id":s.comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"});
-                s.comments.push(c.clone());
-                c
-            }
-            ("GET", "/issues/100/events") => json!([]),
-            ("POST", "/issues/100/labels") => {
-                let head = &s.pull.as_ref().unwrap()["head"]["sha"];
-                assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
-                    && c["head_sha"] == *head
-                    && c["app"]["id"] == 123));
-                s.operations.push("enqueue".into());
-                s.labels = true;
-                json!([{"name":"tl3-queue"}])
-            }
-            ("DELETE", "/issues/100/labels/tl3-queue") => {
-                s.labels = false;
-                json!([])
-            }
-            ("GET", path) if path.ends_with("/check-runs") => {
-                let sha = path.split('/').nth(2).unwrap();
-                let mut checks: Vec<_> = s
-                    .checks
-                    .iter()
-                    .filter(|c| c["head_sha"] == sha)
-                    .cloned()
-                    .collect();
-                if s.labels && s.pull.as_ref().is_some_and(|p| p["head"]["sha"] == sha) {
-                    checks.push(recorded_check(s.queue_fixture, &json!(sha)));
+                ("GET", "/pulls/100") => {
+                    if let Some(pull) = &mut s.pull
+                        && pull["state"] == "open"
+                    {
+                        pull["head"]["sha"] = json!(git(
+                            &self.fixture.remote,
+                            &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
+                        ));
+                    }
+                    s.pull.clone().unwrap()
                 }
-                json!({"check_runs":checks})
-            }
-            ("POST", "/check-runs") => {
-                let mut c = body.clone();
-                c["id"] = json!(s.checks.len() + 1);
-                c["app"] = json!({"id":123,"slug":"factory"});
-                s.operations.push("approve".into());
-                s.checks.push(c.clone());
-                c
-            }
-            _ => panic!("unexpected mock request: {method} {path}"),
+                ("GET", "/issues/42" | "/issues/100") => {
+                    json!({"number":42,"title":"Fix the value", "body":"Return two.","state":if s.closed {"closed"} else {"open"},"updated_at":"2026-10-30T00:00:00Z","labels":if s.labels {json!([{"name":"tl3-queue"}])} else {json!([])},"pull_request":null})
+                }
+                ("PATCH", "/issues/42") => {
+                    s.closed = true;
+                    s.operations.push("close-issue".into());
+                    json!({"number":42,"title":"Fix the value","body":"Return two.","state":"closed","updated_at":"2026-10-30T00:00:00Z"})
+                }
+                ("GET", "/issues/42/comments") => json!(s.comments),
+                ("POST", "/issues/42/comments") => {
+                    if body["body"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Your change was merged.")
+                    {
+                        assert!(
+                            git(&self.fixture.remote, &["for-each-ref", "refs/heads/tl3"])
+                                .is_empty()
+                        );
+                    }
+                    s.operations.push("comment".into());
+                    let c = json!({"id":s.comments.len() as u64+1,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-30T00:00:00Z","updated_at":"2026-10-30T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/42"});
+                    s.comments.push(c.clone());
+                    c
+                }
+                ("GET", "/issues/100/events") => json!([]),
+                ("POST", "/issues/100/labels") => {
+                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
+                    assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
+                        && c["head_sha"] == *head
+                        && c["app"]["id"] == 123));
+                    s.operations.push("enqueue".into());
+                    s.labels = true;
+                    json!([{"name":"tl3-queue"}])
+                }
+                ("DELETE", "/issues/100/labels/tl3-queue") => {
+                    s.labels = false;
+                    json!([])
+                }
+                _ => panic!("unexpected mock request: {method} {path}"),
+            };
+            ResponseTemplate::new(200).set_body_json(value)
         };
         if method != "GET" && s.lose_response == Some(path) {
             s.lose_response = None;
             return ResponseTemplate::new(503);
         }
-        ResponseTemplate::new(200).set_body_json(response)
+        response
     }
 }
 struct Server {
@@ -415,44 +403,11 @@ impl Server {
     }
 }
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
-    let queue = root.join("queue");
-    for state in ["ready", "claimed", "done", "failed", "withdrawn"] {
-        fs::create_dir_all(queue.join(state)).unwrap();
-    }
-    fs::write(queue.join("mode"), "done").unwrap();
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let tool = Tool {
-        program: "python3".into(),
-        args: vec![
-            manifest.join("tests/fixtures/pb.py").into(),
-            queue.clone().into(),
-            manifest.join("../prismabuild/tests/fixtures/queue").into(),
-        ],
-    };
-    adapters::prismabuild::Adapter::new(
-        PrismaBuild::new(Options {
-            queue_root: queue,
-            tool: tool.clone(),
-            bell_url: "http://127.0.0.1:9/".into(),
-        })
-        .unwrap(),
-        adapters::prismabuild::Settings {
-            records: root.join("pb-records"),
-            harness: manifest.join("../../harness/src/tl3_harness"),
-            python: vec!["python3.14".into()],
-            image: format!("sha256:{}", "a".repeat(64)),
-            demand: Demand {
-                cpus: 1.try_into().unwrap(),
-                mem_gb: 2,
-                gpu: false,
-            },
-            quiet: Duration::from_secs(120),
-            priority: -10,
-            result_tool: tool,
-        },
-    )
-    .unwrap()
+    let (client, mut settings) = prismabuild_fixture::settings(root, "done", "http://127.0.0.1:9/");
+    settings.records = root.join("pb-records");
+    adapters::prismabuild::Adapter::new(client, settings).unwrap()
 }
+
 fn document(store: &mut Store, table: &str, value: Value) {
     let snapshot = store.load().unwrap();
     let mut c = Commit::new(
@@ -590,11 +545,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
     registry.register(
         Upstream::Workers,
-        Workers {
-            real: supervisor,
-            fake: adapters::workers::Fake::new(&root.path().join("fakes")),
-            fixture: f.clone(),
-        },
+        workers(
+            supervisor,
+            adapters::workers::Fake::new(&root.path().join("fakes")),
+            f.clone(),
+        ),
     );
     registry.register(Upstream::Worktrees, f.adapter());
     registry.register(
@@ -1050,6 +1005,19 @@ fn publication_recovery() {
 }
 
 fn main() {
+    if env::args().len() == 1 || env::args().nth(1).as_deref() == Some("--router-regression") {
+        let root = tempfile::tempdir().unwrap();
+        let mut router = workers(
+            support::executor_probe::Probe,
+            support::executor_probe::Probe,
+            Arc::new(Fixture::create(root.path())),
+        );
+        support::executor_probe::assert_retire_delivery(&mut router);
+        if std::env::args().len() > 1 {
+            return;
+        }
+    }
+
     if let Some(mode) = env::args().nth(1) {
         let python = prepare_workers();
         let mut database = support::Database::start();
