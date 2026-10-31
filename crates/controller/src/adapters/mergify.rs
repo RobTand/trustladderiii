@@ -1,3 +1,5 @@
+mod head_checks;
+
 use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
@@ -220,9 +222,13 @@ struct Attempt {
 impl Attempt {
     fn check_changed(&self, current: &Option<CheckRun>) -> bool {
         let mut current = current.clone();
-        // Old intents predate completed_at. Its presence alone does not prove acceptance.
+        // Metadata added after an intent was saved does not prove queue acceptance.
         if let Some(check) = &mut current {
             check.completed_at = self.before.as_ref().and_then(|before| before.completed_at);
+            check.check_suite = self
+                .before
+                .as_ref()
+                .and_then(|before| before.check_suite.clone());
         }
         self.before != current
     }
@@ -284,6 +290,9 @@ impl Adapter {
         let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+        if !previously_confirmed && self.reruns_pending(delivery)? {
+            return Ok(Reconciliation::Pending);
+        }
         let baseline = self.baseline(delivery)?;
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
@@ -366,7 +375,7 @@ impl Adapter {
 }
 impl Executor for Adapter {
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
-        for extension in ["intent", "applied", "json", "tmp"] {
+        for extension in ["intent", "applied", "reruns", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -394,6 +403,7 @@ impl Executor for Adapter {
             Reconciliation::Absent => {}
         }
         let (state, _) = self.read(delivery)?;
+        self.rerun_head_checks(delivery, &state)?;
         if self.baseline(delivery)?.is_none() {
             self.records.write(
                 &self.records.path(&delivery.key).with_extension("intent"),
@@ -418,38 +428,28 @@ impl Executor for Adapter {
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
-            || matches!(
-                state.state,
-                QueueState::FailedCi
-                    | QueueState::Conflict
-                    | QueueState::Dequeued
-                    | QueueState::DequeuedByPerson
-            )
-        {
+        self.fence(delivery)?;
+        let mergify = Mergify::new(github);
+        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
+            self.runtime
+                .block_on(mergify.dequeue(&repo, number))
+                .map_err(adapter_error)?;
             self.fence(delivery)?;
-            let mergify = Mergify::new(github);
-            if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
-                self.runtime
-                    .block_on(mergify.dequeue(&repo, number))
-                    .map_err(adapter_error)?;
-                self.fence(delivery)?;
-            }
-            match self.runtime.block_on(mergify.queue(&repo, number, head)) {
-                Ok(()) => {}
-                Err(tl3_mergify::Error::HeadChanged) => {
-                    return match self.completion(delivery)? {
-                        Reconciliation::Found(completion) => Ok(completion),
-                        _ => Err(Error::Invalid("PR changed during enqueue")),
-                    };
-                }
-                Err(error) => return Err(adapter_error(error)),
-            }
-            self.records.write(
-                &self.records.path(&delivery.key).with_extension("applied"),
-                b"true",
-            )?;
         }
+        match self.runtime.block_on(mergify.queue(&repo, number, head)) {
+            Ok(()) => {}
+            Err(tl3_mergify::Error::HeadChanged) => {
+                return match self.completion(delivery)? {
+                    Reconciliation::Found(completion) => Ok(completion),
+                    _ => Err(Error::Invalid("PR changed during enqueue")),
+                };
+            }
+            Err(error) => return Err(adapter_error(error)),
+        }
+        self.records.write(
+            &self.records.path(&delivery.key).with_extension("applied"),
+            b"true",
+        )?;
         match self.completion(delivery)? {
             Reconciliation::Found(completion) => {
                 self.records
@@ -545,62 +545,69 @@ async fn queue_facts(
             },
         }]);
     }
-    let evidence =
-        match state.state {
-            QueueState::Merged => {
-                // Mergify publishes its final queue result after GitHub records the merge.
-                if pull.head.sha == expected_head
-                    && state.check.as_ref().is_some_and(|check| {
-                        check.status != "completed" || check.conclusion.is_none()
-                    })
-                {
-                    return Ok(vec![]);
-                }
-                let checks_passed = if state.check.as_ref().is_some_and(|check| {
-                    check.output.as_ref().is_some_and(|output| {
-                        output.title.as_deref() == Some("Merged via merge queue")
-                    })
-                }) {
-                    tl3_mergify::merged_via_queue(state)
-                } else if let Some(sha) = &pull.merge_commit_sha {
-                    checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
-                } else {
-                    false
-                };
-                Some(Evidence::Merged {
-                    head: pull.head.sha.clone(),
-                    checks_passed,
-                })
-            }
-            QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
-                check: check.id,
-                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                head: pull.head.sha.clone(),
-                infra: tl3_mergify::ci_is_infrastructure(check),
-            }),
-            QueueState::DequeuedByPerson => {
-                state
+    let head_infrastructure = if matches!(state.state, QueueState::FailedCi | QueueState::Dequeued)
+    {
+        head_checks::infrastructure(github, &full_name(repo), pull).await?
+    } else {
+        None
+    };
+    let evidence = match state.state {
+        QueueState::Merged => {
+            // Mergify publishes its final queue result after GitHub records the merge.
+            if pull.head.sha == expected_head
+                && state
                     .check
                     .as_ref()
-                    .map(|check| Evidence::DequeuedByCommand {
-                        check: check.id,
-                        completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                        head: pull.head.sha.clone(),
-                    })
+                    .is_some_and(|check| check.status != "completed" || check.conclusion.is_none())
+            {
+                return Ok(vec![]);
             }
-            QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
-                check: check.id,
-                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+            let checks_passed = if state.check.as_ref().is_some_and(|check| {
+                check
+                    .output
+                    .as_ref()
+                    .is_some_and(|output| output.title.as_deref() == Some("Merged via merge queue"))
+            }) {
+                tl3_mergify::merged_via_queue(state)
+            } else if let Some(sha) = &pull.merge_commit_sha {
+                checks_passed(&github.check_runs(&full_name(repo), sha).await?, sha)
+            } else {
+                false
+            };
+            Some(Evidence::Merged {
                 head: pull.head.sha.clone(),
-                infra: true,
-            }),
-            QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
-                check: check.id,
-                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
-                head: pull.head.sha.clone(),
-            }),
-            _ => None,
-        };
+                checks_passed,
+            })
+        }
+        QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
+            check: check.id,
+            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+            head: pull.head.sha.clone(),
+            infra: head_infrastructure.unwrap_or_else(|| tl3_mergify::ci_is_infrastructure(check)),
+        }),
+        QueueState::DequeuedByPerson => {
+            state
+                .check
+                .as_ref()
+                .map(|check| Evidence::DequeuedByCommand {
+                    check: check.id,
+                    completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                    head: pull.head.sha.clone(),
+                })
+        }
+        QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
+            check: check.id,
+            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+            head: pull.head.sha.clone(),
+            infra: head_infrastructure.unwrap_or(true),
+        }),
+        QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
+            check: check.id,
+            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+            head: pull.head.sha.clone(),
+        }),
+        _ => None,
+    };
     Ok(evidence
         .into_iter()
         .map(|evidence| QueueFact {
