@@ -2,8 +2,7 @@ name: Light checks
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
@@ -19,10 +18,21 @@ env:
   OMP_NUM_THREADS: '1'
   MKL_NUM_THREADS: '1'
   OPENBLAS_NUM_THREADS: '1'
+  RAYON_NUM_THREADS: '1'
+  TOKIO_WORKER_THREADS: '1'
 
 jobs:
   rust:
-    name: Rust
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' ||
+           startsWith(github.head_ref, 'mergify/merge-queue/') ||
+           contains(github.event.pull_request.labels.*.name, 'ci')) &&
+           'Rust' || 'Rust (not requested)' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
+        contains(github.event.pull_request.labels.*.name, 'ci')))
     runs-on: [self-hosted, tl3-fleet]
     timeout-minutes: 40
     steps:
@@ -35,6 +45,7 @@ jobs:
           echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -58,11 +69,21 @@ jobs:
         with:
           # Keep lockfile changes out of rust-cache's fallback restore scope.
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: rust
       - name: Format, lint, and test every Rust project
         run: python tools/ci/check.py rust
 
   python:
-    name: Python
+    name: >-
+      ${{ (github.event_name == 'workflow_dispatch' ||
+           startsWith(github.head_ref, 'mergify/merge-queue/') ||
+           contains(github.event.pull_request.labels.*.name, 'ci')) &&
+           'Python' || 'Python (not requested)' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
+        contains(github.event.pull_request.labels.*.name, 'ci')))
     runs-on: [self-hosted, tl3-fleet]
     timeout-minutes: 30
     steps:
@@ -75,6 +96,7 @@ jobs:
           echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -95,9 +117,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: rust
       - name: Build deployment test helper
         run: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
       - name: Lint and test every Python project
         env:
           TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy
         run: python tools/ci/check.py python
+

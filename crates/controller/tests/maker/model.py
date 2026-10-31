@@ -69,13 +69,13 @@ def create_model(request):
                     os.kill(os.getpid(), signal.SIGKILL)
                 maker._commit = kill_after_commit
             else:
-                save = maker._save
+                save = maker.save
                 def fail_session_save(path, value):
                     if path.suffix == '.json':
                         marker.write_text(str(failures + 1))
                         raise OSError('injected session save failure')
                     save(path, value)
-                maker._save = fail_session_save
+                maker.save = fail_session_save
     if mode == 'bad-schema':
         return Model(responses=[AIMessage(content='{"kind":"done"}')])
     if mode == 'blocked':

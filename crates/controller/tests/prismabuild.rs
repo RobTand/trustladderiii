@@ -1,7 +1,6 @@
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 use bell::Bell;
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
     collections::BTreeSet,
@@ -1247,26 +1246,18 @@ fn abandoned_inputs_are_removed() {
     );
 }
 
-struct Workers {
-    fake: adapters::workers::Fake,
-    head: String,
-}
-impl Executor for Workers {
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        let mut completion = self.fake.execute(delivery)?;
+fn workers(fake: impl Executor + 'static, head: String) -> impl Executor {
+    support::workers::Workers::new(None, fake, vec![], move |_, completion| {
         for observation in &mut completion.observations {
             match observation {
-                Observation::Made { sha, .. } => *sha = self.head.clone(),
+                Observation::Made { sha, .. } => *sha = head.clone(),
                 Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
                 _ => {}
             }
         }
-        Ok(completion)
-    }
-    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        self.fake.reconcile(delivery)
-    }
+    })
 }
+
 fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool, recover: bool) {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), outside);
@@ -1280,10 +1271,10 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     registry.register(Upstream::PrismaBuild, adapter);
     registry.register(
         Upstream::Workers,
-        Workers {
-            fake: adapters::workers::Fake::new(&fakes),
-            head: delivery.head_sha.clone().unwrap(),
-        },
+        workers(
+            adapters::workers::Fake::new(&fakes),
+            delivery.head_sha.clone().unwrap(),
+        ),
     );
     let mut controller = Controller::open(
         tl3_store::Store::open(settings).unwrap(),
@@ -1613,6 +1604,16 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 }
 
 fn main() {
+    if std::env::args().len() == 1
+        || std::env::args().nth(1).as_deref() == Some("--router-regression")
+    {
+        let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
+        support::executor_probe::assert_retire_delivery(&mut router);
+        if std::env::args().len() > 1 {
+            return;
+        }
+    }
+
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
         source_skips_bad_waits();

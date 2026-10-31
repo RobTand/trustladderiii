@@ -276,7 +276,14 @@ impl Served {
     fn load(&self, delivery: &Delivery) -> Result<Option<Record>> {
         let record: Option<Record> = read(&self.record_path(delivery))?;
         if let Some(record) = &record
-            && serde_json::to_value(&record.delivery)? != serde_json::to_value(delivery)?
+            && (record.delivery.key != delivery.key
+                || record.delivery.generation != delivery.generation
+                || !same_repo(&record.delivery.repository, &delivery.repository)
+                || record.delivery.issue != delivery.issue
+                || serde_json::to_value(record.delivery.output)?
+                    != serde_json::to_value(delivery.output)?
+                || matches!(&record.intent, Intent::Push { head, .. }
+                    if delivery.head_sha.as_ref() != Some(head)))
         {
             return Err(Error::Invalid(
                 "worktree effect key reused with different payload",

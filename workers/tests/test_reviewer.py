@@ -389,3 +389,38 @@ def test_blocking_findings_are_bounded(count, valid):
     from jsonschema import Draft202012Validator
     from tl3_workers.contracts import schema
     assert Draft202012Validator(schema('reviewer-reply')).is_valid(changes(*[blocker()] * count)) == valid
+
+
+@pytest.mark.parametrize('recovered', [False, True])
+def test_reviewer_reply_is_validated_exactly_once(
+        review_request, session_model, tmp_path, monkeypatch, recovered):
+    from dataclasses import replace
+    from tl3_workers.roles import reviewer
+
+    _, responses = session_model
+    responses[:] = [AIMessage(content=json.dumps(APPROVE))]
+    review_request['session_file'] = str(tmp_path / 'reviewer.json')
+    if recovered:
+        runtime.run(review_request, lambda event: None)
+        review_request['operation']['generation'] += 1
+    schema_checks, evidence_checks = [], []
+    validate = runtime.validate
+    check_reply = reviewer.check_reply
+
+    def checked_schema(name, reply):
+        schema_checks.append(name)
+        validate(name, reply)
+
+    def checked_evidence(inputs, reply):
+        evidence_checks.append(copy.deepcopy(reply))
+        check_reply(inputs, reply)
+
+    monkeypatch.setattr(runtime, 'validate', checked_schema)
+    monkeypatch.setattr(reviewer, 'validate', checked_schema)
+    monkeypatch.setattr(reviewer, 'check_reply', checked_evidence)
+    monkeypatch.setitem(ROLES, 'reviewer', replace(ROLES['reviewer'], check_reply=checked_evidence))
+    events = []
+    runtime.run(review_request, events.append)
+    assert events[-1]['reply'] == APPROVE
+    assert schema_checks == ['reviewer-reply']
+    assert evidence_checks == [APPROVE]
