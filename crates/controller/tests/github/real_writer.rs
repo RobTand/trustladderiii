@@ -101,6 +101,7 @@ pub(super) fn run(mode: &str) {
     let expected = match mode {
         "multiline" | "always-multiline" | "no-excerpt" | "no-text" => "one line",
         "recommendation" => "outside the options",
+        "no-draft" => "wrong reply shape",
         _ => "original issue title exactly",
     };
     assert!(feedback.contains(expected), "missing feedback: {feedback}");
