@@ -4,7 +4,7 @@ use crate::{Controller, Result, put, request, snapshot};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tl3_kernel::Notice;
-use tl3_store::{Commit, NewEffect, RowChange, Snapshot};
+use tl3_store::{Commit, RowChange, Snapshot};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct FailedNotice {
@@ -65,8 +65,11 @@ impl Controller {
         }
         let node = delivery.node();
         let request = request(snapshot, node)?;
-        let id = format!("post.{}", snapshot.revision.get() + 1);
-        let signature = format!("GitHub:{class}");
+        let id = crate::looks::incident_id(snapshot, "post");
+        let signature = crate::looks::IncidentSignature {
+            upstream: crate::executor::Upstream::GitHub,
+            class: class.into(),
+        };
         let marker = delivery.marker_key();
         let incidents = snapshot
             .rows
@@ -75,7 +78,10 @@ impl Controller {
             .and_then(|r| r.value.as_u64())
             .unwrap_or(0)
             .saturating_add(1);
-        let needs_rob = incidents > 1;
+        let needs_rob =
+            crate::looks::incident_needs_rob(crate::looks::IncidentCause::NoticeFailure {
+                incidents,
+            });
         commit
             .rows
             .push(put("notice_incidents", marker.into(), json!(incidents)));
@@ -94,9 +100,11 @@ impl Controller {
             notice: Notice::Incident { needs_rob },
         };
         post.steering = None;
-        post.note = Some(format!(
-            "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
-            request.repo.owner, request.repo.name, request.issue
+        post.note = Some(crate::looks::incident_note(
+            &request.repo,
+            request.issue,
+            &id,
+            &summary,
         ));
         post.question_context = Some(json!({"issue_title":request.title,
             "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title, request.repo.owner, request.repo.name, request.issue),
@@ -131,21 +139,9 @@ impl Controller {
                 delivery: delivery.clone(),
             }),
         ));
-        if let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "allowances" && r.id == delivery.key)
-        {
-            let mut value = row.value.clone();
-            value["incident"] = json!(id);
-            commit.rows.push(put("allowances", row.id.clone(), value));
-        }
+        self.link_allowance_incident(snapshot, &delivery.key, &id, commit)?;
         commit.rows.push(self.allowance_row(post.clone()));
-        commit.effects.push(NewEffect {
-            key: post.key.clone(),
-            kind: "GitHub".into(),
-            payload: json!(post),
-        });
+        commit.effects.push(post.into_effect());
         Ok(())
     }
 
@@ -185,11 +181,7 @@ impl Controller {
         retry.key = format!("notice-retry:{}", snapshot.revision.get() + 1);
         retry.epoch = snapshot.epoch.get();
         commit.rows.push(self.allowance_row(retry.clone()));
-        commit.effects.push(NewEffect {
-            key: retry.key.clone(),
-            kind: "GitHub".into(),
-            payload: json!(retry),
-        });
+        commit.effects.push(retry.into_effect());
         Ok(true)
     }
 }
