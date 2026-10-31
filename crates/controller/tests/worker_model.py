@@ -45,6 +45,33 @@ def create_model(request):
     if mode == "blocked" or (mode in {"audit-blocked", "steering-commands", "steering-replacement"} and request["role"] == "audit") or (mode == "plan-blocked" and request["role"] == "planner"):
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
+    if request["role"] == "writer":
+        inputs = request["inputs"]
+        facts = inputs["facts"]
+        if inputs["kind"] == "clarification":
+            reply = {"text": 'About "' + facts["comment_excerpt"] + '", would you like me to stop or continue?'}
+        else:
+            reply = {key: facts[key] for key in ("obstacle", "options", "recommended_option",
+                     "recommendation_reason", "how_to_answer")}
+            reply["request_quote"] = facts["issue_title"]
+        if not inputs.get("violations") or mode == "writer-always-multiline":
+            if mode in {"writer-multiline", "writer-always-multiline"}:
+                reply["text"] = reply["text"].replace(", would", ",\nwould")
+            elif mode == "writer-wrong-quote":
+                reply["request_quote"] = "A paraphrased request"
+            elif mode == "writer-no-draft":
+                reply = {"text": "Please choose an option."}
+            elif mode == "writer-recommendation":
+                reply["recommended_option"] = len(reply["options"])
+            elif mode == "writer-no-excerpt":
+                reply = {"text": "Would you like me to stop or continue?"}
+            elif mode == "writer-no-text":
+                reply = {"request_quote": facts["issue_title"], "obstacle": "I need your permission.",
+                         "options": [{"action": "Continue", "outcome": "Work continues."},
+                                     {"action": "Stop", "outcome": "Work stops."}],
+                         "recommended_option": 0, "recommendation_reason": "This completes your request.",
+                         "how_to_answer": "Reply with option one or two."}
+        return FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
     if request["role"] == "classifier":
         body = request["inputs"]["comment"]["body"]
         replies = json.loads((Path(__file__).parent / "fixtures/steering/classifications.json").read_text())
