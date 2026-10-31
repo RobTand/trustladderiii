@@ -1060,3 +1060,53 @@ def test_merge_target_survives_crash_after_an_aborted_resolution(maker_request, 
     runtime.run(maker_request, events.append)
     assert events[-1]['reply']['kind'] == 'cant_meet', 'retry must retain the original pending merge target'
     assert git(root, 'rev-parse', 'HEAD') == leaf
+
+
+@pytest.mark.parametrize('documentation', [
+    'Title\n=========\n',
+    'Marker examples\n<<<<<<< example\n>>>>>>> example\n',
+])
+def test_resolved_merge_ignores_unconflicted_documentation(maker_request, monkeypatch, documentation):
+    root = Path(maker_request['worktree'])
+    (root / 'README.rst').write_text(documentation)
+    git(root, 'add', 'README.rst')
+    git(root, 'commit', '-m', 'Document the project')
+    root, leaf, target = pending_conflict(maker_request)
+    class Resolved(ToolModel):
+        def _generate(self, *args, **kwargs):
+            (root / 'greeting.py').write_text("def greet(): return 'resolved'\n")
+            git(root, 'add', 'greeting.py')
+            return super()._generate(*args, **kwargs)
+    monkeypatch.setattr(runtime, 'create_model', lambda _: Resolved(responses=[AIMessage(**turn(DONE))]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply']['kind'] == 'done', 'unconflicted documentation must not block a resolved merge'
+    assert git(root, 'rev-parse', 'HEAD^1') == leaf
+    assert git(root, 'rev-parse', 'HEAD^2') == target
+    assert (root / 'README.rst').read_text() == documentation
+
+
+@pytest.mark.parametrize('legacy_checkpoint', [False, True])
+def test_original_conflict_files_survive_staging_and_restart(maker_request, monkeypatch, tmp_path, legacy_checkpoint):
+    root, leaf, target = pending_conflict(maker_request)
+    session = tmp_path / 'session.json'
+    maker_request['session_file'] = str(session)
+    class StageAndCrash(ToolModel):
+        def _generate(self, *args, **kwargs):
+            (root / 'greeting.py').write_text('<<<<<<< leftover\nnot resolved\n')
+            git(root, 'add', 'greeting.py')
+            raise RuntimeError('crash after staging')
+    monkeypatch.setattr(runtime, 'create_model', lambda _: StageAndCrash(responses=[]))
+    with pytest.raises(RuntimeError, match='crash after staging'):
+        runtime.run(maker_request, lambda _: None)
+    checkpoint = session.with_suffix('.head')
+    saved = json.loads(checkpoint.read_text())
+    assert saved.get('merge_files') == ['greeting.py'], 'the checkpoint must retain the originally unmerged files'
+    if legacy_checkpoint:
+        del saved['merge_files']
+        checkpoint.write_text(json.dumps(saved))
+    monkeypatch.setattr(runtime, 'create_model', lambda _: ToolModel(responses=[AIMessage(**turn(DONE))]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert events[-1]['reply']['kind'] == 'cant_meet', 'staging must not hide leftover markers on restart'
+    assert git(root, 'rev-parse', 'HEAD') == leaf
