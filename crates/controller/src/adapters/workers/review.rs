@@ -169,7 +169,7 @@ pub(super) fn checkout(root: &Path, delivery: &Delivery) -> Result<()> {
 
 pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<()> {
     if reply["verdict"] == "out_of_room" {
-        return Ok(Default::default());
+        return Ok(());
     }
     if reply["verdict"] == "approve" && reply["head_sha"] != inputs["head_sha"] {
         return Err(Error::Invalid("review approval names a different head"));
