@@ -385,6 +385,52 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
+fn terminal_without_enqueue_ack(
+    settings: &tl3_config::Store,
+    generic: bool,
+    via_look: bool,
+    titles: bool,
+) {
+    let api = Server::new();
+    api.state.lock().unwrap().lag = true;
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), false);
+    let id = api.state.lock().unwrap().queue_check()["id"].clone();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture(if generic { "dequeued" } else { "interrupted" }, "checks");
+        state.queue_check_mut()["id"] = id.clone();
+        if titles {
+            state.queue_check_mut()["output"] = if generic {
+                fixture("live-dequeued", "checks")[0]["output"].clone()
+            } else {
+                json!({"title":"Dequeued — checks interrupted", "summary":"The queue checks were interrupted.", "text":null})
+            };
+        }
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
+        state.lag = false;
+    }
+    if via_look {
+        controller.look_now().unwrap();
+    }
+    drain(&mut controller);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "terminal evidence on the same check ID must release the held enqueue and re-enqueue once without another event"
+    );
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let facts = queue_facts(&mut controller);
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0]["evidence"]["CiFailed"]["check"], id);
+    assert_eq!(facts[0]["evidence"]["CiFailed"]["infra"], true);
+    assert_kernel_facts(settings, 1);
+    println!(
+        "test terminal_without_enqueue_ack_generic_{generic}_look_{via_look}_titles_{titles} ... ok"
+    );
+}
+
 fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
     let api = Server::new();
     api.state.lock().unwrap().lag = true;
@@ -1783,6 +1829,28 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--terminal-without-ack") {
+        let mut database = support::Database::start();
+        for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
+            if std::env::args()
+                .nth(2)
+                .is_some_and(|mode| generic != (mode == "generic"))
+            {
+                continue;
+            }
+            for titles in [false, true] {
+                terminal_without_enqueue_ack(
+                    &database.create(&format!("terminal_{generic}_{via_look}_{titles}")),
+                    generic,
+                    via_look,
+                    titles,
+                );
+            }
+        }
+        database.stop();
+        return;
+    }
+
     if let Some(mode) = std::env::args()
         .nth(1)
         .filter(|arg| arg.starts_with("--generic-dequeue-"))
@@ -1876,6 +1944,16 @@ fn main() {
     merged(&database.create("missing_merge_ci"), false, true, false);
     watched_merge(&database.create("watched"));
     terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
+    for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
+        for titles in [false, true] {
+            terminal_without_enqueue_ack(
+                &database.create(&format!("terminal_{generic}_{via_look}_{titles}")),
+                generic,
+                via_look,
+                titles,
+            );
+        }
+    }
     println!("test merged, catch-up, restart and unapproved head ... ok");
     database.restart();
     for (dirty, lazy) in [(true, false), (false, false), (true, true)] {
@@ -1896,5 +1974,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("48 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("56 Mergify scenarios passed; no skips; no live upstream calls");
 }
