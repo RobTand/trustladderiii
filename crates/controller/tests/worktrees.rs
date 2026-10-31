@@ -252,8 +252,36 @@ fn conflicts() {
             git(&checkout, &["symbolic-ref", "--short", "HEAD"]),
             Real::branch(&rebase).unwrap().as_str()
         );
+        fs::write(checkout.join("staged.txt"), "staged resolution note\n").unwrap();
+        git(&checkout, &["add", "staged.txt"]);
+        fs::write(checkout.join("staged.txt"), "unfinished resolution note\n").unwrap();
         let remove = f.delivery(EffectKind::RemoveWorktree, 4);
         f.adapter().execute(&remove).unwrap();
+        let scratch = format!(
+            "refs/tl3/scratch/{}/{}",
+            Real::branch(&remove).unwrap().as_str(),
+            remove.generation
+        );
+        let saved = git(&f.repo, &["show", &format!("{scratch}:shared.txt")]);
+        assert!(
+            saved.contains("<<<<<<<")
+                && saved.contains("leaf change")
+                && saved.contains("main advance")
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{scratch}^2:staged.txt")]),
+            "staged resolution note"
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{scratch}:staged.txt")]),
+            "unfinished resolution note"
+        );
+        let main = git(&f.remote, &["rev-parse", "main"]);
+        assert_eq!(
+            git(&f.repo, &["merge-base", &scratch, &main]),
+            main,
+            "saved scratch must retain the upstream conflict side too"
+        );
         assert_removed(&f, &remove);
     }
 }

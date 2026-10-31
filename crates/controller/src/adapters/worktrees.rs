@@ -481,13 +481,6 @@ impl Served {
                     .merge_resolution(branch, checkout, &target)
                     .map_err(adapter)?;
                 let result = if let Some(files) = resolution {
-                    if writable {
-                        self.git
-                            .prepare_merge_resolution(branch, checkout, &target)
-                            .map_err(adapter)?;
-                    } else if base != target {
-                        return Ok(None);
-                    }
                     RebaseResult::Conflicted { head, files }
                 } else if base == target {
                     // Finish any checkout restoration interrupted after the atomic ref update.
