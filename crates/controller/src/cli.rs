@@ -9,6 +9,7 @@ use tl3_store::{Reader, Store};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Input {
     Wake,
+    GitHubWake,
     Look {
         key: String,
     },
