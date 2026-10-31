@@ -1,26 +1,12 @@
 use crate::{Error, Result, executor::Delivery};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 use tl3_store::Store;
+use tl3_worktrees::{CommitId, Worktrees};
 
 pub const SCOPE_RULE: &str = "request-scope";
 
 pub const REPORT_RULE: &str = "test-report-integrity";
-
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["-c", "core.hooksPath=/dev/null"])
-        .args(args)
-        .output()?;
-    if !output.status.success() {
-        return Err(Error::Invalid("review snapshot Git operation failed"));
-    }
-    Ok(output.stdout)
-}
 
 pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
     Ok(store
@@ -54,36 +40,29 @@ pub(super) fn inputs(
         .ok_or(Error::Invalid("review needs its exact head"))?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
     let mut base = if delivery.round == 1 && session.is_some() {
-        match run.reviewed_sha.as_deref() {
-            Some(reviewed) => reviewed,
+        match &run.reviewed_sha {
+            Some(reviewed) => reviewed.clone(),
             None => session
                 .as_ref()
                 .map(|s| {
-                    s["head_sha"]
-                        .as_str()
-                        .ok_or(Error::Invalid("reviewer session has no reviewed head"))
+                    CommitId::new(
+                        s["head_sha"]
+                            .as_str()
+                            .ok_or(Error::Invalid("reviewer session has no reviewed head"))?,
+                    )
+                    .map_err(Error::from)
                 })
                 .transpose()?
-                .unwrap_or(&run.base_sha),
+                .unwrap_or_else(|| run.base_sha.clone()),
         }
     } else {
-        &run.base_sha
+        run.base_sha.clone()
     };
-    for sha in [head, base, &run.base_sha] {
-        if !matches!(sha.len(), 40 | 64)
-            || !sha
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(Error::Invalid("invalid review commit"));
-        }
-    }
-    if base != run.base_sha {
-        let common = git(&run.repository, &["merge-base", base, &run.base_sha])?;
-        if common.trim_ascii() != run.base_sha.as_bytes() {
-            // Rebasing moves the check base beyond the previously reviewed history.
-            base = &run.base_sha;
-        }
+    let head_id = CommitId::new(head)?;
+    let repository = Worktrees::open(&run.repository, &run.repository)?;
+    if base != run.base_sha && repository.merge_base(&base, &run.base_sha)? != run.base_sha {
+        // Rebasing moves the check base beyond the previously reviewed history.
+        base = run.base_sha.clone();
     }
     let node = delivery.node().0.to_string();
     let report = snapshot
@@ -92,30 +71,17 @@ pub(super) fn inputs(
         .find(|r| r.table == "check_reports" && r.id == format!("{node}:{head}"))
         .map(|r| &r.value)
         .ok_or(Error::Invalid("review needs exact-head check evidence"))?;
-    if report["base_sha"] != run.base_sha {
+    if report["base_sha"].as_str() != Some(run.base_sha.as_str()) {
         return Err(Error::Invalid("review and checks disagree on base"));
     }
     let criteria = criteria(store, snapshot, delivery.node())?;
-    let diff = git(
-        &run.repository,
-        &["diff", "--no-ext-diff", "--no-textconv", base, head, "--"],
-    )?;
+    let diff = repository.diff(&base, &head_id)?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     if base != run.base_sha {
-        let scope_diff = git(
-            &run.repository,
-            &[
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                &run.base_sha,
-                head,
-                "--",
-            ],
-        )?;
+        let scope_diff = repository.diff(&run.base_sha, &head_id)?;
         if scope_diff.len() > 512 * 1024 {
             return Err(Error::Invalid("scope diff exceeds the input bound"));
         }
@@ -169,24 +135,8 @@ pub(super) fn checkout(root: &Path, delivery: &Delivery) -> Result<()> {
         .ok_or(Error::Invalid("review head missing"))?;
     // Clone committed objects. Dirty maker files never become review evidence.
     fs::remove_dir_all(root)?;
-    git(
-        root.parent()
-            .ok_or(Error::Invalid("review directory needs parent"))?,
-        &[
-            "clone",
-            "--quiet",
-            "--no-local",
-            "--no-checkout",
-            "--template=",
-            "--",
-            run.repository
-                .to_str()
-                .ok_or(Error::Invalid("review repository must be UTF-8"))?,
-            root.to_str()
-                .ok_or(Error::Invalid("review directory must be UTF-8"))?,
-        ],
-    )?;
-    git(root, &["checkout", "--quiet", "--detach", head])?;
+    let head = CommitId::new(head)?;
+    Worktrees::open(&run.repository, &run.repository)?.clone_checkout(root, &head)?;
     Ok(())
 }
 
@@ -282,6 +232,66 @@ mod tests {
             let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":kind,"id":id},"problem":"Problem","evidence":"Evidence"}],"findings":[]});
             assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid);
         }
+    }
+}
+
+#[cfg(test)]
+mod hostile_tests {
+    use super::*;
+    use crate::git_tests::{Repo, documents, support::Database};
+    #[test]
+    fn hostile_review_inputs() {
+        crate::git_tests::hostile(
+            "adapters::workers::review::hostile_tests::hostile_review_inputs",
+            || {
+                let f = Repo::new();
+                let mut db = Database::start();
+                let mut store = Store::open(&db.create("review_inputs")).unwrap();
+                store.put_worker_materials("0", &json!({})).unwrap();
+                let snapshot = documents(
+                    &mut store,
+                    &[
+                        (
+                            "goals",
+                            json!([{"description":"Read the intended repository","verification":"test"}]),
+                        ),
+                        ("check_reports", json!({})),
+                    ],
+                );
+                let mut snapshot = snapshot;
+                let report = snapshot
+                    .rows
+                    .iter_mut()
+                    .find(|r| r.table == "check_reports")
+                    .unwrap();
+                report.id = format!("0:{}", f.head);
+                report.value = json!({"base_sha":f.base,"results":[]});
+                let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+                assert!(
+                    value["diff"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("+intended {}", f.path.display()))
+                );
+            },
+        );
+    }
+    #[test]
+    fn hostile_review_checkout() {
+        crate::git_tests::hostile(
+            "adapters::workers::review::hostile_tests::hostile_review_checkout",
+            || {
+                let f = Repo::new();
+                let root = f.root.path().join("review");
+                fs::create_dir(&root).unwrap();
+                checkout(&root, &f.delivery()).unwrap();
+                assert_eq!(
+                    fs::read(root.join("README.md")).unwrap(),
+                    fs::read(f.path.join("README.md")).unwrap()
+                );
+                assert_eq!(crate::git_tests::git(&root, &["rev-parse", "HEAD"]), f.head);
+            },
+        );
     }
 }
 

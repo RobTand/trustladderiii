@@ -203,14 +203,7 @@ impl Executor for Adapter {
     }
 
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
-        match self.execute_delivery(delivery) {
-            Err(Error::Permanent { class, .. })
-                if !matches!(delivery.output, Out::Effect { .. }) =>
-            {
-                Ok(Completion::permanent(class))
-            }
-            result => result,
-        }
+        self.execute_delivery(delivery)
     }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         let Some(client) = self.clients.values().next().cloned() else {
@@ -294,9 +287,10 @@ impl Executor for Adapter {
         // The current owner fences mutations while reading the original effect epoch.
         self.records.fence(self.epoch)?;
         if publishing::handles(delivery) {
-            return Ok(self
-                .reconcile_publication(delivery)
-                .unwrap_or(Reconciliation::Pending));
+            return match self.reconcile_publication(delivery) {
+                Err(error) if error.is_github_not_found() => Err(error),
+                result => Ok(result.unwrap_or(Reconciliation::Pending)),
+            };
         }
         if let Some(crate::steering::Task::FileRequest {
             correction: true,
@@ -683,9 +677,19 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
                         })
                 })
                 .ok_or(Error::Invalid("incident id missing"))?;
-            Ok(Some(format!(
-                "Reply with \"clear incident {id}\" on https://github.com/{}/{}/issues/{} or on the request's issue after fixing the cause.",
+            let destination = format!(
+                "https://github.com/{}/{}/issues/{}",
                 delivery.repository.owner, delivery.repository.name, delivery.issue
+            );
+            let request = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context["request"].as_str())
+                .and_then(|request| request.rsplit_once('('))
+                .and_then(|(_, url)| url.strip_suffix(')'))
+                .unwrap_or(&destination);
+            Ok(Some(format!(
+                "Reply with \"clear incident {id}\" on {destination} or on the request's issue at {request} after fixing the cause."
             )))
         }
         Out::Notice {

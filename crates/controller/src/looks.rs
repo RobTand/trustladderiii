@@ -327,6 +327,16 @@ impl Controller {
                 .adapters
                 .adapter(&state.delivery)?
                 .look(&state.delivery);
+            let result = match result {
+                Err(error)
+                    if error.is_github_not_found()
+                        && state.failure.as_deref() == Some("not_found")
+                        && matches!(state.delivery.output, Out::Effect { .. }) =>
+                {
+                    Ok(Look::Absent)
+                }
+                result => result,
+            };
             if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
                 self.adapters
                     .get(Upstream::PrismaBuild)?
@@ -404,12 +414,13 @@ impl Controller {
                         .store
                         .effect(&state.delivery.key)?
                         .expect("allowance effect");
-                    if self.is_held(&state.delivery)
+                    if (self.is_held(&state.delivery)
+                        || state.failure.as_deref() == Some("not_found"))
+                        && effect.state.is_pending()
                         && effect.state != EffectState::Cancelling
                         && matches!(state.delivery.output, Out::Effect { .. })
                     {
-                        // Authoritative absence permits the kernel to retry this write.
-                        // An unreadable record never grants that permission.
+                        // Absence or a repeated 404 spends the existing retry allowance.
                         self.complete(
                             &effect.key,
                             Completion {
@@ -1241,6 +1252,66 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
         ),
         None => format!("Mergify's check \"{title}\" is {status}."),
     })
+}
+
+#[cfg(test)]
+mod git_failure_tests {
+    use super::*;
+    #[test]
+    fn deterministic_git_failures_are_permanent_incidents() {
+        use tl3_worktrees::Error as W;
+        for (error, expected) in [
+            (W::BranchName, "invalid_branch"),
+            (W::CommitId, "invalid_commit"),
+            (W::Remote, "invalid_remote"),
+            (W::WorktreePath, "invalid_worktree_path"),
+            (W::Token, "invalid_token"),
+            (W::Response, "invalid_response"),
+            (W::MissingBranch, "missing_branch"),
+            (W::MainBranch, "reserved_branch"),
+            (W::WorktreeOccupied, "worktree_occupied"),
+            (W::DirtyWorktree, "dirty_worktree"),
+            (W::Recovery, "worktree_recovery"),
+        ] {
+            assert_eq!(error.permanent_class(), Some(expected));
+            let error = crate::Error::from(error);
+            let crate::Error::Permanent { class, source } = &error else {
+                panic!("retain the permanent Git error and its class");
+            };
+            assert_eq!(*class, expected);
+            assert!(source.downcast_ref::<W>().is_some());
+            assert_eq!(failure_class(&error), expected, "{error}");
+            if expected == "dirty_worktree" {
+                assert!(
+                    incident_summary(
+                        "request",
+                        &IncidentSignature {
+                            upstream: Upstream::Worktrees,
+                            class: failure_class(&error).into()
+                        },
+                        false
+                    )
+                    .contains("has uncommitted or untracked files")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_git_failures_remain_transport() {
+        use tl3_worktrees::Error as W;
+        for error in [
+            W::Io,
+            W::Spawn,
+            W::Poisoned,
+            W::Git {
+                operation: "fetch",
+                code: Some(128),
+            },
+        ] {
+            assert_eq!(failure_class(&error.into()), "transport");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -112,6 +112,9 @@ pub enum Observation {
         node: NodeId,
         reference: String,
     },
+    ScratchPruned {
+        reference: String,
+    },
     Progress {
         key: String,
         checkpoint: String,

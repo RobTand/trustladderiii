@@ -37,6 +37,7 @@ pub struct Policy {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Violation {
+    WrongReplyShape,
     MissingRequest,
     RequestDoesNotQuoteTitle,
     MissingObstacle,

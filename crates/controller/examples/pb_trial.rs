@@ -89,7 +89,7 @@ fn fixture(root: &Path) -> Delivery {
         job_generation: Some(1),
         checks: Some(CheckRun {
             repository: repo,
-            base_sha: base,
+            base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
             reviewed_sha: None,
             reproducing_unavailable: None,

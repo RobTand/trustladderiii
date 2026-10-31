@@ -701,7 +701,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             sha: "a".repeat(40),
             run: adapters::prismabuild::CheckRun {
                 repository: root.path().to_path_buf(),
-                base_sha: "b".repeat(40),
+                base_sha: tl3_worktrees::CommitId::new("b".repeat(40)).unwrap(),
                 reviewed_sha: None,
                 reproducing_unavailable: None,
                 plan: vec![],
@@ -1002,7 +1002,7 @@ fn assert_incident_request(payload: &serde_json::Value) {
     );
 }
 
-fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
+fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
     let root = tempfile::tempdir().unwrap();
     let fixture = worktree_fixture::Fixture::create(root.path());
     let mut boot = bootstrap();
@@ -1082,10 +1082,75 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store) {
             .any(|note| note.contains(&reference)),
         "closing notice must include the saved ref"
     );
-    println!("test stopped_worktree_saves_scratch ... ok");
+    if check == "write-once" {
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "saved_scratch" && r.id == reference)
+            .unwrap();
+        let effects = Reader::open(settings).unwrap().effects().unwrap();
+        let effect = effects
+            .iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "RemoveWorktree")
+            .unwrap();
+        assert_eq!(
+            row.version, effect.updated_revision,
+            "scratch metadata must be written once with completion"
+        );
+    }
+    if check == "expiry" {
+        worktree_fixture::age_scratch(&fixture.repo, &reference);
+        c.intake(LabelledIssue {
+            delivery: "next-request".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 43,
+            title: "Fix another greeting".into(),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
+        drain(&mut c);
+        assert!(
+            worktree_fixture::git(
+                &fixture.repo,
+                &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"]
+            )
+            .is_empty()
+        );
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "saved_scratch" && r.id == reference),
+            "expired scratch metadata must be removed with its ref"
+        );
+        assert!(matches!(c.world().unwrap().nodes[1].phase, Phase::Making));
+    }
+    println!("test stopped_worktree_saves_scratch_{check} ... ok");
 }
 
 fn main() {
+    if let Some(check) = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--scratch-metadata=").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        stopped_worktree_saves_scratch(&db.create("scratch_metadata"), &check);
+        db.stop();
+        return;
+    }
+    if let Some(case) = std::env::args()
+        .nth(1)
+        .and_then(|s| s.strip_prefix("--effect-http=").map(str::to_owned))
+    {
+        let mut db = support::Database::start();
+        effect_http_failure(&db.create("effect_http"), &case);
+        db.stop();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--request-incident-clear") {
         let mut db = support::Database::start();
         permanent_incident_clear_at(&db.create("request_clear"), true);
@@ -1094,7 +1159,7 @@ fn main() {
     }
     if std::env::args().any(|arg| arg == "--dirty-worktree") {
         let mut db = support::Database::start();
-        stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
+        stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
         db.stop();
         return;
     }
@@ -1148,6 +1213,9 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
+    for case in ["brief", "persistent", "forbidden", "webhooks"] {
+        effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
+    }
     for name in [
         "missing_wait",
         "unknown_owner",
@@ -1186,7 +1254,9 @@ fn main() {
     println!("test pb_owns_progress_failure ... ok");
     owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
     println!("test queue_stall_incident ... ok");
-    stopped_worktree_saves_scratch(&db.create("dirty_worktree"));
+    stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
+    stopped_worktree_saves_scratch(&db.create("scratch_once"), "write-once");
+    stopped_worktree_saves_scratch(&db.create("scratch_expiry"), "expiry");
     permanent_incident_clear_at(&db.create("request_clear"), true);
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");
@@ -1702,4 +1772,133 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
         !path.exists(),
         "{case} deletes the durable wait subscription"
     );
+}
+
+struct HttpEffect {
+    fake: adapters::github::Fake,
+    calls: Rc<Cell<usize>>,
+    status: u16,
+    brief: bool,
+}
+impl Executor for HttpEffect {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::OpenPr,
+                ..
+            }
+        ) {
+            self.calls.set(self.calls.get() + 1);
+            if !self.brief || self.calls.get() == 1 {
+                return Err(tl3_github::Error::Http {
+                    status: self.status,
+                }
+                .into());
+            }
+        }
+        self.fake.execute(d)
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(d)
+    }
+    fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
+        Ok(match self.reconcile(d)? {
+            Reconciliation::Found(c) => Look::Found(c),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
+}
+
+fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("http-github")).unwrap();
+    let clock = FakeClock::new();
+    let calls = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        HttpEffect {
+            fake: adapters::github::Fake::new(&root.path().join("http-github")),
+            calls: calls.clone(),
+            status: if case == "forbidden" { 403 } else { 404 },
+            brief: case == "brief",
+        },
+    );
+    assert_eq!(calls.get(), 1);
+    if case != "forbidden" {
+        let first = c
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .into_iter()
+            .find(|e| e.payload["output"]["Effect"]["kind"] == "OpenPr")
+            .expect("the first effect 404 must stay pending for a look");
+        assert_eq!(first.state, EffectState::Uncertain);
+        assert_eq!(c.world().unwrap().nodes[0].fx_failures, 0);
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents")
+        );
+        if case == "webhooks" {
+            for index in 0..3 {
+                let mut issue = labelled();
+                issue.delivery = format!("duplicate-webhook-{index}");
+                c.intake(issue).unwrap();
+                drain(&mut c);
+                assert_eq!(
+                    calls.get(),
+                    1,
+                    "webhooks must not release a held 404 before its look"
+                );
+            }
+        }
+        c.look_key(&first.key).unwrap();
+        assert_eq!(c.world().unwrap().nodes[0].fx_failures, 1);
+        drain(&mut c);
+        assert_eq!(calls.get(), 2, "404 gets exactly one retry");
+    }
+    if case == "brief" {
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(tl3_kernel::Outcome::Merged)
+        );
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents")
+        );
+    } else {
+        let snapshot = c.snapshot().unwrap();
+        let allowance = snapshot
+            .rows
+            .iter()
+            .find(|r| {
+                r.table == "allowances"
+                    && r.value["delivery"]["output"]["Effect"]["kind"] == "OpenPr"
+                    && r.value["failure"]
+                        == if case == "forbidden" {
+                            "permission"
+                        } else {
+                            "not_found"
+                        }
+            })
+            .expect("the final HTTP failure must retain its permanent class");
+        let key = allowance.value["delivery"]["key"].as_str().unwrap();
+        assert_eq!(c.effect(key).unwrap().unwrap().state, EffectState::Failed);
+    }
+    let before = calls.get();
+    for _ in 0..5 {
+        assert!(!c.drive_once().unwrap(), "terminal failure must not loop");
+    }
+    assert_eq!(calls.get(), before);
+    println!("test effect_http_{case} ... ok");
 }

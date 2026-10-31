@@ -2981,6 +2981,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tl3-config",
+ "tl3-worktrees",
  "tokio",
 ]
 
@@ -2991,6 +2992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "base64 0.22.1",
+ "serde",
  "tempfile",
  "thiserror",
  "url",

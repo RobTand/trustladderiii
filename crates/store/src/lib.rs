@@ -120,6 +120,11 @@ fn retire_ingress(tx: &mut Transaction<'_>) -> Result<()> {
 // Ingress receipt, catch-up, consumer registration and cursor/retirement writes
 // are outside the controller crash save points. Ticket #71 covers these boundaries.
 impl Store {
+    /// Open an independent read-only session without transferring this writer's ownership.
+    pub fn reader(&self) -> Result<Reader> {
+        Reader::open(&self.settings)
+    }
+
     /// Independent of kernel revisions. The immutable operation ID survives lost acknowledgements.
     pub fn queue_memory(&mut self, operation_id: &str, item: &serde_json::Value) -> Result<()> {
         let mut tx = self.client.transaction()?;
@@ -719,15 +724,13 @@ impl Store {
     }
 
     pub fn intern_commit(&mut self, node: &str, sha: &str) -> Result<CommitId> {
-        if !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(Error::Invalid(
-                "commit SHA must be 40 or 64 hexadecimal digits",
-            ));
-        }
+        let sha = tl3_worktrees::CommitId::new(sha).map_err(|_| {
+            Error::Invalid("commit SHA must be 40 or 64 lowercase hexadecimal digits")
+        })?;
         Ok(CommitId(self.intern(
             InternKind::Commit,
             node,
-            &sha.to_ascii_lowercase(),
+            sha.as_str(),
         )?))
     }
 
@@ -797,12 +800,31 @@ impl Store {
 /// A reader never runs migrations or exposes the store's write operations.
 pub struct Reader {
     client: Client,
+    settings: tl3_config::Store,
 }
 
 impl Reader {
+    pub fn reconnect(&mut self) -> Result<()> {
+        *self = Self::open(&self.settings)?;
+        Ok(())
+    }
+
+    pub fn ingress_cursor(&mut self, source: &str) -> Result<Option<serde_json::Value>> {
+        let mut tx = self.transaction()?;
+        let cursor = tx
+            .query_opt(
+                "SELECT cursor FROM tl3_ingress_cursors WHERE source = $1",
+                &[&source],
+            )?
+            .map(|row| row.get(0));
+        tx.commit()?;
+        Ok(cursor)
+    }
+
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
         let mut reader = Self {
             client: connect(settings, true)?,
+            settings: settings.clone(),
         };
         reader.transaction()?.commit()?;
         Ok(reader)
