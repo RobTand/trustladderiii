@@ -528,6 +528,6 @@ def test_new_unique_test_is_a_planner_defect(tmp_path, planner_request):
 
 def test_prompt_states_how_existing_tests_are_named():
     # The planner gets one retry; a rule it was never told about spends it.
-    prompt = (Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text()
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
     assert "must name tests that already exist in the base" in prompt
     assert "without its parameter suffix" in prompt
