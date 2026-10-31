@@ -1,7 +1,5 @@
-# Batch queued PRs, and check up to 3 batches at once, each on top of the ones
-# ahead of it. Batches grow from 1 to 4 PRs as the queue backs up. A failed batch
-# is split to find the culprit; with 3 checks, 4 PRs need one split round.
-# Enqueue only by explicit command.
+# Test batches on draft PRs, then move main to the exact tested head.
+# Explicit queue commands follow coordinator review and PrismaBuild evidence.
 merge_queue:
   mode: serial
   max_parallel_checks: 3
@@ -13,14 +11,12 @@ queue_rules:
   - name: default
     queue_conditions:
       - base = main
-      - check-success = Rust
-      - check-success = Python
+    branch_protection_injection_mode: merge
     merge_conditions:
       - check-success = Rust
       - check-success = Python
-    merge_method: merge
-    batch_size:
-      min: 1
-      max: 4
+    merge_method: fast-forward
+    batch_size: 8
+    batch_max_wait_time: 4 minutes
     max_checks_retries: 0
     checks_timeout: 60 minutes
