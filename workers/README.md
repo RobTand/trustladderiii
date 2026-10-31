@@ -468,13 +468,15 @@ without changing controller state or making server availability a startup gate.
 The request envelope can also supply `mlflow` settings and `trace` correlation
 metadata. Neither enters role inputs or prompts. The supervisor supplies repo,
 issue, request, attempt and round. The runtime adds node, generation, role,
-model, effort, outcome and input, output and total token counts.
+model, effort, outcome and input, output and total token counts. Failed runs
+also record `failure_class` and `failure_message`. The message is a fixed
+diagnostic or an allowlisted internal error, never arbitrary exception text.
 
 MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
 A pinned SDK adapter replaces its network exporter with in-memory capture.
 Only span IDs, parent IDs, times, types, status codes, numeric token counts and
 explicit correlation tags reach the export child. Prompts, model replies,
-tool inputs and outputs, exception messages, resource attributes and provider
+tool inputs and outputs, arbitrary exception messages, resource attributes and provider
 metadata are omitted. This also excludes echoed secrets and request headers.
 
 One child exports the sanitized protobuf to the configured experiment. It uses

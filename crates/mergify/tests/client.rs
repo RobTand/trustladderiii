@@ -192,9 +192,10 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
             json!({"version":1,"state":"dequeued","dequeue_reason":{"code":"CHECKS_TIMEOUT"}}),
             QueueState::FailedCi,
         ),
+        // An interrupted run says nothing about the change; TL3 re-enqueues it as an infrastructure failure.
         (
             json!({"version":1,"state":"dequeued","dequeue_reason":{"code":"CHECKS_INTERRUPTED"}}),
-            QueueState::Dequeued,
+            QueueState::FailedCi,
         ),
     ] {
         check.output.as_mut().unwrap().summary = Some(format!(
@@ -208,6 +209,7 @@ fn machine_metadata_does_not_confuse_interruption_or_deferred_checks_with_failur
         assert_eq!(
             tl3_mergify::ci_is_infrastructure(&check),
             payload["dequeue_reason"]["code"] == "CHECKS_TIMEOUT"
+                || payload["dequeue_reason"]["code"] == "CHECKS_INTERRUPTED"
         );
     }
 }
