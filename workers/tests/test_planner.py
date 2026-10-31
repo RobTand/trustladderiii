@@ -479,3 +479,45 @@ def test_planner_schema_follower_succeeds_without_code_only_fields(
     assert {key: value for key, value in actual.items()
             if key not in {'forecast', 'violations'}} == proposal
     assert bool(actual['violations']) == (proposal['kind'] == 'split')
+
+
+@pytest.mark.parametrize('kind', ['regression', 'behavior-preserving'])
+@pytest.mark.parametrize('missing', ['tests/absent.py::test_absent',
+                                    'tests/test_sequences.py::test_absent',
+                                    'tests/test_sequences.py::TestAbsent::test_absent'])
+def test_planner_checks_base_test_definitions(planner_request, monkeypatch, kind, missing):
+    from tl3_workers.roles.planner import check_reply
+    from tl3_workers.forecast import Forecaster
+
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir()
+    source = (Path(__file__).parents[2] / 'harness/tests/fixtures/chunked_test.py').read_text()
+    (root / 'tests/test_sequences.py').write_text(source)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': kind, 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert any(missing in item and 'base' in item for item in reply['violations'])
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': kind,
+        'node_ids': ['tests/test_sequences.py::test_chunked_rejects_non_positive_sizes'],
+        'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert reply['violations'] == []
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': 'demonstrating', 'node_ids': [missing], 'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert reply['violations'] == []
+
+
+def test_new_unique_test_is_a_planner_defect(tmp_path, planner_request):
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir(exist_ok=True)
+    (root / 'tests/test_sequences.py').write_text('def test_unique_preserves_order(): assert True\n')
+    test = 'tests/test_sequences.py::test_unique_does_not_mutate_input'
+    proposal = copy.deepcopy(LEAF)
+    proposal['checks'] = [{'kind': 'regression', 'node_ids': [test], 'goal_ids': [0, 1]}]
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert_rule_report(result, test)
+    assert 'base' in result.events[-1]['reply']['violations'][0]
