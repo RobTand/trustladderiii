@@ -362,6 +362,23 @@ impl Worktrees {
         }
         if path.join(".git").exists() {
             self.verify_checkout(&path, name)?;
+            let lock = path_line(
+                &self
+                    .run(
+                        &path,
+                        "removal lock",
+                        [
+                            "rev-parse",
+                            "--path-format=absolute",
+                            "--git-path",
+                            "locked",
+                        ],
+                    )?
+                    .stdout,
+            )?;
+            if lock.exists() && !self.initializing_at_base(name, &path)? {
+                return Err(Error::WorktreeOccupied);
+            }
             self.run(&path, "clean saved scratch", ["reset", "--hard", "HEAD"])?;
             self.run(&path, "clean saved untracked files", ["clean", "-fd"])?;
             self.require_clean(&path)?;

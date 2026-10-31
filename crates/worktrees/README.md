@@ -126,7 +126,8 @@ For a clean checkout, the controller records a clean preflight in its Remove int
 `initializing\n` lock and a branch head equal to the durable base also prove
 that no maker ran, including when a killed checkout left tracked files.
 Removal checks this evidence directly without scanning earlier effect records.
-Other dirty checkouts remain errors. Only the durable preflight authorizes
+Other dirty checkouts require saved scratch during teardown. Only a durable clean
+preflight or saved scratch authorizes
 `resume_removal`, which also accepts deletion-only interrupted removals.
 Git removes an initializing checkout with two `--force` flags, keeping its lock
 as evidence until removal ends so a crash can retry safely.
