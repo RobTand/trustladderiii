@@ -447,7 +447,9 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 break;
             }
             changed = true;
-            if c.world().unwrap().nodes[0].phase == expected {
+            if expected == (Phase::Planning { must_split: true })
+                && c.world().unwrap().nodes[0].phase == expected
+            {
                 break;
             }
         }
@@ -460,7 +462,8 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 observed = true;
             }
         }
-        if !observed && c.world().unwrap().nodes[0].phase == expected {
+        let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
+        if (!changed || reached_planner) && c.world().unwrap().nodes[0].phase == expected {
             return;
         }
         assert!(
