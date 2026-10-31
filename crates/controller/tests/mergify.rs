@@ -1672,6 +1672,21 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
             break;
         }
     }
+    if status == 404 {
+        let snapshot = controller.snapshot().unwrap();
+        let pending = snapshot
+            .pending_effects
+            .iter()
+            .find(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
+            .expect("the first enqueue 404 must be held");
+        assert_eq!(pending.state, tl3_store::EffectState::Uncertain);
+        assert!(!snapshot.rows.iter().any(|row| row.table == "incidents"));
+        api.state.lock().unwrap().http_failure = None;
+        controller.look_key(&pending.key).unwrap();
+        assert_eq!(controller.world().unwrap().nodes[0].fx_failures, 1);
+        api.state.lock().unwrap().http_failure = Some(status);
+        drain(&mut controller);
+    }
     let snapshot = controller.snapshot().unwrap();
     let incident = snapshot
         .rows
