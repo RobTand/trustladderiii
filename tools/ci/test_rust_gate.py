@@ -82,7 +82,8 @@ class GateTests(unittest.TestCase):
     def test_custom_harness_measures_intervals_and_includes_unreported_tail(self):
         with tempfile.TemporaryDirectory() as temporary:
             executable = Path(temporary) / 'fixture.py'
-            executable.write_text('print("test named_scenario ... ok")\n')
+            executable.write_text('import sys\nsys.stderr.write("partial diagnostic: ")\n'
+                                  'sys.stderr.flush()\nprint("test named_scenario ... ok")\n')
             binary = {'name': 'fixture', 'command': [sys.executable, str(executable)]}
             results = rust_gate.execute_binary(binary, custom=True)
             self.assertIn('fixture::named_scenario', results)
