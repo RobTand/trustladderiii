@@ -463,6 +463,8 @@ fn main() {
     println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
     external_wait_survives_restart(&database.create("workers_external_wait"));
     println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+    finish_fixture(database, "worker_waits");
+    let mut database = Database::start();
     for wrapped in [false, true] {
         linked_materials(
             &database.create(&format!("linked_materials_{wrapped}")),
@@ -480,6 +482,8 @@ fn main() {
     println!("test sigkill_worker_failure_retries_through_kernel ... ok");
     late_launcher(&database.create("workers_late"));
     println!("test cancelled_late_launcher_cannot_start_a_second_copy ... ok");
+    finish_fixture(database, "worker_launch");
+    let mut database = Database::start();
     killed_controller(&database.create("controller_kill"), "blocked");
     killed_controller(&database.create("planner_controller_kill"), "plan-blocked");
     println!("test sigkill_controller_reattaches_to_the_same_worker ... ok");
@@ -521,10 +525,14 @@ fn main() {
     println!("test retirement_states_keep_one_summary_until_closure ... ok");
     retirement_review::blocked_identities(&database.create("retirement_blocked"));
     println!("test retirement_skips_corrupt_and_foreign_identities_after_one_attempt ... ok");
+    finish_fixture(database, "worker_summaries");
+    let mut database = Database::start();
     for guard in ["inbox", "effect", "progress"] {
         retirement_review::session_guard(&database.create(&format!("session_{guard}")), guard);
         println!("test session_retirement_{guard}_guard ... ok");
     }
+    finish_fixture(database, "worker_sessions");
+    let mut database = Database::start();
     retirement_review::session_unlink_error(&database.create("session_unlink"));
     println!("test session_retirement_logs_retains_and_retries_unlink_error ... ok");
     retirement_review::transient_io(&database.create("source_emfile"));
