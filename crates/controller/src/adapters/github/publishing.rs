@@ -2,6 +2,7 @@ use super::*;
 use tl3_github::{
     CheckConclusion, CheckRun, CheckStatus, NewCheckRun, NewPullRequest, PullRequest,
 };
+use tl3_worktrees::CommitId;
 
 pub const APPROVAL_CHECK: &str = "TL3 approval";
 
@@ -15,21 +16,14 @@ pub(super) fn handles(delivery: &Delivery) -> bool {
     )
 }
 
-fn head(delivery: &Delivery) -> Result<&str> {
-    delivery
-        .head_sha
-        .as_deref()
-        .filter(|sha| {
-            matches!(sha.len(), 40 | 64)
-                && sha
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        })
-        .ok_or(Error::Invalid("approval requires its exact commit SHA"))
+fn head(delivery: &Delivery) -> Result<CommitId> {
+    Ok(CommitId::new(delivery.head_sha.as_deref().ok_or(
+        Error::Invalid("approval requires its exact commit SHA"),
+    )?)?)
 }
 
 fn external_id(delivery: &Delivery) -> Result<String> {
-    Ok(format!("{}:{}", delivery.key, head(delivery)?))
+    Ok(format!("{}:{}", delivery.key, head(delivery)?.as_str()))
 }
 
 fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bool> {
@@ -39,7 +33,7 @@ fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bo
                 .app
                 .as_ref()
                 .is_some_and(|app| app.id == client.app_id())
-            && check.head_sha == head(delivery)?
+            && check.head_sha == head(delivery)?.as_str()
             && check.name == APPROVAL_CHECK
             && check.status == "completed"
             && check.conclusion.as_deref() == Some("success"),
@@ -92,7 +86,7 @@ impl Adapter {
                     &repo,
                     &NewCheckRun {
                         name: APPROVAL_CHECK.into(),
-                        head_sha: head(delivery)?.into(),
+                        head_sha: head(delivery)?.as_str().into(),
                         external_id: external_id(delivery)?,
                         status: CheckStatus::Completed,
                         conclusion: Some(CheckConclusion::Success),
@@ -161,7 +155,7 @@ impl Adapter {
             } => {
                 let checks = self
                     .runtime
-                    .block_on(client.check_runs(&repo, head(delivery)?))?;
+                    .block_on(client.check_runs(&repo, head(delivery)?.as_str()))?;
                 if checks
                     .iter()
                     .any(|check| approved(check, &client, delivery).unwrap_or(false))

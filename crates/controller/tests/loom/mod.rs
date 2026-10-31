@@ -1,5 +1,4 @@
-#[path = "../../../store/tests/support/mod.rs"]
-mod support;
+use crate::store_support as support;
 
 use crate::{
     Bootstrap, Repository,

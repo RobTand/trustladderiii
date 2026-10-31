@@ -31,8 +31,12 @@ let files = repo.changed_files(&base, &head)?;
 | `finish_prepare` | Repair Git-locked initialization only at the durable base |
 | `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `save_scratch`, `clean_saved_scratch` | Save teardown edits on a durable ref before cleaning |
-| `prune_scratch` | Expire saved scratch after 30 days on a worktree event |
+| `expired_scratch`, `prune_scratch` | Journal expiry candidates, then remove their refs on a worktree event |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
+| `head`, `verify_commit`, `merge_base`, `is_ancestor` | Typed commit and ancestry queries |
+| `diff`, `changed_paths_since_merge_base`, `list_tree`, `blob` | Committed review and check evidence |
+| `clone_checkout`, `bundle_check_input`, `commit_check_input` | Private committed snapshots for review and PrismaBuild |
+| `pin_reviewed`, `replay_reviewed`, `remove_reviewed` | Retain and replay reviewed commits for reproducing checks |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
@@ -43,9 +47,10 @@ The controller chooses effect identities. This client does not persist controlle
 state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
 
 `BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
-`CommitId` accepts full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
+`CommitId` accepts lowercase full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
 newlines and non-UTF-8 names. `changed_files` compares the two trees directly and
 disables rename detection so both the old and new path count toward the footprint.
+`changed_paths_since_merge_base` uses a three-dot diff, excluding changes only on the base.
 
 ## Recovery
 
@@ -118,8 +123,9 @@ intent. Saving changes neither working files nor the live index. A retry reuses
 the saved ref. Cleanup then resets the checkout and removes untracked files.
 The completion records the ref, and the closing notice lists it as plain text.
 Use `git show <ref>:<path>` to recover a file, or `<ref>^2:<path>` for staged content.
-Scratch refs stay for 30 days. New worktree deliveries prune expired refs in that
-repository. No timer runs for retention. Rebase and publish still reject dirty
+Scratch refs stay for 30 days. New worktree deliveries journal expiry candidates,
+then prune their refs and metadata. Housekeeping errors are logged and do not block
+worktree operations. No timer runs for retention. Rebase and publish still reject dirty
 worktrees as permanent failures.
 
 For a clean checkout, the controller records a clean preflight in its Remove intent. Git's
