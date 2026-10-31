@@ -3,10 +3,14 @@
 import configparser
 import unittest
 
-from test_runners import ROOT, RunnerTests
+import test_runners
 
 
-class FleetTests(RunnerTests):
+class FleetTests(unittest.TestCase):
+    setUp = test_runners.RunnerTests.setUp
+    run_script = test_runners.RunnerTests.run_script
+    commands = test_runners.RunnerTests.commands
+
     def test_host_names_arch_labels_and_cpu_placement(self):
         for host, arch, label in (("celestia", "x86_64", "x64"),
                                   ("sparky", "aarch64", "ARM64"),
@@ -62,7 +66,7 @@ class FleetTests(RunnerTests):
                              for c in self.commands()))
 
     def test_both_arch_images_and_rustup_downloads_are_pinned(self):
-        containerfile = (ROOT / "Containerfile").read_text()
+        containerfile = (test_runners.ROOT / "Containerfile").read_text()
         self.assertIn("sha256:0ce3288e48b012a83685998f683a2ae0cbd284fa722c090dda0af5443215cf30", containerfile)
         self.assertIn("sha256:2089924d7fb6a96f1d1d2aca242ad6a07315b4ec2d7d275391ee265de70e941b", containerfile)
         self.assertIn("a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697", containerfile)

@@ -124,7 +124,7 @@ elif name == "id": print("1000")
                 for _ in range(10):
                     result = self.run_script("runner-slot.sh", "1", profile)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                commands = self.commands()
+                commands = [c for c in self.commands() if c[0] not in ("uname", "hostname")]
                 self.assertEqual(len(commands), 30)
                 for i in range(10):
                     self.assertEqual(commands[i * 3][0], "gh")
@@ -139,7 +139,8 @@ elif name == "id": print("1000")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("gh exit 42", result.stderr)
                 self.assertNotIn("sensitive-response", result.stdout + result.stderr)
-                self.assertFalse(self.calls.exists(), "failed registration must retain backoff")
+                self.assertFalse(any(c[0] in ("podman", "systemd-notify") for c in self.commands()),
+                                 "failed registration must retain backoff and never launch a job")
 
     def test_both_profiles_preserve_explicit_cpu_placement(self):
         for profile in ("tl3-ci-runner", "tl3-ci-runner-sandbox"):
