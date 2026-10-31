@@ -10,8 +10,11 @@ pub(crate) struct Fixes {
     pub evidence: Value,
 }
 
-pub(crate) fn check(reply: &Value, feedback: &Value, reviewed: Option<&str>) -> Result<Fixes> {
-    let findings = crate::findings::current_review_findings(feedback, reviewed);
+pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) -> Result<Fixes> {
+    let crate::findings::CurrentReview {
+        head: reviewed,
+        findings,
+    } = current;
     let mappings = reply["reproductions"]
         .as_array()
         .cloned()
@@ -96,8 +99,8 @@ mod reply_defects {
         let mut mismatches = Vec::new();
         for vector in vectors.as_array().unwrap() {
             let reply = json!({"reproductions":[{"finding_id":"f", "tests":[vector["node_id"]]}]});
-            if check(&reply, &feedback, Some("head")).is_ok() != vector["valid"].as_bool().unwrap()
-            {
+            let current = crate::findings::current_review(&feedback, 1, Some("head"));
+            if check(&reply, current).is_ok() != vector["valid"].as_bool().unwrap() {
                 mismatches.push(vector.clone());
             }
         }

@@ -102,19 +102,27 @@ pub(crate) fn check_report(
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)
 }
 
-pub(crate) fn current_review_findings<'a>(
+pub(crate) struct CurrentReview<'a> {
+    pub head: Option<&'a str>,
+    pub findings: Vec<&'a serde_json::Value>,
+}
+
+pub(crate) fn current_review<'a>(
     feedback: &'a serde_json::Value,
-    reviewed: Option<&str>,
-) -> Vec<&'a serde_json::Value> {
-    feedback
+    round: u8,
+    head: Option<&'a str>,
+) -> CurrentReview<'a> {
+    let head = head.filter(|_| round == 1);
+    let findings = feedback
         .as_array()
         .into_iter()
         .flatten()
         .filter(|finding| {
             finding["kind"] == "review_finding"
-                && reviewed.is_some_and(|sha| finding["reviewed_sha"] == sha)
+                && head.is_some_and(|sha| finding["reviewed_sha"] == sha)
         })
-        .collect()
+        .collect();
+    CurrentReview { head, findings }
 }
 
 #[cfg(test)]
@@ -129,10 +137,13 @@ mod selection_defects {
             {"kind":"failed_check", "id":"check", "reviewed_sha":"a"},
             {"kind":"review_finding", "id":"missing"}
         ]);
-        assert!(current_review_findings(&feedback, None).is_empty());
-        assert_eq!(
-            current_review_findings(&feedback, Some("a")),
-            vec![&feedback[0]]
-        );
+        for (round, head) in [(0, Some("a")), (0, None), (1, None)] {
+            let current = current_review(&feedback, round, head);
+            assert!(current.head.is_none());
+            assert!(current.findings.is_empty());
+        }
+        let current = current_review(&feedback, 1, Some("a"));
+        assert_eq!(current.head, Some("a"));
+        assert_eq!(current.findings, vec![&feedback[0]]);
     }
 }

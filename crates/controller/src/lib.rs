@@ -1796,9 +1796,9 @@ impl Controller {
                             .worker_document(&node.0.to_string(), "maker_findings")?
                             .unwrap_or(json!([]));
                         let previous = commit_sha(snapshot, n.head);
-                        let reviewed = if n.round == 1 { previous } else { None };
-                        let fixes =
-                            adapters::workers::reproducing::check(&reply, &feedback, reviewed);
+                        let current = findings::current_review(&feedback, n.round, previous);
+                        let reviewed = current.head;
+                        let fixes = adapters::workers::reproducing::check(&reply, current);
                         if expected != checked || checks.len() != goals.len() {
                             Reply::RunFailed
                         } else if let Ok(fixes) = fixes {
