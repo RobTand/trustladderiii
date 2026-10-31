@@ -2,6 +2,7 @@
 mod worktree_fixture;
 
 use std::fs;
+use tl3_controller::adapters::worktrees::Real;
 use tl3_controller::{
     adapters::prismabuild::{Check, CheckRun, Kind},
     executor::{Executor, Observation},
@@ -218,4 +219,97 @@ fn failed_review_pin_reaches_the_next_review_reason() {
         serde_json::to_value(&result).unwrap(),
         serde_json::to_value(adapter.execute(&rebase).unwrap()).unwrap()
     );
+}
+
+#[test]
+fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    let mut adapter = f.adapter();
+    adapter.execute(&prepare).unwrap();
+    let checkout = adapter.checkout(&prepare);
+    let head = commit(&checkout, "shared.txt", "leaf side\n");
+    let target = f.advance_main(true);
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(head.clone());
+    let result = adapter.execute(&push);
+    assert!(
+        matches!(
+            &result,
+            Err(tl3_controller::Error::Permanent {
+                class: "unrebased_head",
+                ..
+            })
+        ),
+        "publishing must refuse a head that does not contain main {target}: {result:?}"
+    );
+    assert!(
+        git(
+            &f.remote,
+            &[
+                "for-each-ref",
+                &format!("refs/heads/{}", Real::branch(&push).unwrap().as_str())
+            ]
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn publication_allows_a_nonconflicting_main_advance_without_rewriting_the_checked_head() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    let mut adapter = f.adapter();
+    adapter.execute(&prepare).unwrap();
+    let checkout = adapter.checkout(&prepare);
+    let head = commit(&checkout, "shared.txt", "checked leaf\n");
+    let main = f.advance_main(false);
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(head.clone());
+    assert!(
+        adapter.execute(&push).is_ok(),
+        "a clean main advance must not require Rob"
+    );
+    assert_eq!(
+        git(
+            &f.remote,
+            &["rev-parse", Real::branch(&push).unwrap().as_str()]
+        ),
+        head
+    );
+    assert_ne!(git(&checkout, &["merge-base", &head, &main]), main);
+}
+
+#[test]
+fn newer_rebase_replaces_an_unfinished_merge_onto_old_main() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let mut adapter = f.adapter();
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    adapter.execute(&prepare).unwrap();
+    let checkout = adapter.checkout(&prepare);
+    let leaf = commit(&checkout, "shared.txt", "leaf\n");
+    let old_main = f.advance_main(true);
+    adapter
+        .execute(&f.delivery(EffectKind::StartRebase, 2))
+        .unwrap();
+    assert_eq!(git(&checkout, &["rev-parse", "MERGE_HEAD"]), old_main);
+    // A maker cant_meet leaves this merge unfinished. A later rebase gets newer main.
+    let main = f.advance_main(true);
+    let result = adapter.execute(&f.delivery(EffectKind::StartRebase, 3));
+    assert!(
+        result.is_ok(),
+        "stale merge must restart, not become a permanent incident: {result:?}"
+    );
+    assert_eq!(git(&checkout, &["rev-parse", "HEAD"]), leaf);
+    assert_eq!(git(&checkout, &["rev-parse", "MERGE_HEAD"]), main);
+    let markers = fs::read_to_string(checkout.join("shared.txt")).unwrap();
+    assert!(
+        markers.contains(&old_main),
+        "resolution must include the newer upstream edit"
+    );
+    commit(&checkout, "shared.txt", "resolved newest main\n");
+    assert_eq!(git(&checkout, &["merge-base", "HEAD", &main]), main);
 }

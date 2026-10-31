@@ -14,7 +14,7 @@ use tl3_controller::{
     adapters::worktrees::{Boundary, Real},
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
-use tl3_kernel::{Ack, EffectKind, Event, Reply};
+use tl3_kernel::{Ack, EffectKind};
 use worktree_fixture::{Fixture, commit, git};
 static VERIFIED_KILLS: AtomicUsize = AtomicUsize::new(0);
 
@@ -233,26 +233,55 @@ fn conflicts() {
         let completion = found(f.adapter().reconcile(&rebase).unwrap());
         assert!(matches!(
             completion.observations.as_slice(),
-            [Observation::Kernel(Event::Reply {
-                reply: Reply::RebaseNeedsChanges,
-                ..
-            })]
+            [Observation::RebaseConflict { files, .. }] if files == &["shared.txt"]
         ));
         assert_eq!(f.head(&rebase), push.head_sha.unwrap());
         let checkout = f.adapter().checkout(&rebase);
+        assert!(git(&checkout, &["status", "--porcelain"]).contains("UU shared.txt"));
+        assert_eq!(
+            git(&checkout, &["rev-parse", "MERGE_HEAD"]),
+            git(&f.remote, &["rev-parse", "main"])
+        );
+        let conflict = fs::read_to_string(checkout.join("shared.txt")).unwrap();
         assert!(
-            git(
-                &checkout,
-                &["status", "--porcelain", "--untracked-files=all"]
-            )
-            .is_empty()
+            conflict.contains("<<<<<<<")
+                && conflict.contains("leaf change")
+                && conflict.contains("main advance")
         );
         assert_eq!(
             git(&checkout, &["symbolic-ref", "--short", "HEAD"]),
             Real::branch(&rebase).unwrap().as_str()
         );
+        fs::write(checkout.join("staged.txt"), "staged resolution note\n").unwrap();
+        git(&checkout, &["add", "staged.txt"]);
+        fs::write(checkout.join("staged.txt"), "unfinished resolution note\n").unwrap();
         let remove = f.delivery(EffectKind::RemoveWorktree, 4);
         f.adapter().execute(&remove).unwrap();
+        let scratch = format!(
+            "refs/tl3/scratch/{}/{}",
+            Real::branch(&remove).unwrap().as_str(),
+            remove.generation
+        );
+        let saved = git(&f.repo, &["show", &format!("{scratch}:shared.txt")]);
+        assert!(
+            saved.contains("<<<<<<<")
+                && saved.contains("leaf change")
+                && saved.contains("main advance")
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{scratch}^2:staged.txt")]),
+            "staged resolution note"
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{scratch}:staged.txt")]),
+            "unfinished resolution note"
+        );
+        let main = git(&f.remote, &["rev-parse", "main"]);
+        assert_eq!(
+            git(&f.repo, &["merge-base", &scratch, &main]),
+            main,
+            "saved scratch must retain the upstream conflict side too"
+        );
         assert_removed(&f, &remove);
     }
 }

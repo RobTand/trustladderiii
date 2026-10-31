@@ -39,6 +39,22 @@ impl Worktrees {
         }
     }
 
+    /// Check publication against current main without rewriting the approved head.
+    pub fn merges_cleanly(&self, main: &CommitId, head: &CommitId) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let output = self.execute(
+            &self.repo,
+            ["merge-tree", "--write-tree", main.as_str(), head.as_str()],
+            None,
+            None,
+        )?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(git_error("publication merge", &output)),
+        }
+    }
+
     /// Compare the two trees, without external diff or text conversion programs.
     pub fn diff(&self, base: &CommitId, head: &CommitId) -> Result<Vec<u8>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;

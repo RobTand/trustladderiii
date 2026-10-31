@@ -185,6 +185,13 @@ pub enum Observation {
         generation: u64,
         sha: String,
     },
+    RebaseConflict {
+        node: NodeId,
+        generation: u64,
+        head: String,
+        target: String,
+        files: Vec<String>,
+    },
     Rebased {
         node: NodeId,
         generation: u64,
