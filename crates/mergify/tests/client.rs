@@ -595,7 +595,7 @@ fn unverified_manual_titles_remain_generic_dequeues() {
     ] {
         check.output.as_mut().unwrap().title = Some(title.into());
         assert_eq!(
-            observe(pr.clone(), &[check.clone()], &pr.head.sha).state,
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha).state,
             QueueState::Dequeued,
             "{title}"
         );
@@ -618,13 +618,13 @@ fn unknown_dequeue_reasons_are_logged_every_time() {
         for _ in 0..2 {
             check.output.as_mut().unwrap().title = Some(TITLE.into());
             check.output.as_mut().unwrap().summary = None;
-            observe(pr.clone(), &[check.clone()], &pr.head.sha);
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha);
             let payload = json!({"version":1,"state":"dequeued","dequeue_reason":{"code":CODE}});
             check.output.as_mut().unwrap().summary = Some(format!(
                 "<span itemprop=\"mergify.v1.{}\"></span>",
                 STANDARD.encode(payload.to_string())
             ));
-            observe(pr.clone(), &[check.clone()], &pr.head.sha);
+            observe(pr.clone(), std::slice::from_ref(check), &pr.head.sha);
         }
         return;
     }
