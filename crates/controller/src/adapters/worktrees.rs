@@ -440,7 +440,7 @@ impl Served {
                     .git
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
-                if !self.git.is_ancestor(&main, &head).map_err(adapter)? {
+                if !self.git.merges_cleanly(&main, &head).map_err(adapter)? {
                     return Err(tl3_worktrees::Error::UnrebasedHead.into());
                 }
                 let expected = expected
@@ -478,7 +478,7 @@ impl Served {
                 };
                 let resolution = self
                     .git
-                    .merge_resolution(branch, checkout, &target)
+                    .merge_resolution(branch, checkout, &target, writable)
                     .map_err(adapter)?;
                 let result = if let Some(files) = resolution {
                     RebaseResult::Conflicted { head, files }

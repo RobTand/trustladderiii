@@ -2135,13 +2135,24 @@ impl Controller {
                 node,
                 generation,
                 sha,
-            } => Event::Reply {
-                node,
-                generation,
-                reply: Reply::RebaseClean {
-                    head: self.head(node, &sha)?,
-                },
-            },
+            } => {
+                let current = &world.nodes[node.0 as usize];
+                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                {
+                    return Ok(None);
+                }
+                commit.rows.push(RowChange::Delete {
+                    table: "rebase_conflicts".into(),
+                    id: node.0.to_string(),
+                });
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RebaseClean {
+                        head: self.head(node, &sha)?,
+                    },
+                }
+            }
             Observation::Merged {
                 node,
                 sha,

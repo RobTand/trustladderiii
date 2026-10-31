@@ -60,7 +60,7 @@ pub enum Error {
     WorktreeOccupied,
     #[error("worktree has uncommitted or untracked files")]
     DirtyWorktree,
-    #[error("refusing to publish a head that does not contain current main")]
+    #[error("refusing to publish a checked head that conflicts with current main")]
     UnrebasedHead,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
@@ -832,26 +832,25 @@ impl Worktrees {
         Ok(())
     }
 
-    /// Resume only a merge onto this effect's recorded main, never another operation's merge.
+    /// Replace an unfinished merge when a newer rebase effect records another main.
     pub fn merge_resolution(
         &self,
         name: &BranchName,
         path: &Path,
         target: &CommitId,
+        writable: bool,
     ) -> Result<Option<Vec<PathBuf>>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.verify_repository(path)?;
-        let resolution = self.merge_resolution_locked(path, target)?;
-        if resolution.is_some() {
-            self.verify_checkout(path, name)?;
-        }
-        Ok(resolution)
+        self.merge_resolution_locked(name, path, target, writable)
     }
 
     fn merge_resolution_locked(
         &self,
+        name: &BranchName,
         path: &Path,
         target: &CommitId,
+        writable: bool,
     ) -> Result<Option<Vec<PathBuf>>, Error> {
         let output = self.run(
             path,
@@ -869,8 +868,12 @@ impl Worktrees {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(Error::Io),
         };
+        self.verify_checkout(path, name)?;
         if head.trim() != target.as_str() {
-            return Err(Error::WorktreeOccupied);
+            if writable {
+                self.run(path, "abort superseded merge", ["merge", "--abort"])?;
+            }
+            return Ok(None);
         }
         let output = self.run(
             path,
@@ -890,7 +893,10 @@ impl Worktrees {
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.verify_checkout(path, name)?;
-        if self.merge_resolution_locked(path, target)?.is_none() {
+        if self
+            .merge_resolution_locked(name, path, target, true)?
+            .is_none()
+        {
             self.require_clean(path)?;
             let output = self.execute(
                 path,
@@ -904,7 +910,10 @@ impl Worktrees {
                 None,
                 None,
             )?;
-            if self.merge_resolution_locked(path, target)?.is_none() {
+            if self
+                .merge_resolution_locked(name, path, target, true)?
+                .is_none()
+            {
                 return Err(git_error("prepare conflict resolution", &output));
             }
         }
