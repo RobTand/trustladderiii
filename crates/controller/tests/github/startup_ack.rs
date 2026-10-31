@@ -189,7 +189,7 @@ impl Respond for Passes {
         if self.release.lock().unwrap().recv().unwrap() {
             self.api.respond(request)
         } else {
-            ResponseTemplate::new(401)
+            ResponseTemplate::new(422)
         }
     }
 }
@@ -215,7 +215,7 @@ fn loop_scenarios(database: &mut support::Database) {
         calls.recv_timeout(Duration::from_secs(10)).unwrap();
         if scenario == "stop" {
             control.stop();
-            assert!(finished.try_recv().is_err(), "Stop must join the outstanding fetch");
+            assert!(finished.recv_timeout(Duration::from_millis(250)).is_err(), "Stop must join the outstanding fetch");
             release.send(true).unwrap();
             finished.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
             running.join().unwrap();
