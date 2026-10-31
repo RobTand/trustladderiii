@@ -6,12 +6,12 @@ use hmac::{Hmac, Mac};
 #[path = "../../../../store/tests/support/mod.rs"]
 mod database;
 
-fn ping(source: &Webhooks, id: usize) {
+fn ping(address: SocketAddr, id: usize) {
     let body = b"{}";
     let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
     mac.update(body);
     let signature = hex::encode(mac.finalize().into_bytes());
-    let mut stream = TcpStream::connect(source.address()).unwrap();
+    let mut stream = TcpStream::connect(address).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     write!(stream, "POST /github/events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 2\r\nX-GitHub-Event: ping\r\nX-GitHub-Delivery: pending-{id}\r\nX-Hub-Signature-256: sha256={signature}\r\n\r\n{{}}").unwrap();
     let mut reply = String::new();
@@ -28,10 +28,12 @@ fn pending_wakes_are_coalesced_before_source_run() {
     let mut database = database::Database::start();
     let settings = database.create("pending_wakes");
     let source = Webhooks::bind("127.0.0.1:0".parse().unwrap(), Store::open(&settings).unwrap(), bootstrap(), b"test-secret".to_vec(), None).unwrap();
-    for id in 0..32 { ping(&source, id); }
+    for id in 0..32 { ping(source.address(), id); }
     assert_eq!(Store::open(&settings).unwrap().pending_ingress().unwrap().len(), 32);
-    assert_eq!(source.receiver.try_iter().count(), 1, "pre-registration deliveries must occupy one wake slot");
-    drop(source);
+    source.control.stop();
+    let (sender, receiver) = mpsc::channel();
+    source.run(sender).unwrap();
+    assert_eq!(receiver.try_iter().count(), 1, "pre-registration deliveries must occupy one wake slot");
     database.stop();
 }
 
@@ -56,22 +58,22 @@ fn fetch_panic_returns_reader_and_receipt_retries() {
     let settings = database.create("fetch_panic");
     let (entered, calls) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
-    let mut source = Webhooks::bind_with_fetcher(Store::open(&settings).unwrap(), Arc::new(PanicOnce { calls: AtomicUsize::new(0), entered, release: Mutex::new(blocked) })).unwrap();
-    source.control.gap();
+    let source = Webhooks::bind_with_fetcher(Store::open(&settings).unwrap(), Arc::new(PanicOnce { calls: AtomicUsize::new(0), entered, release: Mutex::new(blocked) })).unwrap();
+    let address = source.address();
+    let control = source.control();
+    let (sender, wakes) = mpsc::channel();
+    let running = thread::spawn(move || source.run(sender));
     assert_eq!(calls.recv_timeout(Duration::from_secs(10)).unwrap(), 0);
     release.send(()).unwrap();
     assert!(calls.recv_timeout(Duration::from_millis(250)).is_err(), "a panic must not start a timed retry");
-    // Gap is a receiver event, and must recover after the panic returned its reader.
-    source.control.gap();
+    control.gap();
     assert_eq!(calls.recv_timeout(Duration::from_secs(10)).unwrap(), 1);
-    ping(&source, 1);
+    ping(address, 1);
+    wakes.recv_timeout(Duration::from_secs(10)).unwrap();
     release.send(()).unwrap();
-    loop {
-        source.receiver.recv_timeout(Duration::from_secs(10)).unwrap();
-        if Store::open(&settings).unwrap().ingress_cursor("github-catch-up").unwrap().is_some() { break; }
-    }
-    source.control.stop();
-    source.thread.take().unwrap().join().unwrap().unwrap();
-    drop(source);
+    wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(Store::open(&settings).unwrap().ingress_cursor("github-catch-up").unwrap().is_some());
+    control.stop();
+    running.join().unwrap().unwrap();
     database.stop();
 }
