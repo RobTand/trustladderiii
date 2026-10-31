@@ -21,8 +21,9 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]))
                  for check in request["plan"])
     results = run_checks(repo, request["base"], request["head"], plan,
-                         container=Container(request["image"]))
+                         container=Container(request["image"]), reviewed=request.get("reviewed"))
     report = {"schema": "tl3.checks.v1", "effect_key": request["effect_key"],
               "base": request["base"], "head": request["head"],
+              "reviewed": request.get("reviewed"),
               "results": json.loads(result_json(results))}
     print("TL3_CHECKS " + json.dumps(report, sort_keys=True), flush=True)

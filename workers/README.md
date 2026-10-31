@@ -410,6 +410,55 @@ headers and the entire response. Recall accepts at most 64 KiB of decoded respon
 bytes, then returns at most 20 memories, 4,096 characters per memory, and
 15,000 JSON bytes across the returned memories.
 
+## Evaluate the comment classifier
+
+Submit one pass through PrismaBuild from a clean commit. The key file is only
+on dl380g10, so this live action requires `--tag dl380g10`:
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+  --cwd "$PWD" --tag dl380g10 --cpus 2 --demand mem_gb=4 --priority -10 \
+  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
+  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
+  --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 --detach -- \
+  /home/rob/.local/bin/uv run --project workers --locked --no-editable \
+  --python 3.14+gil python -m tl3_workers.classifier_eval \
+  --config /home/rob/.config/tl3/tl3.toml
+```
+
+The command reads `models.comment_classifier[0]` and `models.key_file` from the
+runtime config. Only the existing worker model factory opens the key file.
+The evaluator uses the packaged classifier prompt, Deep Agents profile, reply
+schema and state checks. It takes one model turn per case, with no tools,
+retries or repair turns. It does not change the prompt.
+
+The packaged set has 48 labelled comments and request states. `--cases FILE`
+selects another JSON set. Each case has a unique `id`, a `category`, classifier
+`inputs`, and an `expected` reply. Labels score kind, answer choice, question ID,
+credit amount and revert flag where present. Free wording in clarification
+questions, complaint summaries, guidance and replacement text is checked by the
+existing contract, not by exact string matching. This does not judge whether
+free wording preserves every detail of the comment.
+
+Stdout is one JSON report with accuracy per expected kind in `by_kind` and per
+comment category in `by_category`, every miss, every case result, model settings,
+prompt and set hashes, and token usage. LangChain
+maps the proxy's streamed `usage` fields to input, output and total tokens;
+the report names them `prompt_tokens`, `completion_tokens` and `total_tokens`.
+Missing usage is recorded as null per case. Totals then cover only cases with
+usage, and `usage_complete` is false. A report never claims a pass with missing
+usage. Stderr shows progress counts without provider diagnostics.
+
+A stop or change_request is a destructive miss unless the label expects that
+same kind. This includes either kind returned as an answer, which must match
+both the labelled kind and answer choice. The report flags destructive misses
+even if the reply fails the state contract. Exit 0 means every label matched
+and every usage record arrived. Exit 1 means ordinary misses. Exit 2 means
+setup or report writing failed. Exit 3 means any destructive miss or missing
+usage. `--output FILE` also saves the full JSON report.
+Retain it with the PrismaBuild logs. The report itself isn't imported into
+MLflow.
+
 ## MLflow traces
 
 Set `TL3_MLFLOW_CONFIG` to an absolute TOML path containing an `[mlflow]`

@@ -1,0 +1,183 @@
+{
+  "sandbox_pull": {
+    "number": 29,
+    "url": "https://github.com/RobTand/tl3-sandbox/pull/29",
+    "author": "tl3-robtand[bot]",
+    "branch": "tl3/mergify-merge-account",
+    "head": "446ebf550f036527942c8bbeb697f0f0e0dbe76f",
+    "files": [
+      ".mergify.yml"
+    ],
+    "labels": [],
+    "reviews": [],
+    "tl3_approval_posted": false
+  },
+  "consent": {
+    "date": "2026-10-30",
+    "quote": "Everything that you want approved is approved.",
+    "scope": "Coordinator applies Rob consent to Mergify merging RobTand/tl3-sandbox PRs as RobTand only."
+  },
+  "actions": [
+    {
+      "kind": "red",
+      "action_key": "f0eb96ce71d968a4d3ef4dc072b2c7605d663caaf19c1697147782ea15268b03",
+      "host": "sparky",
+      "source_commit": "f30effcbf6216efc99cdd5ae4445f1e33b9f41f9",
+      "exit_code": 1,
+      "action_exit_code": 101,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "c70da45f1115993ea237734fab8165585689a3d5e56abe44e82730f204bc74fc",
+      "stderr_sha256": "b12d9d4b99008d3873d50d91078b968746f979cbfc96f5de5616fa8814dd4577",
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "payload_sha256": null,
+      "summaries": [
+        "not yet implemented: post sandbox Git objects with the App installation token",
+        "not yet implemented: post sandbox Git objects with the App installation token",
+        "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "kind": "green-dl380g10",
+      "action_key": "77c5a2d24b80da7b18c1209980f5a2399f89ecb612ce1ef19c4c1b145a68422c",
+      "host": "dl380g10",
+      "source_commit": "5c9bab5e368054a91fbde325dcdf72702d5e8e58",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "e72ebfc0cd400aed1aec7bd510ce2e8db63cc6d89db8542e38fe44536615458e",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "2c47ef248498ab62e105b376a1e79508f95b925f9f958da9b54b902092357832",
+      "payload_sha256": "72c0678e2d91ff8fb9c2f6aab1d38120b239bee4ea577dd9a27cc06048601d8c",
+      "summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.03s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "Ran 28 tests in 0.040s",
+        "PASS: Bash syntax for 10 documented command blocks; no trials executed"
+      ]
+    },
+    {
+      "kind": "green-sparky",
+      "action_key": "105342cd90d7f9238223566220241655e464576b5fc128419bd0f081d1a40983",
+      "host": "sparky",
+      "source_commit": "5c9bab5e368054a91fbde325dcdf72702d5e8e58",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "d8c22907ed0d53d882f4c6691eb62e5501d51c50d8a79916a8b9196d445e1322",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "receipt_verified": true,
+      "receipt_sha256": "1258d3be2766f94c87cd324b1bcc3f1421f34b0b0e0213a112a12106455636b1",
+      "payload_sha256": "081a31d738c7c8abe4c1458ed9d77201e5b411ddbd0314241bb2889073b4a650",
+      "summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.91s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "Ran 28 tests in 0.009s",
+        "PASS: Bash syntax for 10 documented command blocks; no trials executed"
+      ]
+    },
+    {
+      "kind": "green-sparklina",
+      "action_key": "88fd2329df655370b38bbd5bed8a5a6b9dd44621a30a16d69d04070a31b63a03",
+      "host": "sparklina",
+      "source_commit": "5c9bab5e368054a91fbde325dcdf72702d5e8e58",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "b3c92d9df81cc8fcc7978b47082034f71d90ab5acee77f4deab5e4fae73be5e7",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "receipt_verified": true,
+      "receipt_sha256": "93391ef6107615a4cc7eef7244cb6dd483abe52258a00233631e9cbedb2237b5",
+      "payload_sha256": "a71a2ad80e5e90e9b883ed6298b59fea4b4bf76ba84643f85391e319e8615024",
+      "summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.10s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "Ran 28 tests in 0.009s",
+        "PASS: Bash syntax for 10 documented command blocks; no trials executed"
+      ]
+    },
+    {
+      "kind": "live-checker-before-sandbox-merge",
+      "action_key": "b89e527901b1b27db7d10ac5f3ec2788061b30c830c461077d1ea177f7d8e1c6",
+      "host": "dl380g10",
+      "source_commit": "5c9bab5e368054a91fbde325dcdf72702d5e8e58",
+      "exit_code": 1,
+      "action_exit_code": 1,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "6571893714c11280d6de6a5235d3352c200b02c4d87f69f389a8121f4338ec1e",
+      "stderr_sha256": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f",
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "payload_sha256": null,
+      "summaries": [
+        "files..mergify.yml: expected \"6654b4c15efc814e2e7ff84dcdffc245ec42a19ce7727b4954153d3f5231ac13\", got \"a348e1553d2b4bbad452bdbb326b704fdd422e888ed5e7917700eb60994adb6c\"",
+        "FAIL: 1 difference(s) or incomplete reads"
+      ]
+    },
+    {
+      "kind": "open-sandbox-pr",
+      "action_key": "109b8db09a7f06a0d32c39561ee8f8284abe9d84630914625b3e5bacdc305c92",
+      "host": "dl380g10",
+      "source_commit": "5c9bab5e368054a91fbde325dcdf72702d5e8e58",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "641df253c81207650bd0d0c83e6defc066a01201f9d7d08b967c1f1e56c3bf3f",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "2f473352a0f02e18159bc0d8bc1ff5ebd40420c0eb486ce684697b10cfc532e1",
+      "payload_sha256": "a71b0d9ceed3e24c494c3b31f3c18b76589c4a6c2c9d9df444aef470bcb5ba49",
+      "summaries": [
+        "sandbox PR 29",
+        "sandbox head 446ebf550f036527942c8bbeb697f0f0e0dbe76f"
+      ]
+    },
+    {
+      "kind": "final-doc-syntax",
+      "action_key": "3b19bb7643c8552305fafa8d2c229687cc036952fd239c63a6234a4a41083b16",
+      "host": "dl380g10",
+      "source_commit": "7e8df37bff71a510c34bd15c915de548b454bcf2",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "14e619ca044936b29403cee64a136fa49cbb43f65696ff3e0b1d6b9c58ef4747",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "b8ae71f490be7e8f2b957ebf0e87cbd72c47eb05ec34b60a2a45575245d40fc6",
+      "payload_sha256": "ba9b8e61e93a21bbbc915cb163578f41607a4ddec43ad4adbea3c42f5876d5df",
+      "summaries": [
+        "PASS: Bash syntax for 10 documented command blocks; no trials executed"
+      ]
+    }
+  ],
+  "skips": [],
+  "missing_tools": [],
+  "phase_b": "Prepared only; successful queue merge and refusal trial not run.",
+  "live_checker": "One expected .mergify.yml hash difference until sandbox #29 merges."
+}
