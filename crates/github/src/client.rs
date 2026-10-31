@@ -638,6 +638,30 @@ impl GitHub {
         body: &str,
     ) -> Result<Comment, Error> {
         let body = marked_body(effect_key, body)?;
+        self.post_formatted_comment(repo, number, effect_key, body)
+            .await
+    }
+
+    /// Bot commands must start the comment; keep the reconciliation marker below it.
+    pub async fn post_command_comment(
+        &self,
+        repo: &str,
+        number: u64,
+        effect_key: &str,
+        command: &str,
+    ) -> Result<Comment, Error> {
+        let marker = comment_marker(effect_key, command)?;
+        self.post_formatted_comment(repo, number, effect_key, format!("{command}\n\n{marker}"))
+            .await
+    }
+
+    async fn post_formatted_comment(
+        &self,
+        repo: &str,
+        number: u64,
+        effect_key: &str,
+        body: String,
+    ) -> Result<Comment, Error> {
         let _guard = self.0.comments.lock().await;
         if let Some(comment) = self.reconcile_comments(repo, number, effect_key).await? {
             return Ok(comment);
@@ -1119,14 +1143,18 @@ impl GitHub {
     }
 }
 
-fn marked_body(effect_key: &str, body: &str) -> Result<String, Error> {
+fn comment_marker(effect_key: &str, body: &str) -> Result<String, Error> {
     if effect_key.is_empty() || body.contains("<!-- tl3:effect:") {
         return Err(Error::Config(
             "comment needs a nonempty effect key and no embedded markers",
         ));
     }
+    Ok(GitHub::marker(effect_key))
+}
+
+fn marked_body(effect_key: &str, body: &str) -> Result<String, Error> {
     // A dangling Markdown code block or HTML comment could expose or swallow the marker.
-    Ok(format!("{}\n\n{body}", GitHub::marker(effect_key)))
+    Ok(format!("{}\n\n{body}", comment_marker(effect_key, body)?))
 }
 
 fn repo_path(repo: &str) -> Result<String, Error> {

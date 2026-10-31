@@ -60,6 +60,8 @@ See Mergify's [batch checks](https://docs.mergify.com/merge-queue/batches/#in-pl
 - `Mergify::new(github)` takes an installation client with issue write permission.
 - `queue(repo, number, approved_head)` requires an open PR on that head, then
   adds `QUEUE_LABEL`, `tl3-queue`. Adding an existing label is harmless.
+- `requeue(repo, number, approved_head, effect_key)` checks the open PR's head,
+  then posts the queue command as the App, with its effect marker below it.
 - `dequeue(repo, number)` removes that label. An absent label is harmless.
 - `read(repo, number, approved_head)` fetches the PR and its head's checks, then
   rereads the PR. A concurrent push or merge returns `ChangedDuringRead`.
@@ -69,7 +71,16 @@ See Mergify's [batch checks](https://docs.mergify.com/merge-queue/batches/#in-pl
 Retrying a label operation converges without an effect key. A successful write
 confirms the label change, not queue membership. Reconcile through `read`.
 The controller must serialize opposing queue and dequeue effects and handle a
-push between queue's preflight read and label write.
+push between queue's preflight read and label write. Before requeueing, it waits
+for the `dequeued` label or the served repo's `Rule: Queue TL3-approved PRs` check
+to conclude. `Observation.dequeue_rule_concluded` rejects an older rule result
+when the queue check supplies its dequeue time.
+
+Mergify's [queue command](https://docs.mergify.com/commands/queue/) resets a dequeued
+PR; the older requeue command is deprecated. Its [command syntax](https://docs.mergify.com/commands/)
+requires the command to start the comment. An HTML marker before it would prevent
+execution. The adapter journals dispatch before posting, and a command receipt
+alone does not confirm queue acceptance.
 
 `observe(pull_request, checks, approved_head)` is the pure observation function.
 It selects the newest `Mergify Merge Queue` check on this head from Mergify's

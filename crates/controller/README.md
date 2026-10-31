@@ -1334,12 +1334,20 @@ Each rerun records its run ID and attempt before the POST. Recovery reads GitHub
 unresolved write stays pending for the existing looks and incident machinery.
 The kernel's existing infrastructure retry bound still applies.
 
-A fresh enqueue removes an existing queue label before adding it again, including
-when Mergify's queue check has returned to ready after a dequeue. Acceptance still
-requires Mergify's queue evidence. A label write alone leaves the effect pending;
-missing acceptance raises the usual incident. Missing Actions permission raises a
-setup incident naming **Actions: Read and write**; see
-[App setup](../../deploy/github-app/README.md#workflow-rerun-permission).
+A queue retry waits for Mergify's `dequeued` label or the current head's
+`Rule: Queue TL3-approved PRs` check to conclude. A rule result older than the
+queue's dequeue check does not release the wait. When the queue label already
+exists, TL3 posts Mergify's documented queue command as its App instead of toggling
+the label. The command starts the comment; its effect marker follows it.
+
+The adapter records command dispatch before posting. A restart or uncertain
+response cannot send the command twice. Explicit HTTP refusals permit a retry;
+unknown outcomes stay pending. Acceptance requires evidence that the PR re-entered
+the queue. Missing completion or acceptance uses the existing incident allowance;
+a second infrastructure dequeue uses the existing retry bound.
+
+Missing Actions permission raises a setup incident naming **Actions: Read and
+write**; see [App setup](../../deploy/github-app/README.md#workflow-rerun-permission).
 
 Run `bash crates/controller/tools/verify-head-checks.sh` through PrismaBuild for the
 focused D4 scenarios. The Mergify and publishing suites cover the surrounding flow.

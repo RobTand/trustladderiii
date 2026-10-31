@@ -205,7 +205,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
 }
 
 #[derive(Clone)]
-struct Clock(std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
+pub(super) struct Clock(pub(super) std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
 impl tl3_controller::clock::Clock for Clock {
     fn now(&self) -> std::time::SystemTime {
         self.0.get()
@@ -265,13 +265,13 @@ pub(super) fn label_present(settings: &tl3_config::Store, lag: bool) {
     drain(&mut controller);
     assert_eq!(
         api.state.lock().unwrap().deletes,
-        1,
-        "remove the existing label before re-adding it"
+        0,
+        "a queue command does not remove the existing label"
     );
     assert_eq!(
         api.state.lock().unwrap().posts,
         2,
-        "the retry must cause a real label transition"
+        "the retry must send a real queue command"
     );
     if lag {
         assert_eq!(

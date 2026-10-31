@@ -2,6 +2,8 @@
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
 mod head_checks;
+#[path = "mergify/requeue.rs"]
+mod requeue;
 mod support;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -76,6 +78,12 @@ struct State {
     checks: Value,
     label: bool,
     posts: usize,
+    requeues: usize,
+    dequeued: bool,
+    queue_rule: Value,
+    comments: Vec<Value>,
+    command_lost_response: bool,
+    requeue_order: Vec<&'static str>,
     fail_reads: bool,
     rate_limit: Option<u16>,
     http_failure: Option<u16>,
@@ -110,6 +118,15 @@ impl State {
             checks: fixture("waiting", "checks"),
             label: false,
             posts: 0,
+            requeues: 0,
+            dequeued: false,
+            queue_rule: json!({"id":910,"name":"Rule: Queue TL3-approved PRs",
+                "status":"completed","conclusion":"failure",
+                "completed_at":"2026-10-31T23:00:00Z",
+                "app":{"id":10562,"slug":"mergify"}}),
+            comments: vec![],
+            command_lost_response: false,
+            requeue_order: vec![],
             fail_reads: false,
             rate_limit: None,
             http_failure: None,
@@ -137,6 +154,9 @@ impl State {
         for check in checks.as_array_mut().unwrap() {
             check["head_sha"] = self.pull["head"]["sha"].clone();
         }
+        let mut rule = self.queue_rule.clone();
+        rule["head_sha"] = self.pull["head"]["sha"].clone();
+        checks.as_array_mut().unwrap().push(rule);
         checks
             .as_array_mut()
             .unwrap()
@@ -244,9 +264,28 @@ impl Respond for Api {
                 }
                 ResponseTemplate::new(200).set_body_json(state.pull.clone())
             },
+            ("GET", "/repos/owner/sandbox/issues/100/comments") => ResponseTemplate::new(200).set_body_json(json!(state.comments)),
+            ("POST", "/repos/owner/sandbox/issues/100/comments") => {
+                assert_eq!(request.headers.get("authorization").unwrap(), "Bearer disposable");
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                assert!(body["body"].as_str().unwrap().starts_with("@mergifyio queue\n"));
+                let comment = json!({"id":1000 + state.requeues,"body":body["body"],
+                    "user":{"id":123,"login":"factory[bot]"},
+                    "created_at":"2026-10-31T22:20:05Z","updated_at":"2026-10-31T22:20:05Z",
+                    "issue_url":"local"});
+                state.comments.push(comment.clone());
+                state.posts += 1;
+                state.requeues += 1;
+                state.requeue_order.push("queue");
+                if state.workflow.is_some() && !state.head_checks.is_empty() && state.required {
+                    state.queued_before_rerun |= state.reruns == 0;
+                }
+                if !state.lag { state.checks = fixture("running", "checks"); }
+                ResponseTemplate::new(if state.command_lost_response { 503 } else { 201 }).set_body_json(comment)
+            }
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
                 "number":100, "title":"change", "state":state.pull["state"], "updated_at":state.pull["updated_at"],
-                "labels": if state.label {json!([{"name":"tl3-queue"}])} else {json!([])},
+                "labels": ([state.label.then(|| json!({"name":"tl3-queue"})), state.dequeued.then(|| json!({"name":"dequeued"}))].into_iter().flatten().collect::<Vec<_>>()),
                 "pull_request":{"url":"local"}})),
             ("POST", "/repos/owner/sandbox/issues/100/labels") => {
                 assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap(), json!({"labels":["tl3-queue"]}));
@@ -1826,7 +1865,7 @@ fn executor_recovery() {
     let posts = api.state.lock().unwrap().posts;
     api.state.lock().unwrap().lag = false;
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
-    assert_eq!(api.state.lock().unwrap().deletes, 1);
+    assert_eq!(api.state.lock().unwrap().deletes, 0);
     assert_eq!(
         api.state.lock().unwrap().posts,
         posts + 1,
@@ -2363,6 +2402,15 @@ fn legacy_intent_ignores_completed_at() {
 fn main() {
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--requeue-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        requeue::scenario(&database.create("requeue"), &mode);
+        database.stop();
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2614,6 +2662,14 @@ fn main() {
     for lag in [false, true] {
         head_checks::label_present(&database.create(&format!("head_label_{lag}")), lag);
     }
+    for mode in [
+        "delayed-label",
+        "delayed-rule",
+        "lost-response",
+        "no-acceptance",
+    ] {
+        requeue::scenario(&database.create(&format!("requeue_{mode}")), mode);
+    }
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
     queue_failure(&database.create("conflict"), true, false);
@@ -2655,5 +2711,5 @@ fn main() {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
     database.stop();
-    println!("82 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("86 Mergify scenarios passed; no skips; no live upstream calls");
 }
