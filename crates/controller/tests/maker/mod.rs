@@ -112,12 +112,12 @@ fn fixture(
     (config, worktree, base)
 }
 
-struct Workers {
-    real: Supervisor,
-    fake: adapters::workers::Fake,
+struct Workers<R = Supervisor, F = adapters::workers::Fake> {
+    real: R,
+    fake: F,
     review: bool,
 }
-impl Workers {
+impl<R, F> Workers<R, F> {
     fn plan(completion: &mut Completion) {
         for observation in &mut completion.observations {
             if let Observation::Plan { paths, .. } = observation {
@@ -126,7 +126,7 @@ impl Workers {
         }
     }
 }
-impl Executor for Workers {
+impl<R: Executor, F: Executor> Executor for Workers<R, F> {
     fn look(
         &mut self,
         delivery: &Delivery,
@@ -1029,4 +1029,10 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
         )
         .unwrap();
     while controller.drive_once().unwrap() {}
+}
+
+pub(super) fn router_regression(look: bool) {
+    let mut router = Workers { real: support::executor_probe::Probe, fake: support::executor_probe::Probe, review: true };
+    if look { support::executor_probe::assert_look(&mut router); }
+    else { support::executor_probe::assert_retire_delivery(&mut router); }
 }

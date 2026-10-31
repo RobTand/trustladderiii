@@ -1,7 +1,6 @@
 #[path = "fixtures/bell/mod.rs"]
 mod bell;
 use bell::Bell;
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 use std::{
     collections::BTreeSet,
@@ -1247,11 +1246,11 @@ fn abandoned_inputs_are_removed() {
     );
 }
 
-struct Workers {
-    fake: adapters::workers::Fake,
+struct Workers<F = adapters::workers::Fake> {
+    fake: F,
     head: String,
 }
-impl Executor for Workers {
+impl<F: Executor> Executor for Workers<F> {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         let mut completion = self.fake.execute(delivery)?;
         for observation in &mut completion.observations {
@@ -1613,6 +1612,12 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--router-regression") {
+        let mut router = Workers { fake: support::executor_probe::Probe, head: "a".repeat(40) };
+        support::executor_probe::assert_retire_delivery(&mut router);
+        return;
+    }
+
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
         source_skips_bad_waits();

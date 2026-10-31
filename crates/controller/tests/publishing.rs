@@ -1,4 +1,3 @@
-#[path = "../../store/tests/support/mod.rs"]
 mod support;
 mod worktree_fixture;
 
@@ -85,12 +84,12 @@ fn check_observation(f: &Fixture, d: &Delivery, head: String) -> Observation {
         run: check_plan(f, base(f, d)),
     }
 }
-struct Workers {
-    real: Supervisor,
-    fake: adapters::workers::Fake,
+struct Workers<R = Supervisor, F = adapters::workers::Fake> {
+    real: R,
+    fake: F,
     fixture: Arc<Fixture>,
 }
-impl Executor for Workers {
+impl<R: Executor, F: Executor> Executor for Workers<R, F> {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if matches!(
             d.output,
@@ -1050,6 +1049,13 @@ fn publication_recovery() {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--router-regression") {
+        let root = tempfile::tempdir().unwrap();
+        let mut router = Workers { real: support::executor_probe::Probe, fake: support::executor_probe::Probe, fixture: Arc::new(Fixture::create(root.path())) };
+        support::executor_probe::assert_retire_delivery(&mut router);
+        return;
+    }
+
     if let Some(mode) = env::args().nth(1) {
         let python = prepare_workers();
         let mut database = support::Database::start();
