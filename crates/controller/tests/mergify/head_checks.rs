@@ -312,6 +312,8 @@ fn refused_then_retry(mode: &str) {
         let mut state = api.state.lock().unwrap();
         delivery.head_sha = Some(state.pull["head"]["sha"].as_str().unwrap().into());
         state.checks = fixture("live-dequeued", "checks");
+        state.pull["mergeable"] = json!(true);
+        state.pull["mergeable_state"] = json!("clean");
         state.head_checks = vec![json!({"id":900,"name":"Sandbox tests",
             "head_sha":delivery.head_sha,"status":"completed","conclusion":"cancelled",
             "app":{"id":15368,"slug":"github-actions"},"check_suite":{"id":800}})];
@@ -323,6 +325,11 @@ fn refused_then_retry(mode: &str) {
     }
     let mut adapter = api.adapter(root.path(), 1);
     assert!(adapter.execute(&delivery).is_err());
+    assert_eq!(
+        api.state.lock().unwrap().reruns,
+        1,
+        "the first attempt must reach the refused rerun POST"
+    );
     assert_eq!(api.state.lock().unwrap().posts, 0);
     drop(adapter);
     api.state.lock().unwrap().rerun_status = 201;
