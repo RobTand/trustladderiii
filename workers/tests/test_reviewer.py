@@ -429,3 +429,15 @@ def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, revi
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])
     assert result.exit_code == 0, result.stderr
     assert result.events == [{"event": "reply", "role": "reviewer", "reply": {"verdict": "out_of_room"}}]
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_q44_model_cannot_request_a_free_restart(review_request, session_model, tmp_path, with_session):
+    _, responses = session_model
+    responses[:] = [AIMessage(content=json.dumps({"verdict": "out_of_room"}))]
+    if with_session:
+        review_request["session_file"] = str(tmp_path / "reviewer.json")
+    events = []
+    with pytest.raises(ValueError, match="model cannot report reviewer exhaustion"):
+        runtime.run(review_request, events.append)
+    assert not any(event["event"] == "reply" for event in events)

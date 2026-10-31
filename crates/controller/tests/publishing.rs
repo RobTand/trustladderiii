@@ -533,7 +533,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         primary.name = "review-primary".into();
         let mut backup = config.models.maker[0].clone();
         backup.name = "review-backup".into();
-        config.models.reviewer = if mode == "out-of-room-wrap" {
+        config.models.reviewer = if mode == "out-of-room-last" {
             vec![backup, primary]
         } else {
             vec![primary, backup]
@@ -674,7 +674,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                     fresh["operation"]["generation"]
                 );
                 assert_eq!(first["model"]["name"], "review-primary");
-                assert_eq!(fresh["model"]["name"], "review-backup");
+                assert_eq!(
+                    fresh["model"]["name"],
+                    if mode == "out-of-room-last" {
+                        "review-primary"
+                    } else {
+                        "review-backup"
+                    }
+                );
                 assert_eq!(
                     fresh["inputs"]["base_sha"],
                     reviews[0]["inputs"]["base_sha"]
@@ -1111,7 +1118,7 @@ fn main() {
         "review-retry",
         "out-of-room",
         "out-of-room-fix",
-        "out-of-room-wrap",
+        "out-of-room-last",
         "before-enqueue",
         "reports-latest",
         "reports-closed",

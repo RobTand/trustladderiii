@@ -808,3 +808,60 @@ fn q44_fix_round_keeps_the_fresh_reviewer_and_a_new_attempt_resets_it() {
     assert!(run.node().review_restarted);
     assert_eq!(run.node().rechecks, 2);
 }
+
+fn q44_new_head_review(rebase: bool) {
+    let mut run = q44_review();
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::Approved { head: HeadId(1) });
+    assert_eq!(run.phase(), Phase::Queued);
+    if rebase {
+        run.fact(Fact::Conflict);
+        run.reply(Reply::RebaseClean { head: HeadId(2) });
+    } else {
+        run.fact(Fact::PushByOther { head: HeadId(2) });
+    }
+    assert!(
+        !run.node().review_restarted,
+        "a new head gets its own fresh review allowance"
+    );
+    run.reply(CHECKS_PASS);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::Reviewing);
+    assert_eq!(run.node().head, Some(HeadId(2)));
+    assert_eq!(
+        run.node().rechecks,
+        3,
+        "new reviews retain the shared recheck counter"
+    );
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.phase(), Phase::Planning { must_split: true });
+}
+
+#[test]
+fn q44_clean_rebase_starts_a_new_review_allowance() {
+    q44_new_head_review(true);
+}
+
+#[test]
+fn q44_outside_push_starts_a_new_review_allowance() {
+    q44_new_head_review(false);
+}
+
+#[test]
+fn q44_the_same_head_keeps_its_exhaustion_history() {
+    for rebase in [false, true] {
+        let mut run = q44_review();
+        run.reply(Reply::ReviewerOutOfRoom);
+        run.reply(Reply::Approved { head: HeadId(1) });
+        if rebase {
+            run.fact(Fact::Conflict);
+            run.reply(Reply::RebaseClean { head: HeadId(1) });
+        } else {
+            run.fact(Fact::PushByOther { head: HeadId(1) });
+        }
+        assert!(run.node().review_restarted);
+        run.reply(CHECKS_PASS);
+        run.reply(Reply::ReviewerOutOfRoom);
+        assert_eq!(run.phase(), Phase::Planning { must_split: true });
+    }
+}
