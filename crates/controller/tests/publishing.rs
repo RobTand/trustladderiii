@@ -547,6 +547,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             vec![primary, backup]
         };
     }
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![

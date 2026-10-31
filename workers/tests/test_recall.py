@@ -118,3 +118,43 @@ def test_recall_has_no_write_or_endpoint_argument(tmp_path):
         tool, = build_tools(tree, {'recall': 'Recall.'})
         assert 'error' in tool.invoke({'query': 'greeting'})
         assert 'nonempty recall query' in tool.invoke({'query': ' '})
+
+
+def test_recall_reads_separate_key_file_and_sends_bearer(monkeypatch, tmp_path):
+    key = tmp_path / "fixture-hindsight-key"
+    key.write_text("fixture-recall-key\n")
+    key.chmod(0o600)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.headers.get("Authorization") != "Bearer fixture-recall-key":
+            return httpx.Response(401, text="fixture-recall-key")
+        return httpx.Response(200, json={"results": [{"id": "one", "text": "remembered"}]})
+
+    client(monkeypatch, handler)
+    with Worktree(tmp_path) as tree:
+        tree.hindsight_endpoint = "http://hindsight.invalid"
+        tree.hindsight_bank = "tl3"
+        tree.hindsight_key_file = str(key)
+        tool, = build_tools(tree, {"recall": "Recall"})
+        result = tool.invoke({"query": "decisions"})
+    assert result == {"results": [{"id": "one", "text": "remembered"}]}
+    assert "fixture-recall-key" not in json.dumps(result)
+    assert b"fixture-recall-key" not in requests[0].content
+
+
+def test_runtime_passes_recall_key_path_outside_model_inputs(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from tl3_workers import runtime
+    from tl3_workers.roles import ROLES
+
+    seen = []
+    def run(model, request, tree, emit):
+        seen.append(getattr(tree, "hindsight_key_file", None))
+        return {"verdict": "agree", "objections": []}
+    monkeypatch.setitem(ROLES, "audit", replace(ROLES["audit"], run=run, tools={"recall": "Recall"}))
+    monkeypatch.setattr(runtime, "create_model", lambda request: object())
+    runtime.run({"role": "audit", "worktree": str(tmp_path), "inputs": {},
+                 "hindsight_key_file": "/fixture/never/read"}, lambda event: None)
+    assert seen == ["/fixture/never/read"]

@@ -115,9 +115,10 @@ def create_model(request):
     ])
 
 
-def fake_recall(endpoint, bank, query):
+def fake_recall(endpoint, bank, query, key_file):
+    assert key_file is None
     assert bank == 'tl3'
-    assert endpoint == 'http://127.0.0.1:8890/' and query == 'greeting decisions'
+    assert endpoint == 'http://127.0.0.1:9/' and query == 'greeting decisions'
     return {'results': [{'id': 'fixture-memory', 'text': 'Keep the greet interface.'}]}
 
 
@@ -155,7 +156,12 @@ def run_with_mismatch(request, emit):
                 event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
                 marker.touch()
         emit(event)
-    return run_worker(request, emit_reply)
+    try:
+        return run_worker(request, emit_reply)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 with patch.object(runtime, 'create_model', create_model), \

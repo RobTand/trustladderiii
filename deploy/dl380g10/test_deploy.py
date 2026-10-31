@@ -102,6 +102,9 @@ class DeployTests(unittest.TestCase):
             deploy.service(self.home, "controller")
             self.assertEqual(os.environ["TIKTOKEN_CACHE_DIR"], data["workers"]["tiktoken_cache_dir"])
         runtime_config = tomllib.loads((runtime / "tl3.toml").read_text())
+        self.assertEqual(runtime_config["hindsight"].get("api_key_file"), str(credentials / "hindsight-key"))
+        self.assertIn("LoadCredential=hindsight-key:%h/.config/tl3/secrets/hindsight-key",
+                      (deploy.HERE / "units/tl3d.service").read_text())
         self.assertEqual(runtime_config["models"]["key_file"], str(credentials / "model-key"))
         self.assertEqual(runtime_config["github"]["app_credentials_file"], str(credentials / "github-app.json"))
         self.assertEqual(execute.call_args.args[1][-2:], ["--config", str(runtime / "tl3.toml")])
