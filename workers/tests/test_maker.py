@@ -974,3 +974,29 @@ def test_no_change_done_recovers_through_protocol(tmp_path, maker_request):
     assert result.exit_code == 0, result.stderr
     assert result.events[-1] == {'event': 'reply', 'role': 'maker', 'reply': reply}
     assert git(maker_request['worktree'], 'rev-parse', 'HEAD') == before
+
+
+def test_conflict_resolution_commits_merge_even_when_keeping_leaf_tree(maker_request):
+    from tl3_workers.roles import maker
+
+    root = Path(maker_request['worktree'])
+    base = git(root, 'rev-parse', 'HEAD')
+    (root / 'greeting.py').write_text("def greet(): return 'hello'\n")
+    git(root, 'add', '.')
+    git(root, 'commit', '-m', 'Leaf')
+    leaf = git(root, 'rev-parse', 'HEAD')
+    branch = git(root, 'symbolic-ref', '--short', 'HEAD')
+    git(root, 'checkout', '-b', 'upstream', base)
+    (root / 'greeting.py').write_text("def greet(): return 'bonjour'\n")
+    git(root, 'add', '.')
+    git(root, 'commit', '-m', 'Main')
+    target = git(root, 'rev-parse', 'HEAD')
+    git(root, 'checkout', branch)
+    with pytest.raises(subprocess.CalledProcessError):
+        git(root, 'merge', '--no-commit', target)
+    (root / 'greeting.py').write_text("def greet(): return 'hello'\n")
+    head = maker._commit(maker_request, leaf)
+    assert head and head != leaf, 'a resolution retaining the leaf tree must still finish the merge'
+    assert git(root, 'rev-parse', 'HEAD^1') == leaf
+    assert git(root, 'rev-parse', 'HEAD^2') == target
+    assert git(root, 'status', '--porcelain') == ''

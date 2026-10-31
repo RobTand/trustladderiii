@@ -2,6 +2,7 @@
 mod worktree_fixture;
 
 use std::fs;
+use tl3_controller::adapters::worktrees::Real;
 use tl3_controller::{
     adapters::prismabuild::{Check, CheckRun, Kind},
     executor::{Executor, Observation},
@@ -217,5 +218,37 @@ fn failed_review_pin_reaches_the_next_review_reason() {
     assert_eq!(
         serde_json::to_value(&result).unwrap(),
         serde_json::to_value(adapter.execute(&rebase).unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Fixture::create(root.path());
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    let mut adapter = f.adapter();
+    adapter.execute(&prepare).unwrap();
+    let checkout = adapter.checkout(&prepare);
+    let head = commit(&checkout, "shared.txt", "leaf side\n");
+    let target = f.advance_main(true);
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(head.clone());
+    let result = adapter.execute(&push);
+    assert!(
+        matches!(
+            &result,
+            Err(tl3_controller::Error::Permanent {
+                class: "unrebased_head",
+                ..
+            })
+        ),
+        "publishing must refuse a head that does not contain main {target}: {result:?}"
+    );
+    assert!(
+        git(
+            &f.remote,
+            &["for-each-ref", Real::branch(&push).unwrap().as_str()]
+        )
+        .is_empty()
     );
 }
