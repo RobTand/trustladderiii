@@ -862,6 +862,7 @@ def review_fix(maker_request):
         {'kind': 'review_finding', 'id': 'old-review', 'reviewed_sha': 'b' * 40,
          'report': 'An earlier attempt failed.', 'goal_ids': ['greeting']},
     ])
+    inputs['current_review_findings'] = inputs['feedback'][:2]
     reply = {**DONE, 'reproductions': [
         {'finding_id': 'review-4-0', 'tests': ['test_greeting.py::test_empty_name']},
         {'finding_id': 'review-4-1', 'reason': 'This is a documentation correction.'},
@@ -912,3 +913,12 @@ def test_standing_rule_feedback_needs_no_goal_citation(maker_request):
     }]
     validate('maker-input', maker_request['inputs'])
     maker._check_inputs(maker_request['inputs'])
+
+
+def test_maker_uses_controller_selection_of_current_findings(maker_request):
+    inputs = maker_request['inputs']
+    selected = {'kind': 'review_finding', 'id': 'chosen', 'reviewed_sha': 'a' * 40,
+                'report': 'Fix it', 'goal_ids': ['greeting']}
+    inputs.update(round=0, feedback=[selected], current_review_findings=[selected])
+    reply = {**DONE, 'reproductions': [{'finding_id': 'chosen', 'reason': 'Review this manually.'}]}
+    maker._check_reply(inputs, reply)

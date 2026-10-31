@@ -788,8 +788,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         assert_eq!(reports[0].value["results"], reviews[1]["inputs"]["checks"]);
         assert!(
-            !snapshot.rows.iter().any(|r| r.table == "review_reports"),
-            "unused review reports must not accumulate"
+            !snapshot.rows.iter().any(|r| matches!(
+                r.table.as_str(),
+                "review_reports" | "reviews" | "plan_reports"
+            )),
+            "unused worker reports must not accumulate"
         );
     }
     let mut state = server.api.state.lock().unwrap();

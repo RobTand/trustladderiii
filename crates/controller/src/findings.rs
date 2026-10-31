@@ -101,3 +101,49 @@ pub(crate) fn check_report(
     }
     clipped(&lines.join("\n"), MAX_REPORT_CHARS)
 }
+
+pub(crate) struct CurrentReview<'a> {
+    pub head: Option<&'a str>,
+    pub findings: Vec<&'a serde_json::Value>,
+}
+
+pub(crate) fn current_review<'a>(
+    feedback: &'a serde_json::Value,
+    round: u8,
+    head: Option<&'a str>,
+) -> CurrentReview<'a> {
+    let head = head.filter(|_| round == 1);
+    let findings = feedback
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|finding| {
+            finding["kind"] == "review_finding"
+                && head.is_some_and(|sha| finding["reviewed_sha"] == sha)
+        })
+        .collect();
+    CurrentReview { head, findings }
+}
+
+#[cfg(test)]
+mod selection_defects {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn current_findings_require_matching_reviewed_head_and_kind() {
+        let feedback = json!([
+            {"kind":"review_finding", "id":"current", "reviewed_sha":"a"},
+            {"kind":"review_finding", "id":"old", "reviewed_sha":"b"},
+            {"kind":"failed_check", "id":"check", "reviewed_sha":"a"},
+            {"kind":"review_finding", "id":"missing"}
+        ]);
+        for (round, head) in [(0, Some("a")), (0, None), (1, None)] {
+            let current = current_review(&feedback, round, head);
+            assert!(current.head.is_none());
+            assert!(current.findings.is_empty());
+        }
+        let current = current_review(&feedback, 1, Some("a"));
+        assert_eq!(current.head, Some("a"));
+        assert_eq!(current.findings, vec![&feedback[0]]);
+    }
+}
