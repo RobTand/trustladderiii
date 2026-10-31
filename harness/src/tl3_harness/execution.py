@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -9,9 +9,8 @@ import tempfile
 import time
 
 from .model import Check, Kind, Outcome, Result, Verdict, judge
-from dataclasses import replace
 from .report import InvalidReport, decode, parse
-from .trees import changed_existing_tests, added_names, commit, configuration, export, is_test, test_edits, validate_configuration
+from .trees import added_names, changed_existing_tests, commit, configuration, export, is_test, test_edits, validate_configuration
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}

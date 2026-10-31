@@ -130,7 +130,7 @@ class Reporter:
     def pytest_runtest_makereport(self, item, call):
         report = yield
         assertion = (call.when == "call" and call.excinfo is not None
-                     and call.excinfo.errisinstance(AssertionError))
+                     and call.excinfo.errisinstance((AssertionError, pytest.fail.Exception)))
         # Xfail and xpass cannot supply evidence for a named test.
         outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
         missing = missing_name(call.excinfo.value) if call.when == "call" and call.excinfo else None

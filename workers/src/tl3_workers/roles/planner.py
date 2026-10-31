@@ -3,11 +3,10 @@
 from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
-from tl3_workers.forecast import Forecaster
+from tl3_workers.forecast import Forecaster, MAX_FILE_BYTES
 from tl3_harness import Check, Kind
 from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
-from tl3_workers.forecast import MAX_FILE_BYTES
 
 
 def check_reply(inputs, reply):
