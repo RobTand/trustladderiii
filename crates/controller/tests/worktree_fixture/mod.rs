@@ -43,6 +43,7 @@ pub fn identity() -> Repository {
     }
 }
 
+#[allow(dead_code)]
 pub fn age_scratch(repo: &Path, reference: &str) {
     let tree = git(repo, &["rev-parse", &format!("{reference}^{{tree}}")]);
     let output = Command::new("git")
