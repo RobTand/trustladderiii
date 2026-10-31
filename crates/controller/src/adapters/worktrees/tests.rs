@@ -106,3 +106,38 @@ fn prepare_records_accept_legacy_ownership_fields() {
         );
     }
 }
+
+#[test]
+fn worktree_error_classes_distinguish_permanent_failures() {
+    use tl3_worktrees::Error as GitError;
+    for (error, class) in [
+        (GitError::BranchName, "invalid_branch"),
+        (GitError::CommitId, "invalid_commit"),
+        (GitError::Remote, "invalid_remote"),
+        (GitError::WorktreePath, "invalid_worktree_path"),
+        (GitError::Token, "invalid_token"),
+        (GitError::Response, "invalid_response"),
+        (GitError::MissingBranch, "missing_branch"),
+        (GitError::MainBranch, "reserved_branch"),
+        (GitError::WorktreeOccupied, "worktree_occupied"),
+        (GitError::DirtyWorktree, "dirty_worktree"),
+        (GitError::Recovery, "worktree_recovery"),
+    ] {
+        let error = adapter(error);
+        assert!(matches!(error, Error::Permanent { .. }));
+        assert_eq!(crate::looks::failure_class(&error), class);
+    }
+    for error in [
+        GitError::Io,
+        GitError::Spawn,
+        GitError::Poisoned,
+        GitError::Git {
+            operation: "fetch",
+            code: Some(128),
+        },
+    ] {
+        let error = adapter(error);
+        assert!(matches!(error, Error::Adapter(_)));
+        assert_eq!(crate::looks::failure_class(&error), "transport");
+    }
+}

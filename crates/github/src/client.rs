@@ -55,6 +55,38 @@ pub enum Error {
     Response,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureClass {
+    Quota,
+    Permanent(&'static str),
+    Transient(&'static str),
+}
+
+impl FailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quota => "quota",
+            Self::Permanent(class) | Self::Transient(class) => class,
+        }
+    }
+}
+
+impl Error {
+    pub fn failure_class(&self) -> FailureClass {
+        match self {
+            Self::RateLimited { .. } => FailureClass::Quota,
+            Self::Http { status: 401 | 403 } => FailureClass::Permanent("permission"),
+            Self::Http { status: 404 | 410 } => FailureClass::Permanent("not_found"),
+            Self::Http { status: 422 } => FailureClass::Permanent("invalid_request"),
+            Self::Config(_) => FailureClass::Permanent("setup"),
+            Self::Jwt => FailureClass::Permanent("permission"),
+            Self::Http { status: 500..=599 } => FailureClass::Transient("upstream_server"),
+            Self::Response => FailureClass::Transient("invalid_response"),
+            Self::Http { .. } | Self::Transport => FailureClass::Transient("transport"),
+        }
+    }
+}
+
 struct Token {
     value: String,
     expires_at: DateTime<Utc>,

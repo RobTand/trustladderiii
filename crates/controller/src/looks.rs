@@ -1047,6 +1047,16 @@ impl Controller {
                 (s.delivery.generation, seq)
             });
         if let Some(mut state) = cause {
+            if let Some(value) = commit.rows.iter().rev().find_map(|row| match row {
+                RowChange::Put { table, id, value }
+                    if table == "allowances" && id == &state.delivery.key =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            }) {
+                state = serde_json::from_value(value.clone())?;
+            }
             state.incident = Some(id.into());
             state.healthy = false;
             state.due_ms = Some(
@@ -1145,16 +1155,14 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::Quota { .. } => "quota",
+        crate::Error::Permanent { class, .. } => class,
         crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_github::Error>() {
-            Some(tl3_github::Error::Http { status: 401 | 403 }) => "permission",
-            Some(tl3_github::Error::Http { status: 500..=599 }) => "upstream_server",
-            Some(tl3_github::Error::Response) => "invalid_response",
-            _ => "transport",
-        },
+        crate::Error::Adapter(error) => error
+            .downcast_ref::<tl3_github::Error>()
+            .map_or("transport", |error| error.failure_class().as_str()),
         crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
@@ -1182,6 +1190,18 @@ pub(crate) fn incident_summary(
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
+        "not_found" => "could not find the requested resource",
+        "invalid_request" => "rejected the request",
+        "dirty_worktree" => "has uncommitted or untracked files",
+        "invalid_branch" => "rejected an invalid branch name",
+        "invalid_commit" => "rejected an invalid commit id",
+        "invalid_remote" => "rejected an invalid remote",
+        "invalid_worktree_path" => "rejected a path outside its configured root",
+        "invalid_token" => "rejected its installation token",
+        "missing_branch" => "could not find the branch or base",
+        "reserved_branch" => "refused to change the reserved main branch",
+        "worktree_occupied" => "found a path or branch owned by another checkout",
+        "worktree_recovery" => "needs recovery after an interrupted rebase",
         "transport" => "could not be reached",
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
