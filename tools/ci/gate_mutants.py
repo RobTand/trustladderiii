@@ -82,6 +82,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mutant', choices=['all', *MUTANTS])
     args = parser.parse_args()
+    subprocess.run(['uv', 'sync', '--locked', '--python', '3.14+gil', '--project', 'workers'],
+                   cwd=ROOT, check=True)
     for name in MUTANTS if args.mutant == 'all' else [args.mutant]:
         run_mutant(name)
 
