@@ -602,7 +602,8 @@ impl Adapter {
                     .filter(|path| path.contains('/'))
                     .cloned(),
             );
-            let draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy) {
+            let mut draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy)
+            {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected)
                     if matches!(
@@ -623,6 +624,35 @@ impl Adapter {
                 }
                 Err(error) => return Err(error),
             };
+            if matches!(notice, Some(Notice::Incident { .. })) {
+                let id = delivery
+                    .question_context
+                    .as_ref()
+                    .and_then(|context| context["incident_id"].as_str())
+                    .or_else(|| {
+                        delivery
+                            .note
+                            .as_deref()
+                            .and_then(|note| {
+                                note.split_once("clear incident ").map(|(_, tail)| tail)
+                            })
+                            .map(|tail| {
+                                tail.trim_end_matches(|c: char| !(c.is_ascii_digit() || c == '.'))
+                            })
+                            .and_then(|tail| {
+                                tail.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+                                    .next()
+                            })
+                    })
+                    .ok_or(Error::Invalid("incident id missing"))?;
+                draft.push_str(&format!("\n\nReply with \"clear incident {id}\" on https://github.com/{repo}/issues/{} or on the request's issue after fixing the cause.", delivery.issue));
+            }
+            if matches!(notice, Some(Notice::Summary(_)))
+                && let Some(note) = &delivery.note
+            {
+                draft.push_str("\n\n");
+                draft.push_str(note);
+            }
             self.fence(delivery)?;
             self.runtime.block_on(client.post_comment(
                 &repo,

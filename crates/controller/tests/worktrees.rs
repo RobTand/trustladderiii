@@ -1083,6 +1083,78 @@ fn remove_ignores_unrelated_journal_records() {
     assert_removed(&f, &remove);
 }
 
+fn dirty_writes_are_permanent() {
+    for kind in [EffectKind::Push, EffectKind::StartRebase] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Fixture::create(root.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        f.advance_main(false);
+        fs::write(checkout.join("shared.txt"), "keep tracked\n").unwrap();
+        fs::write(checkout.join("unfinished.txt"), "keep untracked\n").unwrap();
+        let mut delivery = f.delivery(kind, 2);
+        delivery.head_sha = Some(f.head(&prepare));
+        assert!(
+            matches!(
+                f.adapter().execute(&delivery),
+                Err(tl3_controller::Error::Permanent {
+                    class: "dirty_worktree",
+                    ..
+                })
+            ),
+            "dirty {kind:?} must remain permanent"
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("shared.txt")).unwrap(),
+            "keep tracked\n"
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("unfinished.txt")).unwrap(),
+            "keep untracked\n"
+        );
+        assert!(
+            git(
+                &f.repo,
+                &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"]
+            )
+            .is_empty()
+        );
+    }
+    println!("test dirty_writes_are_permanent ... ok");
+}
+
+fn scratch_removal_crashes() {
+    for boundary in ["before", "after"] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Fixture::create(root.path());
+        let prepare = prepared(&f);
+        let checkout = f.adapter().checkout(&prepare);
+        fs::write(checkout.join("shared.txt"), "saved tracked\n").unwrap();
+        fs::write(checkout.join("untracked.txt"), "saved untracked\n").unwrap();
+        let remove = f.delivery(EffectKind::RemoveWorktree, 2);
+        kill(&f, &remove, boundary);
+        let reference = git(
+            &f.repo,
+            &["for-each-ref", "--format=%(refname)", "refs/tl3/scratch/"],
+        );
+        assert!(!reference.is_empty());
+        let completion = found(f.adapter().reconcile(&remove).unwrap());
+        assert!(completion.observations.iter().any(|o| matches!(o,
+            Observation::ScratchSaved { reference: saved, .. } if saved == &reference)));
+        same(&completion, &f.adapter().execute(&remove).unwrap());
+        assert_removed(&f, &remove);
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{reference}:shared.txt")]),
+            "saved tracked"
+        );
+        assert_eq!(
+            git(&f.repo, &["show", &format!("{reference}:untracked.txt")]),
+            "saved untracked"
+        );
+    }
+    println!("test scratch_removal_crashes ... ok");
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--smudge") {
@@ -1100,6 +1172,8 @@ fn main() {
         killed_git_add();
         return;
     }
+    dirty_writes_are_permanent();
+    scratch_removal_crashes();
     crashes();
     conflicts();
     fences_and_unknowns();
