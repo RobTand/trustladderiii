@@ -475,7 +475,7 @@ impl Served {
                                     base.as_str(),
                                 );
                             }
-                            run.base_sha = base.as_str().into();
+                            run.base_sha = base.clone();
                             observations.push(Observation::CheckPlan {
                                 node: record.delivery.node(),
                                 sha: head.as_str().into(),

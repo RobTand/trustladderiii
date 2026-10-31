@@ -181,7 +181,7 @@ fn observe(
                     sha: sha.into(),
                     run: adapters::prismabuild::CheckRun {
                         repository: repository.into(),
-                        base_sha: base.into(),
+                        base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
                         reviewed_sha: None,
                         reproducing_unavailable: None,

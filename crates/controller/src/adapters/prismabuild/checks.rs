@@ -9,9 +9,9 @@ use tl3_worktrees::{CommitId, Worktrees};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckRun {
     pub repository: PathBuf,
-    pub base_sha: String,
+    pub base_sha: CommitId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reviewed_sha: Option<String>,
+    pub reviewed_sha: Option<CommitId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reproducing_unavailable: Option<String>,
     pub plan: Vec<Check>,
@@ -48,12 +48,8 @@ pub(super) fn stage(
         .as_deref()
         .ok_or(Error::Invalid("checks require an exact head"))?;
     let head = CommitId::new(head)?;
-    let base = CommitId::new(run.base_sha.clone())?;
-    let reviewed = run
-        .reviewed_sha
-        .as_ref()
-        .map(|sha| CommitId::new(sha.clone()))
-        .transpose()?;
+    let base = &run.base_sha;
+    let reviewed = run.reviewed_sha.as_ref();
     if (run.plan.iter().any(|c| c.kind == Kind::Reproducing) && reviewed.is_none())
         || !run.repository.is_absolute()
         || run.plan.is_empty()
@@ -80,11 +76,11 @@ pub(super) fn stage(
     let repository = Worktrees::open(&run.repository, &run.repository)?;
     let served = root.join("served");
     let checkout = repository.clone_checkout(&served, &head)?;
-    if checkout.verify_commit(&base)? != base {
+    if checkout.verify_commit(base)? != *base {
         return Err(Error::Invalid("checks require an exact base"));
     }
     let changed = checkout
-        .changed_paths_since_merge_base(&base, &head)?
+        .changed_paths_since_merge_base(base, &head)?
         .into_iter()
         .map(|path| {
             path.into_os_string()
@@ -92,7 +88,7 @@ pub(super) fn stage(
                 .map_err(|_| Error::Invalid("changed path must be UTF-8"))
         })
         .collect::<Result<Vec<_>>>()?;
-    checkout.bundle_check_input(&root.join("served.bundle"), &base, reviewed.as_ref())?;
+    checkout.bundle_check_input(&root.join("served.bundle"), base, reviewed)?;
     fs::remove_dir_all(served)?;
     let trusted = root.join("trusted/tl3_harness");
     fs::create_dir_all(&trusted)?;

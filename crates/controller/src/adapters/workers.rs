@@ -206,22 +206,13 @@ impl Supervisor {
                 .ok_or(Error::Invalid("production maker needs the accepted plan"))?;
             materials["maker"] = crate::production::maker_inputs(&brief, &plan)?;
             let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
-            let base = match delivery
-                .checks
-                .as_ref()
-                .map(|c| c.base_sha.clone())
-                .or_else(|| {
-                    materials["check_run"]["base_sha"]
-                        .as_str()
-                        .map(str::to_owned)
-                }) {
-                Some(base) => base,
-                None => Worktrees::open(&checkout, &checkout)?
-                    .head()?
-                    .as_str()
-                    .to_owned(),
+            let base = if let Some(run) = &delivery.checks {
+                run.base_sha.clone()
+            } else if let Some(base) = materials["check_run"]["base_sha"].as_str() {
+                CommitId::new(base)?
+            } else {
+                Worktrees::open(&checkout, &checkout)?.head()?
             };
-            let base = CommitId::new(base)?;
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()
                 .ok_or(Error::Invalid("maker plan needs checks"))?

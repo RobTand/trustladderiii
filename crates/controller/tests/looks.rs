@@ -670,7 +670,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             sha: "a".repeat(40),
             run: adapters::prismabuild::CheckRun {
                 repository: root.path().to_path_buf(),
-                base_sha: "b".repeat(40),
+                base_sha: tl3_worktrees::CommitId::new("b".repeat(40)).unwrap(),
                 reviewed_sha: None,
                 reproducing_unavailable: None,
                 plan: vec![],

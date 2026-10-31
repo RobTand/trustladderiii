@@ -1860,7 +1860,8 @@ impl Controller {
                                     })
                                     .then_some(reviewed)
                                     .flatten()
-                                    .map(str::to_owned);
+                                    .map(tl3_worktrees::CommitId::new)
+                                    .transpose()?;
                                 commit.rows.push(put(
                                     "check_plans",
                                     format!("{}:{sha}", node.0),

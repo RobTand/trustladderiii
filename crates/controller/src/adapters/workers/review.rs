@@ -30,29 +30,29 @@ pub(super) fn inputs(
     let session = session(delivery, store)?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
     let mut base = if delivery.round == 1 {
-        match run.reviewed_sha.as_deref() {
-            Some(reviewed) => reviewed,
+        match &run.reviewed_sha {
+            Some(reviewed) => reviewed.clone(),
             None => session
                 .as_ref()
                 .map(|s| {
-                    s["head_sha"]
-                        .as_str()
-                        .ok_or(Error::Invalid("reviewer session has no reviewed head"))
+                    CommitId::new(
+                        s["head_sha"]
+                            .as_str()
+                            .ok_or(Error::Invalid("reviewer session has no reviewed head"))?,
+                    )
+                    .map_err(Error::from)
                 })
                 .transpose()?
-                .unwrap_or(&run.base_sha),
+                .unwrap_or_else(|| run.base_sha.clone()),
         }
     } else {
-        &run.base_sha
+        run.base_sha.clone()
     };
     let head_id = CommitId::new(head)?;
-    let mut base_id = CommitId::new(base)?;
-    let check_base = CommitId::new(run.base_sha.clone())?;
     let repository = Worktrees::open(&run.repository, &run.repository)?;
-    if base_id != check_base && repository.merge_base(&base_id, &check_base)? != check_base {
+    if base != run.base_sha && repository.merge_base(&base, &run.base_sha)? != run.base_sha {
         // Rebasing moves the check base beyond the previously reviewed history.
-        base = &run.base_sha;
-        base_id = check_base;
+        base = run.base_sha.clone();
     }
     let node = delivery.node().0.to_string();
     let report = snapshot
@@ -61,11 +61,11 @@ pub(super) fn inputs(
         .find(|r| r.table == "check_reports" && r.id == format!("{node}:{head}"))
         .map(|r| &r.value)
         .ok_or(Error::Invalid("review needs exact-head check evidence"))?;
-    if report["base_sha"] != run.base_sha {
+    if report["base_sha"].as_str() != Some(run.base_sha.as_str()) {
         return Err(Error::Invalid("review and checks disagree on base"));
     }
     let criteria = criteria(store, delivery.node())?;
-    let diff = repository.diff(&base_id, &head_id)?;
+    let diff = repository.diff(&base, &head_id)?;
     if diff.len() > 512 * 1024 {
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }

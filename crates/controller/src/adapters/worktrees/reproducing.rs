@@ -5,24 +5,20 @@ use crate::{
 use std::path::Path;
 use tl3_worktrees::{BranchName, CommitId, Worktrees};
 
-pub(super) fn pin(repo: &Path, branch: &BranchName, reviewed: &str) -> Result<()> {
-    let reviewed = CommitId::new(reviewed)?;
-    Worktrees::open(repo, repo)?.pin_reviewed(branch, &reviewed)?;
+pub(super) fn pin(repo: &Path, branch: &BranchName, reviewed: &CommitId) -> Result<()> {
+    Worktrees::open(repo, repo)?.pin_reviewed(branch, reviewed)?;
     Ok(())
 }
 
 pub(super) fn rebase(repo: &Path, branch: &BranchName, run: &mut CheckRun, target: &str) {
-    let Some(reviewed) = run.reviewed_sha.as_deref() else {
+    let Some(reviewed) = run.reviewed_sha.as_ref() else {
         return;
     };
-    let replay = || -> Result<String> {
-        let base = CommitId::new(run.base_sha.clone())?;
+    let replay = || -> Result<CommitId> {
         let target = CommitId::new(target)?;
-        let reviewed = CommitId::new(reviewed)?;
-        Ok(Worktrees::open(repo, repo)?
-            .replay_reviewed(branch, &base, &target, &reviewed)?
-            .as_str()
-            .to_owned())
+        Worktrees::open(repo, repo)?
+            .replay_reviewed(branch, &run.base_sha, &target, reviewed)
+            .map_err(Into::into)
     };
     match replay() {
         Ok(sha) => run.reviewed_sha = Some(sha),
@@ -59,7 +55,7 @@ mod tests {
             pin(
                 Path::new(&repo),
                 &BranchName::new("tl3/test").unwrap(),
-                &std::env::var("TL3_PIN_SHA").unwrap(),
+                &CommitId::new(std::env::var("TL3_PIN_SHA").unwrap()).unwrap(),
             )
             .unwrap();
             return;
