@@ -17,9 +17,10 @@ pub(super) fn run(database: &mut support::Database) {
             }
         }
     }
-    for (endpoint, status) in [
+    for (index, (endpoint, status)) in [
         ("issues", 422),
         ("issues/comments", 404),
+        ("issues/12", 403),
         ("pulls", 403),
         ("issues/events", 503),
         (
@@ -30,8 +31,11 @@ pub(super) fn run(database: &mut support::Database) {
             "commits/0000000000000000000000000000000000000001/check-suites",
             503,
         ),
-    ] {
-        let settings = database.create(&format!("diagnostic_{failures}_{status}"));
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let settings = database.create(&format!("diagnostic_{index}"));
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             failed_request(&settings, endpoint, status);
         }))
@@ -111,6 +115,17 @@ fn failed_request(settings: &tl3_config::Store, endpoint: &str, status: u16) {
     let cursor = store.ingress_cursor("github-catch-up").unwrap();
     let pending = store.pending_ingress().unwrap();
     reject(&api, endpoint, status);
+    if endpoint == "issues/12" {
+        api.state.lock().unwrap().gap = true;
+        api.runtime.block_on(async {
+            Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path("/repos/owner/sandbox/issues"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+                .with_priority(1)
+                .mount(&api.server)
+                .await;
+        });
+    }
     let error = catch_up.pass(&mut store, &bootstrap()).unwrap_err();
     let diagnostic = error.to_string();
     assert!(

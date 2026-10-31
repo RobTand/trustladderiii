@@ -119,6 +119,7 @@ fn fetch_panic_returns_reader_and_receipt_retries() {
     let running = thread::spawn(move || source.run(sender));
     assert_eq!(calls.recv_timeout(Duration::from_secs(10)).unwrap(), 0);
     release.send(()).unwrap();
+    wakes.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(
         calls.recv_timeout(Duration::from_millis(250)).is_err(),
         "a panic must not start a timed retry"
