@@ -17,8 +17,7 @@ mode = sys.argv[1]
 class Model(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         from tl3_workers.roles import ROLES
-        role = 'reviewer' if mode == 'review-feedback' and all(tool.name != 'write' for tool in tools) else 'maker'
-        assert {tool.name: tool.description for tool in tools} == dict(ROLES[role].tools)
+        assert {tool.name: tool.description for tool in tools} in [dict(ROLES[role].tools) for role in ('maker', 'reviewer')]
         return self
 
 
@@ -29,6 +28,17 @@ def call(name, args):
 def create_model(request):
     inputs = request['inputs']
     if request['role'] == 'reviewer':
+        record = Path(request['worktree']).parents[1] / 'reviewer-requests' / f"request-{request['operation']['generation']}.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(request))
+        reply = ({'verdict': 'approve', 'head_sha': inputs['head_sha'], 'blocking_findings': [], 'findings': []}
+                 if 'review_fixes' in inputs else {
+                     'verdict': 'changes', 'blocking_findings': [
+                         {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Empty names fail.', 'evidence': 'greet has no empty-name coverage.'},
+                         {'citation': {'kind': 'goal', 'id': 'greeting'}, 'problem': 'Explain the greeting.', 'evidence': 'The documentation omits the greeting.'},
+                     ], 'findings': []})
+        if mode != 'review-feedback':
+            return Model(responses=[AIMessage(content=json.dumps(reply))])
         blockers = [
             {'citation': {'kind': 'goal', 'id': 'greeting'},
              'problem': 'The greeting lacks context.', 'evidence': 'greeting.py returns only hello.'},
@@ -37,7 +47,7 @@ def create_model(request):
         ]
         blockers.extend({'citation': {'kind': 'goal', 'id': 'greeting'},
                          'problem': f'Problem {i} ' + 'é' * 2000,
-                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(30))
+                         'evidence': f'Evidence {i} ' + '界' * 2000} for i in range(18))
         return Model(responses=[AIMessage(content=json.dumps({
             'verdict': 'changes', 'blocking_findings': blockers,
             'findings': [{'problem': 'Optional style note', 'evidence': 'Not a blocker.'}],
@@ -83,10 +93,22 @@ def create_model(request):
     if mode == 'rebase-edits':
         content += f"# visit {request['operation']['generation']}\n"
     reply = {'kind': 'done', 'self_check': [{'goal_id': goal['id'], 'status': 'met', 'evidence': 'Recorded self-check passed; check greeting.'} for goal in inputs['goals']]}
+    reproducing_turns = []
+    if mode == 'review-fix' and inputs['round'] == 1:
+        findings = [finding for finding in inputs['feedback'] if finding.get('reviewed_sha') == inputs.get('reviewed_sha')]
+        reply['reproductions'] = [
+            {'finding_id': findings[0]['id'], 'tests': ['test_greeting.py::test_empty']},
+            {'finding_id': findings[1]['id'], 'reason': 'This is a documentation correction.'},
+        ]
+        reproducing_turns = [call('write', {'path': 'test_greeting.py', 'content': "def test_hello():\n    from greeting import greet\n    assert greet() == 'hello'\ndef test_empty():\n    from greeting import greet\n    assert greet() == 'hello'\n"})]
+    if mode == 'review-feedback' and inputs['round'] == 1:
+        reply['reproductions'] = [{'finding_id': f['id'], 'reason': 'This is a report integrity correction.'}
+                                  for f in inputs['feedback'] if f.get('reviewed_sha') == inputs.get('reviewed_sha')]
     if mode == 'unmet':
         reply['self_check'][0] = {'goal_id': inputs['goals'][0]['id'], 'status': 'not_met', 'why': 'The interface is unresolved.'}
     return Model(responses=[
         call('recall', {'query': 'greeting decisions'}),
+        *reproducing_turns,
         call('write', {'path': path, 'content': content}),
         call('run_tests', {'tests': ['test_greeting.py::test_hello']}),
         AIMessage(content=json.dumps(reply)),
@@ -121,6 +143,11 @@ run_worker = runtime.run
 
 def run_with_mismatch(request, emit):
     def emit_reply(event):
+        marker = Path(request.get('session_file', request['worktree'])).parent / 'mismatch-injected'
+        if mode == 'self-check-mismatch' and event['event'] == 'reply' and not marker.exists():
+            # Corrupt a schema-valid reply after the real worker has committed.
+            event['reply']['self_check'][0]['goal_id'] = 'unexpected-goal'
+            marker.touch()
         if mode == 'self-check-mismatch' and event['event'] == 'reply':
             marker = Path(request['session_file']).parent / 'mismatch-injected'
             if not marker.exists():

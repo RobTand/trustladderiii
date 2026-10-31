@@ -41,6 +41,8 @@ struct Report {
     effect_key: String,
     base: String,
     head: String,
+    #[serde(default)]
+    reviewed: Option<String>,
     results: Vec<CheckResult>,
 }
 #[derive(Deserialize, Serialize)]
@@ -256,6 +258,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         || report.effect_key != job.delivery.key
         || report.base != job.run.base_sha
         || Some(&report.head) != job.delivery.head_sha.as_ref()
+        || report.reviewed != job.run.reviewed_sha
         || report.results.len() != job.run.plan.len()
     {
         return None;

@@ -508,6 +508,7 @@ impl Store {
                 | "audits"
                 | "maker_replies"
                 | "maker_findings"
+                | "review_fixes"
                 | "maker_session"
                 | "plans"
                 | "findings"

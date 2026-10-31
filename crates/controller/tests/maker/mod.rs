@@ -220,7 +220,7 @@ fn registry(
                 .workers
                 .command
                 .get(1)
-                .is_some_and(|mode| mode == "review-feedback"),
+                .is_some_and(|mode| mode == "review-fix" || mode == "review-feedback"),
         },
     );
     let (client, settings) = super::prismabuild_fixture::settings(
@@ -253,6 +253,9 @@ fn observe(
                     run: adapters::prismabuild::CheckRun {
                         repository: repository.into(),
                         base_sha: base.into(),
+
+                        reviewed_sha: None,
+                        reproducing_unavailable: None,
                         plan: vec![adapters::prismabuild::Check {
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
@@ -873,6 +876,9 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
+    real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
+    println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
     declared_wait(&database.create("maker_declared_wait"));
     println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
     real::review_feedback(&database.create("maker_review_feedback"));

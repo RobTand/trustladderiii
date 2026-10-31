@@ -10,6 +10,10 @@ use std::{
 pub struct CheckRun {
     pub repository: PathBuf,
     pub base_sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reproducing_unavailable: Option<String>,
     pub plan: Vec<Check>,
 }
 
@@ -26,6 +30,7 @@ pub enum Kind {
     Demonstrating,
     Regression,
     BehaviorPreserving,
+    Reproducing,
 }
 
 pub(super) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
@@ -77,6 +82,8 @@ pub(super) fn stage(
         .ok_or(Error::Invalid("checks require an exact head"))?;
     if !sha(head)
         || !sha(&run.base_sha)
+        || run.reviewed_sha.as_deref().is_some_and(|s| !sha(s))
+        || (run.plan.iter().any(|c| c.kind == Kind::Reproducing) && run.reviewed_sha.is_none())
         || !run.repository.is_absolute()
         || run.plan.is_empty()
         || run
@@ -155,16 +162,21 @@ pub(super) fn stage(
         &served,
         &["update-ref", "refs/heads/tl3-base", &run.base_sha],
     )?;
-    git(
-        &served,
-        &[
-            "bundle",
-            "create",
-            "../served.bundle",
-            "HEAD",
-            "refs/heads/tl3-base",
-        ],
-    )?;
+    let mut bundle = vec![
+        "bundle",
+        "create",
+        "../served.bundle",
+        "HEAD",
+        "refs/heads/tl3-base",
+    ];
+    if let Some(reviewed) = &run.reviewed_sha {
+        git(
+            &served,
+            &["update-ref", "refs/heads/tl3-reviewed", reviewed],
+        )?;
+        bundle.push("refs/heads/tl3-reviewed");
+    }
+    git(&served, &bundle)?;
     fs::remove_dir_all(served)?;
     let trusted = root.join("trusted/tl3_harness");
     fs::create_dir_all(&trusted)?;
@@ -179,6 +191,7 @@ pub(super) fn stage(
         root.join("request.json"),
         serde_json::to_vec(&serde_json::json!({
             "effect_key": delivery.key, "base": run.base_sha, "head": head,
+            "reviewed": run.reviewed_sha,
             "plan": run.plan, "image": image,
         }))?,
     )?;
