@@ -4,7 +4,8 @@ use tl3_kernel::NodeId;
 use tl3_store::{Commit, RowChange, Snapshot};
 
 impl Controller {
-    /// Call before the proposed head's first check; report only the returned head to the kernel.
+    /// Call once per branch before its first check. A replay returns the original trim head;
+    /// re-read the current branch head before reporting it to the kernel.
     /// Git's receipt covers a crash before the summary row commits, so retry this same call.
     pub fn trim_scope(
         &mut self,
@@ -75,7 +76,11 @@ pub(crate) fn summary(snapshot: &Snapshot, node: NodeId) -> Result<Option<String
     Ok((!paths.is_empty()).then(|| {
         format!(
             "Changes not part of this request were removed: {}.",
-            paths.join(", ")
+            paths
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     }))
 }

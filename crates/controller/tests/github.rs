@@ -835,6 +835,7 @@ fn delivery(notice: Notice) -> Delivery {
         job_generation: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
     }
 }
 fn message_reconciliation() {

@@ -118,6 +118,8 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
     let checkout = f.adapter().checkout(&d);
     commit(&checkout, "shared.txt", "requested\n");
     commit(&checkout, "extra.txt", "unrelated\n");
+    commit(&checkout, "__init__.py", "unrelated\n");
+    commit(&checkout, "example.com", "unrelated\n");
     let proposed = commit(&checkout, "pyproject.toml", "unrelated\n");
     let trim = c
         .trim_scope(
@@ -129,6 +131,8 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
     assert_eq!(
         trim.removed_paths,
         vec![
+            std::path::PathBuf::from("__init__.py"),
+            "example.com".into(),
             std::path::PathBuf::from("extra.txt"),
             "pyproject.toml".into()
         ]
@@ -151,7 +155,7 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
         .expect("durable summary paths");
     assert_eq!(
         row.value["removed_paths"],
-        json!(["extra.txt", "pyproject.toml"])
+        json!(["__init__.py", "example.com", "extra.txt", "pyproject.toml"])
     );
     drop(c);
     let mut c = Controller::open(Store::open(&settings).unwrap(), registry(), bootstrap()).unwrap();
@@ -189,9 +193,12 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
     let summary = summary.lock().unwrap().clone().expect("closing summary");
     assert_eq!(
         serde_json::to_value(&summary).unwrap()["scope_removals"],
-        "Changes not part of this request were removed: `extra.txt`, `pyproject.toml`."
+        "Changes not part of this request were removed: `__init__.py`, `example.com`, `extra.txt`, `pyproject.toml`."
     );
-    assert_eq!(summary.note.as_deref(), Some("Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0"));
+    assert_eq!(
+        summary.note.as_deref(),
+        Some("Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0")
+    );
     drop(c);
     database.stop();
 }

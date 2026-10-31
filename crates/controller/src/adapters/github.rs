@@ -526,7 +526,7 @@ fn writer_input(
         ),
     };
     if kind == MessageKind::Summary
-        && let Some(removed) = &delivery.note
+        && let Some(removed) = &delivery.scope_removals
     {
         facts["removed_changes"] = json!(removed);
     }
@@ -703,7 +703,8 @@ mod scope_summary_tests {
     #[test]
     fn scope_summary_keeps_scratch_and_trim_notes_separate_and_appends_each_once() {
         let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
-        let removed = "Changes not part of this request were removed: `__init__.py`, `example.com`.";
+        let removed =
+            "Changes not part of this request were removed: `__init__.py`, `example.com`.";
         let delivery: Delivery = serde_json::from_value(json!({
             "key":"summary:0", "epoch":1,
             "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(Outcome::Stopped)},
@@ -711,10 +712,25 @@ mod scope_summary_tests {
             "issue":42, "paths":[], "attempt":1, "round":0,
             "note":saved, "scope_removals":removed
         })).unwrap();
-        let request = writer_input(&delivery, Some(Notice::Summary(Outcome::Stopped)), "Add a blue button", "Add a blue button").unwrap();
+        let request = writer_input(
+            &delivery,
+            Some(Notice::Summary(Outcome::Stopped)),
+            "Add a blue button",
+            "Add a blue button",
+        )
+        .unwrap();
         assert_eq!(request.facts["removed_changes"], removed);
-        let prose = checked_draft(&mut super::super::workers::writer::FakeWriter, "summary", request, &Policy::default()).unwrap();
-        let rendered = format!("{prose}\n\n{}", fixed_notice_text(&delivery).unwrap().unwrap());
+        let prose = checked_draft(
+            &mut super::super::workers::writer::FakeWriter,
+            "summary",
+            request,
+            &Policy::default(),
+        )
+        .unwrap();
+        let rendered = format!(
+            "{prose}\n\n{}",
+            fixed_notice_text(&delivery).unwrap().unwrap()
+        );
         assert_eq!(rendered.matches(removed).count(), 1);
         assert_eq!(rendered.matches(saved).count(), 1);
         assert!(rendered.ends_with(saved));

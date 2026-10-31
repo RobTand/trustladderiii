@@ -935,7 +935,11 @@ fn scope_directory_to_file_swap_restores_base() {
 fn scope_tree_swap(base_is_directory: bool) {
     let f = Fixture::new();
     fs::create_dir_all(f.repo.join("dir")).unwrap();
-    let original = if base_is_directory { "dir/f/g" } else { "dir/f" };
+    let original = if base_is_directory {
+        "dir/f/g"
+    } else {
+        "dir/f"
+    };
     if base_is_directory {
         fs::create_dir(f.repo.join("dir/f")).unwrap();
     }
@@ -943,7 +947,11 @@ fn scope_tree_swap(base_is_directory: bool) {
     let base = f.checkout().base;
     git(&f.worktree, ["rm", "-r", "dir/f"]);
     fs::create_dir_all(f.worktree.join("dir")).unwrap();
-    let added = if base_is_directory { "dir/f" } else { "dir/f/g" };
+    let added = if base_is_directory {
+        "dir/f"
+    } else {
+        "dir/f/g"
+    };
     if !base_is_directory {
         fs::create_dir_all(f.worktree.join("dir/f")).unwrap();
     }
@@ -951,9 +959,18 @@ fn scope_tree_swap(base_is_directory: bool) {
     write_commit(&f.worktree, "shared.txt", "requested\n", "request");
     let trim = scope_trim(&f);
     assert_eq!(fs::read(f.worktree.join(original)).unwrap(), b"base\n");
-    assert_eq!(fs::read(f.worktree.join("shared.txt")).unwrap(), b"requested\n");
-    assert_eq!(trim.removed_paths, vec![PathBuf::from("dir/f"), "dir/f/g".into()]);
-    assert_eq!(f.manager.changed_files(&base, &trim.head).unwrap(), vec![PathBuf::from("shared.txt")]);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        trim.removed_paths,
+        vec![PathBuf::from("dir/f"), "dir/f/g".into()]
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
     assert_eq!(scope_trim(&f), trim);
     f.assert_clean();
 }
@@ -965,10 +982,20 @@ fn scope_replay_cleans_abandoned_temporary_indexes_and_receipt_files() {
     let journal = f.manager.common.join("tl3-scope");
     let index = tempfile::tempdir_in(&journal).unwrap().keep();
     fs::write(index.join("index"), "abandoned").unwrap();
-    let temporary = tempfile::NamedTempFile::new_in(&journal).unwrap().keep().unwrap().1;
+    let temporary = tempfile::NamedTempFile::new_in(&journal)
+        .unwrap()
+        .keep()
+        .unwrap()
+        .1;
     assert_eq!(scope_trim(&f), trim);
-    assert!(!index.exists(), "replay must remove its abandoned index directory");
-    assert!(!temporary.exists(), "replay must remove its abandoned receipt file");
+    assert!(
+        !index.exists(),
+        "replay must remove its abandoned index directory"
+    );
+    assert!(
+        !temporary.exists(),
+        "replay must remove its abandoned receipt file"
+    );
 }
 
 #[test]

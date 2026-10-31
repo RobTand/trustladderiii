@@ -120,6 +120,7 @@ impl Controller {
                     question: None,
                     marker_key: None,
                     note: None,
+                    scope_removals: None,
                     question_context: None,
                     request_text: binding.source,
                     steering: Some(Task::ReplacementDropped { text, outcome }),
@@ -210,6 +211,7 @@ impl Controller {
             question: n.question,
             marker_key: None,
             note: None,
+            scope_removals: None,
             question_context: None,
             request_text: binding.source,
             steering: Some(Task::Classify {

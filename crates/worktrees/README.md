@@ -101,6 +101,11 @@ before touching the checkout. Recovery restores that target, advances the branch
 with an expected-head check, then marks the receipt complete. The durable base
 never changes. A completed replay returns the saved result and preserves later
 maker commits, edits, and untracked files, even after checkout removal.
+The receipt's head is the original trim result. Callers must re-read the current
+branch head after a replay. The next trim removes abandoned private `.tmp` index
+directories and receipt files from `tl3-scope` while holding repository ownership.
+Target trees remove affected index entries before restoring the base's entries,
+so file/directory swaps work in both directions.
 
 Keep the receipt with the common Git directory. The owning controller and all
 its Git children must have ended before a replacement resumes an unfinished trim.

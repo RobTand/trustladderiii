@@ -109,7 +109,7 @@ fn reproduced_quote_still_gets_prose_checked() {
 
 #[test]
 fn scope_removals_are_appended_to_checked_summary() {
-    let removed = "Changes not part of this request were removed: extra.txt, pyproject.toml.";
+    let removed = "Changes not part of this request were removed: `extra.txt`, `pyproject.toml`.";
     let result = checked_draft(&mut Draft("Your change was merged.".into()), "scope",
         WriteRequest { kind: MessageKind::Summary, facts: json!({"issue_title":"Add a blue button", "request":"Add a blue button", "outcome":"Your change was merged.", "unmet_goals":[], "removed_changes":removed}), violations:vec![] }, &Policy::default()).unwrap();
     assert_eq!(result, format!("Your change was merged.\n\n{removed}"));

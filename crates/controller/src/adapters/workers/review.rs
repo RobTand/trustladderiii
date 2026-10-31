@@ -119,10 +119,11 @@ pub(super) fn inputs(
         if scope_diff.len() > 512 * 1024 {
             return Err(Error::Invalid("scope diff exceeds the input bound"));
         }
-        inputs["scope_diff"] = json!(
-            String::from_utf8(scope_diff)
-                .map_err(|_| Error::Invalid("scope diff must be UTF-8"))?
-        );
+        let scope_diff = String::from_utf8(scope_diff)
+            .map_err(|_| Error::Invalid("scope diff must be UTF-8"))?;
+        if scope_diff != inputs["diff"].as_str().unwrap() {
+            inputs["scope_diff"] = json!(scope_diff);
+        }
     }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
@@ -153,7 +154,7 @@ pub(crate) fn criteria(
         .ok_or(Error::Invalid("standing rules must be a list"))?;
     rules_list.retain(|rule| rule["id"] != REPORT_RULE && rule["id"] != SCOPE_RULE);
     rules_list.push(json!({"id": REPORT_RULE, "description": "Protect test reports. Block code that writes directly to the test process's file descriptors, replaces its output streams, emits text shaped like test-report events, or reaches into pytest hooks, plugins, reporter or configuration internals. Ordinary output from the program under test is allowed. In-process report custody is accepted for slice one."}));
-    rules_list.push(json!({"id": SCOPE_RULE, "description": "Keep edits within the supplied request goals. Block an unrelated edit, including inside a planned file, only when it serves none of the supplied goals. Necessary supporting code and tests are in scope. Cite this standing rule, quote the changed hunk from scope_diff when supplied or otherwise diff, and explain why it serves no supplied goal. Do not invent goals or demand additional work."}));
+    rules_list.push(json!({"id": SCOPE_RULE, "description": "Keep edits within the supplied request goals. Block an unrelated edit, including inside a planned file, only when it serves none of the supplied goals. Necessary supporting code and tests are in scope. Imports, test fixtures, docstrings and type hints for new or changed code, formatting the change forces, and small helper refactors the change needs are in scope. When unsure whether an edit serves the goals, record a non-blocking finding instead of blocking. Cite this standing rule, identify the unrelated hunk and quote a whole changed diff line from that hunk on its own line in evidence, including its leading plus or minus, from scope_diff when supplied or otherwise diff. Explain why the hunk serves no supplied goal. The quoted changed content must have at least 8 non-whitespace characters; otherwise record a non-blocking finding. Do not invent goals or demand additional work."}));
     Ok(json!({"goals": goals, "standing_rules": rules}))
 }
 
@@ -226,11 +227,11 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<Blocki
                 .as_str()
                 .unwrap_or("");
             if !diff.lines().any(|line| {
-                line.len() > 1
-                    && (line.starts_with('+') || line.starts_with('-'))
+                (line.starts_with('+') || line.starts_with('-'))
                     && !line.starts_with("+++")
                     && !line.starts_with("---")
-                    && finding.evidence.contains(line)
+                    && line[1..].chars().filter(|c| !c.is_whitespace()).count() >= 8
+                    && finding.evidence.lines().any(|quote| quote.trim() == line)
             }) {
                 return Err(Error::Invalid("scope blocker must quote a changed hunk"));
             }
@@ -324,7 +325,14 @@ mod scope_rule_tests {
     #[test]
     fn scope_blocker_rejects_short_or_partial_changed_lines() {
         let inputs = json!({"diff":"+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n", "goals":[{"id":"g1"}], "standing_rules":[{"id":SCOPE_RULE}]});
-        for (evidence, valid) in [("+}", false), ("+       x", false), ("+abcdefg", false), ("+abcdefgh", true), ("+unrelated_action() suffix", false), ("The unrelated helper:\n+unrelated_action()", true)] {
+        for (evidence, valid) in [
+            ("+}", false),
+            ("+       x", false),
+            ("+abcdefg", false),
+            ("+abcdefgh", true),
+            ("+unrelated_action() suffix", false),
+            ("The unrelated helper:\n+unrelated_action()", true),
+        ] {
             let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":"standing_rule", "id":SCOPE_RULE}, "problem":"This helper serves no request goal.", "evidence":evidence}], "findings":[]});
             assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid, "{evidence}");
         }

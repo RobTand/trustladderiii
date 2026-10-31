@@ -1267,11 +1267,14 @@ and submit it for formatting, Clippy and full workspace verification.
 Before reporting a leaf's proposed head or starting its first check, call:
 
 ```rust,ignore
-let trimmed = controller.trim_scope(&worktrees, &delivery, &config.planning.protected_paths)?;
+controller.trim_scope(&worktrees, &delivery, &config.planning.protected_paths)?;
 ```
 
-`delivery.paths` contains the plan's declared files. Report `trimmed.head` as the
-resulting head through the existing head observation. The hook does not change
+`delivery.paths` contains the plan's declared files. The trim runs once per branch.
+Its receipt always returns the original trimmed head, even after later maker
+commits. The adoption tracer must re-read the current branch head after the hook
+and report that head through the existing observation. A replay never resets
+later work. The hook does not change
 kernel state, approve a head, or run a maker. It has no production caller yet;
 the adoption tracer can call it when it supplies proposed heads.
 
@@ -1279,16 +1282,23 @@ The worktree adapter fences the trim against its durable epoch. The controller
 then records the head and removed paths in a `scope_trims` world row. Repeat the
 same call after a crash between Git completion and the SQL commit. Both stages
 are idempotent. The closing summary carries the removal text in the writer's
-`facts.removed_changes`. TL3 appends it after checking the writer's prose, so the
+`facts.removed_changes`, supplied by `Delivery.scope_removals`. Saved-scratch
+text keeps its separate `Delivery.note` field and its separate fixed append.
+TL3 appends removal text after checking the writer's prose, so the
 existing checker continues to reject file paths in model-written text. Path
 bytes outside letters, digits, dot, underscore, hyphen, and slash are percent
 encoded to keep filenames from becoming references or Markdown instructions.
+Each listed path is inline code to prevent emphasis and automatic links.
 
 Review always supplies the `request-scope` standing rule alongside
 `test-report-integrity`. A scope blocker must cite that rule, quote a changed
 hunk, and explain why it serves none of the supplied goals. On a fix round,
 `scope_diff` supplies the whole remaining change against the check base, while
-`diff` keeps the existing incremental review behavior.
+`diff` keeps the existing incremental review behavior. Identical diffs are sent
+only once. Scope findings quote a whole changed line from the unrelated hunk
+with at least 8 non-whitespace characters of changed content. Supporting imports,
+fixtures, documentation, type hints, required formatting and needed small helper
+refactors are in scope. Uncertain scope concerns stay non-blocking.
 
 Generate the verification campaign with
 `python3 crates/controller/tools/scope_review_manifest.py all`, save its JSON

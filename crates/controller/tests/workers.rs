@@ -127,6 +127,7 @@ fn delivery() -> Delivery {
         replanned: false,
         marker_key: None,
         note: None,
+        scope_removals: None,
         checks: None,
         job_generation: None,
         question: None,

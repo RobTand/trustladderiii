@@ -1189,6 +1189,7 @@ impl Controller {
                 question: n.question,
                 marker_key: None,
                 note: None,
+                scope_removals: None,
                 question_context,
                 steering: None,
                 request_text: request.source,
@@ -1200,7 +1201,7 @@ impl Controller {
                     ..
                 }
             ) {
-                delivery.note = scope::summary(snapshot, node)?;
+                delivery.scope_removals = scope::summary(snapshot, node)?;
                 let mut references = std::collections::BTreeSet::new();
                 for value in snapshot
                     .rows

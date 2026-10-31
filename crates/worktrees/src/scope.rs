@@ -25,7 +25,8 @@ fn save(path: &Path, record: &TrimRecord) -> Result<(), Error> {
 }
 
 impl Worktrees {
-    /// Trim once per leaf branch. Replays return the same receipt without touching later work.
+    /// Trim once per leaf branch. Replays return the original head without touching later work.
+    /// Read `branch_state` for the current head after a replay.
     pub fn trim_scope(
         &self,
         name: &BranchName,
@@ -59,6 +60,20 @@ impl Worktrees {
         protected.dedup();
         let journal = self.common.join("tl3-scope");
         fs::create_dir_all(&journal).map_err(|_| Error::Io)?;
+        // Repository ownership and the mutex exclude live writers of these private files.
+        for entry in fs::read_dir(&journal).map_err(|_| Error::Io)? {
+            let entry = entry.map_err(|_| Error::Io)?;
+            if entry.file_name().as_encoded_bytes().starts_with(b".tmp") {
+                if entry.file_type().map_err(|_| Error::Io)?.is_dir() {
+                    fs::remove_dir_all(entry.path()).map_err(|_| Error::Io)?;
+                } else {
+                    fs::remove_file(entry.path()).map_err(|_| Error::Io)?;
+                }
+            }
+        }
+        fs::File::open(&journal)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| Error::Io)?;
         fs::File::open(&self.common)
             .and_then(|f| f.sync_all())
             .map_err(|_| Error::Io)?;
@@ -226,17 +241,27 @@ impl Worktrees {
             names.extend_from_slice(path.as_os_str().as_encoded_bytes());
             names.push(0);
         }
+        // Remove both sides before installing base entries, including file/directory swaps.
         run(
-            &[
-                "--literal-pathspecs",
-                "restore",
-                "--staged",
-                &format!("--source={}", base.as_str()),
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
+            &["update-index", "--force-remove", "-z", "--stdin"],
             Some(&names),
         )?;
+        let base_entries = run(&["ls-tree", "-r", "-z", base.as_str()], None)?.stdout;
+        let mut restored = vec![];
+        for entry in base_entries.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+            let path = entry
+                .splitn(2, |b| *b == b'\t')
+                .nth(1)
+                .ok_or(Error::Recovery)?;
+            if removed
+                .iter()
+                .any(|p| p.as_os_str().as_encoded_bytes() == path)
+            {
+                restored.extend_from_slice(entry);
+                restored.push(0);
+            }
+        }
+        run(&["update-index", "-z", "--index-info"], Some(&restored))?;
         let tree = commit_line(&run(&["write-tree"], None)?.stdout)?;
         let commit = self.execute(
             &self.repo,
