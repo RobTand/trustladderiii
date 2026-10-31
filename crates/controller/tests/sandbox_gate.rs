@@ -102,6 +102,7 @@ fn replay(name: &str, expected: bool) {
         round: 0,
         replanned: false,
         question: None,
+        marker_key: None,
         note: None,
         question_context: None,
         checks: None,

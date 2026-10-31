@@ -125,6 +125,7 @@ fn delivery() -> Delivery {
         attempt: 1,
         round: 0,
         replanned: false,
+        marker_key: None,
         note: None,
         checks: None,
         job_generation: None,
