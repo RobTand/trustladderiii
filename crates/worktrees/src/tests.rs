@@ -1016,3 +1016,60 @@ fn scope_restart_at_each_boundary_is_idempotent_and_preserves_later_maker_work()
         );
     }
 }
+
+#[test]
+fn scope_restart_finishes_after_git_ref_writer_was_killed() {
+    let (f, _, _) = scope_fixture();
+    assert!(
+        f.manager
+            .trim_scope_with(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+                |_| Err(Error::Io)
+            )
+            .is_err()
+    );
+    let branch_lock = f
+        .manager
+        .common
+        .join(format!("{}.lock", f.name.reference()));
+    fs::write(&branch_lock, "interrupted ref write").unwrap();
+    let index_lock = path_line(&git(
+        &f.worktree,
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    ))
+    .unwrap();
+    fs::write(&index_lock, "interrupted index write").unwrap();
+    let unrelated = f.manager.common.join("refs/heads/unrelated.lock");
+    fs::write(&unrelated, "preserve this").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!branch_lock.exists());
+    assert!(!index_lock.exists());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"preserve this");
+}
+
+#[test]
+fn scope_restart_before_intent_finishes_its_private_pin() {
+    let (f, _, _) = scope_fixture();
+    let reference = f
+        .manager
+        .common
+        .join(format!("refs/tl3/scope/{}", f.name.as_str()));
+    fs::create_dir_all(reference.parent().unwrap()).unwrap();
+    let lock = reference.with_file_name(format!(
+        "{}.lock",
+        reference.file_name().unwrap().to_str().unwrap()
+    ));
+    fs::write(&lock, "interrupted pin write").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!lock.exists());
+}
