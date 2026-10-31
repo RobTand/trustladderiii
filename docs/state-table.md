@@ -375,14 +375,16 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 
 ### Reviewing(attempt, round)
 
-The review runs in its own session, independent of the maker and the planner. It can use the same type of agent or a different one. By default its model comes from a different family than the maker's (Q22). In round 1, the reviewer resumes its round-0 session. If it runs out of room, it gets one fresh conversation on the next model in `models.reviewer`, without resuming the exhausted session (Q44). Ordinary fix rounds keep the selected reviewer and its session. A new maker attempt starts with the default reviewer again.
+The review runs in its own session, independent of the maker and the planner. It can use the same type of agent or a different one. By default its model comes from a different family than the maker's (Q22). In round 1, the reviewer resumes its round-0 session. If it runs out of room, it gets one fresh conversation on the next model in `models.reviewer`, without resuming the exhausted session (Q44).
+
+Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A clean rebase or outside push to a new head starts a new review and resets its restart flag; it keeps the shared recheck counter. Ordinary fix rounds keep the selected reviewer and its session. A new maker attempt starts with the default reviewer again. The first restart uses the re-review cost rule in the rows below.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Approved (head) | The head is the one that passed the checks | Publishing | Record the head and its tree as approved; start the publishing sequence |
 | Changes requested (findings, each tied to a measure) | | A failed round | |
-| Reviewer out of room | First time for this review; within `free_rechecks`, or credit at least 1 | Reviewing | Start a fresh conversation, without session resume, on the next reviewer model. Count it as a recheck: free up to `free_rechecks`, then spend 1. |
-| Reviewer out of room | First time for this review; beyond `free_rechecks`, and credit 0 | AwaitingRob(out of credit, continue to Ready(Reviewing)) | Release the slot and files; after funding, start the fresh review on the next reviewer model, without session resume |
+| Reviewer out of room | First time for this review; within `free_rechecks`, or credit at least 1 | Reviewing | Start a fresh conversation, without session resume, on the next reviewer model, clamped at the last entry. Count it as a recheck: free up to `free_rechecks`, then spend 1. |
+| Reviewer out of room | First time for this review; beyond `free_rechecks`, and credit 0 | AwaitingRob(out of credit, continue to Ready(Reviewing)) | Release the slot and files; after funding, start the fresh review on the next reviewer model, clamped at the last entry, without session resume |
 | Reviewer out of room | Again, on the fresh review; credit at least 1 | Planning, which must split | Spend 1; release the slot and files; set `must_split` true |
 | Reviewer out of room | Again, on the fresh review; credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files; preserve `must_split` true in the continuation |
 

@@ -20,27 +20,27 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(super) fn session(
-    delivery: &Delivery,
-    store: &mut Store,
-    snapshot: &tl3_store::Snapshot,
-) -> Result<Option<Value>> {
-    let restarted =
-        crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize].review_restarted;
+pub(super) fn session(delivery: &Delivery, store: &mut Store) -> Result<Option<Value>> {
     Ok(store
         .worker_document(&delivery.node().0.to_string(), "reviewer_session")?
         .filter(|session| {
-            session["attempt"] == delivery.attempt
-                && session["replanned"] == delivery.replanned
-                && session["review_restarted"].as_bool().unwrap_or(false) == restarted
-                && session["out_of_room"] != true
+            session["attempt"] == delivery.attempt && session["replanned"] == delivery.replanned
         }))
+}
+
+pub(super) fn resumes(delivery: &Delivery, session: Option<&Value>, restarted: bool) -> bool {
+    delivery.round == 1
+        && session.is_some_and(|session| {
+            session["review_restarted"].as_bool().unwrap_or(false) == restarted
+                && session["out_of_room"] != true
+        })
 }
 
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
     snapshot: &tl3_store::Snapshot,
+    session: Option<&Value>,
 ) -> Result<Value> {
     let run = delivery
         .checks
@@ -50,7 +50,6 @@ pub(super) fn inputs(
         .head_sha
         .as_deref()
         .ok_or(Error::Invalid("review needs its exact head"))?;
-    let session = session(delivery, store, snapshot)?;
     // A reproducing round keeps the reviewed commit, rebased after a clean rebase.
     let mut base = if delivery.round == 1 && session.is_some() {
         match run.reviewed_sha.as_deref() {
@@ -200,6 +199,11 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exhaustion_has_no_blocking_findings() {
+        assert!(validate_reply(&json!({"verdict":"out_of_room"}), &json!({})).is_ok());
+    }
 
     #[test]
     fn approval_and_blockers_must_match_supplied_evidence() {

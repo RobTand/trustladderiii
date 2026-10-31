@@ -103,6 +103,8 @@ def run(model, request, worktree, emit):
                         raise ValueError("invalid reviewer tool calls")
                     reply = read_json(message.text)
                     validate("reviewer-reply", reply)
+                    if reply["verdict"] == "out_of_room":
+                        raise ValueError("model cannot report reviewer exhaustion")
                     check_reply(request["inputs"], reply)
                     state["reply"] = reply
             state["messages"] = messages_to_dict(history)

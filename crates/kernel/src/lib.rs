@@ -380,7 +380,7 @@ pub struct Node {
     /// The branch and worktree may exist.
     pub worktree: bool,
     pub rechecks: u8,
-    /// This attempt has used its fresh reviewer conversation after exhaustion.
+    /// This review has used its fresh conversation after exhaustion.
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
@@ -1888,6 +1888,9 @@ fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, out: &mut Ou
         }
         Reply::RebaseClean { head } => {
             let m = &mut w.nodes[i];
+            if m.head != Some(head) {
+                m.review_restarted = false;
+            }
             m.head = Some(head);
             m.checked = None;
             recheck(w, i, Phase::Checking, out);
@@ -2175,6 +2178,9 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
             );
             if published {
                 let m = &mut w.nodes[i];
+                if m.head != Some(head) {
+                    m.review_restarted = false;
+                }
                 m.head = Some(head);
                 m.checked = None;
                 recheck(w, i, Phase::Ready(Resume::Checking), out);

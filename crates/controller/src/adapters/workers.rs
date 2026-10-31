@@ -190,6 +190,15 @@ impl Supervisor {
         snapshot: &Snapshot,
     ) -> Result<Value> {
         let node = delivery.node().0.to_string();
+        let review_restarted = role == "reviewer"
+            && crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize]
+                .review_restarted;
+        let review_session = if role == "reviewer" {
+            review::session(delivery, store)?
+        } else {
+            None
+        };
+        let resume_review = review::resumes(delivery, review_session.as_ref(), review_restarted);
         let mut materials =
             if let Some(crate::steering::Task::Classify { inputs, .. }) = &delivery.steering {
                 inputs.clone()
@@ -292,7 +301,12 @@ impl Supervisor {
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
         let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "reviewer" {
-            inputs = review::inputs(delivery, store, snapshot)?;
+            inputs = review::inputs(
+                delivery,
+                store,
+                snapshot,
+                review_session.as_ref().filter(|_| resume_review),
+            )?;
             inputs["context_size"] = json!(self.limits.context_tokens);
         } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
@@ -334,17 +348,13 @@ impl Supervisor {
             "reviewer" => &self.models.reviewer,
             _ => return Err(Error::Invalid("unsupported worker role")),
         };
-        let review_restarted = role == "reviewer"
-            && crate::snapshot::decode(snapshot)?.nodes[delivery.node().0 as usize]
-                .review_restarted;
         let model = if role == "reviewer" {
             let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
             let first = ladder
                 .iter()
                 .position(|model| !model.family.eq_ignore_ascii_case(&maker.family))
                 .ok_or(Error::Invalid("reviewer needs a different model family"))?;
-            // The default may be the last rung; the next entry wraps to the first.
-            &ladder[(first + usize::from(review_restarted)) % ladder.len()]
+            &ladder[(first + usize::from(review_restarted)).min(ladder.len() - 1)]
         } else {
             &ladder[rung.min(ladder.len() - 1)]
         };
@@ -395,13 +405,14 @@ impl Supervisor {
                         format!("reviewer-attempt-{}.json", delivery.attempt)
                     })
             );
-            let session = review::session(delivery, store, snapshot)?;
-            if let Some(session) = &session {
+            // Even a retired conversation's checkpoint has an accepted generation.
+            // Keep it from being mistaken for an unaccepted retry on a new head.
+            if let Some(session) = &review_session {
                 request["last_accepted_generation"] = json!(session["generation"].as_u64().ok_or(
                     Error::Invalid("reviewer session has no accepted generation")
                 )?);
             }
-            request["resume_session"] = json!(delivery.round == 1 && session.is_some());
+            request["resume_session"] = json!(resume_review);
         }
         Ok(request)
     }

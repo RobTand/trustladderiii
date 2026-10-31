@@ -198,7 +198,7 @@ fn check_effect(
 }
 
 /// Applying one event keeps the world consistent and keeps every rule.
-fn check_apply(event: Event) {
+fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
@@ -276,6 +276,7 @@ fn check_apply(event: Event) {
             assert!(after.nodes[0].question.map_or(true, |q| q.id != question));
         }
     }
+    before
 }
 
 /// One internal transition of request 0 keeps the world consistent, changes
@@ -438,10 +439,38 @@ proof!(
     apply_approved,
     check_apply(reply(Reply::Approved { head: kani::any() }))
 );
-proof!(
-    apply_reviewer_out_of_room,
-    check_apply(reply(Reply::ReviewerOutOfRoom))
-);
+proof!(apply_reviewer_out_of_room, {
+    let event = reply(Reply::ReviewerOutOfRoom);
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = b.phase == Phase::Reviewing
+        && b.current() == Some(Item::Await)
+        && b.run == Some(generation);
+    let paid = b.rechecks.saturating_add(1) > FREE_RECHECKS;
+    kani::cover!(
+        accepted && !b.review_restarted && !paid,
+        "first exhaustion: free review"
+    );
+    kani::cover!(
+        accepted && !b.review_restarted && paid && b.credit.can_spend(1),
+        "first exhaustion: paid review"
+    );
+    kani::cover!(
+        accepted && !b.review_restarted && paid && !b.credit.can_spend(1),
+        "first exhaustion: needs credit"
+    );
+    kani::cover!(
+        accepted && b.review_restarted && b.credit.can_spend(1),
+        "second exhaustion: paid split"
+    );
+    kani::cover!(
+        accepted && b.review_restarted && !b.credit.can_spend(1),
+        "second exhaustion: split needs credit"
+    );
+});
 proof!(
     apply_changes_requested,
     check_apply(reply(Reply::ChangesRequested))
