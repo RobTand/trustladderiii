@@ -91,7 +91,7 @@ fn workers(
     mode: String,
 ) -> impl Executor {
     let add_add = mode == "add-add";
-    let d5 = mode.starts_with("d5-");
+    let d5 = mode.starts_with("d5-") || (mode.starts_with("q46-") && mode != "q46-clean");
     support::workers::Workers::new(
         Some(Box::new(real)),
         fake,
@@ -348,6 +348,13 @@ impl Respond for Api {
                             &self.fixture.remote,
                             &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
                         ));
+                    }
+                    if let Some(pull) = &mut s.pull {
+                        let output = Command::new("git").current_dir(&self.fixture.remote)
+                            .args(["merge-tree", "--write-tree", "main", pull["head"]["sha"].as_str().unwrap()])
+                            .output().unwrap();
+                        pull["mergeable"] = json!(output.status.success());
+                        pull["mergeable_state"] = json!(if output.status.success() { "clean" } else { "dirty" });
                     }
                     s.pull.clone().unwrap()
                 }
@@ -664,6 +671,34 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         label: "tl3".into(),
     })
     .unwrap();
+    if mode.starts_with("q46-") {
+        let (sender, receiver) = mpsc::channel();
+        let start = Instant::now();
+        loop {
+            let node = c.world().unwrap().nodes[0];
+            let reached = match mode {
+                "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
+                "q46-reviewing" => node.phase == Phase::Reviewing,
+                "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
+                _ => panic!("unknown Q46 mode"),
+            };
+            if reached { break; }
+            c.drive_once().unwrap();
+            source.poll_once(&mut store, &sender).unwrap();
+            for input in receiver.try_iter() { tl3_controller::ingress::apply(&mut c, input).unwrap(); }
+            assert!(start.elapsed() < Duration::from_secs(90));
+        }
+        if mode != "q46-clean" { commit(&f.source, "value.py", "def value(): return 3\n"); }
+        let main = commit(&f.source, "main-moved.txt", "main moved before publication\n");
+        git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+        if mode == "q46-enqueue" {
+            let mut state = server.api.state.lock().unwrap();
+            state.pull.as_mut().unwrap()["mergeable"] = json!(false);
+            state.pull.as_mut().unwrap()["mergeable_state"] = json!("dirty");
+        }
+        // The fixture's next read reflects the resolved head after the maker merges main.
+        let _ = main;
+    }
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
@@ -752,6 +787,20 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .unwrap()
         .to_owned();
     let credit = c.world().unwrap().nodes[0].credit.balance();
+    if mode.starts_with("q46-") {
+        let node = c.world().unwrap().nodes[0];
+        assert_eq!(node.credit.spent, u32::from(mode != "q46-clean"));
+        assert_eq!(node.rechecks, 0);
+        assert!(node.question.is_none());
+        let main = git(&f.remote, &["rev-parse", "main"]);
+        let d = f.delivery(EffectKind::Push, 100);
+        let checkout = f.adapter().checkout(&d);
+        let contains_main = git(&checkout, &["merge-base", &first_head, &main]) == main;
+        assert_eq!(contains_main, mode != "q46-clean");
+        assert_eq!(fs::read_to_string(root.path().join("reviews.jsonl")).unwrap().lines().count(),
+            if mode == "q46-clean" { 1 } else { 2 });
+    }
+
     let d = f.delivery(EffectKind::Push, 100);
     if matches!(mode, "push" | "reports-latest" | "review-reset-push") {
         let checkout = f.adapter().checkout(&d);
@@ -1491,6 +1540,10 @@ fn main() {
         "rebase",
         "round-one-rebase",
         "add-add",
+        "q46-checking",
+        "q46-reviewing",
+        "q46-enqueue",
+        "q46-clean",
         "d5-clean",
         "d5-conflict",
         "unapproved",

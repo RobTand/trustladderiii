@@ -865,3 +865,62 @@ fn q44_the_same_head_keeps_its_exhaustion_history() {
         assert_eq!(run.phase(), Phase::Planning { must_split: true });
     }
 }
+
+#[test]
+fn publishing_conflict_rebases_at_every_publication_step() {
+    for confirmed in 0..4 {
+        let mut r = Run::new();
+        r.start_making();
+        r.reply(Reply::MakerDone { head: HeadId(1) });
+        r.reply(CHECKS_PASS);
+        r.send(Event::Reply { node: NodeId(0), generation: r.node().generation,
+            reply: Reply::Approved { head: HeadId(1) } });
+        for _ in 0..confirmed {
+            let effect = r.node().effect.unwrap();
+            r.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::Confirmed });
+        }
+        let generation = r.node().generation;
+        let credit = r.credit();
+        r.fact(Fact::Conflict);
+        assert_eq!(r.phase(), Phase::Rebasing);
+        assert!(r.node().generation > generation);
+        assert_eq!(r.credit(), credit);
+        let generation = r.node().generation;
+        r.fact(Fact::Conflict);
+        assert_eq!(r.node().generation, generation, "duplicate conflict must not restart rebasing");
+        r.reply(Reply::RebaseNeedsChanges);
+        assert_eq!(r.phase(), Phase::Making);
+        assert_eq!(r.credit(), credit - 1);
+        let mut head = HeadId(1);
+        r.pass(&mut head);
+        r.fact(Fact::PrMerged { head, checks_passed: true });
+        assert_eq!(r.phase(), Phase::Closed(Outcome::Merged));
+        assert!(!r.asked_rob());
+    }
+}
+
+#[test]
+fn publishing_conflict_cycles_exhaust_credit_or_recheck_allowance() {
+    for clean in [false, true] {
+        let mut r = Run::new();
+        r.start_making();
+        let mut head = HeadId(1);
+        r.reply(Reply::MakerDone { head });
+        r.reply(CHECKS_PASS);
+        loop {
+            r.send(Event::Reply { node: NodeId(0), generation: r.node().generation,
+                reply: Reply::Approved { head } });
+            r.fact(Fact::Conflict);
+            assert_eq!(r.phase(), Phase::Rebasing);
+            head.0 += 1;
+            r.reply(if clean { Reply::RebaseClean { head } } else { Reply::RebaseNeedsChanges });
+            if r.phase() == Phase::AwaitingRob { break; }
+            if !clean { r.reply(Reply::MakerDone { head }); }
+            r.reply(CHECKS_PASS);
+            assert!(head.0 <= u64::from(FREE_RECHECKS) + 6, "conflicts cannot loop for free");
+        }
+        assert_eq!(r.credit(), 0);
+        assert!(!r.node().holds);
+        assert_eq!(r.node().question.unwrap().kind, QKind::OutOfCredit);
+    }
+}
