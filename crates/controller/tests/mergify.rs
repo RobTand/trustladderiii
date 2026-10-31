@@ -2655,5 +2655,5 @@ fn main() {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
     database.stop();
-    println!("76 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("82 Mergify scenarios passed; no skips; no live upstream calls");
 }

@@ -1343,3 +1343,9 @@ setup incident naming **Actions: Read and write**; see
 
 Run `bash crates/controller/tools/verify-head-checks.sh` through PrismaBuild for the
 focused D4 scenarios. The Mergify and publishing suites cover the surrounding flow.
+
+Workflow recovery waits while a cancelled check's workflow run is still finishing.
+A later look reruns the completed workflow before enqueueing. Explicit Actions
+refusals retain only a safe reason: missing App access, an expired run, or other
+workflow restrictions. A refused POST can be retried with the same delivery key;
+a lost response still needs an increased `run_attempt` before enqueueing.

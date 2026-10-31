@@ -89,16 +89,8 @@ pub(super) async fn infrastructure(
 struct Rerun {
     run: WorkflowRun,
     accepted: bool,
-}
-
-fn actions_error(error: tl3_github::Error) -> Error {
-    match error {
-        error @ tl3_github::Error::Http { status: 403 } => Error::Permanent {
-            class: "actions_write_required",
-            source: Box::new(error),
-        },
-        error => error.into(),
-    }
+    #[serde(default)]
+    waiting_for_completion: bool,
 }
 
 impl Adapter {
@@ -121,10 +113,14 @@ impl Adapter {
             let current = self
                 .runtime
                 .block_on(github.workflow_run(&repo, saved.run.id))
-                .map_err(actions_error)?;
-            if current.head_sha != saved.run.head_sha
-                || current.run_attempt <= saved.run.run_attempt
-            {
+                .map_err(Error::from)?;
+            if current.head_sha != saved.run.head_sha {
+                return Ok(true);
+            }
+            if current.run_attempt > saved.run.run_attempt {
+                continue;
+            }
+            if !saved.waiting_for_completion || current.status != "completed" {
                 return Ok(true);
             }
         }
@@ -148,7 +144,7 @@ impl Adapter {
         let runs = self
             .runtime
             .block_on(github.workflow_runs(&repo, head))
-            .map_err(actions_error)?;
+            .map_err(Error::from)?;
         let mut selected = BTreeMap::new();
         for check in checks {
             let run = runs
@@ -169,14 +165,26 @@ impl Adapter {
         let mut saved = self.saved_reruns(delivery)?;
         let path = self.records.path(&delivery.key).with_extension("reruns");
         for run in selected.into_values() {
-            if let Some(previous) = saved.iter().find(|saved| saved.run.id == run.id) {
+            if let Some(index) = saved.iter().position(|saved| saved.run.id == run.id) {
+                let previous = &saved[index];
                 if previous.accepted || run.run_attempt > previous.run.run_attempt {
                     continue;
                 }
-                return Err(Error::Invalid("workflow rerun acceptance is still unknown"));
+                if !previous.waiting_for_completion {
+                    return Err(Error::Invalid("workflow rerun acceptance is still unknown"));
+                }
+                saved.remove(index);
             }
             if run.status != "completed" {
-                continue;
+                saved.push(Rerun {
+                    run,
+                    accepted: false,
+                    waiting_for_completion: true,
+                });
+                self.records.write(&path, &serde_json::to_vec(&saved)?)?;
+                return Err(Error::Invalid(
+                    "workflow run is still finishing before rerun",
+                ));
             }
             let pull = self.runtime.block_on(github.pull_request(&repo, number))?;
             if pull.head.sha != run.head_sha || pull.state != "open" || pull.merged_at.is_some() {
@@ -186,6 +194,7 @@ impl Adapter {
             saved.push(Rerun {
                 run: run.clone(),
                 accepted: false,
+                waiting_for_completion: false,
             });
             // GitHub has no idempotency key for reruns. Persist before POST and recover
             // a lost response from run_attempt; silence never permits another POST.
@@ -195,12 +204,26 @@ impl Adapter {
                 .block_on(github.rerun_workflow_run(&repo, run.id))
             {
                 Ok(()) => saved.last_mut().unwrap().accepted = true,
-                Err(error @ tl3_github::Error::RateLimited { .. }) => {
-                    saved.pop();
+                Err(error) => {
+                    match &error {
+                        tl3_github::Error::ActionsForbidden(
+                            tl3_github::ActionsRefusal::RunInProgress,
+                        ) => {
+                            saved.last_mut().unwrap().waiting_for_completion = true;
+                        }
+                        tl3_github::Error::ActionsForbidden(_)
+                        | tl3_github::Error::RateLimited { .. }
+                        | tl3_github::Error::Http {
+                            status: 400..=407 | 409..=499,
+                        } => {
+                            // A refused request did not start a rerun. Retrying this key is safe.
+                            saved.pop();
+                        }
+                        _ => {}
+                    }
                     self.records.write(&path, &serde_json::to_vec(&saved)?)?;
                     return Err(error.into());
                 }
-                Err(error) => return Err(actions_error(error)),
             }
             self.records.write(&path, &serde_json::to_vec(&saved)?)?;
         }

@@ -1250,6 +1250,10 @@ pub(crate) fn incident_summary(
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
+        "actions_run_expired" => "cannot rerun a workflow run older than 30 days",
+        "actions_refused" => {
+            "refused the workflow request. Check the workflow and repository restrictions"
+        }
         "not_found" => "could not find the requested resource",
         "invalid_request" => "rejected the request",
         "dirty_worktree" => "has uncommitted or untracked files",
