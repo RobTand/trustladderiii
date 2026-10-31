@@ -652,7 +652,7 @@ inside an admitted action. Controller/store tests and this trial are separate.
 
 The systematic [crash simulation](../../docs/crash-simulation.md) uses real
 SIGKILL cuts inside transactions and around dispatch and reconciliation. Its
-default `merge` smoke scenario covers all thirteen save points. Set
+default `merge` smoke scenario covers all twenty save points. Set
 `TL3_SIM_FULL=1` for the full matrix and effect-and-phase coverage assertion.
 Its seed and optional scenario and save-point filters appear in failure output.
 Generate the required three-host and two-portable campaign with

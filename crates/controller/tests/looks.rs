@@ -1133,6 +1133,36 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
 }
 
 fn main() {
+    if std::env::args().any(|s| s == "--r5") {
+        let mut db = support::Database::start();
+        let mut failures = 0;
+        for (name, test) in [
+            (
+                "moving_maker_wait_keeps_registration",
+                moving_maker_wait_keeps_registration as fn(&tl3_config::Store),
+            ),
+            (
+                "successful_look_breaks_failure_streak",
+                successful_look_breaks_failure_streak,
+            ),
+            (
+                "successful_wait_read_breaks_failure_streak",
+                successful_wait_read_breaks_failure_streak,
+            ),
+        ] {
+            let settings = db.create(name);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| test(&settings)));
+            println!(
+                "R5 {name}: {}",
+                if result.is_ok() { "PASS" } else { "FAIL" }
+            );
+            failures += usize::from(result.is_err());
+        }
+        db.stop();
+        assert_eq!(failures, 0, "R5 look regressions");
+        return;
+    }
+
     if let Some(check) = std::env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--scratch-metadata=").map(str::to_owned))
@@ -1230,6 +1260,9 @@ fn main() {
         wait_subscription_retirement(&db.create(&format!("wait_retirement_{case}")), case);
         println!("test wait_subscription_removed_after_{case} ... ok");
     }
+    moving_maker_wait_keeps_registration(&db.create("moving_wait"));
+    successful_look_breaks_failure_streak(&db.create("failure_streak"));
+    successful_wait_read_breaks_failure_streak(&db.create("wait_failure_streak"));
     worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
     println!("test worker_look_does_not_read_github_deliveries ... ok");
     declared_maker_wait(&db.create("maker_wait_ended"), "done");
@@ -1771,6 +1804,187 @@ fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
     assert!(
         !path.exists(),
         "{case} deletes the durable wait subscription"
+    );
+}
+
+fn moving_maker_wait_keeps_registration(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let stops = Rc::new(Cell::new(0));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        WaitingMaker {
+            fake: adapters::workers::Fake::new(root.path()),
+            stops: stops.clone(),
+            owner: "prismabuild".into(),
+            checkout: root.path().join("worktree"),
+        },
+    );
+    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    waits::record(root.path(), "claimed");
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    c.set_allowances(allowances());
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    c.look_now().unwrap();
+    let marker = root.path().join(format!(
+        "queue/claimed/{}.100.host.1.abc.tombstone",
+        waits::key()
+    ));
+    std::fs::rename(
+        root.path()
+            .join(format!("queue/claimed/{}.json", waits::key())),
+        &marker,
+    )
+    .unwrap();
+    for _ in 0..3 {
+        clock.advance(1000);
+        c.look_now().unwrap();
+        let snapshot = c.snapshot().unwrap();
+        let allowance = snapshot
+            .rows
+            .iter()
+            .find(|row| {
+                row.table == "allowances" && row.value["external_wait"]["key"] == waits::key()
+            })
+            .unwrap();
+        assert_eq!(
+            allowance.value["read_failures"], 0,
+            "finish window must not count as a failed look"
+        );
+        assert_eq!(
+            allowance.value["wait_ended"], false,
+            "move must keep wait registered"
+        );
+        assert!(
+            !snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents" && row.value["open"] == true),
+            "finish window must not open an incident"
+        );
+        assert_eq!(stops.get(), 0);
+    }
+    waits::record(root.path(), "done");
+    std::fs::remove_file(marker).unwrap();
+    c.look_now().unwrap();
+    assert_eq!(stops.get(), 0, "terminal starts the allowance");
+}
+
+struct RecoveringLook {
+    healthy: Rc<Cell<bool>>,
+}
+impl Executor for RecoveringLook {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+    fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
+        if self.healthy.get() {
+            Ok(Look::Alive {
+                progress: "same".into(),
+            })
+        } else {
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+        }
+    }
+}
+fn successful_look_breaks_failure_streak(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let healthy = Rc::new(Cell::new(false));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Workers,
+        RecoveringLook {
+            healthy: healthy.clone(),
+        },
+    );
+    for success in [false, true, false] {
+        healthy.set(success);
+        c.look_now().unwrap();
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents" && r.value["open"] == true),
+            "nonconsecutive read failures must not open an incident"
+        );
+    }
+    c.look_now().unwrap();
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .count(),
+        1,
+        "two consecutive read failures must open one incident"
+    );
+}
+
+fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        WaitingMaker {
+            fake: adapters::workers::Fake::new(root.path()),
+            stops: Rc::new(Cell::new(0)),
+            owner: "prismabuild".into(),
+            checkout: root.path().join("worktree"),
+        },
+    );
+    registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
+    waits::record(root.path(), "claimed");
+    let mut c =
+        Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
+            .unwrap();
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    let path = root
+        .path()
+        .join(format!("queue/claimed/{}.json", waits::key()));
+    for success in [false, true, false] {
+        if success {
+            waits::record(root.path(), "claimed");
+        } else {
+            std::fs::write(&path, "broken JSON").unwrap();
+        }
+        c.look_now().unwrap();
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "incidents" && r.value["open"] == true),
+            "nonconsecutive wait read failures must not open an incident"
+        );
+    }
+    c.look_now().unwrap();
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .count(),
+        1,
+        "two consecutive wait read failures must open one incident"
     );
 }
 

@@ -1,6 +1,10 @@
 use std::{env, error::Error, fs, path::PathBuf};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo::rustc-check-cfg=cfg(loom)");
+    if env::var_os("CARGO_FEATURE_LOOM").is_some() {
+        println!("cargo::rustc-cfg=loom");
+    }
     let directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?)
         .join("../../workers/src/tl3_workers/schemas");
     println!("cargo:rerun-if-changed={}", directory.display());
