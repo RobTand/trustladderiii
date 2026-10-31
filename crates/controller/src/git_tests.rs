@@ -35,9 +35,7 @@ pub fn git(path: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
-#[path = "../../store/tests/support/mod.rs"]
-#[allow(dead_code)]
-pub mod support;
+pub(crate) use crate::store_support as support;
 
 pub fn hostile(name: &str, check: impl FnOnce()) {
     if std::env::var_os("TL3_HOSTILE_ADAPTER_CHILD").is_some() {
