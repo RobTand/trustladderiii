@@ -55,6 +55,26 @@ pub enum Error {
     Recovery,
 }
 
+impl Error {
+    pub fn permanent_class(&self) -> Option<&'static str> {
+        match self {
+            Self::BranchName => Some("invalid_branch"),
+            Self::CommitId => Some("invalid_commit"),
+            Self::Remote => Some("invalid_remote"),
+            Self::WorktreePath => Some("invalid_worktree_path"),
+            Self::Token => Some("invalid_token"),
+            Self::Response => Some("invalid_response"),
+            Self::MissingBranch => Some("missing_branch"),
+            Self::MainBranch => Some("reserved_branch"),
+            Self::WorktreeOccupied => Some("worktree_occupied"),
+            Self::DirtyWorktree => Some("dirty_worktree"),
+            Self::Recovery => Some("worktree_recovery"),
+            // A Git exit alone cannot distinguish a lock or network failure.
+            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchName(String);
 

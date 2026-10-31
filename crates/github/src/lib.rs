@@ -5,5 +5,5 @@ pub mod message;
 mod models;
 pub mod webhook;
 
-pub use client::{API_VERSION, AppConfig, ClientOptions, Error, GitHub};
+pub use client::{API_VERSION, AppConfig, ClientOptions, Error, FailureClass, GitHub};
 pub use models::*;
