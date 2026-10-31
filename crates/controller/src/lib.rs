@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod adoption;
 pub mod findings;
 
 pub mod adapters;
@@ -1558,7 +1559,9 @@ impl Controller {
                 }
                 return Ok(None);
             }
-            Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
+            Observation::Kernel(
+                Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. },
+            ) => {
                 return Err(Error::Invalid(
                     "acknowledgements require an effect key; requests require authorized intake",
                 ));

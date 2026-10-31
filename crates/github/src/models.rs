@@ -54,6 +54,12 @@ pub struct Comment {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PullRequest {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<Label>,
     pub number: u64,
     pub user: Actor,
     pub state: String,

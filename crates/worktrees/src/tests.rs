@@ -876,3 +876,132 @@ fn auth_header_is_scoped_to_github() {
     assert!(remote.credentials(Some(&f.token)).is_some());
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
+
+#[test]
+fn adoption_fetches_only_the_pinned_pull_ref() {
+    let f = Fixture::new();
+    let pinned = f.manager.resolve("HEAD").unwrap();
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    let fetched = f
+        .manager
+        .fetch_pull_head(&f.remote, None, 17, &pinned)
+        .unwrap();
+    assert_eq!(fetched, pinned);
+    write_commit(&f.repo, "author.txt", "later\n", "later author push");
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    assert_eq!(
+        f.manager
+            .fetch_pull_head(&f.remote, None, 17, &pinned)
+            .unwrap(),
+        pinned
+    );
+    let invocations = f.manager.invocations.lock().unwrap();
+    let fetches: Vec<_> = invocations
+        .iter()
+        .filter(|i| i.argv.iter().any(|a| a == "fetch"))
+        .collect();
+    assert_eq!(fetches.len(), 1, "a retained pin ignores later pushes");
+    assert!(
+        fetches[0]
+            .argv
+            .iter()
+            .any(|a| a == "+refs/pull/17/head:refs/tl3/pulls/17")
+    );
+}
+
+#[test]
+fn adoption_branch_preserves_author_head_and_separate_base() {
+    let f = Fixture::new();
+    let base = f.manager.resolve("HEAD").unwrap();
+    write_commit(&f.repo, "author.txt", "author\n", "author change");
+    let start = f.manager.resolve("HEAD").unwrap();
+    let branch = f
+        .manager
+        .create_branch_from(&f.name, &base, &start)
+        .unwrap();
+    assert_eq!(branch.base, base);
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), start);
+    assert_eq!(
+        f.manager
+            .resolve(&format!("refs/tl3/starts/{}", f.name.as_str()))
+            .unwrap(),
+        start
+    );
+    f.manager.create_worktree(&f.name, &f.worktree).unwrap();
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "author\n"
+    );
+    write_commit(&f.worktree, "author.txt", "fixed\n", "fix");
+    let fixed = f.manager.resolve(&f.name.reference()).unwrap();
+    f.manager
+        .create_branch_from(&f.name, &base, &start)
+        .unwrap();
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), fixed);
+}
+
+#[test]
+fn adoption_crash_repairs_only_an_unchanged_start() {
+    let f = Fixture::new();
+    let base = f.manager.resolve("HEAD").unwrap();
+    write_commit(&f.repo, "author.txt", "author\n", "author change");
+    let start = f.manager.resolve("HEAD").unwrap();
+    f.manager
+        .update_refs(&format!(
+            "create {} {}\ncreate {} {}\ncreate refs/tl3/starts/{} {}\n",
+            f.name.reference(),
+            start.as_str(),
+            f.name.base_ref(),
+            base.as_str(),
+            f.name.as_str(),
+            start.as_str()
+        ))
+        .unwrap();
+    git(
+        &f.repo,
+        [
+            "worktree",
+            "add",
+            "--no-checkout",
+            "--lock",
+            "--reason",
+            "initializing",
+            f.worktree.to_str().unwrap(),
+            f.name.as_str(),
+        ],
+    );
+    assert!(
+        f.manager
+            .finish_prepare(&f.name, &f.worktree, true)
+            .unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "author\n"
+    );
+    write_commit(&f.worktree, "author.txt", "maker\n", "maker ran");
+    git(
+        &f.repo,
+        [
+            "worktree",
+            "lock",
+            "--reason",
+            "initializing",
+            f.worktree.to_str().unwrap(),
+        ],
+    );
+    assert!(matches!(
+        f.manager.finish_prepare(&f.name, &f.worktree, true),
+        Err(Error::Recovery)
+    ));
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "maker\n"
+    );
+}

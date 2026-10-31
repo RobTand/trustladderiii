@@ -1,4 +1,6 @@
 mod prismabuild_fixture;
+#[path = "publishing/adoption.rs"]
+mod publishing_adoption;
 mod support;
 mod worktree_fixture;
 
@@ -120,6 +122,8 @@ fn workers(
 
 struct State {
     pull: Option<Value>,
+    proposed: Option<Value>,
+    proposed_comments: Vec<Value>,
     checks: Vec<Value>,
     comments: Vec<Value>,
     operations_comments: Vec<Value>,
@@ -137,6 +141,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             pull: None,
+            proposed: None,
+            proposed_comments: vec![],
             checks: vec![],
             comments: vec![],
             operations_comments: vec![],
@@ -256,6 +262,20 @@ impl Respond for Api {
         let prefix = "/repos/RobTand/tl3-sandbox";
         let path = path.strip_prefix(prefix).unwrap_or(path);
         let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
+        if path == "/pulls/17" {
+            if method == "PATCH" {
+                s.proposed.as_mut().unwrap()["state"] = body["state"].clone();
+            }
+            return ResponseTemplate::new(200).set_body_json(s.proposed.clone().unwrap());
+        }
+        if path == "/issues/17/comments" {
+            if method == "POST" {
+                let c = json!({"id":s.proposed_comments.len() + 101,"body":body["body"],"user":{"id":99,"login":"factory[bot]"},"created_at":"2026-10-31T00:00:00Z","updated_at":"2026-10-31T00:00:00Z","issue_url":"https://api.github.com/repos/RobTand/tl3-sandbox/issues/17"});
+                s.proposed_comments.push(c.clone());
+                return ResponseTemplate::new(201).set_body_json(c);
+            }
+            return ResponseTemplate::new(200).set_body_json(json!(s.proposed_comments));
+        }
         let response = if let Some(response) =
             support::github::respond(r, r.url.path(), prefix, &mut *s)
         {
@@ -271,7 +291,7 @@ impl Respond for Api {
                     );
                     let base = git(&self.fixture.remote, &["rev-parse", "main"]);
                     s.pull = Some(
-                        json!({"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
+                        json!({"body":body["body"],"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
                     "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
                     );
@@ -1024,7 +1044,11 @@ fn main() {
     if let Some(mode) = env::args().nth(1) {
         let python = prepare_workers();
         let mut database = support::Database::start();
-        lifecycle(&database.create("publishing_regression"), &python, &mode);
+        if mode.starts_with("adoption-") {
+            publishing_adoption::run(&database.create("adoption"), &python, &mode);
+        } else {
+            lifecycle(&database.create("publishing_regression"), &python, &mode);
+        }
         database.stop();
         println!("test publishing_{mode} ... ok");
         return;
@@ -1053,6 +1077,10 @@ fn main() {
         );
         println!("test publishing_{mode} ... ok");
     }
+    for mode in ["adoption-pass", "adoption-fix", "adoption-negative"] {
+        publishing_adoption::run(&database.create(mode), &python, mode);
+        println!("test {mode} ... ok");
+    }
     database.stop();
-    println!("12 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("15 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

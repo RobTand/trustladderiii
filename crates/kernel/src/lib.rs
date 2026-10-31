@@ -369,6 +369,10 @@ pub struct Node {
     pub fx_incidents: u8,
     pub waiting_incident: bool,
     pub incident_needs_rob: bool,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub proposed: Option<HeadId>,
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub adopted: bool,
     pub head: Option<HeadId>,
     /// The head that passed its checks.
     pub checked: Option<HeadId>,
@@ -413,6 +417,8 @@ impl Node {
             fx_incidents: 0,
             waiting_incident: false,
             incident_needs_rob: false,
+            proposed: None,
+            adopted: false,
             head: None,
             checked: None,
             approved: None,
@@ -671,6 +677,10 @@ pub enum Command {
 pub enum Event {
     NewRequest {
         repo: RepoId,
+    },
+    NewAdoption {
+        repo: RepoId,
+        head: HeadId,
     },
     Reply {
         node: NodeId,
@@ -1454,12 +1464,17 @@ pub enum Broken {
 }
 
 // proof map start
+pub const ADOPTION_PROOFS: [&str; 2] = [
+    "apply_adoption_at_most_once",
+    "apply_adoption_has_no_maker_credit",
+];
 /// The Kani proof that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
 pub fn proof_of_event(event: &Event) -> &'static str {
     match event {
         Event::NewRequest { .. } => "apply_new_request",
+        Event::NewAdoption { .. } => "apply_new_adoption",
         Event::Reply { reply, .. } => match reply {
             Reply::IngestDone { .. } => "apply_ingest_done",
             Reply::IngestEarlyEnd(_) => "apply_ingest_early_end",
@@ -1568,6 +1583,7 @@ pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<Worl
 
 fn apply(w: &mut World, event: Event, out: &mut Outbox) {
     match event {
+        Event::NewAdoption { .. } => todo!("Q45 adoption intake"),
         Event::NewRequest { repo } => {
             if repo.index().is_some_and(|r| r < w.gates.len()) {
                 w.nodes.push(Node::new(repo));

@@ -456,6 +456,25 @@ impl Worktrees {
     }
 
     /// Fetches only main, with the same credential and transport policy as pushes.
+    pub fn fetch_pull_head(
+        &self,
+        _remote: &Remote,
+        _token: Option<&InstallationToken>,
+        _number: u64,
+        _pinned: &CommitId,
+    ) -> Result<CommitId, Error> {
+        todo!("Q45 pinned pull fetch")
+    }
+
+    pub fn create_branch_from(
+        &self,
+        _name: &BranchName,
+        _base: &CommitId,
+        _start: &CommitId,
+    ) -> Result<Branch, Error> {
+        todo!("Q45 branch start")
+    }
+
     pub fn fetch_main(
         &self,
         remote: &Remote,

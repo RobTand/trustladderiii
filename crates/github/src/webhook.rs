@@ -40,6 +40,12 @@ pub enum Event {
         after: String,
         actor: Actor,
     },
+    PullRequestLabeled {
+        context: Context,
+        pull_request: PullRequest,
+        label: Label,
+        actor: Actor,
+    },
     PullRequestUnlabeled {
         context: Context,
         pull_request: PullRequest,
