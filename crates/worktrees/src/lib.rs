@@ -384,8 +384,8 @@ impl Worktrees {
                 self.execute_index(
                     &path,
                     ["update-index", "-z", "--index-info"],
-                    Some(&instructions),
                     None,
+                    Some(&instructions),
                     Some(&index),
                 )?,
             )?;
