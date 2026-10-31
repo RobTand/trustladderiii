@@ -705,6 +705,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
 
         webhook(&mut c, &server, "synchronize");
         if mode == "review-reset-push" {
+            while c.drive_once().unwrap() {}
             assert!(
                 !c.world().unwrap().nodes[0].review_restarted,
                 "outside push starts a new review"
