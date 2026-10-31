@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 use tl3_store::Store;
 
+pub const SCOPE_RULE: &str = "request-scope";
+
 pub const REPORT_RULE: &str = "test-report-integrity";
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
@@ -121,8 +123,9 @@ pub(crate) fn criteria(
     let rules_list = rules
         .as_array_mut()
         .ok_or(Error::Invalid("standing rules must be a list"))?;
-    rules_list.retain(|rule| rule["id"] != REPORT_RULE);
+    rules_list.retain(|rule| rule["id"] != REPORT_RULE && rule["id"] != SCOPE_RULE);
     rules_list.push(json!({"id": REPORT_RULE, "description": "Protect test reports. Block code that writes directly to the test process's file descriptors, replaces its output streams, emits text shaped like test-report events, or reaches into pytest hooks, plugins, reporter or configuration internals. Ordinary output from the program under test is allowed. In-process report custody is accepted for slice one."}));
+    rules_list.push(json!({"id": SCOPE_RULE, "description": "Keep edits within the supplied request goals. Block an unrelated edit, including inside a planned file, only when it serves none of the supplied goals. Necessary supporting code and tests are in scope. Cite this standing rule, quote the changed hunk from the supplied diff, and explain why it serves no supplied goal. Do not invent goals or demand additional work."}));
     Ok(json!({"goals": goals, "standing_rules": rules}))
 }
 
@@ -184,6 +187,19 @@ pub(crate) fn validate_reply(reply: &Value, inputs: &Value) -> Result<Vec<Blocki
     }
     let findings: Vec<BlockingFinding> = super::protocol::reply_field(reply, "blocking_findings")?;
     for finding in &findings {
+        if finding.citation.kind == CitationKind::StandingRule && finding.citation.id == SCOPE_RULE
+        {
+            let diff = inputs["diff"].as_str().unwrap_or("");
+            if !diff.lines().any(|line| {
+                line.len() > 1
+                    && (line.starts_with('+') || line.starts_with('-'))
+                    && !line.starts_with("+++")
+                    && !line.starts_with("---")
+                    && finding.evidence.contains(line)
+            }) {
+                return Err(Error::Invalid("scope blocker must quote a changed hunk"));
+            }
+        }
         let entries = match finding.citation.kind {
             CitationKind::Goal => &inputs["goals"],
             CitationKind::StandingRule => &inputs["standing_rules"],

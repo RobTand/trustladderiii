@@ -213,12 +213,31 @@ impl Real {
         Ok(())
     }
 
+    /// Run before reporting a proposed head. This does not approve it or change kernel state.
     pub fn trim_scope(
         &self,
-        _delivery: &Delivery,
-        _protected: &[String],
+        delivery: &Delivery,
+        protected: &[String],
     ) -> Result<tl3_worktrees::ScopeTrim> {
-        todo!("controller worktree trim")
+        let repo = self.repository(delivery)?;
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        if delivery.epoch < repo.fence()? {
+            return Err(adapter(std::io::Error::other(
+                "worktree upstream refused an older controller epoch",
+            )));
+        }
+        write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
+        repo.git
+            .trim_scope(
+                &Self::branch(delivery)?,
+                &self.checkout(delivery),
+                &delivery.paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+                protected,
+            )
+            .map_err(adapter)
     }
 
     pub fn branch(delivery: &Delivery) -> Result<BranchName> {

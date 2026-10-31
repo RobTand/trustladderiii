@@ -13,6 +13,7 @@ pub mod looks;
 pub mod memory;
 mod notices;
 pub mod production;
+mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -271,15 +272,6 @@ impl Controller {
 
     pub fn effect(&mut self, key: &str) -> Result<Option<Effect>> {
         Ok(self.store.effect(key)?)
-    }
-
-    pub fn trim_scope(
-        &mut self,
-        _adapter: &adapters::worktrees::Real,
-        _delivery: &Delivery,
-        _protected: &[String],
-    ) -> Result<tl3_worktrees::ScopeTrim> {
-        todo!("trim and record summary paths")
     }
 
     pub fn snapshot(&mut self) -> Result<Snapshot> {
@@ -1189,6 +1181,15 @@ impl Controller {
                 steering: None,
                 request_text: request.source,
             };
+            if matches!(
+                output,
+                Out::Notice {
+                    notice: tl3_kernel::Notice::Summary(_),
+                    ..
+                }
+            ) {
+                delivery.note = scope::summary(snapshot, node)?;
+            }
             if let Out::Notice {
                 notice: tl3_kernel::Notice::Incident { needs_rob },
                 ..

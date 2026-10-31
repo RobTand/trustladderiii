@@ -222,27 +222,6 @@ pub enum TrimBoundary {
 }
 
 impl Worktrees {
-    pub fn trim_scope(
-        &self,
-        name: &BranchName,
-        path: &Path,
-        footprint: &[PathBuf],
-        protected: &[String],
-    ) -> Result<ScopeTrim, Error> {
-        self.trim_scope_with(name, path, footprint, protected, |_| Ok(()))
-    }
-
-    pub fn trim_scope_with(
-        &self,
-        _name: &BranchName,
-        _path: &Path,
-        _footprint: &[PathBuf],
-        _protected: &[String],
-        _hook: impl FnMut(TrimBoundary) -> Result<(), Error>,
-    ) -> Result<ScopeTrim, Error> {
-        todo!("scope trim")
-    }
-
     pub fn create_worktree(
         &self,
         name: &BranchName,
@@ -1232,6 +1211,21 @@ impl Worktrees {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.execute_index(path, args, token, input, None)
+    }
+
+    fn execute_index<I, S>(
+        &self,
+        path: &Path,
+        args: I,
+        token: Option<&InstallationToken>,
+        input: Option<&[u8]>,
+        index: Option<&Path>,
+    ) -> Result<Output, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new("git");
         // Clear inherited tracing, config injection, alternate indexes and credential helpers.
         command
@@ -1281,6 +1275,9 @@ impl Worktrees {
             } else {
                 Stdio::null()
             });
+        if let Some(index) = index {
+            command.env("GIT_INDEX_FILE", index);
+        }
         if let Some(token) = token {
             let header = format!(
                 "Authorization: Basic {}",
@@ -1424,6 +1421,8 @@ struct Invocation {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
+
+mod scope;
 
 #[cfg(test)]
 mod tests;

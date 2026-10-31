@@ -383,7 +383,7 @@ fn writer_input(
             violations: vec![],
         });
     }
-    let (kind, facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
+    let (kind, mut facts) = match notice.ok_or(Error::Invalid("missing request notice"))? {
         Notice::Ask { question } => {
             let binding = delivery
                 .question
@@ -512,6 +512,11 @@ fn writer_input(
             }}),
         ),
     };
+    if kind == MessageKind::Summary
+        && let Some(removed) = &delivery.note
+    {
+        facts["removed_changes"] = json!(removed);
+    }
     Ok(WriteRequest {
         kind,
         facts,

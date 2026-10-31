@@ -46,6 +46,14 @@ Do not invent goals or rules, widen scope, or turn preferences into blockers.
 Record other concerns as non-blocking findings with a problem and evidence.
 These findings may accompany either verdict and never prevent approval.
 
+When the request-scope standing rule is supplied, block an unrelated edit inside
+or outside a planned file only if it serves none of the supplied request goals.
+Necessary supporting code and tests can serve a goal. Cite request-scope as a
+standing_rule, quote the changed hunk from the supplied diff in evidence, and
+explain why it serves no supplied goal, so a maker fix round can remove it.
+This rule does not add goals or require new work. When it is not supplied,
+record scope concerns as non-blocking findings.
+
 Test reports are trusted only because the code under test leaves them alone.
 A change that tampers with how tests report their results breaks the standing
 rule that protects test reports. Examples: writing to the test process's file
