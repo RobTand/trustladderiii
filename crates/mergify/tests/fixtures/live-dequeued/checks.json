@@ -1,0 +1,19 @@
+[
+  {
+    "app": {
+      "id": 10562,
+      "slug": "mergify"
+    },
+    "conclusion": "neutral",
+    "external_id": "queue:72",
+    "head_sha": "648f043743232f04d85db054dd41250eb6c02354",
+    "id": 124588287914,
+    "name": "Mergify Merge Queue",
+    "output": {
+      "summary": "### \ud83d\udeab Left the queue\n\n1 min in the queue, with no time running CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Sat 31 Oct, 16:13 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \ud83d\udeab **Left the queue** 16:14 \u00b7 `648f043`\n\n**Reason**\n\nPull request #72 has been dequeued\n\nQueue conditions are not satisfied:\n\n> - [ ] `-conflict` [\ud83d\udccc queue requirement]\n\n**Hint**\n\nYou should look at the reason for the failure and decide if the pull request needs to be fixed or if you want to requeue it.\nIf you do update this pull request, it will automatically be requeued once the queue conditions match again.\nIf you think this was a flaky issue instead, you can requeue the pull request, without updating it, by posting a `@mergifyio queue` comment.\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=72) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+      "text": null,
+      "title": "Dequeued \u2014 pull request dequeued"
+    },
+    "status": "completed"
+  }
+]
