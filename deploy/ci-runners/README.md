@@ -13,8 +13,8 @@ its Kani and network-isolation requirements.
 
 ## Design and isolation
 
-Six TL3 and two sandbox systemd user services on dl380g10 each run a rootless
-Podman container. Both repositories use the same image and slot script. The
+TL3 systemd user services run rootless Podman containers on dl380g10,
+celestia, sparky, and sparklina. Only dl380g10 also serves the sandbox. Both repositories use the same image and slot script. The
 installer selects the repository with its second argument.
 The host script calls the repository's `generate-jitconfig` REST endpoint using
 the host's existing `gh` login. It sends the resulting one-job credential through
@@ -28,8 +28,14 @@ JITCONFIG is unset and print only `set` or `unset`, never its value.
 The host login never enters the container. Do not run these scripts with shell
 tracing or enable GitHub CLI debug logging.
 
-Runner names start with `tl3-dl380g10-slot-N-` and have a unique suffix for each
-registration. Labels are `self-hosted`, `linux`, `x64`, and `tl3-fleet`.
+Runner names start with `tl3-HOST-slot-N-` and have a unique suffix for each
+registration. Labels are `self-hosted`, `linux`, `tl3-fleet`, and
+`tl3-host-HOST`, plus `x64` on x86_64 or `ARM64` on aarch64. The optional
+`runner_host` workflow-dispatch input targets a host for rollout checks. Its
+concurrency group includes that host so concurrent canaries cannot cancel each
+other. Rust PR and Mergify jobs select `[self-hosted, tl3-fleet, tl3-fast]`.
+Python keeps `[self-hosted, tl3-fleet]`. Only TL3 slots on celestia and the
+Sparks receive `tl3-fast`; dl380g10 and sandbox slots do not.
 GitHub's JIT configuration makes the runner ephemeral. The listener exits after
 one job, Podman deletes the container, and systemd restarts the slot with a new
 registration. There is no status-polling loop. Start limiting is disabled, so
@@ -55,7 +61,11 @@ container-runtime/kernel vulnerability. Use these runners only for trusted
 TL3 PRs. Durable forwarding of runner diagnostic logs also remains future work;
 GitHub keeps job logs, while local diagnostics disappear with the container.
 
-The Containerfile pins the official Actions runner base by manifest digest.
+The Containerfile pins separate amd64 and arm64 manifests for official Actions
+runner 2.338.2. The installer passes `TARGETARCH` from the native architecture.
+Each architecture has its own pinned rustup installer checksum. Rustup selects
+native Rust components; apt selects native system packages. The pinned
+setup-python and setup-uv actions select their own architecture-specific assets.
 It adds build tools, a checksum-pinned rustup installer, Rust 1.99.1 with clippy
 and rustfmt, ShellCheck, `systemd-analyze`, and shared libraries for embedded Postgres.
 The existing workflow installs Python 3.14 and uv. The required check names stay
@@ -68,7 +78,7 @@ stay intact. Mergify allows
 
 ## Capacity
 
-Each container has `--cpus=4 --cpuset-cpus=40-79 --memory=6g --memory-swap=6g`
+Each container has `--cpus=4 --memory=6g --memory-swap=6g`
 and at most 1,024 processes. Six TL3 slots use at most 24 CPU equivalents and
 36 GiB RAM, enough for three Mergify batches with two jobs each. The build-only
 cache warmer shares these TL3 slots and can briefly leave a batch job queued.
@@ -85,14 +95,96 @@ physical cores 0 through 39 preferred for PrismaBuild. PrismaBuild can still
 use the siblings as overflow. This rollout does not change its configuration
 or claim a reservation in its ledger.
 
-Set `CI_RUNNER_CPUSET=...` when installing to override the default. An ordinary
-reinstall preserves existing CPU placement, while an absent or empty placement
-uses 40-79. For the upgrade from #98, run
+dl380g10 additionally uses `--cpuset-cpus=40-79`. Other hosts default to no
+explicit CPU set, retaining their available CPU placement. Set
+`CI_RUNNER_CPUSET=...` when installing to override the host default. An ordinary
+reinstall preserves existing CPU placement. An absent or empty placement uses
+the host default. For the upgrade from #98, run
 `CI_RUNNER_CPUSET=40-79 deploy/ci-runners/install.sh 0`.
 Restart idle slots one at a time to apply image or CPU-placement changes. Check
 the REST runners list for `busy=false` immediately before each restart. If all
 slots are busy, wait for a runner's exit through systemd rather than polling or
 stopping a job.
+
+## Additional fleet hosts
+
+The 2026-10-31 rollout adds six TL3 slots on celestia and four on each Spark.
+Existing dl380g10 slots stay unchanged. Six celestia slots can consume at most
+24 CPU equivalents and 36 GiB RAM on its 16 logical CPUs and 61 GiB RAM. Four
+Spark slots cap at 16 CPU equivalents and 24 GiB RAM per host. CPU quotas may
+share available CPUs; they are ceilings rather than reservations.
+
+The units use `CPUWeight=20` and `Nice=10` for low-priority CI. Celestia gets a
+unit drop-in with milder `CPUWeight=50` and `Nice=5`, following Rob's instruction
+to use all six slots. Listener processes inherit those nice values. Rootless
+Podman may place container scopes beside the service, so nice is also needed
+to keep job processes below ordinary feeder processes. None of this changes
+PrismaBuild admission, affinities, supervisors, or workers.
+
+On the Sparks, passwordless sudo installed distro-signed Podman, uidmap,
+slirp4netns, and fuse-overlayfs packages. No Docker daemon, socket, group,
+worker, or GPU configuration was changed. All hosts have an existing owner
+login with runner-management access. The Spark CLI lives in `~/.local/bin`;
+the scripts add that path. Credentials never move between hosts.
+
+For a fresh Spark, check `sudo -n true` first. If permitted, install rootless
+Podman and its helpers, then run `gh auth status` as the owner. Stop that
+host's rollout if authentication or runtime setup needs Rob. The installer
+requires rootless Podman and refuses a rootful runtime. A Docker adapter was
+unnecessary because all three hosts support rootless Podman.
+
+Install as the authenticated owner:
+
+```sh
+# On celestia
+deploy/ci-runners/install.sh 6
+# On each Spark
+deploy/ci-runners/install.sh 4
+```
+
+Run the same workflow once per host with a branch containing the host input:
+
+```sh
+gh api --method POST repos/RobTand/trustladderiii/actions/workflows/light-checks.yml/dispatches \
+  -f ref=YOUR_BRANCH -f 'inputs[runner_host]=celestia'
+```
+
+Repeat with `sparky` and `sparklina`. Inspect the jobs API for successful
+`Rust` and `Python` conclusions and matching `runner_name` prefixes. These are
+full batch-equivalent jobs, including the JIT input scrub assertion. Runtime
+state and timings are recorded under [evidence](evidence/). No sandbox slots
+are installed on ARM hosts; both installer and slot script reject that profile.
+
+Rust currently runs on celestia alone because the Spark slots remain disabled.
+The warm-cache workflow has one matrix entry per enabled Rust host, currently
+`celestia`. Add each Spark only after its full Rust canary passes. Cache warming
+uses the same six celestia slots as Rust and Python, so all CI jobs together
+stay within Rob's six-job cap. No separate cache-warming runner is installed.
+
+The initial rollout passed both checks on celestia in run
+[41221383547](https://github.com/RobTand/trustladderiii/actions/runs/41221383547).
+Its Rust job took 10m28s. After fast routing,
+[41226136570](https://github.com/RobTand/trustladderiii/actions/runs/41226136570)
+passed with Rust in 9m49s and Python in 2m37s. A successful dl380g10 batch at
+the same Rust source base took 27m08s. Cache state and host load were not
+controlled.
+
+Both Spark canaries passed Python but failed Rust twice at
+`crates/controller/tests/maker/real.rs:435`, where a reproducing-check rebase
+had no `reviewed_sha`. Their four slots per host are installed but disabled
+after checking the runners were idle. Keep them disabled until full Rust CI
+passes. The boundary suites passed on both hosts. Native PrismaBuild controls,
+including the image's Git version, also passed the failing worker scenario.
+An isolated sparky Rust run with temporary replay-error logging later passed
+in 15m59s, without reproducing the error. That does not resolve the two clean
+failures on each Spark. No application assertions were weakened. See the per-host and diagnostic evidence for the failed
+attempts and controls.
+
+Systemd 255 on the Sparks supports restart steps, but does not implement
+[`RESTART_RESET=1`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html#RESTART_RESET=1),
+introduced in systemd 258. Its restart delay can rise to five minutes after
+repeated restarts. Slots still recover without polling or exhausting a start
+limit. Celestia uses systemd 259.
 
 ## Install and roll out
 
@@ -104,7 +196,8 @@ lingering enabled. Run as that owner, without sudo:
 deploy/ci-runners/install.sh 1
 ```
 
-The user manager must delegate `cpuset` along with `cpu`, `memory`, and `pids`.
+If you set CPU placement, the user manager must delegate `cpuset` along with
+`cpu`, `memory`, and `pids`.
 On dl380g10, `/etc/systemd/system/user@1000.service.d/50-tl3-ci-cpuset.conf`
 contains `[Service]` and `Delegate=cpu cpuset memory pids`. Root's
 `systemctl daemon-reload` applies that delegation without restarting the user
@@ -234,11 +327,9 @@ labels. Images and installed files can remain for a later rollout.
   endpoints the checks need. Rootless networking alone does not provide this.
 - Account for CI's 32 CPUs and 48 GiB in PrismaBuild's capacity and coordinate
   CPU affinity, rather than competing for its full inherited CPU set.
-- Add ARM runners on sparky and sparklina after that accounting is in place.
-  Pin an ARM runner base and rustup installer with their own digests, validate
-  architecture-specific dependencies and all checks, give runners an `arm64`
-  label, and choose workflow labels that deliberately permit ARM. Do not put
-  the fleet shared mount or sockets inside CI containers.
+- Account for the additional fleet slots in admission. Rob authorized sharing
+  all fleet hosts on 2026-10-31. The slots use low priority and bounded resources,
+  but do not create PrismaBuild ledger reservations.
 - Add ticket #8's Kani check with a separate heavier slot type and label. It
   must be required for kernel/proof changes, run fully at night, cap proof
   parallelism at eight, and demonstrably block a failing proof. The six light

@@ -22,8 +22,12 @@ env:
 
 jobs:
   warm-cache:
-    name: Warm Rust cache
-    runs-on: [self-hosted, tl3-fleet]
+    name: Warm Rust cache (${{ matrix.host }})
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [celestia]
+    runs-on: [self-hosted, tl3-fleet, tl3-fast, "tl3-host-${{ matrix.host }}"]
     timeout-minutes: 15
     steps:
       - name: Verify runner input is scrubbed
