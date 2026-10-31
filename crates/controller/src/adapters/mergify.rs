@@ -222,9 +222,13 @@ struct Attempt {
 impl Attempt {
     fn check_changed(&self, current: &Option<CheckRun>) -> bool {
         let mut current = current.clone();
-        // Old intents predate completed_at. Its presence alone does not prove acceptance.
+        // Metadata added after an intent was saved does not prove queue acceptance.
         if let Some(check) = &mut current {
             check.completed_at = self.before.as_ref().and_then(|before| before.completed_at);
+            check.check_suite = self
+                .before
+                .as_ref()
+                .and_then(|before| before.check_suite.clone());
         }
         self.before != current
     }
