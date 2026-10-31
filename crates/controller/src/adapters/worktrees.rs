@@ -213,6 +213,14 @@ impl Real {
         Ok(())
     }
 
+    pub fn trim_scope(
+        &self,
+        _delivery: &Delivery,
+        _protected: &[String],
+    ) -> Result<tl3_worktrees::ScopeTrim> {
+        todo!("controller worktree trim")
+    }
+
     pub fn branch(delivery: &Delivery) -> Result<BranchName> {
         BranchName::new(format!(
             "tl3/issue-{}-node-{}",

@@ -273,6 +273,15 @@ impl Controller {
         Ok(self.store.effect(key)?)
     }
 
+    pub fn trim_scope(
+        &mut self,
+        _adapter: &adapters::worktrees::Real,
+        _delivery: &Delivery,
+        _protected: &[String],
+    ) -> Result<tl3_worktrees::ScopeTrim> {
+        todo!("trim and record summary paths")
+    }
+
     pub fn snapshot(&mut self) -> Result<Snapshot> {
         Ok(self.store.load()?)
     }

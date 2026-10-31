@@ -876,3 +876,143 @@ fn auth_header_is_scoped_to_github() {
     assert!(remote.credentials(Some(&f.token)).is_some());
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
+
+fn scope_fixture() -> (Fixture, CommitId, CommitId) {
+    let f = Fixture::new();
+    write_commit(&f.repo, "outside.txt", "base outside\n", "outside base");
+    write_commit(&f.repo, "pyproject.toml", "base config\n", "config base");
+    let base = f.checkout().base;
+    write_commit(&f.worktree, "shared.txt", "requested\n", "request");
+    write_commit(&f.worktree, "outside.txt", "unrelated\n", "outside edit");
+    write_commit(&f.worktree, "extra.txt", "unrelated\n", "outside add");
+    write_commit(
+        &f.worktree,
+        "pyproject.toml",
+        "unrelated\n",
+        "protected edit",
+    );
+    let head = f.manager.head_locked(&f.name).unwrap();
+    (f, base, head)
+}
+
+fn scope_trim(f: &Fixture) -> ScopeTrim {
+    f.manager
+        .trim_scope(
+            &f.name,
+            &f.worktree,
+            &["shared.txt".into(), "pyproject.toml".into()],
+            &["pyproject.toml".into()],
+        )
+        .unwrap()
+}
+
+#[test]
+fn scope_extra_file_deleted() {
+    let (f, _, original) = scope_fixture();
+    let result = scope_trim(&f);
+    assert!(!f.worktree.join("extra.txt").exists());
+    assert!(result.removed_paths.contains(&PathBuf::from("extra.txt")));
+    assert_eq!(
+        git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+        original.as_str().as_bytes()
+    );
+    assert_eq!(
+        git(&f.worktree, ["show", "-s", "--format=%an <%ae>"]).trim_ascii(),
+        b"TL3 <tl3@localhost>"
+    );
+}
+
+#[test]
+fn scope_outside_edit_restored() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("outside.txt")).unwrap(),
+        b"base outside\n"
+    );
+}
+
+#[test]
+fn scope_protected_path_restored_even_in_footprint() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("pyproject.toml")).unwrap(),
+        b"base config\n"
+    );
+}
+
+#[test]
+fn scope_footprint_edits_kept() {
+    let (f, base, _) = scope_fixture();
+    let trim = scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
+    f.assert_clean();
+}
+
+#[test]
+fn scope_restart_at_each_boundary_is_idempotent_and_preserves_later_maker_work() {
+    for crash in [
+        TrimBoundary::Recorded,
+        TrimBoundary::CheckoutRestored,
+        TrimBoundary::HeadUpdated,
+    ] {
+        let (f, _, original) = scope_fixture();
+        assert!(
+            f.manager
+                .trim_scope_with(
+                    &f.name,
+                    &f.worktree,
+                    &["shared.txt".into(), "pyproject.toml".into()],
+                    &["pyproject.toml".into()],
+                    |at| if at == crash { Err(Error::Io) } else { Ok(()) }
+                )
+                .is_err()
+        );
+        let manager = Worktrees::open(&f.repo, f.worktree.parent().unwrap()).unwrap();
+        let trim = manager
+            .trim_scope(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+            )
+            .unwrap();
+        assert_eq!(
+            trim.removed_paths,
+            vec![
+                PathBuf::from("extra.txt"),
+                "outside.txt".into(),
+                "pyproject.toml".into()
+            ]
+        );
+        assert_eq!(
+            git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+            original.as_str().as_bytes()
+        );
+        f.assert_clean();
+        write_commit(
+            &f.worktree,
+            "shared.txt",
+            "later maker commit\n",
+            "later maker",
+        );
+        fs::write(f.worktree.join("scratch.txt"), "maker scratch").unwrap();
+        assert_eq!(scope_trim(&f), trim);
+        assert_eq!(
+            fs::read(f.worktree.join("shared.txt")).unwrap(),
+            b"later maker commit\n"
+        );
+        assert_eq!(
+            fs::read(f.worktree.join("scratch.txt")).unwrap(),
+            b"maker scratch"
+        );
+    }
+}

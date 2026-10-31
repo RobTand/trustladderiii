@@ -208,7 +208,41 @@ struct Checkout {
     branch: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopeTrim {
+    pub head: CommitId,
+    pub removed_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrimBoundary {
+    Recorded,
+    CheckoutRestored,
+    HeadUpdated,
+}
+
 impl Worktrees {
+    pub fn trim_scope(
+        &self,
+        name: &BranchName,
+        path: &Path,
+        footprint: &[PathBuf],
+        protected: &[String],
+    ) -> Result<ScopeTrim, Error> {
+        self.trim_scope_with(name, path, footprint, protected, |_| Ok(()))
+    }
+
+    pub fn trim_scope_with(
+        &self,
+        _name: &BranchName,
+        _path: &Path,
+        _footprint: &[PathBuf],
+        _protected: &[String],
+        _hook: impl FnMut(TrimBoundary) -> Result<(), Error>,
+    ) -> Result<ScopeTrim, Error> {
+        todo!("scope trim")
+    }
+
     pub fn create_worktree(
         &self,
         name: &BranchName,

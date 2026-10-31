@@ -244,3 +244,20 @@ mod reply_defects {
         }
     }
 }
+
+#[cfg(test)]
+mod scope_rule_tests {
+    use super::*;
+    #[test]
+    fn scope_blocker_requires_a_quoted_added_hunk() {
+        let inputs = json!({"diff":"+def unrelated(): return 42\n", "goals":[{"id":"g1"}], "standing_rules":[{"id":"request-scope"}]});
+        for (evidence, valid) in [
+            ("+def unrelated(): return 42", true),
+            ("file.py has extra work", false),
+            ("+invented()", false),
+        ] {
+            let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":"standing_rule", "id":"request-scope"}, "problem":"Serves none of the supplied goals.", "evidence":evidence}], "findings":[]});
+            assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid);
+        }
+    }
+}

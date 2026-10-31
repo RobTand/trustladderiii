@@ -424,3 +424,21 @@ def test_reviewer_reply_is_validated_exactly_once(
     assert events[-1]['reply'] == APPROVE
     assert schema_checks == ['reviewer-reply']
     assert evidence_checks == [APPROVE]
+
+
+@pytest.mark.parametrize("evidence,valid", [("+def unrelated(): return 42", True),
+                                           ("greeting.py has extra work", False),
+                                           ("+invented_hunk()", False)])
+def test_scope_rule_requires_quoted_hunk(tmp_path, review_request, evidence, valid):
+    from importlib.resources import files
+    prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
+    assert "request-scope" in prompt
+    assert "Do not invent goals or rules, widen scope" in prompt
+    review_request["inputs"]["standing_rules"].append({"id": "request-scope", "description": "Remove edits serving none of the supplied goals."})
+    review_request["inputs"]["diff"] += '+def unrelated(): return 42\n'
+    finding = {"citation": {"kind": "standing_rule", "id": "request-scope"},
+               "problem": "The unrelated helper serves none of the supplied goals.", "evidence": evidence}
+    result = start_worker(tmp_path, review_request, [{"content": json.dumps(changes(finding))}])
+    assert result.exit_code == (0 if valid else 1), result.stderr
+    if valid:
+        assert result.events[-1]["reply"] == changes(finding)
