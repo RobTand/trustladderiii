@@ -278,6 +278,12 @@ fn loop_scenarios(database: &mut support::Database) {
         }
         if scenario == "reconnect" {
             database.restart();
+            // Restore receipt's writer separately, leaving the catch-up reader stale.
+            assert_eq!(
+                post(address, "writer-reconnected", false, fixture(false), true),
+                202
+            );
+            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
             control.gap();
         }
         calls.recv_timeout(Duration::from_secs(10)).unwrap();
