@@ -320,6 +320,15 @@ mod scope_rule_tests {
             assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid);
         }
     }
+
+    #[test]
+    fn scope_blocker_rejects_short_or_partial_changed_lines() {
+        let inputs = json!({"diff":"+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n", "goals":[{"id":"g1"}], "standing_rules":[{"id":SCOPE_RULE}]});
+        for (evidence, valid) in [("+}", false), ("+       x", false), ("+abcdefg", false), ("+abcdefgh", true), ("+unrelated_action() suffix", false), ("The unrelated helper:\n+unrelated_action()", true)] {
+            let reply = json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":"standing_rule", "id":SCOPE_RULE}, "problem":"This helper serves no request goal.", "evidence":evidence}], "findings":[]});
+            assert_eq!(validate_reply(&reply, &inputs).is_ok(), valid, "{evidence}");
+        }
+    }
 }
 
 #[cfg(test)]

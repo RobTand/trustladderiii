@@ -456,6 +456,23 @@ def test_scope_blocker_can_quote_unchanged_hunk_on_fix_round(tmp_path, review_re
     assert result.exit_code == 0, result.stderr
 
 
+@pytest.mark.parametrize('evidence,valid', [('+}', False), ('+       x', False),
+    ('+abcdefg', False), ('+abcdefgh', True), ('+unrelated_action() suffix', False),
+    ('The unrelated helper:\n+unrelated_action()', True)])
+def test_scope_blocker_requires_whole_meaningful_changed_line(review_request, evidence, valid):
+    from tl3_workers.roles.reviewer import check_reply
+    inputs = review_request['inputs']
+    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
+    inputs['diff'] = '+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n'
+    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
+               'problem': 'The helper serves no request goal.', 'evidence': evidence}
+    if valid:
+        check_reply(inputs, changes(finding))
+    else:
+        with pytest.raises(ValueError, match='scope blocker must quote'):
+            check_reply(inputs, changes(finding))
+
+
 def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, review_request):
     review_request["inputs"]["context_size"] = 1_000
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])

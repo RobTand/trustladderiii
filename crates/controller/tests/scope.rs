@@ -164,6 +164,14 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
         .unwrap(),
         trim
     );
+    let mut store = Store::open(&settings).unwrap();
+    let mut saved = tl3_store::Commit::new("saved-scratch", json!({}), &store.load().unwrap());
+    saved.rows.push(tl3_store::RowChange::Put {
+        table: "saved_scratch".into(),
+        id: "scope-scratch".into(),
+        value: json!({"node":d.node(), "reference":"refs/tl3/scratch/issue-42-node-0"}),
+    });
+    store.commit(&saved).unwrap();
     c.observe(
         "scope-head",
         Observation::Made {
@@ -180,9 +188,10 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
     );
     let summary = summary.lock().unwrap().clone().expect("closing summary");
     assert_eq!(
-        summary.note.as_deref(),
-        Some("Changes not part of this request were removed: extra.txt, pyproject.toml.")
+        serde_json::to_value(&summary).unwrap()["scope_removals"],
+        "Changes not part of this request were removed: `extra.txt`, `pyproject.toml`."
     );
+    assert_eq!(summary.note.as_deref(), Some("Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0"));
     drop(c);
     database.stop();
 }
