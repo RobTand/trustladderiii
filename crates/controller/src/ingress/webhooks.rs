@@ -87,3 +87,26 @@ fn catch_up_state(
 ) -> tl3_store::Result<(Option<serde_json::Value>, tl3_store::Snapshot)> {
     Ok((reader.ingress_cursor("github-catch-up")?, reader.load()?))
 }
+
+#[cfg(test)]
+trait Fetcher: Send + Sync {
+    fn fetch(
+        &self,
+        since: DateTime<Utc>,
+        snapshot: tl3_store::Snapshot,
+        bootstrap: &Bootstrap,
+    ) -> Result<CatchUpBatch>;
+}
+
+#[cfg(test)]
+impl Webhooks {
+    fn bind_with_fetcher(
+        _store: Store,
+        _fetcher: Arc<dyn Fetcher>,
+    ) -> Result<Self> {
+        todo!("fakeable fetch boundary for the real receipt loop")
+    }
+}
+
+#[cfg(test)]
+mod tests;
