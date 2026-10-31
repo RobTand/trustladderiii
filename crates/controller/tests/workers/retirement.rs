@@ -421,3 +421,177 @@ pub(super) fn session_unlink_error(settings: &tl3_config::Store) {
         "a later idle pass retries retained sessions"
     );
 }
+
+pub(super) fn bad_memory_never_blocks_retirement(settings: &tl3_config::Store) {
+    for bad in ["request", "exit", "size"] {
+        let root = tempfile::tempdir().unwrap();
+        let config = config(settings, root.path(), "normal");
+        let mut store = Store::open(settings).unwrap();
+        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        let run = seed(
+            &mut store,
+            &config,
+            &format!("bad-memory-{bad}"),
+            EffectState::Confirmed,
+        );
+        let attempt = root_for(&config, &run.key).join("attempt-00000000");
+        fs::write(
+            attempt.join("request.json"),
+            json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
+        )
+        .unwrap();
+        if bad == "size" {
+            fs::write(
+                attempt.join("request.json"),
+                vec![b' '; 16 * 1024 * 1024 + 1],
+            )
+            .unwrap();
+        } else {
+            fs::write(attempt.join(format!("{bad}.json")), b"broken json").unwrap();
+        }
+        supervisor.retire(&mut store).unwrap();
+        assert!(
+            !root_for(&config, &run.key).exists(),
+            "bad memory {bad} must never block retirement"
+        );
+        assert!(store.worker_progress(None).unwrap().is_empty());
+    }
+}
+
+pub(super) fn feed_retirement_end_to_end(settings: &tl3_config::Store) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = runtime.block_on(MockServer::start());
+    let (sent, received) = mpsc::channel();
+    runtime.block_on(Mock::given(method("POST")).and(path("/v1/default/banks/tl3/memories"))
+        .respond_with(move |request: &wiremock::Request| {
+            if request.headers.get("authorization").map(|v| v.as_bytes()) != Some(b"Bearer fixture-feed-key".as_slice()) {
+                return ResponseTemplate::new(401);
+            }
+            let body: Value = request.body_json().unwrap();
+            sent.send(body.clone()).unwrap();
+            ResponseTemplate::new(200).set_body_json(json!({"success":true,"async":true,"bank_id":"tl3","items_count":1,"operation_id":body["operation_id"]}))
+        }).mount(&server));
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(settings, root.path(), "normal");
+    let key = root.path().join("fixture-hindsight-key");
+    fs::write(&key, "fixture-feed-key\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    config.hindsight.endpoint = server.uri().parse().unwrap();
+    config.hindsight.api_key_file = Some(key);
+    let mut store = Store::open(settings).unwrap();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = seed(&mut store, &config, "memory-feed", EffectState::Confirmed);
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    fs::write(attempt.join("request.json"), json!({"role":"audit", "model":{"name":"fixture"}, "inputs":{"goals":["remember me"]}, "memory":{"repo":"fixture", "request":"0"}}).to_string()).unwrap();
+    fs::write(
+        attempt.join("memory.json"),
+        json!({"reply":{"summary":"retired audit"}, "outcome":"succeeded"}).to_string(),
+    )
+    .unwrap();
+    fs::write(attempt.join("exit.json"), b"{\"code\":0}").unwrap();
+    supervisor.retire(&mut store).unwrap();
+    assert!(!root_for(&config, &run.key).exists());
+    let sent = received
+        .recv_timeout(Duration::from_secs(30))
+        .expect("retire wakes the authenticated Feed");
+    let record: Value =
+        serde_json::from_str(sent["items"][0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(record["reply"]["summary"], "retired audit");
+    assert!(!sent.to_string().contains("fixture-feed-key"));
+}
+
+pub(super) fn recall_key_request_wiring(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(settings, root.path(), "normal");
+    config.workers.python = "/bin/true".into();
+    config.hindsight.api_key_file = Some(root.path().join("never-read-fixture-key"));
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = delivery();
+    watch_run(&mut store, &run);
+    let error = supervisor.execute(&run).unwrap_err();
+    assert!(matches!(
+        error,
+        tl3_controller::Error::Invalid(
+            "worker launcher did not claim the attempt; inspect launcher.log"
+        )
+    ));
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &run.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["hindsight_key_file"],
+        json!(config.hindsight.api_key_file),
+        "worker scenario must carry the Hindsight credential path outside model inputs"
+    );
+    assert!(
+        !request["inputs"]
+            .to_string()
+            .contains("never-read-fixture-key")
+    );
+}
+
+pub(super) fn memory_store_error_retries_retirement(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    let run = seed(
+        &mut store,
+        &config,
+        "memory-store-error",
+        EffectState::Confirmed,
+    );
+    let attempt = root_for(&config, &run.key).join("attempt-00000000");
+    fs::write(
+        attempt.join("request.json"),
+        json!({"role":"audit", "memory":{"repo":"fixture", "request":"0"}}).to_string(),
+    )
+    .unwrap();
+    let mut db = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    db.batch_execute("CREATE FUNCTION fail_memory_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture storage failure'; END $$; CREATE TRIGGER fail_memory BEFORE INSERT ON tl3_memory_outbox FOR EACH ROW EXECUTE FUNCTION fail_memory_insert()").unwrap();
+    assert!(
+        matches!(
+            supervisor.retire(&mut store),
+            Err(tl3_controller::Error::Store(_))
+        ),
+        "Postgres memory error must propagate so retirement retries"
+    );
+    assert!(
+        attempt.join("request.json").exists(),
+        "failed storage keeps evidence"
+    );
+    assert!(
+        store.retired_workers().unwrap().contains(&run.key),
+        "failed storage keeps the durable retirement retry queued"
+    );
+    db.batch_execute("DROP TRIGGER fail_memory ON tl3_memory_outbox")
+        .unwrap();
+    supervisor.retire(&mut store).unwrap();
+    assert!(!attempt.exists());
+    assert_eq!(store.pending_memories(0).unwrap().len(), 1);
+    supervisor.retire(&mut store).unwrap();
+    assert_eq!(
+        store.pending_memories(0).unwrap().len(),
+        1,
+        "retry queues exactly one record"
+    );
+}
