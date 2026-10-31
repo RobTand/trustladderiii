@@ -895,6 +895,108 @@ Stop proves the process has ended and stores no plan. The leaf, split, rejected
 leaf, invalid split and cannot-meet scenarios also check persistence, narrowing
 context and retry findings.
 
+## Hindsight write-back
+
+Store migration 6 remains `0006_worker_wait.sql`, as deployed by the MVP.
+Migration 7, `0007_hindsight.sql`, adds the memory outbox. Migration 8,
+`0008_memory_parking.sql`, adds parking and key-rejection health. Migration 9,
+`0009_memory_recovery.sql`, timestamps parking for retention. Upgrading
+a schema-6 database preserves its recorded SQL and existing worker waits.
+
+Every worker role uses the same runtime summary collector. Protocol v1 requests
+can carry `memory` with a controller-owned `summary_file`, repository, issue,
+request and epoch. The collector atomically replaces and fsyncs `memory.json`
+at file and test tool boundaries and when the run ends. It records paths, test
+selectors, outcomes and PrismaBuild action keys. It never copies file contents
+or a transcript. A failed run reports the exception class without its message.
+Summary-write errors do not change the worker reply or exit.
+
+Worker retirement queues one bounded item per physical attempt in
+`tl3_memory_outbox`, before removing the attempt's evidence. Missing summaries
+fall back to the request, structured reply and supervisor exit. Interrupted
+attempts are recorded as failures. Collection strips NUL bytes and checks the
+item's size using Postgres's JSONB text representation. Invalid JSON and oversized records are logged and dropped. Store errors keep
+the evidence and fail retirement so a later drain can retry.
+
+A separate thread drains the outbox into `[hindsight].bank`, which defaults to
+`tl3`. The bank must be separate from the coordinator's bank. The thread wakes
+at startup and at controller drains through a channel of capacity one. An
+outage leaves rows for the next controller wake or restart. It never polls on
+a timer and never makes a request wait for Hindsight.
+
+The server's `/openapi.json`, read on 2026-10-30, documents
+`POST /v1/default/banks/{bank}/memories` with `async: true` and a client-supplied
+`operation_id`. Repeating that UUID returns the original durable operation
+without creating new work. The UUID includes repository, request, epoch, effect
+key, generation and attempt. A stable document ID provides provenance. TL3
+deletes its outbox row only after validating the server's durable acknowledgement.
+Hindsight then owns extraction and its operation retries. This handoff uses
+Hindsight's operation contract; it does not wait for extraction on the request
+thread.
+
+Authenticated servers use optional `[hindsight].api_key_file`. It contains the
+raw API key in an owner-only file. The sender loads it at runtime and sends a
+Bearer authorization header. A missing, insecure or unreadable file leaves the
+outbox pending. It does not block daemon startup or request progress. Worker
+requests carry only the file path in `hindsight_key_file`, outside model inputs;
+recall reads it at runtime and sends the same header. The deployed service loads
+`hindsight-key` through systemd's credentials directory. Neither the path nor key
+is included in retained items. Status readers do not need the file.
+
+A 401 or 403 stops the current pass and records one operations incident:
+"Hindsight rejected TL3's key". The first successful retain clears that incident.
+Another rejection can raise a new incident; repeated rejections update its HTTP
+status without raising duplicates. HTTP 408 and 429 stay pending for retry.
+Other 4xx responses park the row with its status for 30 days from parking.
+Every flush deletes expired HTTP rows, including a flush with no pending rows.
+Existing parked rows begin their retention period when migration 9 runs.
+Transport failures and 5xx responses end the pass and leave rows pending for the
+next wake. A hung endpoint costs one request timeout per pass.
+
+The active retry set holds at most 10,000 rows; new records beyond that limit
+park the oldest pending rows. After a successful retain drains the pending set,
+the same flush requeues capacity-parked rows oldest first, within the cap, and
+continues sending. Replay uses no timer. The status page shows pending, total
+parked and HTTP-parked counts, plus any key-rejection incident.
+
+After correcting a permanent HTTP error, operators can replay parked HTTP rows
+with this single SQL statement. It preserves the active cap and operation IDs:
+
+```sql
+DO $$
+BEGIN
+    LOCK TABLE tl3_memory_outbox IN SHARE ROW EXCLUSIVE MODE;
+    UPDATE tl3_memory_outbox SET parked_reason = NULL, http_status = NULL, parked_at = NULL
+    WHERE sequence IN (
+        SELECT sequence FROM tl3_memory_outbox WHERE parked_reason = 'http'
+        ORDER BY sequence
+        LIMIT (SELECT GREATEST(0, 10000 - count(*)) FROM tl3_memory_outbox WHERE parked_reason IS NULL)
+    );
+END $$;
+```
+
+Run it while the controller is stopped, then restart the controller to wake the
+feed. The statement does not contact Hindsight.
+
+Records have `repo:`, `request:` and `role:` tags. The controller selects summary
+fields, omits infrastructure and repository file contents, removes credential
+fields, and redacts bearer tokens, common provider keys, private keys,
+credential assignments and passwords in URLs before enqueueing. Each item is
+at most 32 KiB. Oversized sections carry a truncation marker. Pending reads use
+64-row pages, and acknowledged items are deleted without a local receipt
+history. Redaction replaces matched spans and preserves surrounding prose. Bare hex
+strings of at least 32 characters stay redacted in prose. Public action IDs
+are preserved in structured test activity. A maker reply's known 40-character
+commit is retained as structured `head_sha`. No extra Git read is needed. Meanwhile,
+generic input fields ending in `_key`, `_token` or `_secret` are removed.
+Full transcripts remain the tracing system's responsibility.
+
+`cargo test -p tl3-controller --test hindsight --locked` uses only a fake server.
+It covers every discovered role, outages, lost acknowledgements, real SIGKILL
+cuts, database restart, secret filtering, bounded records and cleanup. The
+worker scenarios also prove that requests close during a memory outage and
+leave their completed run records queued. Python's `test_memory.py` covers the
+shared runtime collector for every role.
 ## Allowance looks and incidents
 
 `looks` stores active allowances and incidents in `tl3_world`. It uses the

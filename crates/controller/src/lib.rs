@@ -19,6 +19,7 @@ pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
 mod loom_tests;
+pub mod memory;
 mod notices;
 pub mod production;
 mod snapshot;
@@ -54,6 +55,8 @@ pub enum Error {
     Adapter(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("Hindsight returned HTTP {0}")]
+    HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
     #[error("upstream permanently failed: {class}")]
