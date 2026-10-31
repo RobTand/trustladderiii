@@ -49,19 +49,28 @@ personal CircleCI token or a resource token in the repository or job environment
 
 ## Coverage and timing
 
-`CircleCI Rust` has three parallel nodes on `fast-x64`. Each builds the tests;
-node zero also checks formatting and clippy. `cargo-nextest` runs all targets
-and splits by binary ID. Its JUnit `classname` is that same binary ID, so
-`circleci tests split --split-by=timings --timings-type=classname` learns the
-sum of each binary's test durations. Each node uses four test threads.
+`CircleCI Rust` runs once on `fast-x64`. Its adapter calls the same
+`check.rust()` function as `python tools/ci/check.py rust`. Formatting, clippy,
+and `rust_gate.test_workspace()` therefore use the same code as GitHub Actions.
+The gate rejects skipped libtest tests and enforces per-test budgets against
+`origin/main`, including the rule that budgets and the slow list cannot grow.
+The GitHub integration binary runs the same `flow` and `notices` groups.
 
-Ordinary Rust branches select changed workspace crates and their reverse
-dependencies with nextest `rdeps()`. Shared files, deleted crates, missing Git
-history, and unknown inputs select everything. Queue branches, main, explicit
-`full=true` pipelines, and nightly runs always select the full suite. The ARM
-class receives no TL3 Rust job until #175 qualifies it. There is no measured
-speed ratio for the new runner platform yet, so there is no invented weighting
-between architectures.
+CircleCI uses an explicit [`checkout.method: full`](https://circleci.com/docs/reference/configuration-reference/#checkout).
+The Rust adapter also verifies history before starting the gate. It
+unshallows a shallow checkout, fetches `main` explicitly into `origin/main`,
+and refuses to continue if history remains shallow. The logs record the
+verified state and target commit. This does not rely on CircleCI's default
+checkout depth or its remote branch refspec.
+
+The shared gate has no shard interface. Running it once preserves its budget
+checks and complete test inventory without changing GitHub's gate. It runs
+four binaries concurrently, bounded by `RUST_TEST_THREADS=4`. Successful
+per-test durations are exported as JUnit for CircleCI timing history. Rust
+selection and cross-node timing splits are paused until the shared gate can
+support them without changing coverage. Ordinary branches, queue branches,
+main, and nightly runs all execute the full Rust gate. The ARM class receives
+no TL3 Rust job until #175 qualifies it.
 
 `CircleCI Python` has two parallel nodes on `slow-x64`. It builds the same
 Rust deployment helper and checks the same Python projects as Light checks.
@@ -72,8 +81,8 @@ using prior file timings. Both jobs upload results with `store_test_results`.
 No Python tests are removed by impact analysis in this first shadow gate.
 
 Main pushes run the full gate. The nightly workflow also runs it at 03:15 UTC.
-The first timing split has no history and CircleCI falls back to its initial
-partition. Warm runs provide the evidence for later balancing decisions.
+Python keeps its timing split. Its first run has no history, so CircleCI uses
+its initial partition. Warm runs provide the evidence for later balancing decisions.
 
 ## Smarter Testing and cost
 
@@ -120,7 +129,9 @@ Report queue-to-start seconds separately from execution time. Correlate waits
 with running tasks across both TL3 and PB before attributing them to the
 five-task limit. A queue delay alone does not prove that limit was the cause. Canceled, missing, and unfinished checks are not agreement. A rerun of
 one SHA does not count as another batch. Review at least three distinct batches,
-including any disagreements, before preparing the cutover.
+including any disagreements, before preparing the cutover. Count only batches
+that contain the shared Rust gate on both CI platforms. Earlier nextest-only
+CircleCI runs do not establish parity with the budgeted GitHub gate.
 
 The cutover PR changes Mergify conditions to the exact CircleCI status contexts
 observed on those SHAs and removes the TL3 GitHub Rust and Python jobs. The
