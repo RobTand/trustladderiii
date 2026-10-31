@@ -15,14 +15,29 @@ from worker_replies import scripted_reply
 def main():
     mode, marker = sys.argv[1], Path(sys.argv[2])
     request = json.load(sys.stdin)
-    if request['role'] == 'maker':
-        # Steering also checks publication of an actual commit. Keep that boundary real.
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).with_name('worker_model.py')), mode, str(marker)],
-            input=json.dumps(request), text=True,
-        )
-        return result.returncode
     reply = scripted_reply(request, mode, marker)
+    if request['role'] == 'maker':
+        tree = Path(request['worktree'])
+        (tree / 'greeting.py').write_text("def greet(): return 'hello'\n")
+        env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+        env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                   GIT_AUTHOR_NAME='Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
+                   GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid')
+        def git(*args):
+            return subprocess.check_output(
+                ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', *args],
+                cwd=tree, env=env, text=True,
+            ).strip()
+        git('add', 'greeting.py')
+        git('commit', '--quiet', '--allow-empty', '-m', 'Scripted steering change')
+        reply = {'kind': 'done', 'head': git('rev-parse', 'HEAD'), 'self_check': [
+            {'goal_id': goal['id'], 'status': 'met', 'evidence': 'Scripted greeting change.'}
+            for goal in request['inputs']['goals']
+        ]}
+        if 'session_file' in request:
+            session = Path(request['session_file'])
+            session.parent.mkdir(parents=True, exist_ok=True)
+            session.write_text('[]')
     config = request['inputs'].get('forecast')
     if config and request['role'] in {'ingest', 'planner'}:
         paths = reply.get('files', [])
