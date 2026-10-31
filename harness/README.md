@@ -41,7 +41,8 @@ pytest's reporting plugin runs in the tests' own interpreter. Slice one accepts
 this. Rob decided on 2026-10-30 that hostile code isn't a concern at this point.
 Tamper-proof custody needs PB #2403.
 The verdict is `pass`, `fail`, or `infrastructure-failure`. Invalid inputs or
-changed test configuration raise `ValueError`. Missing admission raises
+changed test configuration raise `ValueError`. A named test outside the
+configured test files returns a failing check result and fails the round. Missing admission raises
 `RuntimeError`. Git failures retain their subprocess error.
 
 The served repository supplies this protected configuration in `pyproject.toml`:
@@ -72,13 +73,27 @@ Demonstrating checks run the head's test edits against the base production
 code. Every named test must fail there with a call-phase assertion and pass
 on the head. A setup assertion does not count. The state table also permits
 a missing name added by the change. The harness recognizes a call-phase
-module attribute error when the head adds that module-level function or class.
-Other exceptions cannot demonstrate a change.
+module attribute error, an import of a new module, or an import of a function
+or class the round adds. A module-level import failure counts too. Collection
+errors apply only to tests in that file. Setup errors and unrelated import
+failures cannot demonstrate a change.
 
 Regression checks run against the original base and the head. A base failure
 is recorded as pre-existing. It can excuse a head failure, but cannot excuse
 a skipped, missing, or uncollected test. A passing head also cannot excuse an
 unavailable base test. Behavior-preserving checks require passes on both trees.
+
+Reproducing checks use `Kind.REPRODUCING` and require the `reviewed` commit
+argument to `run_checks`. They run the fix round's test edits against that
+commit's production code, then require the tests to pass on the fixed head.
+Their failure rules match demonstrating checks. Setup errors, runtime errors,
+skips, missing tests and uncollected tests fail. In a reproducing result, `base`
+records the reviewed tree's outcome. Other check kinds still use the original
+base. After a clean rebase, the controller replays the reviewed state onto the new
+base and retains it under an owned ref. The before tree uses that rebased
+state, including upstream test configuration, with only the round's test edits.
+If that replay conflicts, the controller drops the reproducing checks and
+supplies a reason for the next review to judge. Ordinary checks still run.
 
 The original base results are cached by base commit, image and selected tests
 within the admitted action's trusted process. No untrusted cache enters a

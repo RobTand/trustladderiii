@@ -671,6 +671,8 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
             run: adapters::prismabuild::CheckRun {
                 repository: root.path().to_path_buf(),
                 base_sha: "b".repeat(40),
+                reviewed_sha: None,
+                reproducing_unavailable: None,
                 plan: vec![],
             },
         },
