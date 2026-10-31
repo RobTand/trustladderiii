@@ -92,6 +92,8 @@ enum Intent {
         expected: Option<String>,
         #[serde(default)]
         clean_verified: bool,
+        #[serde(default)]
+        scratch_ref: Option<String>,
     },
 }
 
@@ -370,12 +372,18 @@ impl Served {
                 kind: EffectKind::RemoveWorktree,
                 ..
             } => {
-                self.git
-                    .verify_removal_clean(branch, checkout)
-                    .map_err(adapter)?;
+                let scratch_ref = match self.git.verify_removal_clean(branch, checkout) {
+                    Ok(()) => None,
+                    Err(tl3_worktrees::Error::DirtyWorktree) => self
+                        .git
+                        .save_scratch(branch, checkout, delivery.generation)
+                        .map_err(adapter)?,
+                    Err(error) => return Err(adapter(error)),
+                };
                 Ok(Intent::Remove {
                     expected: read(&self.published_path(branch))?,
                     clean_verified: true,
+                    scratch_ref,
                 })
             }
             _ => Err(Error::Invalid("unsupported worktree effect")),
@@ -431,6 +439,9 @@ impl Served {
                 }
             }
             Intent::Push { head, expected } => {
+                self.git
+                    .verify_removal_clean(branch, checkout)
+                    .map_err(adapter)?;
                 let head = CommitId::new(head).map_err(adapter)?;
                 let expected = expected
                     .as_ref()
@@ -536,6 +547,7 @@ impl Served {
             Intent::Remove {
                 expected,
                 clean_verified,
+                scratch_ref,
             } => {
                 let token = self.token()?;
                 let remote = self
@@ -543,6 +555,11 @@ impl Served {
                     .remote_head(branch, &self.remote, token.as_ref())
                     .map_err(adapter)?;
                 if writable {
+                    if let Some(reference) = scratch_ref {
+                        self.git
+                            .clean_saved_scratch(branch, checkout, reference)
+                            .map_err(adapter)?;
+                    }
                     if *clean_verified {
                         self.git.resume_removal(branch, checkout).map_err(adapter)?;
                     } else {
@@ -573,6 +590,12 @@ impl Served {
                         .is_some()
                 {
                     return Ok(None);
+                }
+                if let Some(reference) = scratch_ref {
+                    observations.push(Observation::ScratchSaved {
+                        node: record.delivery.node(),
+                        reference: reference.clone(),
+                    });
                 }
             }
         }
@@ -606,6 +629,14 @@ impl Real {
         let mut record = match repo.load(delivery)? {
             Some(record) => record,
             None => {
+                repo.git
+                    .prune_scratch(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    )
+                    .map_err(adapter)?;
                 let record = Record {
                     delivery: delivery.clone(),
                     intent: repo.intent(delivery, &branch, &self.checkout(delivery))?,

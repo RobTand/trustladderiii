@@ -1,6 +1,7 @@
 import json
 
 from .model import Outcome
+from .node_ids import selects
 
 
 class InvalidReport(ValueError):
@@ -37,9 +38,9 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
                 if (selected is not None or not all(isinstance(name, str) for name in names)
-                        or len(set(names)) != len(names) or not set(names) <= set(tests)):
+                        or len(set(names)) != len(names) or any(not any(selects(test, name) for test in tests) for name in names)):
                     raise InvalidReport("invalid test population")
-                selected = set(names)
+                selected = names
             case {"event": "collection-error"} if len(record) == 1:
                 collection_errors[""] = (Outcome.ERROR, message)
             case {"event": "collection-error", "test": str(file), "missing": name} if len(record) == 3:
@@ -62,6 +63,23 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
             case _:
                 raise InvalidReport("unknown report event")
+    def case_outcome(test):
+        setup, call, teardown = [phases.get((test, phase)) for phase in ("setup", "call", "teardown")]
+        if setup is None or teardown is None:
+            raise InvalidReport("test did not finish")
+        if setup[0] == "failed" or teardown[0] == "failed":
+            return Outcome.ERROR
+        if any(phase and phase[0] == "skipped" for phase in (setup, call, teardown)):
+            return Outcome.SKIPPED
+        if call is None:
+            raise InvalidReport("test has no call report")
+        if call[0] == "failed":
+            return (Outcome.ASSERTION if call[1] else Outcome.ADDED_NAME
+                    if call[2] else Outcome.ERROR)
+        return Outcome.PASSED
+
+    # Validate every collected case, including cases after the first failure.
+    cases = {test: case_outcome(test) for test in selected or ()}
     outcomes = {}
     for test in tests:
         if test in missing:
@@ -72,23 +90,13 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 messages[test] = error[1]
         elif selected is None:
             raise InvalidReport("missing collection report")
-        elif test not in selected:
-            outcomes[test] = Outcome.UNCOLLECTED
         else:
-            setup, call, teardown = [phases.get((test, phase)) for phase in ("setup", "call", "teardown")]
-            if setup is None or teardown is None:
-                raise InvalidReport("test did not finish")
-            if setup[0] == "failed" or teardown[0] == "failed":
-                outcomes[test] = Outcome.ERROR
-            elif any(phase and phase[0] == "skipped" for phase in (setup, call, teardown)):
-                outcomes[test] = Outcome.SKIPPED
-            elif call is None:
-                raise InvalidReport("test has no call report")
-            elif call[0] == "failed":
-                outcomes[test] = (Outcome.ASSERTION if call[1] else Outcome.ADDED_NAME
-                                  if call[2] else Outcome.ERROR)
-            else:
-                outcomes[test] = Outcome.PASSED
+            matches = [name for name in selected if selects(test, name)]
+            failing = next((name for name in matches if cases[name] != Outcome.PASSED), None)
+            outcomes[test] = (cases[failing] if failing is not None else
+                              Outcome.PASSED if matches else Outcome.UNCOLLECTED)
+            if messages is not None and failing is not None and failing in messages:
+                messages[test] = messages[failing]
     if exit_code != 0 and all(value == Outcome.PASSED for value in outcomes.values()):
         raise InvalidReport("pytest failed outside the named tests")
     if exit_code == 0 and any(value in (Outcome.ASSERTION, Outcome.ADDED_NAME, Outcome.ERROR) for value in outcomes.values()):

@@ -108,6 +108,10 @@ impl Delivery {
 /// External values are interned by the controller before entering the kernel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
+    ScratchSaved {
+        node: NodeId,
+        reference: String,
+    },
     Progress {
         key: String,
         checkpoint: String,
