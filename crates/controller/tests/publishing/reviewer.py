@@ -20,14 +20,14 @@ def model(request):
     assert any(rule["id"] == "test-report-integrity" for rule in inputs["standing_rules"])
     assert all(check["custody"] == "in-process" for check in inputs["checks"])
     assert Path(request["worktree"], "value.py").read_text() == (
-        "def value():\n    return 2\n" if request["resume_session"] else "def value(): return 2\n")
+        "def value():\n    return 2\n" if request["trace"]["round"] == 1 else "def value(): return 2\n")
     count = len(record.read_text().splitlines()) if record.exists() else 0
     first = count == 0
     with record.open("a") as output:
         output.write(json.dumps(request) + "\n")
     reply = {"verdict": "approve", "head_sha": inputs["head_sha"],
              "blocking_findings": [], "findings": [{"problem": "Optional style concern", "evidence": "This does not break a goal or rule."}]}
-    if (mode in ("changes", "review-retry", "round-one-rebase") and first) or (mode == "new-attempt" and count < 2):
+    if (mode in ("changes", "review-retry", "round-one-rebase", "out-of-room-fix") and first) or (mode == "new-attempt" and count < 2):
         reply = {"verdict": "changes", "blocking_findings": [{
             "citation": {"kind": "goal", "id": inputs["goals"][0]["id"]},
             "problem": "Check the result once more.", "evidence": "A fixture requests one fix round."}], "findings": []}
@@ -43,9 +43,14 @@ def model(request):
                 assert previous[0].additional_kwargs["reasoning_content"] == "The goal needs another check."
             if mode == "review-retry" and count == 2:
                 raise AssertionError("retry must use the saved reply without a model turn")
+            if mode.startswith(("out-of-room", "review-reset")):
+                assert len([m for m in messages if m.type == "human"]) == (2 if request["resume_session"] else 1)
             return super()._generate(messages, **kwargs)
 
-    return Model(responses=[AIMessage(content=json.dumps(reply), additional_kwargs={
+    exhausted = ((mode.startswith("out-of-room") and (mode != "out-of-room-fix" or not first))
+                 or (mode.startswith("review-reset") and count % 2 == 0))
+    return Model(responses=[AIMessage(content=json.dumps(reply), usage_metadata=(
+        {"input_tokens": 127_499, "output_tokens": 1, "total_tokens": 127_500} if exhausted else None), additional_kwargs={
         "reasoning_content": "The goal needs another check."})])
 
 
