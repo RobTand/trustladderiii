@@ -198,7 +198,7 @@ fn check_effect(
 }
 
 /// Applying one event keeps the world consistent and keeps every rule.
-fn check_apply(event: Event) {
+fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
@@ -217,6 +217,51 @@ fn check_apply(event: Event) {
         _ => None,
     };
     check_outputs(&before, &after, &out, exempt);
+    if let Event::Reply {
+        generation,
+        reply: Reply::ReviewerOutOfRoom,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if b.phase == Phase::Reviewing
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.run_failures, 0);
+            assert_eq!(n.attempt, b.attempt);
+            assert_eq!(n.round, b.round);
+            if b.review_restarted {
+                assert!(!n.holds);
+                if b.credit.can_spend(1) {
+                    assert_eq!(n.phase, Phase::Planning { must_split: true });
+                    assert_eq!(n.credit.spent, b.credit.spent + 1);
+                } else {
+                    assert_eq!(n.phase, Phase::AwaitingRob);
+                    assert_eq!(
+                        n.question.unwrap().cont,
+                        Cont::Planning { must_split: true }
+                    );
+                }
+            } else {
+                assert!(n.review_restarted);
+                assert_eq!(n.rechecks, b.rechecks.saturating_add(1));
+                assert_eq!(n.checked, b.checked);
+                if n.rechecks <= FREE_RECHECKS || b.credit.can_spend(1) {
+                    assert_eq!(n.phase, Phase::Reviewing);
+                    assert!(n.generation > b.generation);
+                    assert_eq!(
+                        n.credit.spent,
+                        b.credit.spent + u32::from(n.rechecks > FREE_RECHECKS)
+                    );
+                } else {
+                    assert_eq!(n.phase, Phase::AwaitingRob);
+                    assert_eq!(n.question.unwrap().cont, Cont::Ready(Resume::Reviewing));
+                }
+            }
+        }
+    }
     // Each of Rob's answers applies only to the question it names, and only
     // once: anything it changes closes that question.
     if let Event::Command {
@@ -231,6 +276,7 @@ fn check_apply(event: Event) {
             assert!(after.nodes[0].question.map_or(true, |q| q.id != question));
         }
     }
+    before
 }
 
 /// One internal transition of request 0 keeps the world consistent, changes
@@ -393,6 +439,38 @@ proof!(
     apply_approved,
     check_apply(reply(Reply::Approved { head: kani::any() }))
 );
+proof!(apply_reviewer_out_of_room, {
+    let event = reply(Reply::ReviewerOutOfRoom);
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = b.phase == Phase::Reviewing
+        && b.current() == Some(Item::Await)
+        && b.run == Some(generation);
+    let paid = b.rechecks.saturating_add(1) > FREE_RECHECKS;
+    kani::cover!(
+        accepted && !b.review_restarted && !paid,
+        "first exhaustion: free review"
+    );
+    kani::cover!(
+        accepted && !b.review_restarted && paid && b.credit.can_spend(1),
+        "first exhaustion: paid review"
+    );
+    kani::cover!(
+        accepted && !b.review_restarted && paid && !b.credit.can_spend(1),
+        "first exhaustion: needs credit"
+    );
+    kani::cover!(
+        accepted && b.review_restarted && b.credit.can_spend(1),
+        "second exhaustion: paid split"
+    );
+    kani::cover!(
+        accepted && b.review_restarted && !b.credit.can_spend(1),
+        "second exhaustion: split needs credit"
+    );
+});
 proof!(
     apply_changes_requested,
     check_apply(reply(Reply::ChangesRequested))

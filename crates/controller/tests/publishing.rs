@@ -458,15 +458,23 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 break;
             }
             changed = true;
+            if expected == (Phase::Planning { must_split: true })
+                && c.world().unwrap().nodes[0].phase == expected
+            {
+                break;
+            }
         }
         source.poll_once(store, &sender).unwrap();
+        let mut observed = false;
         for input in receiver.try_iter() {
             if let Input::Observation { key, observation } = input {
                 c.observe(&key, observation).unwrap();
                 changed = true;
+                observed = true;
             }
         }
-        if !changed && c.world().unwrap().nodes[0].phase == expected {
+        let reached_planner = expected == (Phase::Planning { must_split: true }) && !observed;
+        if (!changed || reached_planner) && c.world().unwrap().nodes[0].phase == expected {
             return;
         }
         assert!(
@@ -539,6 +547,17 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
+    if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
+        let mut primary = config.models.maker[2].clone();
+        primary.name = "review-primary".into();
+        let mut backup = config.models.maker[0].clone();
+        backup.name = "review-backup".into();
+        config.models.reviewer = if mode == "out-of-room-last" {
+            vec![backup, primary]
+        } else {
+            vec![primary, backup]
+        };
+    }
     config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
@@ -630,6 +649,50 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             "enqueue must report the outside push so the new head gets checked"
         );
     }
+    if mode.starts_with("out-of-room") {
+        drain(
+            &mut c,
+            &mut source,
+            &mut store,
+            Phase::Planning { must_split: true },
+        );
+        let n = c.world().unwrap().nodes[0];
+        assert_eq!(
+            n.run_failures, 0,
+            "Q44 exhaustion is not an infrastructure failure"
+        );
+        assert_eq!(n.rechecks, 1);
+        assert!(!n.holds);
+        assert_eq!(n.credit.balance(), 3);
+        let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(reviews.len(), if mode == "out-of-room-fix" { 3 } else { 2 });
+        let first = &reviews[reviews.len() - 2];
+        let fresh = &reviews[reviews.len() - 1];
+        assert_eq!(fresh["resume_session"], false);
+        assert_ne!(first["session_file"], fresh["session_file"]);
+        assert_ne!(
+            first["operation"]["generation"],
+            fresh["operation"]["generation"]
+        );
+        assert_eq!(first["model"]["name"], "review-primary");
+        assert_eq!(
+            fresh["model"]["name"],
+            if mode == "out-of-room-last" {
+                "review-primary"
+            } else {
+                "review-backup"
+            }
+        );
+        assert_eq!(
+            fresh["inputs"]["base_sha"],
+            reviews[0]["inputs"]["base_sha"]
+        );
+        return;
+    }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
         .as_str()
@@ -637,7 +700,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .to_owned();
     let credit = c.world().unwrap().nodes[0].credit.balance();
     let d = f.delivery(EffectKind::Push, 100);
-    if matches!(mode, "push" | "reports-latest") {
+    if matches!(mode, "push" | "reports-latest" | "review-reset-push") {
         let checkout = f.adapter().checkout(&d);
         git(
             &checkout,
@@ -653,8 +716,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
 
         webhook(&mut c, &server, "synchronize");
+        if mode == "review-reset-push" {
+            while c.drive_once().unwrap() {}
+            assert!(
+                !c.world().unwrap().nodes[0].review_restarted,
+                "outside push starts a new review"
+            );
+        }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-    } else if matches!(mode, "rebase" | "round-one-rebase") {
+    } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
         let new_target = git(&f.remote, &["rev-parse", "main"]);
@@ -662,6 +732,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             c.drive_once().unwrap();
             let n = c.world().unwrap().nodes[0];
             if n.phase == Phase::Checking {
+                if mode == "review-reset-rebase" {
+                    assert!(!n.review_restarted, "clean rebase starts a new review");
+                }
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
                 let plan = c
@@ -683,6 +756,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    if mode.starts_with("review-reset") {
+        assert_eq!(reviews.len(), 4);
+        assert_ne!(
+            reviews[0]["inputs"]["head_sha"],
+            reviews[2]["inputs"]["head_sha"]
+        );
+        for pair in reviews.as_chunks::<2>().0 {
+            assert_eq!(pair[0]["model"]["name"], "review-primary");
+            assert_eq!(pair[1]["model"]["name"], "review-backup");
+            assert_eq!(pair[0]["resume_session"], false);
+            assert_eq!(pair[1]["resume_session"], false);
+            assert_ne!(pair[0]["session_file"], pair[1]["session_file"]);
+        }
+        assert_eq!(
+            reviews[2]["last_accepted_generation"],
+            reviews[1]["operation"]["generation"]
+        );
+        assert_eq!(
+            reviews[3]["last_accepted_generation"],
+            reviews[2]["operation"]["generation"]
+        );
+        assert_eq!(c.world().unwrap().nodes[0].rechecks, 3);
+        return;
+    }
     assert_eq!(
         reviews.len(),
         if matches!(mode, "new-attempt" | "review-retry" | "round-one-rebase") {
@@ -1179,6 +1276,11 @@ fn main() {
         "changes",
         "new-attempt",
         "review-retry",
+        "out-of-room",
+        "out-of-room-fix",
+        "out-of-room-last",
+        "review-reset-push",
+        "review-reset-rebase",
         "before-enqueue",
         "reports-latest",
         "reports-closed",
@@ -1191,5 +1293,5 @@ fn main() {
         println!("test publishing_{mode} ... ok");
     }
     database.stop();
-    println!("15 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!("20 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
