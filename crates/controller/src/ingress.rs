@@ -1,4 +1,9 @@
 use crate::http;
+use crate::sync::{
+    Arc,
+    mpsc::{self, Sender},
+    thread,
+};
 use crate::{
     Bootstrap, Controller, Error, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
@@ -11,11 +16,6 @@ use std::{
     collections::BTreeMap,
     io::{self, BufRead},
     net::SocketAddr,
-    sync::{
-        Arc,
-        mpsc::{self, Sender},
-    },
-    thread,
 };
 use tl3_github::{
     GitHub, ServedRepo,
@@ -77,21 +77,21 @@ impl Sources {
             let input = match controller.next_look_in()? {
                 Some(wait) => match self.receiver.recv_timeout(wait) {
                     Ok(input) => input,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         controller.look_due()?;
                         // Retry deferred deliveries on the existing allowance look, without a new timer.
                         drain_on_wake(controller)?;
                         while controller.drive_once()? {}
                         continue;
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 },
                 None => match self.receiver.recv() {
                     Ok(input) => input,
                     Err(_) => break,
                 },
             };
-            for exit in self.exits.try_iter() {
+            while let Ok(exit) = self.exits.try_recv() {
                 exit?;
             }
             drain_on_wake(controller)?;
@@ -99,7 +99,7 @@ impl Sources {
             controller.look_due()?;
             while controller.drive_once()? {}
         }
-        for exit in self.exits {
+        while let Ok(exit) = self.exits.recv() {
             exit?;
         }
         Ok(())
@@ -234,6 +234,7 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
                     apply(controller, input)?;
                 }
             }
+            controller.store.ingress_applied(&stored);
             controller.store.consume_ingress(stored.sequence)?;
         }
     }
@@ -540,7 +541,7 @@ impl CatchUpBatch {
 }
 
 enum WebhookMessage {
-    Request(http::Request, mpsc::SyncSender<u16>),
+    Request(http::Request, std::sync::mpsc::SyncSender<u16>),
     Gap,
     Stop,
     ServerExit(Result<()>),
@@ -600,7 +601,13 @@ impl WebhookReceiver {
             store,
             bootstrap,
             secret,
-            catch_up: catch_up.map(|fetcher| Arc::new(fetcher) as Arc<dyn webhooks::Fetcher>),
+            catch_up: catch_up.map(|fetcher| {
+                let fetcher: std::sync::Arc<dyn webhooks::Fetcher> = std::sync::Arc::new(fetcher);
+                // Loom cannot coerce Arc<CatchUp> to an unsized trait object.
+                #[cfg(loom)]
+                let fetcher = Arc::from_std(fetcher);
+                fetcher
+            }),
             catch_up_reader,
         })
     }
@@ -644,6 +651,20 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
     }
 }
 
+fn receive_request(
+    store: &mut Store,
+    secret: &[u8],
+    request: &http::Request,
+    notifications: &webhooks::Notifications,
+    reply: std::sync::mpsc::SyncSender<u16>,
+) -> (u16, bool) {
+    let status = receive_delivery(store, secret, request);
+    if status == 202 {
+        notifications.wake();
+    }
+    (status, reply.send(status).is_err())
+}
+
 impl WebhookReceiver {
     fn run(self, notifications: Arc<webhooks::Notifications>) -> Result<()> {
         let Self {
@@ -666,7 +687,7 @@ impl WebhookReceiver {
                         Ok(request) if request.method != "POST" => (405, request.method == "HEAD"),
                         Ok(request) if request.path != "/github/events" => (404, false),
                         Ok(request) => {
-                            let (reply, response) = mpsc::sync_channel(1);
+                            let (reply, response) = std::sync::mpsc::sync_channel(1);
                             if requests
                                 .send(WebhookMessage::Request(request, reply))
                                 .is_err()
@@ -693,11 +714,8 @@ impl WebhookReceiver {
                     .map_err(|_| Error::Invalid("webhook receiver stopped"))?
                 {
                     WebhookMessage::Request(request, reply) => {
-                        let status = receive_delivery(&mut store, &secret, &request);
-                        if status == 202 {
-                            notifications.wake();
-                        }
-                        let disconnected = reply.send(status).is_err();
+                        let (status, disconnected) =
+                            receive_request(&mut store, &secret, &request, &notifications, reply);
                         if (status == 503 || disconnected || state.waiting())
                             && let Some(catch_up) = &catch_up
                         {
@@ -761,3 +779,7 @@ impl WebhookReceiver {
         result
     }
 }
+
+#[cfg(all(test, loom))]
+#[path = "../tests/loom/ingress.rs"]
+mod loom_tests;

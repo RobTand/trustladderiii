@@ -38,6 +38,27 @@ pub struct ActionRecord {
     pub progress_observation: Option<ProgressObservation>,
 }
 
+/// A transition owns the record until its destination is published.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RecordRead {
+    Absent,
+    Moving,
+    Present(Box<ActionRecord>),
+}
+
+impl RecordRead {
+    /// Moving records retain their waits and cannot establish termination.
+    pub fn is_live(&self) -> bool {
+        match self {
+            Self::Moving => true,
+            Self::Present(record) => {
+                matches!(record.state, ActionState::Queued | ActionState::Claimed)
+            }
+            Self::Absent => false,
+        }
+    }
+}
+
 /// Maximum retained stderr suffix, in UTF-8 bytes.
 pub const MAX_STDERR_TAIL_BYTES: usize = 8192;
 
@@ -64,7 +85,7 @@ pub struct AcceptedProgress {
 }
 
 /// Results are independent: one unreadable key does not hide other observations.
-pub type Observations = BTreeMap<ActionKey, Result<Option<ActionRecord>, Error>>;
+pub type Observations = BTreeMap<ActionKey, Result<RecordRead, Error>>;
 
 #[derive(Default, Deserialize)]
 struct Detail {
@@ -188,11 +209,71 @@ async fn document<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<
 }
 
 impl PrismaBuild {
-    /// Missing records return None. Unreadable records remain errors, never evidence of loss.
-    pub async fn read(&self, key: &ActionKey) -> Result<Option<ActionRecord>, Error> {
+    /// Moving records are present evidence. Unreadable records remain errors, never evidence of loss.
+    pub async fn read(&self, key: &ActionKey) -> Result<RecordRead, Error> {
+        self.read_with(key, |_| {}).await
+    }
+
+    async fn read_with(
+        &self,
+        key: &ActionKey,
+        mut after_read: impl FnMut(&str),
+    ) -> Result<RecordRead, Error> {
         let root = &self.options.queue_root;
         let mut chosen: Option<(usize, PathBuf, Record)> = None;
-        for (rank, state) in STATES.iter().enumerate() {
+        let mut ready_capture_seen = false;
+        // Claims can return to ready. Revisit live slots after the terminal scan
+        // so a link-ready/unlink-claimed handoff cannot look like an ending.
+        for (index, state) in STATES.iter().chain(["ready", "claimed"].iter()).enumerate() {
+            // PrismaBuild captures claims and ready items before publishing their destinations.
+            // Scan before terminals, so publishing an ending and retiring its marker cannot hide both.
+            if index == 2 && chosen.is_none() {
+                for state in ["claimed", "ready-transitions"] {
+                    let directory = root.join(state);
+                    let mut entries = match tokio::fs::read_dir(&directory).await {
+                        Ok(entries) => entries,
+                        Err(error)
+                            if state == "ready-transitions"
+                                && error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            continue;
+                        }
+                        Err(source) => {
+                            return Err(Error::Io {
+                                path: directory,
+                                source,
+                            });
+                        }
+                    };
+                    while let Some(entry) =
+                        entries.next_entry().await.map_err(|source| Error::Io {
+                            path: directory.clone(),
+                            source,
+                        })?
+                    {
+                        let name = entry.file_name();
+                        let name = name.to_string_lossy();
+                        if name.starts_with(&format!("{key}."))
+                            && (if state == "claimed" {
+                                name.ends_with(".tombstone") || name.ends_with(".late-finish")
+                            } else {
+                                name.ends_with(".json")
+                            })
+                        {
+                            if state == "claimed" {
+                                return Ok(RecordRead::Moving);
+                            }
+                            // Ready captures have no retirement bell. Read their published ending now.
+                            ready_capture_seen = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            let rank = STATES
+                .iter()
+                .position(|candidate| candidate == state)
+                .unwrap();
             let directory = root.join(state);
             let metadata = tokio::fs::metadata(&directory)
                 .await
@@ -204,7 +285,9 @@ impl PrismaBuild {
                 return Err(invalid(&directory, "expected a queue state directory"));
             }
             let path = directory.join(format!("{key}.json"));
-            let Some(record) = document::<Record>(&path).await? else {
+            let record = document::<Record>(&path).await?;
+            after_read(state);
+            let Some(record) = record else {
                 continue;
             };
             if &record.action_key != key
@@ -226,7 +309,11 @@ impl PrismaBuild {
             }
         }
         let Some((rank, path, record)) = chosen else {
-            return Ok(None);
+            return Ok(if ready_capture_seen {
+                RecordRead::Moving
+            } else {
+                RecordRead::Absent
+            });
         };
         let status = record.status.as_deref();
         let returncode = record.detail.returncode();
@@ -328,7 +415,7 @@ impl PrismaBuild {
         } else {
             None
         };
-        Ok(Some(ActionRecord {
+        Ok(RecordRead::Present(Box::new(ActionRecord {
             key: key.clone(),
             snapshot_parent: record.checkout_snapshot.map(|s| s.parent),
             state,
@@ -339,7 +426,7 @@ impl PrismaBuild {
             termination_reason: record.detail.termination_reason,
             stderr_tail: record.detail.stderr_tail,
             progress_observation: record.detail.progress_observation,
-        }))
+        })))
     }
 
     pub async fn reconcile(&self, awaited: &BTreeSet<ActionKey>) -> Observations {
@@ -348,5 +435,186 @@ impl PrismaBuild {
             records.insert(key.clone(), self.read(key).await);
         }
         records
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Options, Tool};
+
+    fn fixture() -> (tempfile::TempDir, PrismaBuild, ActionKey) {
+        let root = tempfile::tempdir().unwrap();
+        for state in STATES {
+            std::fs::create_dir(root.path().join(state)).unwrap();
+        }
+        let key: ActionKey = "a".repeat(64).parse().unwrap();
+        let client = PrismaBuild::new(Options {
+            queue_root: root.path().into(),
+            tool: Tool {
+                program: "/never-submit".into(),
+                args: vec![],
+            },
+            bell_url: "http://127.0.0.1:9/".into(),
+        })
+        .unwrap();
+        std::fs::write(
+            root.path().join(format!("claimed/{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": ITEM_SCHEMA, "action_key": key, "published_unix": 100
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        (root, client, key)
+    }
+
+    #[tokio::test]
+    async fn lookup_keeps_unstarted_claim_live_during_requeue() {
+        let (root, client, key) = fixture();
+        let mut moved = false;
+        let record = client
+            .read_with(&key, |state| {
+                if state == "ready" && !moved {
+                    // PrismaBuild _ClaimReservation.abandon links ready before unlinking claimed.
+                    let claimed = root.path().join(format!("claimed/{key}.json"));
+                    std::fs::hard_link(&claimed, root.path().join(format!("ready/{key}.json")))
+                        .unwrap();
+                    std::fs::remove_file(claimed).unwrap();
+                    moved = true;
+                }
+            })
+            .await
+            .unwrap();
+        assert!(
+            matches!(record, RecordRead::Present(record)
+            if matches!(record.state, ActionState::Queued | ActionState::Claimed)),
+            "live requeue read as absent"
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_does_not_declare_absence_during_finish_handoff() {
+        let (root, client, key) = fixture();
+        std::fs::rename(
+            root.path().join(format!("claimed/{key}.json")),
+            root.path()
+                .join(format!("claimed/{key}.100.host.1.abc.tombstone")),
+        )
+        .unwrap();
+        assert!(
+            matches!(client.read(&key).await, Ok(RecordRead::Moving)),
+            "in-flight handoff must be present moving evidence, not an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_keeps_retry_live_when_finishing_marker_retires() {
+        let (root, client, key) = fixture();
+        let claimed = root.path().join(format!("claimed/{key}.json"));
+        let marker = root
+            .path()
+            .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
+        std::fs::rename(&claimed, &marker).unwrap();
+        let mut claimed_reads = 0;
+        let record = client
+            .read_with(&key, |state| {
+                if state == "claimed" {
+                    claimed_reads += 1;
+                    if claimed_reads == 2 {
+                        std::fs::hard_link(&marker, root.path().join(format!("ready/{key}.json")))
+                            .unwrap();
+                        std::fs::remove_file(&marker).unwrap();
+                    }
+                }
+            })
+            .await;
+        assert!(
+            record.is_ok_and(|record| record.is_live()),
+            "retiring retry marker read as absent"
+        );
+    }
+    #[tokio::test]
+    async fn lookup_keeps_finish_present_when_marker_retires_after_terminals() {
+        for finish_after in ["failed", "done", "withdrawn"] {
+            let (root, client, key) = fixture();
+            let marker = root
+                .path()
+                .join(format!("claimed/{key}.100.host.1.abc.tombstone"));
+            std::fs::rename(root.path().join(format!("claimed/{key}.json")), &marker).unwrap();
+            let record = client
+                .read_with(&key, |state| {
+                    if state == finish_after {
+                        std::fs::write(
+                            root.path().join(format!("done/{key}.json")),
+                            serde_json::to_vec(&serde_json::json!({
+                                "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
+                                "status": "executed", "detail": {"returncode": 0}
+                            }))
+                            .unwrap(),
+                        )
+                        .unwrap();
+                        std::fs::remove_file(&marker).unwrap();
+                    }
+                })
+                .await;
+            let present = match &record {
+                Ok(RecordRead::Moving) => true,
+                Ok(RecordRead::Present(record)) => {
+                    record.state == ActionState::Finished { returncode: 0 }
+                }
+                _ => false,
+            };
+            assert!(
+                present,
+                "finish after {finish_after}: expected moving or successful terminal, got {record:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_returns_terminal_while_ready_capture_remains() {
+        let (root, client, key) = fixture();
+        std::fs::create_dir(root.path().join("ready-transitions")).unwrap();
+        let capture = root.path().join(format!(
+            "ready-transitions/{key}.100000000.abc.origin-released.json"
+        ));
+        std::fs::rename(root.path().join(format!("claimed/{key}.json")), &capture).unwrap();
+        std::fs::write(
+            root.path().join(format!("failed/{key}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": OUTCOME_SCHEMA, "action_key": key, "published_unix": 100,
+                "status": "origin_consumer_released"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let record = client.read(&key).await;
+        assert!(
+            matches!(&record, Ok(RecordRead::Present(record))
+                if matches!(&record.state, ActionState::Failed { status, .. }
+                    if status == "origin_consumer_released")),
+            "ready capture hid durable terminal: {record:?}"
+        );
+        assert!(capture.exists());
+    }
+
+    #[tokio::test]
+    async fn lookup_keeps_ready_captures_present_during_transition() {
+        for kind in ["withdraw-ready", "orphan", "dead-input", "origin-released"] {
+            let (root, client, key) = fixture();
+            std::fs::create_dir(root.path().join("ready-transitions")).unwrap();
+            std::fs::rename(
+                root.path().join(format!("claimed/{key}.json")),
+                root.path()
+                    .join(format!("ready-transitions/{key}.100000000.abc.{kind}.json")),
+            )
+            .unwrap();
+            let record = client.read(&key).await;
+            assert!(
+                matches!(record, Ok(RecordRead::Moving)),
+                "ready capture {kind} read as absent or error"
+            );
+        }
     }
 }

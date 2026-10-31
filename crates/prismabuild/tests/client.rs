@@ -7,13 +7,27 @@ use std::{
 };
 use tempfile::TempDir;
 use tl3_prismabuild::{
-    ActionKey, ActionState, Demand, Error, MAX_STDERR_TAIL_BYTES, Options, PrismaBuild,
-    ProgressPhase, SubmissionStatus, SubmitAction, Tool,
+    ActionKey, ActionRecord, ActionState, Demand, Error, MAX_STDERR_TAIL_BYTES, Options,
+    PrismaBuild, ProgressPhase, RecordRead, SubmissionStatus, SubmitAction, Tool,
 };
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{header, method, path, query_param},
 };
+
+fn present(read: RecordRead) -> Box<ActionRecord> {
+    match read {
+        RecordRead::Present(record) => record,
+        other => panic!("expected queue record, got {other:?}"),
+    }
+}
+
+fn current(read: &Result<RecordRead, Error>) -> &ActionRecord {
+    match read.as_ref().unwrap() {
+        RecordRead::Present(record) => record,
+        other => panic!("expected queue record, got {other:?}"),
+    }
+}
 
 const EPOCH: &str = "0123456789abcdef0123456789abcdef";
 
@@ -282,12 +296,7 @@ async fn real_queue_records_report_action_codes_and_withdrawn_attempts_without_b
             137,
         ),
     ] {
-        let record = f
-            .client
-            .read(&text.parse().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+        let record = present(f.client.read(&text.parse().unwrap()).await.unwrap());
         assert_eq!(record.state, state);
         assert_eq!(record.attempts.len(), 1);
         assert_eq!(record.attempts[0].returncode, Some(attempt_code));
@@ -322,7 +331,7 @@ async fn outcomes_keep_only_typed_fields_and_a_bounded_utf8_stderr_tail() {
         "published_unix":100.0,"status":"failed","detail":detail,
         "attempt_history":[{"attempt":1,"outcome":outcome}]}),
     );
-    let record = f.client.read(&key(1)).await.unwrap().unwrap();
+    let record = present(f.client.read(&key(1)).await.unwrap());
     assert_eq!(record.returncode, Some(42));
     assert_eq!(
         record.state,
@@ -360,16 +369,13 @@ async fn reconciliation_is_independent_for_malformed_and_unreadable_records() {
     let records = f.client.reconcile(&(1..=5).map(key).collect()).await;
     assert_eq!(records.len(), 5);
     assert_eq!(
-        records[&key(1)].as_ref().unwrap().as_ref().unwrap().state,
+        current(&records[&key(1)]).state,
         ActionState::Finished { returncode: 0 }
     );
     assert!(matches!(records[&key(2)], Err(Error::Record { .. })));
     assert!(matches!(records[&key(3)], Err(Error::Io { .. })));
-    assert_eq!(
-        records[&key(4)].as_ref().unwrap().as_ref().unwrap().state,
-        ActionState::Claimed
-    );
-    assert!(records[&key(5)].as_ref().unwrap().is_none());
+    assert_eq!(current(&records[&key(4)]).state, ActionState::Claimed);
+    assert!(matches!(records[&key(5)], Ok(RecordRead::Absent)));
 }
 
 #[tokio::test]
@@ -480,17 +486,9 @@ async fn restart_reconciliation_maps_all_record_states_and_missing_keys() {
     }
     let records = f.client.reconcile(&awaited).await;
     assert_eq!(records.len(), 10);
-    assert!(records[&key(999)].as_ref().unwrap().is_none());
+    assert!(matches!(records[&key(999)], Ok(RecordRead::Absent)));
     for (i, (_, _, _, expected)) in cases.iter().enumerate() {
-        assert_eq!(
-            &records[&key(i as u32 + 1)]
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .state,
-            expected
-        );
+        assert_eq!(&current(&records[&key(i as u32 + 1)]).state, expected);
     }
     assert!(
         !f.dir.path().join("calls.jsonl").exists(),
@@ -509,17 +507,17 @@ async fn newer_publication_wins_and_an_old_lease_never_declares_loss() {
         "action_key":key(1), "heartbeat_unix":1.0, "owner":"worker:1", "host":"fake-worker",
         "progress_observation":{"units_completed":4}}),
     );
-    let record = f.client.read(&key(1)).await.unwrap().unwrap();
+    let record = present(f.client.read(&key(1)).await.unwrap());
     assert_eq!(record.state, ActionState::Claimed);
     assert_eq!(record.lease.unwrap().heartbeat_unix, 1.0);
     f.record("failed", 1, Some("lease_lost_max_attempts"), None, 200.0);
     assert_eq!(
-        f.client.read(&key(1)).await.unwrap().unwrap().state,
+        present(f.client.read(&key(1)).await.unwrap()).state,
         ActionState::LeaseLost
     );
     f.record("withdrawn", 1, Some("withdrawn"), None, 200.0);
     assert_eq!(
-        f.client.read(&key(1)).await.unwrap().unwrap().state,
+        present(f.client.read(&key(1)).await.unwrap()).state,
         ActionState::Withdrawn
     );
 }
@@ -537,7 +535,7 @@ async fn requeued_and_reclaimed_actions_preserve_lease_loss_attempts() {
             "action_key":key(1), "published_unix":100.0, "attempts":1, "status":"lease_lost",
             "attempt_history":[{"attempt":1, "outcome":outcome}]}),
         );
-        let record = f.client.read(&key(1)).await.unwrap().unwrap();
+        let record = present(f.client.read(&key(1)).await.unwrap());
         assert_eq!(
             record.state,
             if directory == "ready" {
@@ -556,7 +554,7 @@ async fn requeued_and_reclaimed_actions_preserve_lease_loss_attempts() {
         "withdrawn_attempt":{"schema":"prismaquant.prismabuild.pool_item.v1",
         "action_key":key(1),"published_unix":100.0,"attempt_history":[{"attempt":1,"outcome":outcome}]}}),
     );
-    let withdrawn = f.client.read(&key(1)).await.unwrap().unwrap();
+    let withdrawn = present(f.client.read(&key(1)).await.unwrap());
     assert_eq!(withdrawn.state, ActionState::Withdrawn);
     assert!(withdrawn.attempts[0].lease_lost());
 }
@@ -632,12 +630,7 @@ async fn bell_reset_rereads_every_awaited_key_and_reconciles_before_waiting() {
         .unwrap();
     assert!(initial.reset && initial.bell_available);
     assert_eq!(
-        initial.records[&key(1)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&initial.records[&key(1)]).state,
         ActionState::Queued
     );
     f.record("done", 1, Some("executed"), Some(0), 100.0);
@@ -649,24 +642,14 @@ async fn bell_reset_rereads_every_awaited_key_and_reconciles_before_waiting() {
     assert!(reset.reset && reset.bell_available);
     assert_eq!(reset.records.len(), 3);
     assert_eq!(
-        reset.records[&key(1)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&reset.records[&key(1)]).state,
         ActionState::Finished { returncode: 0 }
     );
     assert_eq!(
-        reset.records[&key(2)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&reset.records[&key(2)]).state,
         ActionState::LeaseLost
     );
-    assert!(reset.records[&key(99)].as_ref().unwrap().is_none());
+    assert!(matches!(reset.records[&key(99)], Ok(RecordRead::Absent)));
 }
 
 #[tokio::test]
@@ -724,12 +707,7 @@ async fn bell_filters_more_than_128_keys_and_reads_only_hints() {
     assert!(!hinted.reset && hinted.bell_available);
     assert_eq!(hinted.records.len(), 1);
     assert_eq!(
-        hinted.records[&key(1)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&hinted.records[&key(1)]).state,
         ActionState::Claimed
     );
     let empty = watcher
@@ -755,12 +733,7 @@ async fn unavailable_bell_falls_back_to_records_without_losing_work() {
         .unwrap();
     assert!(!changes.bell_available && changes.reset);
     assert_eq!(
-        changes.records[&key(1)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&changes.records[&key(1)]).state,
         ActionState::Claimed
     );
 }
@@ -796,15 +769,10 @@ async fn bell_returns_bad_records_beside_good_records_and_keeps_listening() {
         Err(Error::Record { .. })
     ));
     assert_eq!(
-        initial.records[&key(2)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&initial.records[&key(2)]).state,
         ActionState::Finished { returncode: 0 }
     );
-    assert!(initial.records[&key(3)].as_ref().unwrap().is_none());
+    assert!(matches!(initial.records[&key(3)], Ok(RecordRead::Absent)));
     f.record("done", 1, Some("executed"), Some(0), 100.0);
     let repaired = watcher
         .next(&awaited, Duration::from_secs(1))
@@ -812,12 +780,7 @@ async fn bell_returns_bad_records_beside_good_records_and_keeps_listening() {
         .unwrap();
     assert!(!repaired.reset && repaired.bell_available);
     assert_eq!(
-        repaired.records[&key(1)]
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .state,
+        current(&repaired.records[&key(1)]).state,
         ActionState::Finished { returncode: 0 }
     );
 }

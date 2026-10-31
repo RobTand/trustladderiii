@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::Mutex;
+use crate::sync::Mutex;
 
 /// Receipt starts at bind, before controller recovery or source registration.
 pub struct Webhooks {
@@ -24,7 +24,7 @@ impl Webhooks {
     fn start(source: WebhookReceiver) -> Self {
         let address = source.address();
         let control = source.control();
-        let notifications = Arc::new(Notifications(Mutex::new(WakeTarget::Pending(false))));
+        let notifications = Arc::new(Notifications::new());
         let receipts = Arc::clone(&notifications);
         let thread = Some(thread::spawn(move || source.run(receipts)));
         Self {
@@ -112,7 +112,7 @@ impl Fetcher for CatchUp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 impl Webhooks {
     fn bind_with_fetcher(store: Store, fetcher: Arc<dyn Fetcher>) -> Result<Self> {
         let reader = store.reader()?;
@@ -135,6 +135,9 @@ enum WakeTarget {
     Registered(Sender<Input>),
 }
 impl Notifications {
+    pub(super) fn new() -> Self {
+        Self(Mutex::new(WakeTarget::Pending(false)))
+    }
     pub(super) fn wake(&self) {
         match &mut *self.0.lock().expect("webhook notifications") {
             WakeTarget::Pending(pending) => *pending = true,
@@ -143,7 +146,7 @@ impl Notifications {
             }
         }
     }
-    fn register(&self, sender: Sender<Input>) {
+    pub(super) fn register(&self, sender: Sender<Input>) {
         let mut target = self.0.lock().expect("webhook notifications");
         if matches!(*target, WakeTarget::Pending(true)) {
             let _ = sender.send(Input::GitHubWake);
@@ -178,5 +181,9 @@ impl FetchState {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests;
+
+#[cfg(all(test, loom))]
+#[path = "../../tests/loom/notifications.rs"]
+mod loom_tests;

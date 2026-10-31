@@ -1620,6 +1620,28 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--r5") {
+        let mut failures = 0;
+        for (name, test) in [
+            (
+                "moving_wait_bell_is_quiet",
+                moving_wait_bell_is_quiet as fn(),
+            ),
+            (
+                "moving_job_reconcile_is_pending",
+                moving_job_reconcile_is_pending,
+            ),
+        ] {
+            let result = std::panic::catch_unwind(test);
+            println!(
+                "R5 {name}: {}",
+                if result.is_ok() { "PASS" } else { "FAIL" }
+            );
+            failures += usize::from(result.is_err());
+        }
+        assert_eq!(failures, 0, "R5 adapter regressions");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
         source_skips_bad_waits();
         return;
@@ -1656,8 +1678,16 @@ fn main() {
     }
     for (name, test) in [
         (
+            "moving_wait_bell_is_quiet",
+            moving_wait_bell_is_quiet as fn(),
+        ),
+        (
+            "moving_job_reconcile_is_pending",
+            moving_job_reconcile_is_pending,
+        ),
+        (
             "reproducing_check_plan_and_verdict",
-            reproducing_check_plan_and_verdict as fn(),
+            reproducing_check_plan_and_verdict,
         ),
         ("source_skips_bad_waits", source_skips_bad_waits as fn()),
         (
@@ -1906,4 +1936,93 @@ fn live_waits_do_not_look_on_bell_reset() {
         tl3_controller::cli::Input::Look { .. }
     ));
     assert!(rx.try_recv().is_err());
+}
+
+fn moving_wait_bell_is_quiet() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut bell = Bell::new();
+    let mut adapter = fixture_with_bell(root.path(), "pending", &bell.url);
+    let key = "a".repeat(64);
+    let marker = root
+        .path()
+        .join(format!("queue/claimed/{key}.100.host.1.abc.tombstone"));
+    fs::write(&marker, "{}").unwrap();
+    adapter
+        .watch_wait(
+            &delivery,
+            Some(&tl3_store::ExternalWait {
+                upstream: "prismabuild".into(),
+                key: key.clone(),
+            }),
+        )
+        .unwrap();
+    let mut source = adapter.source();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
+    for response in [
+        reset,
+        serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":1, "reset":false,
+        "events":[{"seq":1,"dir":"claimed","key":key}]}),
+    ] {
+        let count = thread::scope(|scope| {
+            let bell = &mut bell;
+            scope.spawn(move || bell.request().response.send(response).unwrap());
+            runtime
+                .block_on(source.poll(&tx, Duration::from_secs(10)))
+                .unwrap()
+        });
+        assert_eq!(count, 0, "finish window must produce no Look");
+        assert!(rx.try_recv().is_err(), "moving record is no bell news");
+    }
+    assert!(
+        record_path(root.path(), &delivery.key, "wait").is_file(),
+        "move retains durable wait"
+    );
+    fs::write(
+        root.path().join(format!("queue/done/{key}.json")),
+        serde_json::json!({"schema":"prismaquant.prismabuild.pool_outcome.v1", "action_key":key,
+            "published_unix":100,"status":"executed","detail":{"returncode":0}})
+        .to_string(),
+    )
+    .unwrap();
+    fs::remove_file(marker).unwrap();
+    let count = thread::scope(|scope| {
+        let bell = &mut bell;
+        let key = &key;
+        scope.spawn(move || {
+            bell.request()
+                .reply(2, serde_json::json!([{"seq":2,"dir":"done","key":key}]))
+        });
+        runtime
+            .block_on(source.poll(&tx, Duration::from_secs(10)))
+            .unwrap()
+    });
+    assert_eq!(count, 1, "retained wait receives its ending");
+    assert!(
+        matches!(rx.try_recv().unwrap(), tl3_controller::cli::Input::Look {key} if key == delivery.key)
+    );
+}
+
+fn moving_job_reconcile_is_pending() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    fs::rename(
+        root.path().join(format!("queue/ready/{key}.json")),
+        root.path()
+            .join(format!("queue/claimed/{key}.100.host.1.abc.tombstone")),
+    )
+    .unwrap();
+    let result = adapter.reconcile(&delivery);
+    assert!(
+        matches!(result, Ok(Reconciliation::Pending)),
+        "moving reconcile must stay Pending"
+    );
 }

@@ -1,5 +1,6 @@
 use super::record::Records;
 use crate::executor::Output as Out;
+use crate::sync::{Arc, Mutex};
 use crate::{
     Result,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
@@ -58,11 +59,10 @@ use std::{
     fs::{self, File},
     io::Write,
     path::PathBuf,
-    sync::{Arc, Mutex},
     time::Duration,
 };
 use tl3_prismabuild::{
-    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, SubmitAction, Tool,
+    ActionKey, ActionState, Demand, PrismaBuild, ProgressPhase, RecordRead, SubmitAction, Tool,
 };
 
 #[derive(Clone, Debug)]
@@ -109,8 +109,10 @@ fn read_wait(
     let Ok(key) = key.parse() else {
         return Ok(WaitRecord::Ended);
     };
-    let Some(record) = runtime.block_on(client.read(&key)).map_err(adapter_error)? else {
-        return Ok(WaitRecord::Ended);
+    let record = match runtime.block_on(client.read(&key)).map_err(adapter_error)? {
+        RecordRead::Moving => return Ok(WaitRecord::Alive),
+        RecordRead::Absent => return Ok(WaitRecord::Ended),
+        RecordRead::Present(record) => record,
     };
     if !matches!(record.state, ActionState::Queued | ActionState::Claimed) {
         return Ok(WaitRecord::Ended);
@@ -351,9 +353,7 @@ impl Adapter {
                 .runtime
                 .block_on(self.client.read(&job.action))
                 .map_err(adapter_error)?;
-            if record.is_some_and(|record| {
-                matches!(record.state, ActionState::Queued | ActionState::Claimed)
-            }) {
+            if record.is_live() {
                 return Err(crate::Error::Invalid(
                     "cannot retire an active PrismaBuild job",
                 ));
@@ -480,9 +480,7 @@ impl Adapter {
             .runtime
             .block_on(self.client.read(&job.action))
             .map_err(adapter_error)?;
-        if record.as_ref().is_some_and(|record| {
-            matches!(record.state, ActionState::Queued | ActionState::Claimed)
-        }) {
+        if record.is_live() {
             return Ok(Reconciliation::Pending);
         }
         Ok(
@@ -491,7 +489,7 @@ impl Adapter {
                 .block_on(results::ending(&self.settings.result_tool, job, false))?
             {
                 Some(completion) => Reconciliation::Found(completion),
-                None if record.is_none() => Reconciliation::Absent,
+                None if matches!(record, RecordRead::Absent) => Reconciliation::Absent,
                 None => Reconciliation::Pending,
             },
         )
@@ -615,12 +613,12 @@ impl Executor for Adapter {
             } => {
                 let job = self.submit(delivery)?;
                 let _ = self.keys.send(delivery.node());
-                if self
-                    .runtime
-                    .block_on(self.client.read(&job.action))
-                    .map_err(adapter_error)?
-                    .is_none()
-                {
+                if matches!(
+                    self.runtime
+                        .block_on(self.client.read(&job.action))
+                        .map_err(adapter_error)?,
+                    RecordRead::Absent
+                ) {
                     self.runtime
                         .block_on(self.client.publish(&job.action))
                         .map_err(adapter_error)?;
@@ -670,11 +668,11 @@ impl Executor for Adapter {
             } => {
                 for job in self.targets(delivery)? {
                     self.remove_input(&job.delivery)?;
-                    let Some(record) = self
+                    let record = self
                         .runtime
                         .block_on(self.client.read(&job.action))
-                        .map_err(adapter_error)?
-                    else {
+                        .map_err(adapter_error)?;
+                    if matches!(record, RecordRead::Absent) {
                         // Share marker ownership with an ending already in flight on the source.
                         let _guard = self.records_lock.lock().expect("PrismaBuild records lock");
                         let done = record_path(&self.settings.records, &job.delivery, "done");
@@ -683,8 +681,11 @@ impl Executor for Adapter {
                         }
                         let _ = self.keys.send(job.delivery.node());
                         continue;
-                    };
-                    if matches!(record.state, ActionState::Queued | ActionState::Claimed) {
+                    }
+                    if matches!(record, RecordRead::Moving) {
+                        return Ok(Reconciliation::Pending);
+                    }
+                    if record.is_live() {
                         self.fence(delivery.epoch)?;
                         self.runtime
                             .block_on(self.client.withdraw(&job.action, "controller withdrawal"))
