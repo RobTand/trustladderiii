@@ -207,7 +207,8 @@ def test_agent_gitattributes_cannot_run_drivers_at_commit(tmp_path, maker_reques
     assert not (root / "driver-ran").exists()
 
 
-@pytest.mark.parametrize("turns", [[turn(DONE)], [write_turn(content="def greet(): return 'goodbye'\n"), turn(DONE)]])
+@pytest.mark.parametrize("turns", [[turn(DONE), turn(DONE)],
+    [write_turn(content="def greet(): return 'goodbye'\n"), turn(DONE), turn(DONE)]])
 def test_done_without_a_change_reports_cant_meet(tmp_path, maker_request, turns):
     root = Path(maker_request["worktree"])
     before = git(root, "rev-parse", "HEAD")
