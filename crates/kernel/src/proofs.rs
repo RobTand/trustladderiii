@@ -262,6 +262,42 @@ fn check_apply(event: Event) -> World {
             }
         }
     }
+    if let Event::Fact {
+        fact: Fact::Conflict,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        kani::cover!(
+            b.phase == Phase::Publishing,
+            "Q46 conflict before the queue"
+        );
+        kani::cover!(b.phase == Phase::Queued, "conflict after enqueue");
+        if matches!(b.phase, Phase::Publishing | Phase::Queued) {
+            assert_eq!(n.phase, Phase::Rebasing);
+            assert_eq!(n.generation, b.generation + 1);
+            assert_eq!(n.credit, b.credit);
+            assert_eq!(n.holds, b.holds);
+        } else {
+            assert_eq!(n, b, "a repeated Conflict cannot restart the rebase");
+        }
+    }
+    if let Event::Reply {
+        generation,
+        reply: Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if b.phase == Phase::Rebasing && b.run == Some(generation) {
+            // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
+            let fuel =
+                |n: &Node| n.credit.balance() + i64::from(FREE_RECHECKS.saturating_sub(n.rechecks));
+            assert!(n.phase == Phase::AwaitingRob || fuel(n) < fuel(b));
+        }
+    }
     // Each of Rob's answers applies only to the question it names, and only
     // once: anything it changes closes that question.
     if let Event::Command {

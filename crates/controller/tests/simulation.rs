@@ -2062,32 +2062,12 @@ fn publication_main_advance(settings: &tl3_config::Store, conflict: bool) {
         }
     }
     let snapshot = controller.snapshot().unwrap();
-    if conflict {
-        assert!(matches!(
-            controller.world().unwrap().nodes[0].phase,
-            Phase::AwaitingRob
-        ));
-        let incident = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "incidents" && r.value["signature"]["class"] == "unrebased_head")
-            .expect("publication conflict must explain why it stopped");
-        assert!(
-            incident.value["summary"]
-                .as_str()
-                .unwrap()
-                .contains("checked head conflicts with current main"),
-            "Rob must see the actual publication conflict: {}",
-            incident.value
-        );
-    } else {
-        assert_eq!(
-            controller.world().unwrap().nodes[0].phase,
-            Phase::Closed(Outcome::Merged),
-            "a nonconflicting main advance must not require Rob"
-        );
-        assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
-    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged),
+        "publication must recover from a main advance without Rob"
+    );
+    assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
 }
 
 fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {

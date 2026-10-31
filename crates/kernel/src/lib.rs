@@ -2207,7 +2207,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
         Fact::Conflict => {
             let m = &mut w.nodes[i];
-            if m.phase == Phase::Queued {
+            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
             }
         }

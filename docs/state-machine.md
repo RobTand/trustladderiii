@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44 from 2026-10-31 are listed with them. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44 and Q46 from 2026-10-31 are listed with them. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -469,6 +469,8 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q44 Reviewer out of room:** "Fresh start, then split." On the first out-of-room, restart the review in a fresh conversation on the next model in the reviewer's ladder. If that review also runs out, Planning must split the leaf, exactly as the maker's out-of-room rule does, including both credit rows. Decided on 2026-10-31.
 
   **Coordinator defaults, for Rob to check:** The first restart counts like a re-review, sharing the rebase allowance: free up to `free_rechecks`, then 1 each. The ladder clamps at its last entry, reusing that model in a fresh conversation. A clean rebase or outside push to a new head resets the restart flag; the shared recheck counter continues to bound restarts through credit. Ordinary fix rounds continue the selected reviewer's session. A new maker attempt resets the reviewer.
+
+- **Q46 Publication conflicts:** Publishing plus a conflict with current main goes to Rebasing, with the same effects and costs as a conflict in Queued. Publication guards report Conflict instead of a permanent effect failure. Checks and review run again on the rebased head before it republishes. A clean main advance publishes without rebasing and lets Mergify update. Rob approved this rule on 2026-10-31 after drill D5 found that Mergify never queues the conflicting head.
 
 - **Q43 Declared waits:** an agent run stays alive while an outside job it has declared it is waiting on, such as a PrismaBuild test run, has by its own record neither ended nor been lost. Decided after the grilling, on 2026-10-30.
 - **Q8 Notes:** only when something changes a request's course, such as a stop, a pause, a merge TL3 didn't approve or a re-plan. Routine steps show only in the status view.

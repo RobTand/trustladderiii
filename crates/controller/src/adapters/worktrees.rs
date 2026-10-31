@@ -441,7 +441,14 @@ impl Served {
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
                 if !self.git.merges_cleanly(&main, &head).map_err(adapter)? {
-                    return Err(tl3_worktrees::Error::UnrebasedHead.into());
+                    let completion =
+                        Completion::confirmed(vec![Observation::Kernel(tl3_kernel::Event::Fact {
+                            node: record.delivery.node(),
+                            fact: tl3_kernel::Fact::Conflict,
+                        })]);
+                    record.completion = Some(completion.clone());
+                    write(&self.record_path(&record.delivery), record)?;
+                    return Ok(Some(completion));
                 }
                 let expected = expected
                     .as_ref()
