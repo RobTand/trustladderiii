@@ -215,6 +215,10 @@ pub fn checked_draft(
         .as_str()
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
+    let policy = Policy {
+        request_title: Some(title.clone()),
+        ..policy.clone()
+    };
     let change_quote = (input.kind == MessageKind::Note)
         .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
         .flatten();
@@ -238,13 +242,10 @@ pub fn checked_draft(
                     recommendation_reason: question.recommendation_reason.clone(),
                     how_to_answer: question.how_to_answer.clone(),
                 };
-                message::check(&draft, policy).map(|checked| checked.as_str().to_owned())
+                message::check(&draft, &policy).map(|checked| checked.as_str().to_owned())
             }
             WriterReply::Text(text) if input.kind != MessageKind::Question => {
-                // The quoted title and comment excerpt are exempt by design: they are
-                // Rob's or the issue's own text, not TL3's prose.
-                let prefix = format!("You asked for \"{title}\".");
-                let written = text.text.strip_prefix(&prefix).unwrap_or(&text.text);
+                let written = &text.text;
                 let written = if input.kind == MessageKind::Clarification {
                     written.replace(
                         &format!("\"{}\"", input.facts["comment_excerpt"].as_str().unwrap()),
@@ -253,7 +254,7 @@ pub fn checked_draft(
                 } else {
                     written.to_owned()
                 };
-                message::check_prose(&written, policy).map(|_| text.text.clone())
+                message::check_prose(&written, &policy).map(|_| text.text.clone())
             }
             _ => Err(vec![Violation::WrongReplyShape]),
         };
@@ -279,7 +280,7 @@ pub fn checked_draft(
                 }
                 return Ok(text);
             }
-            Err(violations) => input.violations = feedback(&reply, &violations, policy),
+            Err(violations) => input.violations = feedback(&reply, &violations, &policy),
         }
     }
     Err(Error::MessageRejected)

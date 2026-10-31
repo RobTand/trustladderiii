@@ -488,7 +488,6 @@ fn main() {
         request_vocabulary::run(&mode);
         return;
     }
-    request_vocabulary::all();
     if let Some(mode) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))
@@ -512,6 +511,7 @@ fn main() {
         notice_incidents::child(&args);
         return;
     }
+    request_vocabulary::all();
     let mut database = support::Database::start();
     if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
         startup_ack::run(&mut database);

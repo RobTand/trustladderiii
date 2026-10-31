@@ -1,7 +1,7 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::LazyLock};
+use std::{borrow::Cow, collections::BTreeSet, sync::LazyLock};
 use unicode_normalization::UnicodeNormalization;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,8 +25,9 @@ pub struct Draft {
 /// Add current internal identifiers and names, including request and operation ids.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
-    /// Original request text supplied by the caller, never by the message writer.
+    /// Exact double-quoted occurrences of this original title are exempt from checks.
     pub request_title: Option<String>,
+    /// Only snake_case words from the original title and body are allowed in prose.
     pub request_body: String,
     /// Only these request-local issue and PR references may appear in prose.
     pub own_issue: Option<u64>,
@@ -76,10 +77,12 @@ static HEX_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b[0-9a-f]{7,
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| {
     // CamelCase alone also describes product names. Actual internal names belong in Policy.
     Regex::new(
-        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|\b[a-z]+(?:_[a-z0-9]+)+\b|<!--)",
+        r"(?x)(?:(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:id|uuid|sha|request_id|operation_id|effect_key)\s*[:=]\s*\S+)|<!--)",
     )
     .unwrap()
 });
+static SNAKE_CASE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[a-z]+(?:_[a-z0-9]+)+\b").unwrap());
 static LOG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
     r"(?ix)(?:```|\b(?:traceback|stack\s+trace|panic(?:ked)?|stdout|stderr)\b|\b(?:error|warn|info|debug|trace)\s*[:\[]|\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}|\bat\s+\S+:\d+)"
@@ -88,6 +91,10 @@ static LOG: LazyLock<Regex> = LazyLock::new(|| {
 
 /// A deterministic format/content check. It cannot judge whether prose is true.
 pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Violation>> {
+    let policy = Policy {
+        request_title: Some(draft.issue_title.clone()),
+        ..policy.clone()
+    };
     let mut errors = Vec::new();
     if is_blank(&draft.issue_title) || is_blank(&draft.request_quote) {
         errors.push(Violation::MissingRequest);
@@ -97,7 +104,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.obstacle) {
         errors.push(Violation::MissingObstacle);
     }
-    let obstacle = normalize(&draft.obstacle);
+    let obstacle = normalize(&without_title_quotes(&draft.obstacle, &policy));
     let sentences = obstacle
         .split_terminator(['.', '!', '?'])
         .filter(|s| !s.trim().is_empty())
@@ -154,9 +161,9 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
         draft.recommendation_reason.as_str(),
         draft.how_to_answer.as_str(),
     ]);
-    errors.extend(content_errors(&written.join("\n"), policy));
+    errors.extend(content_errors(&written.join("\n"), &policy));
     // The quoted title is exempt by design: it is the issue's text, not TL3's prose.
-    errors.extend(reference_errors(&rendered[request_prefix.len()..], policy));
+    errors.extend(reference_errors(&rendered[request_prefix.len()..], &policy));
     if errors.is_empty() {
         Ok(CheckedMessage(rendered))
     } else {
@@ -179,12 +186,21 @@ pub fn check_prose(text: &str, policy: &Policy) -> Result<CheckedMessage, Vec<Vi
 }
 
 fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
-    let normalized = normalize(text);
+    let normalized = normalize(&without_title_quotes(text, policy));
+    let request_words: BTreeSet<_> = policy
+        .request_title
+        .iter()
+        .chain(std::iter::once(&policy.request_body))
+        .flat_map(|text| SNAKE_CASE.find_iter(text).map(|word| word.as_str()))
+        .collect();
     let mut errors = Vec::new();
     if VOCABULARY.is_match(&normalized) {
         errors.push(Violation::InternalVocabulary);
     }
     if IDENTIFIER.is_match(&normalized)
+        || SNAKE_CASE
+            .find_iter(&normalized)
+            .any(|word| !request_words.contains(word.as_str()))
         || HEX_ID.find_iter(&normalized).any(|token| {
             let bytes = token.as_str().as_bytes();
             bytes.iter().any(u8::is_ascii_digit) && bytes.iter().any(u8::is_ascii_alphabetic)
@@ -230,6 +246,19 @@ fn content_errors(text: &str, policy: &Policy) -> Vec<Violation> {
     errors
 }
 
+fn without_title_quotes<'a>(text: &'a str, policy: &Policy) -> Cow<'a, str> {
+    match policy
+        .request_title
+        .as_deref()
+        .filter(|title| !title.is_empty())
+    {
+        // Keep a prose placeholder so a leading quote cannot turn the remaining
+        // text into an indented Markdown code block and hide outside references.
+        Some(title) => Cow::Owned(text.replace(&format!("\"{title}\""), "\"the request\"")),
+        None => Cow::Borrowed(text),
+    }
+}
+
 static MENTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?:^|[^a-zA-Z0-9])(?P<mention>@[a-zA-Z0-9][a-zA-Z0-9-]*(?:/[a-zA-Z0-9_][a-zA-Z0-9_-]*)?)",
@@ -254,6 +283,8 @@ static HTML_ENTITY: LazyLock<Regex> = LazyLock::new(|| {
 /// Mask code using GFM ranges so tables, nested blocks and multi-backtick spans
 /// have the same meaning to this rule as they do to the Markdown renderer.
 fn reference_errors(text: &str, policy: &Policy) -> Vec<Violation> {
+    let text = without_title_quotes(text, policy);
+    let text = text.as_ref();
     let mut prose = text.as_bytes().to_vec();
     let mut in_code_block = false;
     let options = Options::ENABLE_TABLES
