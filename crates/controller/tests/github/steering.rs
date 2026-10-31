@@ -602,7 +602,8 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     assert_eq!(jobs[0].attempt, 0);
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(15001);
-    d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
+    d.wait(|s| s.node()["phase"].get("Closed").is_some());
+    assert_eq!(d.node()["phase"], json!({"Closed": "Merged"}));
     d.settled();
     assert_eq!(
         d.requests()
@@ -820,6 +821,7 @@ pub(super) fn concurrent_requests(settings: &tl3_config::Store) {
 pub(super) fn guidance(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-guidance");
     d.wait(|s| s.node()["question"]["kind"] == "CantMeet");
+    fs::write(d.marker.with_extension("guidance-requested"), "ready").unwrap();
     d.send(19001, "Try again using the public API");
     d.classified(19001);
     d.wait(|s| s.marker.with_extension("guided").exists());

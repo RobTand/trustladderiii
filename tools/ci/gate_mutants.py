@@ -18,6 +18,8 @@ MUTANTS = {
               ['commands', 'replacement', 'queued_pause', 'classifier_failures',
                'concurrent_requests', 'answer_replacement']),
     'clarify': (STEERING, '"unclear" => Answer::Unclear,', '"unclear" => Answer::Stop,', ['answers']),
+    'continue': (STEERING, '"continue" => Answer::Continue,', '"continue" => Answer::Stop,', ['answer_recovery']),
+    'guidance': (STEERING, '.push(reply["guidance"].clone());', '.push(json!("Wrong guidance"));', ['guidance']),
     'credit': (STEERING, 'Answer::AddCredit(credit_amount(&reply)?)',
                'Answer::AddCredit(credit_amount(&reply)?.saturating_add(1))', ['credit']),
     'revert': ('crates/controller/src/adapters/github.rs',

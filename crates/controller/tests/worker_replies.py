@@ -78,7 +78,7 @@ def scripted_reply(request, mode, marker):
         while True:
             time.sleep(1)
     reply = brief if request["role"] == "ingest" else {"verdict": "agree", "objections": []}
-    if mode == "steering-guidance" and request["role"] == "planner" and "Use the public API." in request["inputs"]["findings"]:
+    if mode == "steering-guidance" and request["role"] == "planner" and marker.with_suffix(".guidance-requested").exists():
         publish_marker(marker.with_suffix(".guided"), "ready")
         while not marker.with_suffix(".release").exists():
             time.sleep(0.01)
