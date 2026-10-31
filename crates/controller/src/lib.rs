@@ -350,7 +350,7 @@ impl Controller {
         commit.rows.push(put(
             "adoption_questions",
             key,
-            json!({"question":question,"done":false}),
+            json!({"question":question}),
         ));
         self.store.commit(&commit)?;
         Ok(())
@@ -563,19 +563,6 @@ impl Controller {
             .iter()
             .filter(|r| r.table == "adoption_questions")
         {
-            if row.value["done"] == true {
-                let mut commit = Commit::new(
-                    format!("{}:retired", row.id),
-                    json!({"question_retired":row.id}),
-                    &snapshot,
-                );
-                commit.rows.push(RowChange::Delete {
-                    table: "adoption_questions".into(),
-                    id: row.id.clone(),
-                });
-                self.store.commit(&commit)?;
-                return Ok(true);
-            }
             let question = serde_json::from_value(row.value["question"].clone())?;
             hook(Boundary::BeforeDispatch, &row.id);
             let result = self
