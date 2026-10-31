@@ -14,7 +14,7 @@ use tl3_controller::{
     adapters::worktrees::{Boundary, Real},
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
-use tl3_kernel::{Ack, EffectKind, Event, Reply};
+use tl3_kernel::{Ack, EffectKind};
 use worktree_fixture::{Fixture, commit, git};
 static VERIFIED_KILLS: AtomicUsize = AtomicUsize::new(0);
 

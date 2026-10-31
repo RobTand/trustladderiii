@@ -335,6 +335,67 @@ impl Worktrees {
                 self.execute_index(&path, ["read-tree", "HEAD"], None, None, Some(&index))?,
             )?;
         }
+        // A scratch tree cannot contain index stages. Preserve stage zero and the
+        // leaf side of each conflict in the private index; never change the live index.
+        let unmerged = success(
+            "scratch conflicts",
+            self.execute_index(
+                &path,
+                ["ls-files", "--unmerged", "-z"],
+                None,
+                None,
+                Some(&index),
+            )?,
+        )?;
+        let mut entries = HashMap::<Vec<u8>, Option<Vec<u8>>>::new();
+        for entry in unmerged
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+        {
+            let tab = entry
+                .iter()
+                .position(|byte| *byte == b'\t')
+                .ok_or(Error::Response)?;
+            let metadata = &entry[..tab];
+            let path = entry[tab + 1..].to_vec();
+            let side = entries.entry(path).or_default();
+            if metadata.ends_with(b" 2") {
+                *side = Some(metadata[..metadata.len() - 2].to_vec());
+            }
+        }
+        if !entries.is_empty() {
+            let mut instructions = Vec::new();
+            for (path, side) in entries {
+                instructions.extend_from_slice(
+                    format!("0 {}\t", "0".repeat(head.as_str().len())).as_bytes(),
+                );
+                instructions.extend_from_slice(&path);
+                instructions.push(0);
+                if let Some(side) = side {
+                    instructions.extend_from_slice(&side);
+                    instructions.push(b'\t');
+                    instructions.extend_from_slice(&path);
+                    instructions.push(0);
+                }
+            }
+            success(
+                "save conflicted index",
+                self.execute_index(
+                    &path,
+                    ["update-index", "-z", "--index-info"],
+                    Some(&instructions),
+                    None,
+                    Some(&index),
+                )?,
+            )?;
+        }
+        let merge = self.execute(&path, ["rev-parse", "--verify", "MERGE_HEAD"], None, None)?;
+        let merge = if merge.status.success() {
+            Some(commit_line(&merge.stdout)?)
+        } else {
+            None
+        };
         let staged_tree = self.scratch_git(&path, &index, ["write-tree"])?;
         let staged = self.scratch_git(
             &path,
@@ -343,7 +404,7 @@ impl Worktrees {
                 "commit-tree",
                 staged_tree.as_str(),
                 "-p",
-                head.as_str(),
+                merge.as_ref().unwrap_or(&head).as_str(),
                 "-m",
                 "Saved maker index",
             ],

@@ -267,7 +267,7 @@ impl Supervisor {
                 let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
                 feedback.as_array_mut().ok_or(Error::Invalid("invalid maker feedback"))?.push(json!({
                     "kind":"failed_check", "goal_ids":[],
-                    "report":format!("Resolve the merge onto main {} in these files: {}. The checkout contains the pending merge, both sides in the index, and conflict markers. Preserve the request and upstream changes. Complete the resolution; worker code commits the merge. Do not abort the merge or return to the old base.", conflict["target"], conflict["files"])
+                    "report":crate::findings::clipped(&format!("Resolve the merge onto main {} in these files: {}. The checkout contains the pending merge, both sides in the index, and conflict markers. Preserve the request and upstream changes. Complete the resolution; worker code commits the merge. Do not abort the merge or return to the old base.", conflict["target"], conflict["files"]), crate::findings::MAX_REPORT_CHARS)
                 }));
                 inputs["feedback"] = feedback;
             }
