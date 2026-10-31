@@ -479,6 +479,11 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--real-worker-contracts") {
+        real_writer::run("multiline");
+        real_writer::classifier_contract();
+        return;
+    }
     if let Some(mode) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))

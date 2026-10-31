@@ -343,6 +343,20 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--real-worker-contracts")
+    {
+        simulation(&database.create("contract_ingest_audit"));
+        println!("test real_worker_contract_ingest_audit ... ok");
+        planning::planning(&database.create("contract_planner"), "normal");
+        planning::planning(&database.create("contract_planner_reject"), "plan-invalid");
+        println!("test real_worker_contract_planner ... ok");
+        maker::reproducing_rebase_contract(&database.create("contract_maker_reviewer"));
+        println!("test real_worker_contract_maker_reviewer ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--gate-planning") {
         for mode in [
             "normal",

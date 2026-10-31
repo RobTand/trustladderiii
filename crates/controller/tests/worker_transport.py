@@ -17,6 +17,8 @@ def main():
     mode, marker = sys.argv[1], Path(sys.argv[2])
     request = json.load(sys.stdin)
     reply = scripted_reply(request, mode, marker)
+    if mode.startswith('plan-'):
+        print(json.dumps({'event': 'progress', 'unit': 'model_turn'}), flush=True)
     if request['role'] == 'maker':
         tree = Path(request['worktree'])
         (tree / 'greeting.py').write_text("def greet(): return 'hello'\n")
