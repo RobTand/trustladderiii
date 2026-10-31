@@ -2,6 +2,7 @@ name: Light checks
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,10 +20,17 @@ env:
   OMP_NUM_THREADS: '1'
   MKL_NUM_THREADS: '1'
   OPENBLAS_NUM_THREADS: '1'
+  RAYON_NUM_THREADS: '1'
+  TOKIO_WORKER_THREADS: '1'
 
 jobs:
   rust:
     name: Rust
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
+        contains(github.event.pull_request.labels.*.name, 'ci')))
     runs-on: [self-hosted, tl3-fleet]
     timeout-minutes: 40
     steps:
@@ -35,6 +43,7 @@ jobs:
           echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -58,11 +67,17 @@ jobs:
         with:
           # Keep lockfile changes out of rust-cache's fallback restore scope.
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci
       - name: Format, lint, and test every Rust project
         run: python tools/ci/check.py rust
 
   python:
     name: Python
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (startsWith(github.head_ref, 'mergify/merge-queue/') ||
+        contains(github.event.pull_request.labels.*.name, 'ci')))
     runs-on: [self-hosted, tl3-fleet]
     timeout-minutes: 30
     steps:
@@ -75,6 +90,7 @@ jobs:
           echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -95,9 +111,40 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci
       - name: Build deployment test helper
         run: cargo +1.99.1 build --locked -p tl3-controller --example tl3-deploy
       - name: Lint and test every Python project
         env:
           TL3_DEPLOY_HELPER: ${{ github.workspace }}/target/debug/examples/tl3-deploy
         run: python tools/ci/check.py python
+
+  warm-cache:
+    name: Warm Rust cache
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, tl3-fleet]
+    timeout-minutes: 15
+    steps:
+      - name: Verify runner input is scrubbed
+        run: |
+          if [[ -v ACTIONS_RUNNER_INPUT_JITCONFIG ]]; then
+            echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=set'
+            exit 1
+          fi
+          echo 'ACTIONS_RUNNER_INPUT_JITCONFIG=unset'
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci
+      - name: Build test dependencies without running tests
+        run: cargo test --workspace --all-targets --locked --no-run
+      - name: Build deployment helper without running tests
+        run: cargo build --locked -p tl3-controller --example tl3-deploy

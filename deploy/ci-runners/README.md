@@ -1,5 +1,10 @@
 # TL3 CI runners
 
+The current queue tests each batch once and fast-forwards `main` to the tested
+head. Ordinary PR checks are optional. Main pushes only build the Rust cache.
+See [CI batches](../../docs/ci-batches.md) for the trigger policy, protection
+evidence, timings, rollout trial, coordinator instructions and rollback.
+
 GitHub stopped starting hosted CI at 18:34 UTC on 2026-10-30 because of its
 account billing limit. Rob approved this phase with "Just prioritize getting
 things running locally, please." That instruction authorizes installing these
@@ -53,7 +58,10 @@ It adds build tools, a checksum-pinned rustup installer, Rust 1.99.1 with clippy
 and rustfmt, ShellCheck, `systemd-analyze`, and shared libraries for embedded Postgres.
 The existing workflow installs Python 3.14 and uv. The required check names stay
 `Rust` and `Python`. Rust's overall job budget is 40 minutes and
-Python's is 30 minutes. Test deadlines and assertions stay intact. Mergify allows
+Python's is 30 minutes. Worker pytest uses four isolated processes. Rust keeps
+four libtest threads; integration executables retain Cargo's ordering. Native
+libraries, Rayon and Tokio workers are bounded. Test deadlines and assertions
+stay intact. Mergify allows
 60 minutes for checks, including time spent waiting for a free runner.
 
 ## Capacity
@@ -123,8 +131,10 @@ gh api repos/RobTand/trustladderiii/actions/runners \
   --jq '.runners[] | {name,status,labels:[.labels[].name]}'
 ```
 
-The coordinator queues the PR through Mergify. Keep the required check names
-`Rust` and `Python`. Do not merge directly or change the queue configuration.
+The coordinator reviews and queues PRs through `tools/queue_pr.py` using the
+full reviewed head SHA and PrismaBuild evidence. Keep the required check names
+`Rust` and `Python`. Do not merge directly. Queue drafts run both checks;
+ordinary PRs can request them with a `ci` label or workflow dispatch.
 
 Infrastructure hardening follows test-first through demonstrations. Run
 `python3 deploy/ci-runners/test_hardening.py` through PrismaBuild before and
