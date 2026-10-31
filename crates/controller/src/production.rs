@@ -190,16 +190,11 @@ impl Materials {
         let issue = runtime.block_on(client.issue(&name, delivery.issue))?;
         let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
         let path = repository_path(&self.worktrees, &delivery.repository);
-        let git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
-        let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
+        let git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
+        let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
         let token =
-            tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)
-                .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
-        let base = git
-            .fetch_main(&remote, Some(&token))
-            .map_err(|e| crate::Error::Adapter(Box::new(e)))?;
+            tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
+        let base = git.fetch_main(&remote, Some(&token))?;
         let repo = repository_materials(&path, base.as_str())?;
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});

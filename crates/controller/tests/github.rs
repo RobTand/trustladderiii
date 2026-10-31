@@ -1,6 +1,8 @@
 use tl3_controller::executor::Output as Out;
 #[path = "github/notice_incidents.rs"]
 mod notice_incidents;
+#[path = "github/real_writer.rs"]
+mod real_writer;
 #[path = "github/steering.rs"]
 mod steering;
 mod support;
@@ -475,6 +477,13 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if let Some(mode) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))
+    {
+        real_writer::run(&mode);
+        return;
+    }
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--crash") {
         crash_child(&args);
@@ -518,6 +527,7 @@ fn main() {
     println!("test post_crash_recovers ... ok");
     message_reconciliation();
     println!("test message_reconciliation ... ok");
+    real_writer::all();
     writer_checks();
     println!("test writer_checks ... ok");
     receiver_limits(&database.create("receiver_limits"));
