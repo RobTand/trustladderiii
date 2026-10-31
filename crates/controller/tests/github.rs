@@ -679,10 +679,11 @@ fn gap_catch_up(settings: &tl3_config::Store) {
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let handle = thread::spawn(move || source.run(sender));
-    // Synchronize on the startup pass with a real webhook, without a polling timer.
+    // Receipt and startup catch-up each wake the controller, in either order.
     let mut other = fixture(false);
     other["sender"]["id"] = json!(7);
     assert_eq!(post(address, "wake-start", false, other, true), 202);
+    let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     let _ = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     api.state.lock().unwrap().gap = true;
     control.gap();

@@ -23,6 +23,9 @@ use tl3_github::{
 };
 use tl3_store::Store;
 
+mod webhooks;
+pub use webhooks::Webhooks;
+
 pub trait Source: Send + 'static {
     fn run(self, sender: Sender<Input>) -> Result<()>;
 }
@@ -372,6 +375,7 @@ fn comment_input(
     })
 }
 
+#[derive(Clone)]
 pub struct CatchUp {
     clients: BTreeMap<u64, GitHub>,
     runtime: &'static tokio::runtime::Runtime,
@@ -384,19 +388,29 @@ impl CatchUp {
         })
     }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
-        let runtime = &self.runtime;
+        self.collect(store, bootstrap)?.persist(store)
+    }
+    fn collect(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<CatchUpBatch> {
         let since: DateTime<Utc> = store
             .ingress_cursor("github-catch-up")?
             .map(serde_json::from_value)
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;
+        self.fetch(since, snapshot, bootstrap)
+    }
+    fn fetch(
+        &self,
+        since: DateTime<Utc>,
+        snapshot: tl3_store::Snapshot,
+        bootstrap: &Bootstrap,
+    ) -> Result<CatchUpBatch> {
+        let runtime = &self.runtime;
         // Sources can finish their first catch-up before Controller::open initializes the store.
         let world = (!snapshot.rows.is_empty())
             .then(|| crate::snapshot::decode(&snapshot))
             .transpose()?;
         let mut deliveries = Vec::new();
-        let mut notifications = Vec::new();
         let mut cursor = None;
         for repo in &bootstrap.github_repositories() {
             let client = self
@@ -461,14 +475,23 @@ impl CatchUp {
                 let payload = serde_json::to_vec(&delivery)?;
                 let key = format!("{name}:{:x}", Sha256::digest(&payload));
                 deliveries.push((key, payload));
-                notifications.push(Input::Wake);
             }
         }
 
-        if let Some(cursor) = cursor {
-            store.receive_catch_up("github-catch-up", &deliveries, &json!(cursor))?;
+        Ok(CatchUpBatch { deliveries, cursor })
+    }
+}
+
+struct CatchUpBatch {
+    deliveries: Vec<(String, Vec<u8>)>,
+    cursor: Option<DateTime<Utc>>,
+}
+impl CatchUpBatch {
+    fn persist(self, store: &mut Store) -> Result<Vec<Input>> {
+        if let Some(cursor) = self.cursor {
+            store.receive_catch_up("github-catch-up", &self.deliveries, &json!(cursor))?;
         }
-        Ok(notifications)
+        Ok(self.deliveries.iter().map(|_| Input::Wake).collect())
     }
 }
 
@@ -477,6 +500,7 @@ enum WebhookMessage {
     Gap,
     Stop,
     ServerExit(Result<()>),
+    CaughtUp(Result<CatchUpBatch>),
 }
 struct Control {
     sender: Sender<WebhookMessage>,
@@ -495,7 +519,7 @@ impl WebhookControl {
     }
 }
 
-pub struct Webhooks {
+struct WebhookReceiver {
     control: WebhookControl,
     server: http::Server,
     receiver: mpsc::Receiver<WebhookMessage>,
@@ -504,7 +528,7 @@ pub struct Webhooks {
     secret: Vec<u8>,
     catch_up: Option<CatchUp>,
 }
-impl Webhooks {
+impl WebhookReceiver {
     pub fn bind(
         address: SocketAddr,
         store: Store,
@@ -573,7 +597,7 @@ fn receive_delivery(store: &mut Store, secret: &[u8], request: &http::Request) -
     }
 }
 
-impl Source for Webhooks {
+impl Source for WebhookReceiver {
     fn run(self, sender: Sender<Input>) -> Result<()> {
         let Self {
             control,
@@ -614,16 +638,25 @@ impl Source for Webhooks {
             let _ = exits.send(WebhookMessage::ServerExit(result));
         });
         let mut gap = true;
+        let mut retry_ready = true;
+        let mut catching_up = None;
         let result = (|| {
             loop {
-                if gap {
+                if gap && retry_ready && catching_up.is_none() {
                     gap = false;
                     if let Some(catch_up) = &catch_up {
-                        if let Err(error) = catch_up.pass(&mut store, &bootstrap) {
-                            eprintln!("GitHub catch-up failed: {error}");
-                            gap = true;
-                        } else {
-                            let _ = sender.send(Input::Wake);
+                        match webhooks::fetch_catch_up(
+                            catch_up.clone(),
+                            &mut store,
+                            bootstrap.clone(),
+                            control.0.sender.clone(),
+                        ) {
+                            Ok(thread) => catching_up = Some(thread),
+                            Err(error) => {
+                                eprintln!("GitHub catch-up failed: {error}");
+                                gap = true;
+                                retry_ready = false;
+                            }
                         }
                     }
                 }
@@ -632,6 +665,7 @@ impl Source for Webhooks {
                     .map_err(|_| Error::Invalid("webhook receiver stopped"))?
                 {
                     WebhookMessage::Request(request, reply) => {
+                        retry_ready = true;
                         let status = receive_delivery(&mut store, &secret, &request);
                         if status == 202 {
                             let _ = sender.send(Input::Wake);
@@ -641,7 +675,27 @@ impl Source for Webhooks {
                             gap = true;
                         }
                     }
-                    WebhookMessage::Gap => gap = true,
+                    WebhookMessage::Gap => {
+                        gap = true;
+                        retry_ready = true;
+                    }
+                    WebhookMessage::CaughtUp(result) => {
+                        if let Some(thread) = catching_up.take() {
+                            thread
+                                .join()
+                                .map_err(|_| Error::Invalid("GitHub catch-up panicked"))?;
+                        }
+                        match result.and_then(|batch| batch.persist(&mut store)) {
+                            Ok(_) => {
+                                let _ = sender.send(Input::Wake);
+                            }
+                            Err(error) => {
+                                eprintln!("GitHub catch-up failed: {error}");
+                                gap = true;
+                                retry_ready = false;
+                            }
+                        }
+                    }
                     WebhookMessage::Stop => return Ok(()),
                     WebhookMessage::ServerExit(result) => {
                         result?;
@@ -652,6 +706,11 @@ impl Source for Webhooks {
         })();
         control.0.server.stop();
         drop(receiver);
+        if let Some(thread) = catching_up {
+            thread
+                .join()
+                .map_err(|_| Error::Invalid("GitHub catch-up panicked"))?;
+        }
         server_thread
             .join()
             .map_err(|_| Error::Invalid("webhook HTTP server panicked"))?;
