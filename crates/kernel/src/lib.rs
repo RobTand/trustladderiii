@@ -1259,7 +1259,8 @@ impl World {
                                 QKind::OutOfCredit,
                                 Cont::Planning { .. }
                                 | Cont::Ready(Resume::Making)
-                                | Cont::Ready(Resume::Checking),
+                                | Cont::Ready(Resume::Checking)
+                                | Cont::Ready(Resume::Reviewing),
                             ) => true,
                             (
                                 QKind::EffectFailed,
