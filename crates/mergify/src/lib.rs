@@ -201,7 +201,7 @@ fn payload_state(json: &str) -> Option<QueueState> {
             .as_ref()
             .map(|reason| reason.code.as_str())
         {
-            Some("CHECKS_FAILED" | "CHECKS_TIMEOUT") => QueueState::FailedCi,
+            Some("CHECKS_FAILED" | "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED") => QueueState::FailedCi,
             Some("CONFLICT_WITH_BASE_BRANCH" | "CONFLICT_WITH_ANOTHER_PR") => QueueState::Conflict,
             _ => QueueState::Dequeued,
         },
@@ -209,7 +209,7 @@ fn payload_state(json: &str) -> Option<QueueState> {
     })
 }
 
-/// A timeout reports runner/setup failure rather than a test failure.
+/// A timeout or an interrupted run reports runner/setup failure rather than a test failure.
 pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
     if matches!(
         check.conclusion.as_deref(),
@@ -227,9 +227,12 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
         .and_then(|bytes| serde_json::from_slice::<Payload>(&bytes).ok())
         .is_some_and(|payload| {
             payload.version == 1
-                && payload
-                    .dequeue_reason
-                    .is_some_and(|reason| reason.code == "CHECKS_TIMEOUT")
+                && payload.dequeue_reason.is_some_and(|reason| {
+                    matches!(
+                        reason.code.as_str(),
+                        "CHECKS_TIMEOUT" | "CHECKS_INTERRUPTED"
+                    )
+                })
         })
 }
 
