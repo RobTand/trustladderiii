@@ -14,11 +14,6 @@ mod steering;
 mod support;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-use rand::rngs::OsRng;
-use rsa::{
-    RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, LineEnding},
-};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::{
@@ -46,13 +41,8 @@ use tl3_kernel::{NodeId, Notice, Outcome, Phase};
 use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-static PEM: LazyLock<String> = LazyLock::new(|| {
-    RsaPrivateKey::new(&mut OsRng, 2048)
-        .unwrap()
-        .to_pkcs8_pem(LineEnding::LF)
-        .unwrap()
-        .to_string()
-});
+static PEM: LazyLock<String> =
+    LazyLock::new(|| include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into());
 fn bootstrap() -> Bootstrap {
     Bootstrap {
         operations: None,

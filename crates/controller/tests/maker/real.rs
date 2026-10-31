@@ -365,6 +365,52 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     });
     store.commit(&commit).unwrap();
     let reviewed = flow.record()["head"].as_str().unwrap().to_owned();
+    if rebase {
+        // Force reconciliation to reach Checking before the source seeds this head.
+        let mut missing =
+            tl3_store::Commit::new("late-first-maker-plan", json!({}), &store.load().unwrap());
+        missing.rows.push(tl3_store::RowChange::Delete {
+            table: "check_plans".into(),
+            id: format!("0:{reviewed}"),
+        });
+        store.commit(&missing).unwrap();
+        let request = requests(&flow.config).pop().unwrap();
+        let reply = store
+            .worker_document("0", "maker_replies")
+            .unwrap()
+            .unwrap();
+        observe(
+            &mut flow.controller,
+            "late-first-maker-source-reply",
+            Observation::WorkerReply {
+                node: NodeId(0),
+                generation: request["operation"]["generation"].as_u64().unwrap(),
+                role: "maker".into(),
+                reply,
+            },
+            &flow.worktree,
+            &flow.base,
+        );
+        while flow
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox")
+        {
+            assert!(flow.controller.drive_once().unwrap());
+        }
+        assert!(
+            flow.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| { row.table == "check_plans" && row.id == format!("0:{reviewed}") }),
+            "a late first maker source reply must seed its missing fixture plan"
+        );
+    }
     flow.until(|phase| phase == Phase::Making);
     let feedback = store
         .worker_document("0", "maker_findings")
@@ -394,6 +440,35 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
     if rebase {
         flow.until(|phase| phase == Phase::Queued);
+        // Reconciliation can consume a reply before its source message is received.
+        let request = requests(&flow.config).pop().unwrap();
+        let reply = store
+            .worker_document("0", "maker_replies")
+            .unwrap()
+            .unwrap();
+        observe(
+            &mut flow.controller,
+            "delayed-maker-source-reply",
+            Observation::WorkerReply {
+                node: NodeId(0),
+                generation: request["operation"]["generation"].as_u64().unwrap(),
+                role: "maker".into(),
+                reply,
+            },
+            &flow.worktree,
+            &flow.base,
+        );
+        while flow.controller.drive_once().unwrap() {}
+        let replayed = flow.controller.snapshot().unwrap();
+        let preserved = replayed
+            .rows
+            .iter()
+            .find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}"))
+            .unwrap();
+        assert_eq!(
+            preserved.value, run.value,
+            "a delayed maker source reply must preserve the enriched check plan"
+        );
         let upstream = root.path().join("repo");
         fs::OpenOptions::new()
             .append(true)
