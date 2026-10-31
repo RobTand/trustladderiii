@@ -627,3 +627,97 @@ fn unicode_boundaries_preserve_own_numbers_code_and_unique_feedback() {
         assert_eq!(check_prose(text, &policy).unwrap_err(), vec![expected]);
     }
 }
+
+fn request_policy(title: &str, body: &str) -> Policy {
+    Policy {
+        request_title: Some(title.into()),
+        request_body: body.into(),
+        internal_terms: vec!["RepoSlot".into()],
+        ..Policy::default()
+    }
+}
+
+#[test]
+fn quoted_request_titles_are_exempt_in_any_phrasing() {
+    for title in [
+        "Convert snake_case names to camelCase",
+        "Show supersedes_terminal (failed-then-passed reruns) in pbstatus and pbwait",
+        "leaf RepoSlot id=12 abc1234 <!-- marker --> src/main.rs ERROR: @octocat #123 &amp;",
+        "First. Second. Third. Fourth.",
+        "ERROR: \"RepoSlot\" needs attention\n<!-- original text -->",
+    ] {
+        let policy = request_policy(title, "");
+        for text in [
+            format!("For \"{title}\", work can continue."),
+            format!("Update on \"{title}\": work can continue."),
+            format!("For \"{title}\", see \"{title}\" again."),
+        ] {
+            assert_eq!(check_prose(&text, &policy).unwrap().as_str(), text);
+        }
+        let mut d = draft();
+        d.issue_title = title.into();
+        d.request_quote = title.into();
+        d.obstacle = format!("For \"{title}\", choose another image.");
+        assert!(check(&d, &policy).is_ok(), "{title}");
+    }
+}
+
+#[test]
+fn request_snake_case_words_are_allowed_in_prose_and_questions() {
+    let title = "Convert snake_case names to camelCase";
+    let policy = request_policy(title, "Also convert storage_pool names.");
+    let note = format!(
+        "For \"{title}\", the plan is to add a helper that turns snake_case names into camelCase."
+    );
+    assert!(check_prose(&note, &policy).is_ok());
+    assert!(check_prose("The storage_pool names can be converted.", &policy).is_ok());
+    let mut d = draft();
+    d.issue_title = title.into();
+    d.request_quote = title.into();
+    d.options[0].outcome = "I will convert snake_case and storage_pool names.".into();
+    assert!(check(&d, &policy).is_ok());
+}
+
+#[test]
+fn request_vocabulary_does_not_exempt_other_words_or_rules() {
+    let policy = request_policy(
+        "Convert snake_case names to camelCase",
+        "storage_pool leaf RepoSlot id=12 abc1234 <!-- marker --> src/main.rs ERROR: @octocat #123 &amp;",
+    );
+    for word in ["other_word", "snake_cases", "prefix_storage_pool"] {
+        assert!(
+            check_prose(&format!("Use {word}."), &policy)
+                .unwrap_err()
+                .contains(&Violation::InternalNameOrId)
+        );
+    }
+    for (text, violation) in [
+        ("\"leaf\"", Violation::InternalVocabulary),
+        ("\"RepoSlot\"", Violation::InternalNameOrId),
+        ("id=12", Violation::InternalNameOrId),
+        ("abc1234", Violation::InternalNameOrId),
+        (
+            "b5862850-8ed7-47f7-8fdf-887a96ba872c",
+            Violation::InternalNameOrId,
+        ),
+        ("<!-- marker -->", Violation::InternalNameOrId),
+        ("src/main.rs", Violation::FilePath),
+        ("ERROR: failed", Violation::Log),
+        ("@octocat", Violation::Mention("@octocat".into())),
+        ("#123", Violation::ForeignReference("#123".into())),
+        ("&amp;", Violation::HtmlEntity("&amp;".into())),
+    ] {
+        assert!(
+            check_prose(text, &policy).unwrap_err().contains(&violation),
+            "{text}"
+        );
+    }
+    let title = "Fix the leaf";
+    let policy = request_policy(title, "");
+    assert!(
+        check_prose(&format!("For \"{title}\", the leaf needs help."), &policy)
+            .unwrap_err()
+            .contains(&Violation::InternalVocabulary)
+    );
+    assert!(check_prose("For \"Fix the Leaf\", work can continue.", &policy).is_err());
+}

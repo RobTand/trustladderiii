@@ -3,6 +3,8 @@ use tl3_controller::executor::Output as Out;
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
 mod real_writer;
+#[path = "github/request_vocabulary.rs"]
+mod request_vocabulary;
 #[path = "github/startup_ack.rs"]
 mod startup_ack;
 #[path = "github/steering.rs"]
@@ -479,6 +481,14 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if let Some(mode) = env::args()
+        .nth(1)
+        .and_then(|arg| arg.strip_prefix("--request-vocabulary=").map(str::to_owned))
+    {
+        request_vocabulary::run(&mode);
+        return;
+    }
+    request_vocabulary::all();
     if let Some(mode) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--writer-structural=").map(str::to_owned))

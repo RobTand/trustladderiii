@@ -25,6 +25,9 @@ pub struct Draft {
 /// Add current internal identifiers and names, including request and operation ids.
 #[derive(Clone, Debug, Default)]
 pub struct Policy {
+    /// Original request text supplied by the caller, never by the message writer.
+    pub request_title: Option<String>,
+    pub request_body: String,
     /// Only these request-local issue and PR references may appear in prose.
     pub own_issue: Option<u64>,
     /// Owner/repository of the request, for checking absolute GitHub links.
