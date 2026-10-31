@@ -1,0 +1,584 @@
+{
+  "schema": "tl3.sandbox.queue-trials.phase-b.v1",
+  "reviewed_base": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+  "replay_code_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+  "offline_audit_commit": "0451c6dc",
+  "handoff_directory": "/home/rob/tmp/tl3-queue-trials-BuGEeuKb",
+  "live_settings": "PASS after sandbox #29 merged as 1179d3fccfdc9fccc9b08efd11615f373ae3d5fc",
+  "success": {
+    "pull": 30,
+    "draft": 32,
+    "approved_head": "1ee8d4c881c7350e9c75551bd03ea9dcd5d6bab1",
+    "draft_head": "ea23986de7a3ea85ad7ba62150cf3d6a40d47818",
+    "merge_commit": "668fd489e9798d64fb1c0a96295d2fd5c9ef6205",
+    "merged_by": "RobTand",
+    "queue_result": "Merged via merge queue",
+    "draft_runner": "tl3-sandbox-dl380g10-slot-1-1793396093-18022"
+  },
+  "refusal": {
+    "pull": 31,
+    "head": "50b8650d7ed02e93dda3a9c787805ce94221a2f1",
+    "condition_check_id": 124324781836,
+    "result": "Waiting for queue conditions to match; only App approval missing; no queue entry or draft",
+    "closed_by": "tl3-robtand[bot]"
+  },
+  "cleanup": {
+    "branches": [
+      "main"
+    ],
+    "open_pulls": [],
+    "deleted_old_setup_branches": [
+      "t4-seed-sandbox-issues",
+      "tl3/issue-17-node-220",
+      "tl3/mergify-merge-account"
+    ],
+    "seed_issues_unchanged": true
+  },
+  "verification": {
+    "per_host": [
+      "cargo fmt --all --check",
+      "38 Mergify adapter scenarios",
+      "2 sandbox adapter replays: queue true, bootstrap false"
+    ],
+    "hosts": [
+      "dl380g10",
+      "sparky",
+      "sparklina"
+    ],
+    "offline_audit": [
+      "28 sandbox Python tests",
+      "queue trial verifier",
+      "fleet job/runner labels",
+      "App closure actor",
+      "final branches and PRs",
+      "refusal decoded state",
+      "recorder field allowlists"
+    ]
+  },
+  "red_then_green": {
+    "reason": "Live-service and evidence-only round; no production code changed. New replay coverage consumes actual merged queue payloads and preserves the existing bootstrap false assertion. No meaningful red implementation run.",
+    "closest_live_verifier_action": "91fc546c826ba0582387ad8dbd46604caaf228346fde08ed5f508d4f0942cda3"
+  },
+  "actions": [
+    {
+      "kind": "adapter-dl380g10",
+      "action_key": "0ba51de32393f99b750d8c5614d2aaad8f4a7476e72c0133ceb09e18967453ba",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "d549dfb8b988f83b6e345156647bcd291b734d55d97e6b9b9835163b8fc7f256",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "9c6dad0d71dff2e13a4d846642d6a10a26b15df050e6fda0716a751dec15e5b1",
+      "payload_sha256": "f1a681acacb12c0f6832883abd1c6b1dceb907dec9e7f886c9a0ccb77d60de20",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "cb9e4677fbdcc3ed7ad7ccc54e61f1abdde2c870",
+      "resources": {
+        "cpu": 2,
+        "mem_gb": 6
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          4,
+          13
+        ]
+      },
+      "summaries": [
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "kind": "adapter-sparklina",
+      "action_key": "3dd59eea8679eca8d255a133f1edd65b10ac66809f880f407b7aa2e16efe61cc",
+      "host": "sparklina",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "a0ec0a926a5f4c4de172d4e51bd850f6f7916b8b0702550c45b61cff8da62454",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "receipt_verified": true,
+      "receipt_sha256": "c06ea5e7ed54b83e5c7ea0b0d1feedaf1972fb0ebab434c3be2465f5f5f04f34",
+      "payload_sha256": "15e85351fc39b2a36c8b861bc79be0043c17cb49ea74ef72bb1d08543f640a26",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "35169e346b1644605bb68b5ce9eba5581a44b126",
+      "resources": {
+        "cpu": 2,
+        "mem_gb": 6
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          17,
+          19
+        ]
+      },
+      "summaries": [
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "kind": "adapter-sparky",
+      "action_key": "929e9ce216ae3e5622e8ea9e6aeb10e5d15ac6273501f9359ffbaa0a15467633",
+      "host": "sparky",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "52d2162dff21f902cec16bcf7ebff8eeafd116279b8c3e11e572fef8a538e751",
+      "stderr_sha256": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f",
+      "receipt_verified": true,
+      "receipt_sha256": "34ad8682d26f65f4eb4caf8022823355e4f26eec34652662aa70713e2858aba7",
+      "payload_sha256": "a6e9add5c6e531ea19fb020d55321af717886a911a46398580c2508a4a20292b",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "89d4737039dd8b01cc2af2ebb64882b92b7ed8ee",
+      "resources": {
+        "cpu": 2,
+        "mem_gb": 6
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          9,
+          15
+        ]
+      },
+      "summaries": [
+        "38 Mergify scenarios passed; no skips; no live upstream calls",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "kind": "approve-and-queue",
+      "action_key": "08e2c638f5d81cc7a5e4f77045a0257f436a700a09ea95121dc796622f364328",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "5217e4949e20ba43c4b27f76b16c714a5578a9b429b05b1572ac75d2c9661953",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "807d879758e421437c0ef51205503f5aeaf104397b76b8685ee6987c0c1d8cb0",
+      "payload_sha256": "560c573fa3e11d351790b67ce3b860759a930d1ff3ea52768638a518f8a792cf",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "4022ec3de02d86ee940285b76ebe585c91620d94",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          11
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "build-helper",
+      "action_key": "f32a3df1a0545e0f94048c24b1c3c5798df6c910c5223a735b9b78da8f76b4f8",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "219c04542609f19182c72f519481f62b54da66de9c2f56888e93387ebe876546",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "8dba1255589f798e4ff8d8842e59f8243a535557123f8dccdc95801703b3ae8a",
+      "payload_sha256": "06d2f6d70e335f140f1d08a89b194d8981bc238102d4144a37f8c4965a221a76",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "61ffc27b741eb3a35df3e98a717181c6cd6be856",
+      "resources": {
+        "cpu": 2,
+        "mem_gb": 6
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          6,
+          7
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "cleanup",
+      "action_key": "8af3741ed99ee4445de1f170d0cbc52edcbc2805fdf628209d565caeb631b4fd",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "3a8dbf6e042a9ff28b9bc3575a6a8493a1b583312631a5fb8cc42976130a101f",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "123dbc2ec96e03c2b9b942d2f39b4cbb7b2f210860f8839567299b776d540ace",
+      "payload_sha256": "40c4c33f4723704f901799d0dd7626c67a40d3300689c4439b60e1b42668c648",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "3f6efeeb6abbfb094146c61ea87d9507765dea1a",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          3
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "final-evidence-audit",
+      "action_key": "112f3e1fbbf7d3ec97752f24d769d3fce92b4d1ddff927dcc30f4ade17812025",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "5aa097a9068e29ed84293b7351e0ca4006ba8e4a89512ed048c4ca6f5c5eff2e",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "82ea65b6fa9215981f5430973363533b79eac3709ad89be6bcbdb77e4a5e5696",
+      "payload_sha256": "969e46c3ce351d6a0440b5b0fa800b071724bfee37044ce654fea59b68252be1",
+      "source_commit": "0451c6dc26f33e23582d1691cacc8e140282f056",
+      "snapshot_commit": "7adfc09d0c67a1f7febf3ea99e1beed4aaec6cb3",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          17
+        ]
+      },
+      "summaries": [
+        "Ran 28 tests in 0.033s",
+        "PASS: recorded queue merge preserves the approved head",
+        "PASS: fleet CI, App cleanup, refusal conditions, unchanged head, and recorder field allowlists"
+      ]
+    },
+    {
+      "kind": "inspect-originals",
+      "action_key": "b1052187f95032389f8f9c64f8b4738abb984baabaddd186aee92dd102d108f5",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "677abb778685723f6da90dbacecb8964b959c859cd0468cd73d9dacbe40909d8",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "6c1cc091339e6626074d8d8b496e35dddabeda4eee9b9717d2537c750892cae7",
+      "payload_sha256": "63fc1fe219eebfb59ab99b55dbcf03c6420849f929b58d797ae4dbd7d63c102c",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "ea0450cc49d0f5ec8784869abd3d298068121628",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          11
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "label-refusal",
+      "action_key": "cb1269d75ba447b3d5864879d3596e4253f5c6c23a0a9ba227656294eb05b093",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "4d93b21e9505dd911106acccfe0f30f5fa597dd0b04b223af2f2881323e501f9",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "c3d1f976c80860d597588bced1c2f406cd1b1c0843050040f203b5443168cfbc",
+      "payload_sha256": "54009815a2d1bff5aec9c11eabb8f16f04d40949d23c0e4ac004d38d2ad7fa04",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "e101028d302f59f8db9361a13f107e2cdf0fe591",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          13
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "live-settings",
+      "action_key": "2e96c143a2dc6c83a8ab4d9bb0807c72b1ae5cbbd127eca55a2461fe8138206f",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "c3158a50da6b6c91766f701da00c8195bcc092363f3d17a7ab86227fef3c8cde",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "425c25826813e080305ff175ad8e43052a73c5455792c8443010aec1c3c17f52",
+      "payload_sha256": "7c1faec95ebf8e6a8bef7f9a687674cbeb9c30add89b7d19cd2776cc12ca027d",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "411987f3b30d936594a92748f943941666661e63",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          2
+        ]
+      },
+      "summaries": [
+        "PASS: RobTand/tl3-sandbox matches the approved sandbox gate"
+      ]
+    },
+    {
+      "kind": "open-approved",
+      "action_key": "f7da020176452f6001219fc31567d98c2bf11deb05768d30a1010571ad07b981",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "17aa8d52f01c26da9943510694b984c262dd9fe2a54371713f21e78095febdbc",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "b5084d52fe0f5c2cf52a3baca6ca373ffd21e28e5800631e3f42beb9a6a5a36a",
+      "payload_sha256": "ade4d5d39d84bec24e8d15257132e5d3f3f18b897c264564de9c5db4f638deed",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "eb3baffa75c905f31fdf5286996fbba93c4a1c4f",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          7
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "open-refusal",
+      "action_key": "8dd9b18faece3cc65c25430978b2d3c60c950cb4525660275686874525fdcb77",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "f537fff571de34d43224dd40bdc75ae48bdf9ea04f39105d0dc72e857e4b49b9",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "923bde2076bc2c1e99d40e344c0da40c9b8d51e34e26e9fbf463c636fbbb67d3",
+      "payload_sha256": "12cdcd2688d684b0b3d469712ab2444672eb1cfd0bed16f5c8f88728477a0d91",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "33c98e8b35a14d24b057e0e31cab64508cb76c0f",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          11
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "original-jobs-and-evaluation",
+      "action_key": "240db94b4ab020aaec758450a03be2b4b96a84bfda3b120bf3ae3ed0c134e782",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "4cba23caca9145d19d4b18d5237fd6a4240be215bbd8208b36cf219b6de2f90d",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "08092c213d4b90e2840f51c8bfe1de2cc04df7e61e1d986225844cb483c76e3c",
+      "payload_sha256": "977e27824778ae25c98a73ee1d455086cadf098b3f667f2d05bc72998fa740fb",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "40f922c520b4c4f4282c87d8e9b070ce3f0faa95",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          14
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "original-jobs-quoting-failure",
+      "action_key": "71e2fcb0b6b8c22739327ee0be9918959ea2e787dcac6084b8d02e9178ec2197",
+      "host": "dl380g10",
+      "exit_code": 1,
+      "action_exit_code": 1,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "bef0c986154f1f89c7e23533eeb9705e9a1935ca74a33f66846f6585e57448ed",
+      "stderr_sha256": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f",
+      "receipt_verified": false,
+      "receipt_sha256": null,
+      "payload_sha256": null,
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "62c010320b6e2fd1e16b1e21358eccefbf7cb10d",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          10
+        ]
+      },
+      "summaries": [
+        "KeyError: <built-in function id>"
+      ],
+      "note": "Supplementary recording command failed because shell quoting removed JSON key quotes. Corrected by original-jobs-and-evaluation; no sandbox write in either command."
+    },
+    {
+      "kind": "queue-observation",
+      "action_key": "597f21bf922ee025bc3e2b3e0430ae83ef693de9d865b52c1a9cbd81f971a22c",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "792afd4f7c01cb3adfd3e4832ae2fa14259b37d3b0bf74aad6e270046d1f8ab7",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "5c95529f30f1a5a64e77f9261cc507f78f760fd7e625321c69e51a047fa42d0a",
+      "payload_sha256": "ae7a2506d1682e8d865810a9b0b077575036c1d692ac899701f0d46080b2351f",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "ad1583c3d1e559a8eb30aef3818688e414dfe83a",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          7
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "remaining-branches-cleanup",
+      "action_key": "f4ed98e69ad05054db79af6b057f5e567f8d8839a0fc61a2176af52c6b1ca8c7",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "6713fc360602a6363f151c2bed78e0b607b4820634f0201812b658baf4c0c685",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "b5616c96cab53d6feb2c8f5335dfdc10431cd557d0c47202772ff716fe99a583",
+      "payload_sha256": "968a30e4f814b0a4a63bbc86cc57fb66ef3c5de71e59f0634f061ed0b62ec7fe",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "4465274c755f9cb80dc6d313ebddebbb1e198bab",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          8
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "verify-refusal",
+      "action_key": "87747002bf300b4c076a8f0de60e377bda810f8ee75e811597d3afc18903a0e6",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "59b819a858929889a5abba0ae030cbce5f6e335ff1aca000102181a9e3fe8bc2",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "7ac1868e219814c112cd0d2043250dc1f13da838ded9b2f2d31d41eeacb3f1ff",
+      "payload_sha256": "ea7ecaeadc3927b863daa334ba75ca08c2ba06fdd83e42089c445b93062c385a",
+      "source_commit": "670e713b7e9e3df871b000fede522d33f74387aa",
+      "snapshot_commit": "92ca85d4b87637a5c0243885ee9530abdc8d4cfd",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          3
+        ]
+      },
+      "summaries": []
+    },
+    {
+      "kind": "verify-success",
+      "action_key": "91fc546c826ba0582387ad8dbd46604caaf228346fde08ed5f508d4f0942cda3",
+      "host": "dl380g10",
+      "exit_code": 0,
+      "action_exit_code": 0,
+      "terminal_verified": true,
+      "logs_verified": true,
+      "stdout_sha256": "f564ef2627653bc451421ae7a2a08bfa033ee2694d33c5615742443ca7529c4f",
+      "stderr_sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c",
+      "receipt_verified": true,
+      "receipt_sha256": "e61e3a8ffdd9d1c0fbc940329bbc64409ec86d39a0c76a6e34da6116c9fabe18",
+      "payload_sha256": "c57e15196dd1e533944546769d87ba2812e175f2719f45d8c8d9678714850a79",
+      "source_commit": "8bf5e74229edecf105e1a4a529e0f42183b6b706",
+      "snapshot_commit": "c5f6a88093066aa3e1531de64a8efc1f5bd17d94",
+      "resources": {
+        "cpu": 1,
+        "mem_gb": 1
+      },
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          7
+        ]
+      },
+      "summaries": [
+        "PASS: recorded queue merge preserves the approved head"
+      ]
+    }
+  ],
+  "test_skips": [],
+  "missing_tools": [],
+  "unrun_trials": [
+    "Separate main-advancement trial; outside the requested success/refusal pair."
+  ],
+  "unobserved_deliveries": [
+    "check_run in_progress",
+    "pull_request closed after merge"
+  ],
+  "delivery_history": "Only a failed ping, HTTP 502, from 2026-10-30T13:38:37.006Z."
+}

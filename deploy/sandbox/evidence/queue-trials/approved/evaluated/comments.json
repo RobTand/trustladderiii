@@ -1,0 +1,13 @@
+[
+  {
+    "id": 6533972707,
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"merged\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-10-30T21:36:32.781493+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-10-30T21:37:26.596888+00:00\"}\n-*- Mergify Payload End -*-\n-->\n\n### \u2705 Merged into `main` as `668fd48` at 21:37 UTC\n\n1 min in the queue, less than a minute of it CI.\n\n**So far**\n\n- \u2705 **Entered the queue** Fri 30 Oct, 21:36 \u00b7 rule `default` \u00b7 triggered by rule `Queue TL3-approved PRs`\n- \u2705 **Passed** \u00b7 draft #32\n- \u2705 **Merged** 21:37 \u00b7 `668fd48` \u00b7 merge\n\n<details>\n<summary>1 merge condition met</summary>\n\n- [x] `check-success = Sandbox tests`\n\n</details>\n\n<sub>Times in UTC \u00b7 [dashboard](https://dashboard.mergify.com/orgs/RobTand/repos/tl3-sandbox/queues/status?branch=main&pull=30) \u00b7 [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>",
+    "user": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "created_at": "2026-10-30T21:36:40Z",
+    "updated_at": "2026-10-30T21:37:27Z",
+    "issue_url": "https://api.github.com/repos/RobTand/tl3-sandbox/issues/30"
+  }
+]
