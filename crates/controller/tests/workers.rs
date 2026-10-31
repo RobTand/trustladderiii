@@ -343,6 +343,15 @@ fn main() {
     }
     prepare_workers();
     let mut database = Database::start();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--maker-reproducing-rebase")
+    {
+        maker::reproducing_rebase_contract(&database.create("maker_reproducing_rebase"));
+        println!("test real_worker_contract_maker_reviewer_reproducing_rebase ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--gate-wire") {
         invalid_replies(&database.create("gate_invalid"));
         stop_and_exit_gate(&database.create("gate_stop"));

@@ -364,6 +364,10 @@ pub(super) fn answers(settings: &tl3_config::Store) {
     );
     d.send(11001, "My answer is unclear");
     d.classified(11001);
+    assert!(
+        d.node()["question"]["id"].is_u64(),
+        "an unclear answer must open a clarification question"
+    );
     let clarified = d.node()["question"]["id"].as_u64().unwrap();
     assert_ne!(original, clarified);
     assert_eq!(d.node()["question"]["clarified"], true);
