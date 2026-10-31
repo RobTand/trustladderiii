@@ -136,6 +136,19 @@ fn previous_delivery_shape_reconciles_inflight_worktree() {
         f.adapter().reconcile(&changed).is_err(),
         "changed operation must still be rejected"
     );
+    let checkout = f.adapter().checkout(&current);
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(worktree_fixture::commit(
+        &checkout,
+        "leaf.txt",
+        "leaf change\n",
+    ));
+    f.adapter().execute(&push).unwrap();
+    push.head_sha = Some(f.advance_main(false));
+    assert!(
+        f.adapter().reconcile(&push).is_err(),
+        "a push key cannot change its intended head"
+    );
 }
 
 #[test]
@@ -406,6 +419,28 @@ fn steering_creates_allowance_with_classifier() {
             .iter()
             .any(|r| r.table == "allowances" && r.id == effect.key),
         "classifier must receive allowance in its creation transaction"
+    );
+    c.observe(
+        "classified",
+        Observation::Classified {
+            key: effect.key.clone(),
+            reply: Some(json!({"kind":"unsure", "question":"Which greeting should change?"})),
+        },
+    )
+    .unwrap();
+    assert!(c.drive_once().unwrap());
+    let snapshot = c.snapshot().unwrap();
+    let clarification = snapshot
+        .pending_effects
+        .iter()
+        .find(|effect| effect.key.starts_with("clarify:"))
+        .unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "allowances" && row.id == clarification.key),
+        "clarification must receive allowance in its creation transaction"
     );
     db.stop();
 }

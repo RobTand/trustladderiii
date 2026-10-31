@@ -677,6 +677,7 @@ impl Controller {
             if active && looks::outage_waiting(&snapshot, &delivery.key) {
                 continue;
             }
+            let mut quota = false;
             if active {
                 delivery = hydrate(&effect, &snapshot)?;
                 hook(Boundary::BeforeReconcile, &delivery.key);
@@ -719,6 +720,10 @@ impl Controller {
                 if completion.releases_holds() {
                     self.retry_held_effects(executor::upstream(delivery.output));
                 }
+                quota = completion
+                    .observations
+                    .iter()
+                    .any(|observation| matches!(observation, Observation::Quota { .. }));
                 for (index, observation) in completion.observations.iter().enumerate() {
                     self.queue_observation(
                         &snapshot,
@@ -729,7 +734,6 @@ impl Controller {
                     )?;
                 }
             }
-            let quota = commit.rows.iter().any(|row| matches!(row, RowChange::Put { table, value, .. } if table == "inbox" && value.get("Quota").is_some()));
             if !quota {
                 commit.rows.push(RowChange::Delete {
                     table: "watches".into(),
