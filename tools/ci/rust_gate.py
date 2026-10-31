@@ -42,8 +42,8 @@ def execute_binary(binary, custom, arguments=()):
     suite = False
     passed = 0
     failures = []
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, env=env) as process:
+    # Diagnostics may end without a newline. Keep them off the completion stream.
+    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, env=env) as process:
         for line in process.stdout:
             now = time.monotonic()
             print(f'[{name}] {line.rstrip()}', flush=True)
