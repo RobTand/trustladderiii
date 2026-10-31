@@ -111,6 +111,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         replanned: false,
         marker_key: None,
         note: None,
+        scope_removals: None,
         steering: None,
         request_text: None,
         proposed: None,
@@ -119,7 +120,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         job_generation: Some(4),
         checks: Some(CheckRun {
             repository: repo,
-            base_sha: base,
+            base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
             reviewed_sha: None,
             reproducing_unavailable: None,
@@ -259,7 +260,8 @@ fn reproducing_check_plan_and_verdict() {
             .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(
-            request["reviewed"], reviewed,
+            request["reviewed"],
+            reviewed.as_str(),
             "freeze the exact reviewed commit"
         );
         let (report, pass, _) = observed(completion(&mut adapter, &delivery));
@@ -661,7 +663,7 @@ fn footprint_paths_and_merge_base() {
         let mut delivery = run(root.path(), false);
         let run = delivery.checks.as_mut().unwrap();
         let repo = &run.repository;
-        git(repo, &["reset", "--hard", &run.base_sha]);
+        git(repo, &["reset", "--hard", run.base_sha.as_str()]);
         fs::remove_file(repo.join("untracked.py")).unwrap();
         let expected: Vec<&str> = match case {
             "rename" => {
@@ -689,8 +691,9 @@ fn footprint_paths_and_merge_base() {
                 git(repo, &["add", "."]);
                 git(repo, &["commit", "--quiet", "-m", "main advances"]);
                 let common = run.base_sha.clone();
-                run.base_sha = git(repo, &["rev-parse", "HEAD"]);
-                git(repo, &["checkout", "--detach", &common]);
+                run.base_sha =
+                    tl3_worktrees::CommitId::new(git(repo, &["rev-parse", "HEAD"])).unwrap();
+                git(repo, &["checkout", "--detach", common.as_str()]);
                 fs::write(repo.join("value.py"), "def value(): return 2\n").unwrap();
                 vec!["value.py"]
             }
@@ -1217,7 +1220,8 @@ fn abandoned_inputs_are_removed() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
     let mut adapter = fixture(root.path(), "pending");
-    delivery.checks.as_mut().unwrap().base_sha = "a".repeat(40);
+    delivery.checks.as_mut().unwrap().base_sha =
+        tl3_worktrees::CommitId::new("a".repeat(40)).unwrap();
     assert!(adapter.execute(&delivery).is_err());
     let input = record_path(root.path(), &delivery.key, "input");
     assert!(input.exists(), "failed staging fixture left its input");
@@ -1233,10 +1237,11 @@ fn abandoned_inputs_are_removed() {
     let mut adapter = fixture(root.path(), "pending");
     assert!(!input.exists(), "startup removes an unbound input");
     assert!(!orphan.exists(), "startup finishes interrupted retirement");
-    delivery.checks.as_mut().unwrap().base_sha = git(
+    delivery.checks.as_mut().unwrap().base_sha = tl3_worktrees::CommitId::new(git(
         &delivery.checks.as_ref().unwrap().repository,
         &["rev-parse", "HEAD^"],
-    );
+    ))
+    .unwrap();
     adapter.execute(&delivery).unwrap();
     fs::create_dir_all(&input).unwrap();
     drop(adapter);

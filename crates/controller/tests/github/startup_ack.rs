@@ -257,6 +257,7 @@ fn loop_scenarios(database: &mut support::Database) {
         }
         release.send(scenario != "failure").unwrap();
         if scenario == "failure" {
+            wakes.recv_timeout(Duration::from_secs(10)).unwrap();
             assert!(
                 calls.recv_timeout(Duration::from_millis(250)).is_err(),
                 "failed passes must wait for an event, without a timer"

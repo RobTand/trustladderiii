@@ -877,6 +877,497 @@ fn auth_header_is_scoped_to_github() {
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
 
+fn scope_fixture() -> (Fixture, CommitId, CommitId) {
+    let f = Fixture::new();
+    write_commit(&f.repo, "outside.txt", "base outside\n", "outside base");
+    write_commit(&f.repo, "pyproject.toml", "base config\n", "config base");
+    let base = f.checkout().base;
+    write_commit(&f.worktree, "shared.txt", "requested\n", "request");
+    write_commit(&f.worktree, "outside.txt", "unrelated\n", "outside edit");
+    write_commit(&f.worktree, "extra.txt", "unrelated\n", "outside add");
+    write_commit(
+        &f.worktree,
+        "pyproject.toml",
+        "unrelated\n",
+        "protected edit",
+    );
+    let head = f.manager.head_locked(&f.name).unwrap();
+    (f, base, head)
+}
+
+fn scope_trim(f: &Fixture) -> ScopeTrim {
+    f.manager
+        .trim_scope(
+            &f.name,
+            &f.worktree,
+            &["shared.txt".into(), "pyproject.toml".into()],
+            &["pyproject.toml".into()],
+        )
+        .unwrap()
+}
+
+#[test]
+fn scope_extra_file_deleted() {
+    let (f, _, original) = scope_fixture();
+    let result = scope_trim(&f);
+    assert!(!f.worktree.join("extra.txt").exists());
+    assert!(result.removed_paths.contains(&PathBuf::from("extra.txt")));
+    assert_eq!(
+        git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+        original.as_str().as_bytes()
+    );
+    assert_eq!(
+        git(&f.worktree, ["show", "-s", "--format=%an <%ae>"]).trim_ascii(),
+        b"TL3 <tl3@localhost>"
+    );
+}
+
+#[test]
+fn scope_file_to_directory_swap_restores_base() {
+    scope_tree_swap(false);
+}
+
+#[test]
+fn scope_directory_to_file_swap_restores_base() {
+    scope_tree_swap(true);
+}
+
+fn scope_tree_swap(base_is_directory: bool) {
+    let f = Fixture::new();
+    fs::create_dir_all(f.repo.join("dir")).unwrap();
+    let original = if base_is_directory {
+        "dir/f/g"
+    } else {
+        "dir/f"
+    };
+    if base_is_directory {
+        fs::create_dir(f.repo.join("dir/f")).unwrap();
+    }
+    write_commit(&f.repo, original, "base\n", "base shape");
+    let base = f.checkout().base;
+    git(&f.worktree, ["rm", "-r", "dir/f"]);
+    fs::create_dir_all(f.worktree.join("dir")).unwrap();
+    let added = if base_is_directory {
+        "dir/f"
+    } else {
+        "dir/f/g"
+    };
+    if !base_is_directory {
+        fs::create_dir_all(f.worktree.join("dir/f")).unwrap();
+    }
+    write_commit(&f.worktree, added, "unrelated\n", "swap shape");
+    write_commit(&f.worktree, "shared.txt", "requested\n", "request");
+    let trim = scope_trim(&f);
+    assert_eq!(fs::read(f.worktree.join(original)).unwrap(), b"base\n");
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        trim.removed_paths,
+        vec![PathBuf::from("dir/f"), "dir/f/g".into()]
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
+    assert_eq!(scope_trim(&f), trim);
+    f.assert_clean();
+}
+
+#[test]
+fn scope_replay_cleans_abandoned_temporary_indexes_and_receipt_files() {
+    let (f, _, _) = scope_fixture();
+    let trim = scope_trim(&f);
+    let journal = f.manager.common.join("tl3-scope");
+    let index = tempfile::tempdir_in(&journal).unwrap().keep();
+    fs::write(index.join("index"), "abandoned").unwrap();
+    let temporary = tempfile::NamedTempFile::new_in(&journal)
+        .unwrap()
+        .keep()
+        .unwrap()
+        .1;
+    assert_eq!(scope_trim(&f), trim);
+    assert!(
+        !index.exists(),
+        "replay must remove its abandoned index directory"
+    );
+    assert!(
+        !temporary.exists(),
+        "replay must remove its abandoned receipt file"
+    );
+}
+
+#[test]
+fn scope_outside_edit_restored() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("outside.txt")).unwrap(),
+        b"base outside\n"
+    );
+}
+
+#[test]
+fn scope_protected_path_restored_even_in_footprint() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("pyproject.toml")).unwrap(),
+        b"base config\n"
+    );
+}
+
+#[test]
+fn scope_footprint_edits_kept() {
+    let (f, base, _) = scope_fixture();
+    let trim = scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
+    f.assert_clean();
+}
+
+#[test]
+fn scope_restart_at_each_boundary_is_idempotent_and_preserves_later_maker_work() {
+    for crash in [
+        TrimBoundary::Recorded,
+        TrimBoundary::CheckoutRestored,
+        TrimBoundary::HeadUpdated,
+    ] {
+        let (f, _, original) = scope_fixture();
+        assert!(
+            f.manager
+                .trim_scope_with(
+                    &f.name,
+                    &f.worktree,
+                    &["shared.txt".into(), "pyproject.toml".into()],
+                    &["pyproject.toml".into()],
+                    |at| if at == crash { Err(Error::Io) } else { Ok(()) }
+                )
+                .is_err()
+        );
+        let manager = Worktrees::open(&f.repo, f.worktree.parent().unwrap()).unwrap();
+        let trim = manager
+            .trim_scope(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+            )
+            .unwrap();
+        assert_eq!(
+            trim.removed_paths,
+            vec![
+                PathBuf::from("extra.txt"),
+                "outside.txt".into(),
+                "pyproject.toml".into()
+            ]
+        );
+        assert_eq!(
+            git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+            original.as_str().as_bytes()
+        );
+        f.assert_clean();
+        write_commit(
+            &f.worktree,
+            "shared.txt",
+            "later maker commit\n",
+            "later maker",
+        );
+        fs::write(f.worktree.join("scratch.txt"), "maker scratch").unwrap();
+        assert_eq!(scope_trim(&f), trim);
+        assert_eq!(
+            fs::read(f.worktree.join("shared.txt")).unwrap(),
+            b"later maker commit\n"
+        );
+        assert_eq!(
+            fs::read(f.worktree.join("scratch.txt")).unwrap(),
+            b"maker scratch"
+        );
+    }
+}
+
+#[test]
+fn scope_restart_finishes_after_git_ref_writer_was_killed() {
+    let (f, _, _) = scope_fixture();
+    assert!(
+        f.manager
+            .trim_scope_with(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+                |_| Err(Error::Io)
+            )
+            .is_err()
+    );
+    let branch_lock = f
+        .manager
+        .common
+        .join(format!("{}.lock", f.name.reference()));
+    fs::write(&branch_lock, "interrupted ref write").unwrap();
+    let index_lock = path_line(&git(
+        &f.worktree,
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    ))
+    .unwrap();
+    fs::write(&index_lock, "interrupted index write").unwrap();
+    let unrelated = f.manager.common.join("refs/heads/unrelated.lock");
+    fs::write(&unrelated, "preserve this").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!branch_lock.exists());
+    assert!(!index_lock.exists());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"preserve this");
+}
+
+#[test]
+fn scope_restart_before_intent_finishes_its_private_pin() {
+    let (f, _, _) = scope_fixture();
+    let reference = f
+        .manager
+        .common
+        .join(format!("refs/tl3/scope/{}", f.name.as_str()));
+    fs::create_dir_all(reference.parent().unwrap()).unwrap();
+    let lock = reference.with_file_name(format!(
+        "{}.lock",
+        reference.file_name().unwrap().to_str().unwrap()
+    ));
+    fs::write(&lock, "interrupted pin write").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!lock.exists());
+}
+
+fn hostile_query(name: &str, query: impl FnOnce(&Fixture, &CommitId, &CommitId, &CommitId)) {
+    if std::env::var_os("TL3_HOSTILE_QUERY_CHILD").is_none() {
+        let foreign = Fixture::new();
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("tests::{name}"), "--nocapture"])
+            .env("TL3_HOSTILE_QUERY_CHILD", "1")
+            .env("GIT_DIR", foreign.repo.join(".git"))
+            .env("GIT_WORK_TREE", &foreign.repo)
+            .env("GIT_INDEX_FILE", foreign.repo.join("hostile-index"))
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "protocol.allow")
+            .env("GIT_CONFIG_VALUE_0", "always")
+            .env("GIT_CONFIG_KEY_1", "credential.helper")
+            .env("GIT_CONFIG_VALUE_1", "!exit 99")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "hostile query failed: {}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    let f = Fixture::new();
+    let common = f.manager.resolve("HEAD").unwrap();
+    git(&f.repo, ["checkout", "-b", "feature"]);
+    write_commit(&f.repo, "feature.txt", "feature\n", "feature");
+    let head = f.manager.resolve("HEAD").unwrap();
+    git(&f.repo, ["checkout", "main"]);
+    write_commit(&f.repo, "upstream.txt", "upstream\n", "upstream");
+    let base = f.manager.resolve("HEAD").unwrap();
+    query(&f, &common, &base, &head);
+    for invocation in f.manager.invocations.lock().unwrap().iter() {
+        assert!(!invocation.environment.iter().any(|(key, _)| {
+            [
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_INDEX_FILE",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+            ]
+            .iter()
+            .any(|bad| key == OsStr::new(bad))
+        }));
+    }
+}
+
+#[test]
+fn hostile_head() {
+    hostile_query("hostile_head", |f, _, base, _| {
+        assert_eq!(&f.manager.head().unwrap(), base)
+    });
+}
+#[test]
+fn hostile_verify_commit() {
+    hostile_query("hostile_verify_commit", |f, _, _, head| {
+        assert_eq!(&f.manager.verify_commit(head).unwrap(), head)
+    });
+}
+#[test]
+fn hostile_merge_base() {
+    hostile_query("hostile_merge_base", |f, common, base, head| {
+        assert_eq!(&f.manager.merge_base(base, head).unwrap(), common)
+    });
+}
+#[test]
+fn hostile_is_ancestor() {
+    hostile_query("hostile_is_ancestor", |f, common, base, head| {
+        assert!(f.manager.is_ancestor(common, head).unwrap());
+        assert!(!f.manager.is_ancestor(base, head).unwrap());
+    });
+}
+#[test]
+fn hostile_diff() {
+    hostile_query("hostile_diff", |f, _, base, head| {
+        let diff = String::from_utf8(f.manager.diff(base, head).unwrap()).unwrap();
+        assert!(diff.contains("+feature\n"));
+        assert!(diff.contains("-upstream\n"));
+    });
+}
+#[test]
+fn hostile_changed_paths_since_merge_base() {
+    hostile_query(
+        "hostile_changed_paths_since_merge_base",
+        |f, _, base, head| {
+            assert_eq!(
+                f.manager
+                    .changed_paths_since_merge_base(base, head)
+                    .unwrap(),
+                vec![PathBuf::from("feature.txt")]
+            );
+            assert_eq!(
+                f.manager.changed_files(base, head).unwrap(),
+                vec![PathBuf::from("feature.txt"), PathBuf::from("upstream.txt")]
+            );
+        },
+    );
+}
+#[test]
+fn hostile_list_tree() {
+    hostile_query("hostile_list_tree", |f, _, _, head| {
+        let tree = f.manager.list_tree(head).unwrap();
+        assert!(
+            tree.split(|b| *b == 0)
+                .any(|entry| entry.ends_with(b"\tfeature.txt"))
+        );
+        assert!(
+            !tree
+                .split(|b| *b == 0)
+                .any(|entry| entry.ends_with(b"\tupstream.txt"))
+        );
+    });
+}
+#[test]
+fn hostile_blob() {
+    hostile_query("hostile_blob", |f, _, _, head| {
+        let object = commit_line(&git(
+            &f.repo,
+            ["rev-parse", &format!("{}:feature.txt", head.as_str())],
+        ))
+        .unwrap();
+        assert_eq!(
+            f.manager
+                .blob(&BlobId::new(object.as_str()).unwrap())
+                .unwrap(),
+            b"feature\n"
+        );
+    });
+}
+#[test]
+fn commit_ids_reject_uppercase_at_both_hash_lengths() {
+    for length in [40, 64] {
+        assert!(CommitId::new("a".repeat(length)).is_ok());
+        assert!(
+            CommitId::new("A".repeat(length)).is_err(),
+            "uppercase is not a canonical commit id"
+        );
+    }
+}
+
+fn assert_snapshot_identity(path: &Path, head: &CommitId, message: &str) {
+    let raw = String::from_utf8(git(path, ["cat-file", "commit", head.as_str()])).unwrap();
+    assert!(
+        raw.contains("author TL3 <tl3@example.invalid> 946684800 +0000\n"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("committer TL3 <tl3@example.invalid> 946684800 +0000\n"),
+        "{raw}"
+    );
+    assert!(raw.ends_with(&format!("\n{message}\n")));
+    let tree = String::from_utf8(git(
+        path,
+        ["rev-parse", &format!("{}^{{tree}}", head.as_str())],
+    ))
+    .unwrap();
+    let parents = String::from_utf8(git(
+        path,
+        ["rev-list", "--parents", "-n", "1", head.as_str()],
+    ))
+    .unwrap();
+    let parents: String = parents
+        .split_whitespace()
+        .skip(1)
+        .map(|parent| format!("parent {parent}\n"))
+        .collect();
+    let legacy = format!(
+        "tree {}\n{parents}author TL3 <tl3@example.invalid> 946684800 +0000\ncommitter TL3 <tl3@example.invalid> 946684800 +0000\n\n{message}\n",
+        tree.trim()
+    );
+    let mut input = Command::new("git")
+        .current_dir(path)
+        .args(["hash-object", "-t", "commit", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    input
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(legacy.as_bytes())
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(input.wait_with_output().unwrap().stdout)
+            .unwrap()
+            .trim(),
+        head.as_str()
+    );
+}
+
+#[test]
+fn check_snapshot_retains_legacy_identity() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("request.json"), "{}\n").unwrap();
+    let head = Worktrees::commit_check_input(root.path()).unwrap();
+    assert_snapshot_identity(root.path(), &head, "Freeze controller check input");
+}
+
+#[test]
+fn replay_snapshot_retains_legacy_identity() {
+    let f = Fixture::new();
+    let base = f.manager.head().unwrap();
+    write_commit(&f.repo, "reviewed.txt", "reviewed\n", "reviewed");
+    let reviewed = f.manager.head().unwrap();
+    let replay = f
+        .manager
+        .replay_reviewed(&f.name, &base, &base, &reviewed)
+        .unwrap();
+    assert_snapshot_identity(
+        &f.repo,
+        &replay,
+        "Replay reviewed state for reproducing checks",
+    );
+}
+
 #[test]
 fn adoption_fetches_only_the_pinned_pull_ref() {
     let f = Fixture::new();
@@ -1157,11 +1648,22 @@ fn scratch_refs_expire_only_after_thirty_days() {
         .trim()
         .parse::<u64>()
         .unwrap();
-    f.manager
-        .prune_scratch(saved + 30 * 24 * 60 * 60 - 1)
-        .unwrap();
+    assert!(
+        f.manager
+            .expired_scratch(saved + 30 * 24 * 60 * 60 - 1)
+            .unwrap()
+            .is_empty()
+    );
     assert!(f.manager.resolve_optional(&reference).unwrap().is_some());
-    f.manager.prune_scratch(saved + 30 * 24 * 60 * 60).unwrap();
+    let expired = f
+        .manager
+        .expired_scratch(saved + 30 * 24 * 60 * 60)
+        .unwrap();
+    assert_eq!(expired.len(), 1);
+    let (expired_ref, expected) = &expired[0];
+    assert_eq!(expired_ref, &reference);
+    f.manager.prune_scratch(expired_ref, expected).unwrap();
+    f.manager.prune_scratch(expired_ref, expected).unwrap();
     assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
     assert!(f.manager.branch_state(&f.name).unwrap().is_some());
 }

@@ -76,6 +76,8 @@ pub struct Delivery {
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
+    pub scope_removals: Option<String>,
+    #[serde(default)]
     pub marker_key: Option<String>,
     #[serde(default)]
     pub question_context: Option<serde_json::Value>,
@@ -110,6 +112,9 @@ impl Delivery {
 pub enum Observation {
     ScratchSaved {
         node: NodeId,
+        reference: String,
+    },
+    ScratchPruned {
         reference: String,
     },
     Progress {

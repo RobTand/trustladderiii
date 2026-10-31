@@ -101,6 +101,8 @@ enum Intent {
 struct Record {
     delivery: Delivery,
     intent: Intent,
+    #[serde(default)]
+    scratch_prune: Vec<(String, String)>,
     completion: Option<Completion>,
 }
 
@@ -215,6 +217,33 @@ impl Real {
             mutex,
         });
         Ok(())
+    }
+
+    /// Run before reporting a proposed head. This does not approve it or change kernel state.
+    pub fn trim_scope(
+        &self,
+        delivery: &Delivery,
+        protected: &[String],
+    ) -> Result<tl3_worktrees::ScopeTrim> {
+        let repo = self.repository(delivery)?;
+        let _guard = repo
+            .mutex
+            .lock()
+            .map_err(|_| Error::Invalid("worktree mutex poisoned"))?;
+        if delivery.epoch < repo.fence()? {
+            return Err(adapter(std::io::Error::other(
+                "worktree upstream refused an older controller epoch",
+            )));
+        }
+        write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
+        repo.git
+            .trim_scope(
+                &Self::branch(delivery)?,
+                &self.checkout(delivery),
+                &delivery.paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+                protected,
+            )
+            .map_err(adapter)
     }
 
     pub fn branch(delivery: &Delivery) -> Result<BranchName> {
@@ -522,7 +551,7 @@ impl Served {
                                     base.as_str(),
                                 );
                             }
-                            run.base_sha = base.as_str().into();
+                            run.base_sha = base.clone();
                             observations.push(Observation::CheckPlan {
                                 node: record.delivery.node(),
                                 sha: head.as_str().into(),
@@ -609,6 +638,18 @@ impl Served {
                 }
             }
         }
+        if writable {
+            for (reference, expected) in &record.scratch_prune {
+                let result = CommitId::new(expected)
+                    .and_then(|expected| self.git.prune_scratch(reference, &expected));
+                match result {
+                    Ok(()) => observations.push(Observation::ScratchPruned {
+                        reference: reference.clone(),
+                    }),
+                    Err(error) => eprintln!("scratch housekeeping for {reference}: {error}"),
+                }
+            }
+        }
         hook(Boundary::AfterApply);
         let completion = Completion::confirmed(observations);
         record.completion = Some(completion.clone());
@@ -639,17 +680,28 @@ impl Real {
         let mut record = match repo.load(delivery)? {
             Some(record) => record,
             None => {
-                repo.git
-                    .prune_scratch(
+                let scratch_prune = repo
+                    .git
+                    .expired_scratch(
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
                     )
-                    .map_err(adapter)?;
+                    .unwrap_or_else(|error| {
+                        eprintln!(
+                            "scratch housekeeping for {}/{}: {error}",
+                            repo.identity.owner, repo.identity.name
+                        );
+                        vec![]
+                    })
+                    .into_iter()
+                    .map(|(reference, head)| (reference, head.as_str().to_owned()))
+                    .collect();
                 let record = Record {
                     delivery: delivery.clone(),
                     intent: repo.intent(delivery, &branch, &self.checkout(delivery))?,
+                    scratch_prune,
                     completion: None,
                 };
                 write(&repo.record_path(delivery), &record)?;

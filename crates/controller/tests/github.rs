@@ -1,4 +1,6 @@
 use tl3_controller::executor::Output as Out;
+#[path = "github/catchup_heads.rs"]
+mod catchup_heads;
 #[path = "github/notice_incidents.rs"]
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
@@ -503,6 +505,11 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--catchup-heads") {
+        catchup_heads::run(&mut database);
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
         startup_ack::run(&mut database);
         database.stop();
@@ -531,6 +538,7 @@ fn main() {
         database.stop();
         return;
     }
+    catchup_heads::run(&mut database);
     startup_ack::run(&mut database);
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
@@ -845,6 +853,7 @@ fn delivery(notice: Notice) -> Delivery {
         job_generation: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
     }
 }
 fn message_reconciliation() {
@@ -1928,7 +1937,7 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
         .unwrap();
     let body: Value = serde_json::from_slice(&post.body).unwrap();
     let text = body["body"].as_str().unwrap();
-    assert!(text.lines().any(|line| line == "Reply with \"clear incident 5.0\" on https://github.com/owner/tl3/issues/17 or on the request's issue after fixing the cause."), "fixed instruction missing: {text}");
+    assert!(text.lines().any(|line| line == "Reply with \"clear incident 5.0\" on https://github.com/owner/tl3/issues/17 or on the request's issue at https://github.com/owner/sandbox/issues/12 after fixing the cause."), "fixed instruction missing request URL: {text}");
     for expected in [
         "Fix a greeting",
         "`https://github.com/owner/sandbox/issues/12`",

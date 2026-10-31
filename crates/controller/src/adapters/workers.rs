@@ -1,4 +1,5 @@
 use crate::executor::Output as Out;
+use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
@@ -217,36 +218,15 @@ impl Supervisor {
                 .ok_or(Error::Invalid("production maker needs the accepted plan"))?;
             materials["maker"] = crate::production::maker_inputs(&brief, &plan)?;
             let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
-            let base = match delivery
-                .checks
-                .as_ref()
-                .map(|c| c.base_sha.clone())
-                .or_else(|| {
-                    materials["check_run"]["base_sha"]
-                        .as_str()
-                        .map(str::to_owned)
-                }) {
-                Some(base) => base,
-                None => {
-                    let output = Command::new("git")
-                        .arg("-C")
-                        .arg(&checkout)
-                        .args([
-                            "rev-parse",
-                            &format!(
-                                "refs/tl3/bases/{}",
-                                super::worktrees::Real::branch(delivery)?.as_str()
-                            ),
-                        ])
-                        .output()?;
-                    if !output.status.success() {
-                        return Err(Error::Invalid("maker checkout has no base"));
-                    }
-                    String::from_utf8(output.stdout)
-                        .map_err(|_| Error::Invalid("invalid maker base"))?
-                        .trim()
-                        .to_owned()
-                }
+            let base = if let Some(run) = &delivery.checks {
+                run.base_sha.clone()
+            } else if let Some(base) = materials["check_run"]["base_sha"].as_str() {
+                CommitId::new(base)?
+            } else {
+                Worktrees::open(&checkout, &checkout)?
+                    .branch_state(&super::worktrees::Real::branch(delivery)?)?
+                    .ok_or(Error::Invalid("maker checkout has no base"))?
+                    .1
             };
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()
@@ -254,7 +234,8 @@ impl Supervisor {
                 .iter()
                 .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
                 .collect::<Vec<_>>();
-            materials["check_run"] = json!({"repository":checkout,"base_sha":base,"plan":checks});
+            materials["check_run"] =
+                json!({"repository":checkout,"base_sha":base.as_str(),"plan":checks});
             store.put_worker_materials(&node, &materials)?;
         }
         let mut inputs = materials.get(role).unwrap_or(&materials).clone();

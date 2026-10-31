@@ -59,7 +59,7 @@ fn bootstrap() -> Bootstrap {
 fn check_plan(f: &Fixture, base: String) -> CheckRun {
     CheckRun {
         repository: f.repo.clone(),
-        base_sha: base,
+        base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
         reviewed_sha: None,
         reproducing_unavailable: None,

@@ -391,6 +391,7 @@ pub fn verify_contracts() {
             job_generation: None,
             marker_key: None,
             note: None,
+            scope_removals: None,
             question: None,
             question_context: None,
             steering: None,

@@ -5,6 +5,8 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 NotifyAccess=all
+CPUWeight=20
+Nice=10
 EnvironmentFile=%h/.config/tl3-ci-runners/%p.env
 ExecStartPre=-/usr/bin/podman rm --force %p-%i
 ExecStart=%h/.local/lib/tl3-ci-runners/runner-slot.sh %i %p

@@ -61,6 +61,7 @@ fn sources_publish_evidence_before_one_owner_consumes_it() {
         for _ in 0..3 {
             match receiver.recv().unwrap() {
                 Input::Wake
+                | Input::GitHubWake
                 | Input::Look { .. }
                 | Input::ProposedIssue { .. }
                 | Input::AdoptionClarification(_) => {

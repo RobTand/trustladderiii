@@ -235,3 +235,29 @@ def test_maker_staged_submission_retains_checkout_parent(submission):
     assert git("rev-parse", "HEAD") == parent
     assert git("status", "--porcelain") == before
     assert (root / "uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
+
+
+def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_path):
+    from tl3_workers import pb_tests
+    original = subprocess.run
+    policies = []
+
+    def run(command, **kwargs):
+        if command[0] == "git":
+            # Ask the real Git process for its effective policy with the same
+            # global arguments, cwd and environment as the staging operation.
+            operation = next(i for i, arg in enumerate(command) if arg in ("init", "fetch", "add", "commit", "update-ref"))
+            probe = original([*command[:operation], "config", "--get", "protocol.allow"],
+                cwd=kwargs["cwd"], env=kwargs["env"], capture_output=True)
+            policies.append(probe.stdout.strip())
+        return original(command, **kwargs)
+
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    monkeypatch.setattr(pb_tests.subprocess, "run", run)
+    staged = tmp_path / "input"
+    staged.mkdir()
+    with Worktree(submission[0]) as tree:
+        pb_tests._stage(tree, staged)
+    assert policies and all(policy == b"never" for policy in policies), policies

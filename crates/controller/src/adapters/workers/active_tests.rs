@@ -30,6 +30,7 @@ fn retiring_quota_attempt_keeps_resumed_process_active() {
         question: None,
         marker_key: None,
         note: None,
+        scope_removals: None,
         question_context: None,
         steering: None,
         request_text: None,

@@ -31,8 +31,13 @@ let files = repo.changed_files(&base, &head)?;
 | `finish_prepare` | Repair Git-locked initialization only at the durable base |
 | `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `save_scratch`, `clean_saved_scratch` | Save teardown edits on a durable ref before cleaning |
-| `prune_scratch` | Expire saved scratch after 30 days on a worktree event |
+| `expired_scratch`, `prune_scratch` | Journal expiry candidates, then remove their refs on a worktree event |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
+| `trim_scope` | Restore changes outside declared files or matching protected globs; return the head and removed paths |
+| `head`, `verify_commit`, `merge_base`, `is_ancestor` | Typed commit and ancestry queries |
+| `diff`, `changed_paths_since_merge_base`, `list_tree`, `blob` | Committed review and check evidence |
+| `clone_checkout`, `bundle_check_input`, `commit_check_input` | Private committed snapshots for review and PrismaBuild |
+| `pin_reviewed`, `replay_reviewed`, `remove_reviewed` | Retain and replay reviewed commits for reproducing checks |
 
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
@@ -43,9 +48,10 @@ The controller chooses effect identities. This client does not persist controlle
 state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
 
 `BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
-`CommitId` accepts full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
+`CommitId` accepts lowercase full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
 newlines and non-UTF-8 names. `changed_files` compares the two trees directly and
 disables rename detection so both the old and new path count toward the footprint.
+`changed_paths_since_merge_base` uses a three-dot diff, excluding changes only on the base.
 
 ## Recovery
 
@@ -85,6 +91,35 @@ leftover files through `git status`.
 A retry reuses the staging registration or finishes its cleanup. Other nonempty
 directories and another branch's checkout return `WorktreeOccupied`.
 
+### Trim a proposed head
+
+`trim_scope(branch, checkout, footprint, protected_paths)` runs once per leaf
+branch. It reads `refs/tl3/bases/<branch>`, compares both committed trees without
+rename detection, and restores paths outside the declared files. Protected globs
+use Git's `:(top,glob)` pathspec syntax and always override the footprint.
+The result is a new TL3 commit with the proposed head as its parent. A trim with
+no removed paths keeps its original head.
+
+The first call requires a clean checkout. It builds the target in a separate
+index, pins it under `refs/tl3/scope/<branch>`, and fsyncs a `tl3-scope` receipt
+before touching the checkout. Recovery restores that target, advances the branch
+with an expected-head check, then marks the receipt complete. The durable base
+never changes. A completed replay returns the saved result and preserves later
+maker commits, edits, and untracked files, even after checkout removal.
+The receipt's head is the original trim result. Callers must re-read the current
+branch head after a replay. The next trim removes abandoned private `.tmp` index
+directories and receipt files from `tl3-scope` while holding repository ownership.
+Target trees remove affected index entries before restoring the base's entries,
+so file/directory swaps work in both directions.
+
+Keep the receipt with the common Git directory. The owning controller and all
+its Git children must have ended before a replacement resumes an unfinished trim.
+Only an unfinished receipt authorizes checkout restoration and removal of that
+checkout's stale index lock and the branch's stale ref lock. The private scope
+pin's stale lock can be cleared before recording an intent. Other ref locks stay
+untouched. Prepare's initializing-lock repair rule is unchanged.
+`trim_scope_with` exposes durable boundaries for crash tests.
+
 ### Clear a half-registered add
 
 A kill after Git writes the admin `gitdir` but before it writes `HEAD` needs
@@ -118,8 +153,9 @@ intent. Saving changes neither working files nor the live index. A retry reuses
 the saved ref. Cleanup then resets the checkout and removes untracked files.
 The completion records the ref, and the closing notice lists it as plain text.
 Use `git show <ref>:<path>` to recover a file, or `<ref>^2:<path>` for staged content.
-Scratch refs stay for 30 days. New worktree deliveries prune expired refs in that
-repository. No timer runs for retention. Rebase and publish still reject dirty
+Scratch refs stay for 30 days. New worktree deliveries journal expiry candidates,
+then prune their refs and metadata. Housekeeping errors are logged and do not block
+worktree operations. No timer runs for retention. Rebase and publish still reject dirty
 worktrees as permanent failures.
 
 For a clean checkout, the controller records a clean preflight in its Remove intent. Git's

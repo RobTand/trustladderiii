@@ -1,4 +1,5 @@
 use crate::{Result, adapters, executor::Registry, ingress::Webhooks};
+use tl3_worktrees::{CommitId, Worktrees};
 
 pub struct Registration {
     pub adapters: Registry,
@@ -52,7 +53,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         let path = repository_path(&config.worktrees_root, repo);
         fs::create_dir_all(&path)?;
         if !path.join("HEAD").exists() {
-            git(&path, &["init", "--bare", "--quiet", "--template="])?;
+            Worktrees::init_bare(&path)?;
         }
         worktrees.serve_github(repo.clone(), &path, clients[&repo.installation].clone())?;
     }
@@ -153,31 +154,6 @@ fn repository_path(root: &std::path::Path, repo: &crate::Repository) -> std::pat
         .join(format!("{}.git", repo.name.to_ascii_lowercase()))
 }
 
-fn git(root: &std::path::Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .env_clear()
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args([
-            "--no-replace-objects",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-        ])
-        .args(args)
-        .output()?;
-    if !output.status.success() {
-        return Err(crate::Error::Invalid(
-            "production repository operation failed",
-        ));
-    }
-    Ok(output.stdout)
-}
-
 #[derive(Clone)]
 pub(crate) struct Materials {
     clients: std::collections::BTreeMap<u64, tl3_github::GitHub>,
@@ -233,10 +209,9 @@ pub(crate) fn repository_materials(
 ) -> Result<serde_json::Value> {
     use crate::Error;
     use serde_json::json;
-    if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|c| c.is_ascii_hexdigit()) {
-        return Err(Error::Invalid("repository snapshot needs an exact commit"));
-    }
-    let tree = git(repository, &["ls-tree", "-r", "-l", "-z", commit])?;
+    let commit = CommitId::new(commit)?;
+    let repository = Worktrees::open(repository, repository)?;
+    let tree = repository.list_tree(&commit)?;
     let mut files = Vec::new();
     let mut materials = Vec::new();
     let mut readme = String::new();
@@ -268,7 +243,7 @@ pub(crate) fn repository_materials(
         if total > 32 * 1024 * 1024 {
             return Err(Error::Invalid("repository text exceeds the input bound"));
         }
-        let bytes = git(repository, &["cat-file", "blob", fields[2]])?;
+        let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
         if bytes.contains(&0) {
             continue;
         }
@@ -351,6 +326,35 @@ mod tests {
                 .any(|m| m["path"] == "link" || m["path"] == "binary")
         );
         assert_eq!(repo["file_list"].as_array().unwrap().len(), 4);
+    }
+}
+
+#[cfg(test)]
+impl Materials {
+    pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
+        Self {
+            clients: Default::default(),
+            worktrees,
+        }
+    }
+}
+
+#[cfg(test)]
+mod hostile_tests {
+    #[test]
+    fn hostile_repository_materials() {
+        crate::git_tests::hostile(
+            "production::hostile_tests::hostile_repository_materials",
+            || {
+                let f = crate::git_tests::Repo::new();
+                let value = super::repository_materials(&f.path, &f.head).unwrap();
+                assert_eq!(
+                    value["readme"],
+                    std::fs::read_to_string(f.path.join("README.md")).unwrap()
+                );
+                assert_eq!(value["file_list"], serde_json::json!(["README.md"]));
+            },
+        );
     }
 }
 

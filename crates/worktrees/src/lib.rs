@@ -5,6 +5,9 @@
 //! No OS file locks are used because of the deployment kernel's file-lock bug.
 #![forbid(unsafe_code)]
 
+mod queries;
+mod snapshots;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{
     collections::HashMap,
@@ -17,6 +20,12 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 use url::Url;
+
+enum GitEnvironment<'a> {
+    Default,
+    Snapshot,
+    Index(&'a Path),
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -113,20 +122,51 @@ impl BranchName {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(transparent)]
 pub struct CommitId(String);
+
+impl std::fmt::Display for CommitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CommitId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
 
 impl CommitId {
     pub fn new(value: impl Into<String>) -> Result<Self, Error> {
         let value = value.into();
-        if !matches!(value.len(), 40 | 64) || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !matches!(value.len(), 40 | 64)
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err(Error::CommitId);
         }
-        Ok(Self(value.to_ascii_lowercase()))
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobId(CommitId);
+
+impl BlobId {
+    pub fn new(value: impl Into<String>) -> Result<Self, Error> {
+        CommitId::new(value).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
@@ -206,6 +246,19 @@ pub struct Worktrees {
 struct Checkout {
     path: PathBuf,
     branch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopeTrim {
+    pub head: CommitId,
+    pub removed_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrimBoundary {
+    Recorded,
+    CheckoutRestored,
+    HeadUpdated,
 }
 
 impl Worktrees {
@@ -386,8 +439,8 @@ impl Worktrees {
         Ok(())
     }
 
-    /// Called on worktree events; expiry never schedules a wakeup.
-    pub fn prune_scratch(&self, now_secs: u64) -> Result<(), Error> {
+    /// Discover expiry candidates before the caller journals their removal.
+    pub fn expired_scratch(&self, now_secs: u64) -> Result<Vec<(String, CommitId)>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let output = self.run(
             &self.repo,
@@ -399,6 +452,7 @@ impl Worktrees {
             ],
         )?;
         let text = std::str::from_utf8(&output.stdout).map_err(|_| Error::Response)?;
+        let mut expired = Vec::new();
         for line in text.lines() {
             let mut fields = line.split_whitespace();
             let reference = fields.next().ok_or(Error::Response)?;
@@ -409,12 +463,24 @@ impl Worktrees {
                 .parse()
                 .map_err(|_| Error::Response)?;
             if now_secs.saturating_sub(saved) >= 30 * 24 * 60 * 60 {
-                self.run(
-                    &self.repo,
-                    "expire saved scratch",
-                    ["update-ref", "-d", reference, head],
-                )?;
+                expired.push((reference.to_owned(), CommitId::new(head)?));
             }
+        }
+        Ok(expired)
+    }
+
+    /// A missing ref confirms an earlier deletion when replaying a journalled prune.
+    pub fn prune_scratch(&self, reference: &str, expected: &CommitId) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !reference.starts_with("refs/tl3/scratch/") {
+            return Err(Error::Recovery);
+        }
+        if self.resolve_optional(reference)?.is_some() {
+            self.run(
+                &self.repo,
+                "expire saved scratch",
+                ["update-ref", "-d", reference, expected.as_str()],
+            )?;
         }
         Ok(())
     }
@@ -1501,6 +1567,27 @@ impl Worktrees {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.execute_with_environment(
+            path,
+            args,
+            token,
+            input,
+            index.map_or(GitEnvironment::Default, GitEnvironment::Index),
+        )
+    }
+
+    fn execute_with_environment<I, S>(
+        &self,
+        path: &Path,
+        args: I,
+        token: Option<&InstallationToken>,
+        input: Option<&[u8]>,
+        environment: GitEnvironment<'_>,
+    ) -> Result<Output, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new("git");
         // Clear inherited tracing, config injection, alternate indexes and credential helpers.
         command
@@ -1512,10 +1599,12 @@ impl Worktrees {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true")
             .env("LC_ALL", "C")
             .args([
+                "--no-replace-objects",
                 "-c",
                 "core.hooksPath=/dev/null",
                 "-c",
@@ -1550,7 +1639,16 @@ impl Worktrees {
             } else {
                 Stdio::null()
             });
-        if let Some(index) = index {
+        if matches!(environment, GitEnvironment::Snapshot) {
+            command
+                .env("GIT_AUTHOR_NAME", "TL3")
+                .env("GIT_AUTHOR_EMAIL", "tl3@example.invalid")
+                .env("GIT_COMMITTER_NAME", "TL3")
+                .env("GIT_COMMITTER_EMAIL", "tl3@example.invalid")
+                .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z");
+        }
+        if let GitEnvironment::Index(index) = environment {
             command.env("GIT_INDEX_FILE", index);
         }
         if let Some(token) = token {
@@ -1697,6 +1795,7 @@ struct Invocation {
     stderr: Vec<u8>,
 }
 
+mod scope;
 fn recovery_error(error: Error) -> Error {
     match error {
         Error::Git { .. } | Error::DirtyWorktree => Error::Recovery,
