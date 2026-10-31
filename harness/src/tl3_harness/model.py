@@ -6,6 +6,7 @@ class Kind(StrEnum):
     DEMONSTRATING = "demonstrating"
     REGRESSION = "regression"
     BEHAVIOR_PRESERVING = "behavior-preserving"
+    REPRODUCING = "reproducing"
 
 
 class Outcome(StrEnum):
@@ -77,7 +78,7 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
         pre_existing = (check.kind == Kind.REGRESSION
                         and before in (Outcome.ASSERTION, Outcome.ERROR))
         match check.kind:
-            case Kind.DEMONSTRATING:
+            case Kind.DEMONSTRATING | Kind.REPRODUCING:
                 passed = before in (Outcome.ASSERTION, Outcome.ADDED_NAME) and after == Outcome.PASSED
             case Kind.REGRESSION:
                 available = before not in (Outcome.SKIPPED, Outcome.MISSING, Outcome.UNCOLLECTED, Outcome.NO_REPORT)

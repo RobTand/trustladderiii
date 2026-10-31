@@ -8,7 +8,9 @@ its Kani and network-isolation requirements.
 
 ## Design and isolation
 
-Six systemd user services on dl380g10 each run a rootless Podman container.
+Six TL3 and two sandbox systemd user services on dl380g10 each run a rootless
+Podman container. Both repositories use the same image and slot script. The
+installer selects the repository with its second argument.
 The host script calls the repository's `generate-jitconfig` REST endpoint using
 the host's existing `gh` login. It sends the resulting one-job credential through
 stdin, without writing it to disk, the Podman environment, or the journal.
@@ -59,8 +61,10 @@ Python's is 30 minutes. Test deadlines and assertions stay intact. Mergify allow
 ## Capacity
 
 Each container has `--cpus=4 --cpuset-cpus=40-79 --memory=6g --memory-swap=6g`
-and at most 1,024 processes. Six slots use at most 24 CPU equivalents and 36 GiB
-RAM, enough for three Mergify batches with two jobs each. Native thread limits remain in the
+and at most 1,024 processes. Six TL3 slots use at most 24 CPU equivalents and
+36 GiB RAM, enough for three Mergify batches with two jobs each. Two sandbox
+slots add at most eight CPU equivalents and 12 GiB RAM. All eight slots total
+32 CPU equivalents and 48 GiB RAM. Native thread limits remain in the
 workflow and image. Image builds also have a two-CPU, six-GiB limit.
 
 On 2026-10-30, the published PrismaBuild configuration at
@@ -102,9 +106,11 @@ before setting container CPU placement.
 The installer rebuilds through Podman's cache, installs the scripts and unit,
 records the immutable local image ID, reloads systemd, and enables one slot.
 Rerunning it converges on the same files without restarting an active job.
-After a successful retag it removes only the previous image ID, without force.
-If a container still references that image, removal is deferred. Remove that
-same ID after the idle-slot rollout. Never use `podman image prune`, since other
+After a successful retag it updates the image ID in every installed profile's
+environment file, preserving each profile's CPU placement. It then removes only
+previous image IDs that no environment file references, without force. If a
+container still references an old image, removal is deferred. Remove that same
+ID after the idle-slot rollout. Never use `podman image prune`, since other
 projects have untagged images in the same store.
 Use `install.sh 0` to install without starting slots. This does not stop slots
 that are already active.
@@ -137,6 +143,52 @@ The PR records the red and green action keys and live evidence. CI runs on the
 fleet directly under Rob's Mergify policy. Agent-run development tests still
 require PrismaBuild; this infrastructure is not an alternative test route.
 
+## Serve the sandbox
+
+Install two separate slots without restarting TL3 jobs:
+
+```sh
+deploy/ci-runners/install.sh 2 sandbox
+gh api repos/RobTand/tl3-sandbox/actions/runners \
+  --jq '.runners[] | {name,status,labels:[.labels[].name]}'
+```
+
+The installer reuses the cached `localhost/tl3-ci-runner:phase1` image and
+installs `tl3-ci-runner-sandbox@.service`. Each sandbox service passes its
+prefix to the shared slot script. Its containers are named
+`tl3-ci-runner-sandbox-N`; runner names start with `tl3-sandbox-dl380g10-slot-N-`.
+Registration uses `POST repos/RobTand/tl3-sandbox/actions/runners/generate-jitconfig`
+and labels `self-hosted`, `linux`, `x64`, and `tl3-sandbox-fleet`.
+Only sandbox slots 1 and 2 are accepted. Limits and isolation match the TL3 slots.
+
+The unit files reproduce the installed units on dl380g10. TL3 keeps
+`~/.config/tl3-ci-runners/runner.env` and the slot script's default prefix.
+The sandbox uses `~/.config/tl3-ci-runners/tl3-ci-runner-sandbox.env` and
+passes `%i %p`. Both units disable start limiting and use the same restart
+backoff and notifications. A sandbox reinstall preserves its CPU placement
+and updates only the image ID in TL3's environment, leaving its unit untouched.
+`install.sh 0 sandbox` updates files without enabling additional slots.
+Reinstalling does not restart active services.
+
+Open the sandbox workflow PR as TL3's GitHub App using `sandbox_gate`, as
+[the sandbox procedure](../sandbox/RUN_TRIALS.md) describes. Select
+`[self-hosted, linux, x64, tl3-sandbox-fleet]` and keep the job name
+`Sandbox tests`. Its own PR workflow is the canary. Confirm its successful
+jobs API record names a `tl3-sandbox-dl380g10-slot-` runner. Give the PR number
+and full head SHA to the coordinator for Rob's code-owner approval and queueing.
+Do not submit a human approval or bypass the gate.
+
+Update `deploy/sandbox/files/.github/workflows/tests.yml` and its SHA-256 in
+`deploy/sandbox/approved.json` together. After the sandbox PR merges, run the
+GET-only settings checker through PrismaBuild. Until then, a live workflow
+hash mismatch is expected. The approved baseline remains reviewed, not learned
+from live settings.
+
+Run the offline runner boundary tests and sandbox checker tests through
+PrismaBuild. `test_runners.py` uses synthetic JIT input and temporary command
+boundaries, with no credentials or running containers. Live installation and
+the GitHub canary prove the actual registration and image.
+
 ## Roll back
 
 First stop and disable the units. A revert PR cannot get hosted checks while
@@ -149,6 +201,17 @@ systemctl --user stop 'tl3-ci-runner@*'
 systemctl --user disable tl3-ci-runner@{1..6}.service
 ```
 
+To roll back the sandbox, revert its workflow through the App and reviewed
+queue process, and update the approved copy and hash in the TL3 PR. Stop and
+disable only its two slots:
+
+```sh
+systemctl --user stop 'tl3-ci-runner-sandbox@*'
+systemctl --user disable tl3-ci-runner-sandbox@{1..2}.service
+```
+
+Stopping sandbox slots cancels their running jobs. The TL3 slots keep running.
+
 Then prepare the revert through the normal reviewed PR process. Rob must clear
 the billing limit before its hosted checks can run. Reverting restores hosted
 labels. Images and installed files can remain for a later rollout.
@@ -157,7 +220,7 @@ labels. Images and installed files can remain for a later rollout.
 
 - Block LAN access while allowing the GitHub, Rust, Python, uv, and package
   endpoints the checks need. Rootless networking alone does not provide this.
-- Account for CI's 24 CPUs and 36 GiB in PrismaBuild's capacity and coordinate
+- Account for CI's 32 CPUs and 48 GiB in PrismaBuild's capacity and coordinate
   CPU affinity, rather than competing for its full inherited CPU set.
 - Add ARM runners on sparky and sparklina after that accounting is in place.
   Pin an ARM runner base and rustup installer with their own digests, validate

@@ -850,6 +850,61 @@ def test_outside_path_feedback_schema_is_bounded(maker_request, paths):
         validate('maker-input', maker_request['inputs'])
 
 
+@pytest.fixture
+def review_fix(maker_request):
+    inputs = maker_request['inputs']
+    inputs.update(round=1, reviewed_sha='a' * 40, feedback=[
+        {'kind': 'review_finding', 'id': 'review-4-0', 'reviewed_sha': 'a' * 40,
+         'report': 'Greeting fails for an empty name.', 'goal_ids': ['greeting']},
+        {'kind': 'review_finding', 'id': 'review-4-1', 'reviewed_sha': 'a' * 40,
+         'report': 'Describe the signature.', 'goal_ids': ['interface']},
+        {'kind': 'failed_check', 'report': 'Existing test failed.', 'goal_ids': ['greeting']},
+        {'kind': 'review_finding', 'id': 'old-review', 'reviewed_sha': 'b' * 40,
+         'report': 'An earlier attempt failed.', 'goal_ids': ['greeting']},
+    ])
+    reply = {**DONE, 'reproductions': [
+        {'finding_id': 'review-4-0', 'tests': ['test_greeting.py::test_empty_name']},
+        {'finding_id': 'review-4-1', 'reason': 'This is a documentation correction.'},
+    ]}
+    return inputs, reply
+
+
+def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
+    inputs, reply = review_fix
+    from tl3_workers.contracts import schema
+    from jsonschema import Draft202012Validator
+    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'reviewed findings need identities'
+    assert Draft202012Validator(schema('maker-reply')).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
+    maker._check_reply(inputs, reply)
+
+
+@pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])
+def test_review_fix_must_cover_current_findings_exactly_once(review_fix, invalid):
+    inputs, reply = review_fix
+    if invalid == 'omitted':
+        reply.pop('reproductions')
+    elif invalid == 'partial':
+        reply['reproductions'].pop()
+    elif invalid == 'duplicate':
+        reply['reproductions'].append(reply['reproductions'][0])
+    elif invalid == 'unknown':
+        reply['reproductions'][0]['finding_id'] = 'invented'
+    elif invalid == 'old':
+        reply['reproductions'][0]['finding_id'] = 'old-review'
+    else:
+        reply['reproductions'][0]['tests'] = ['test_greeting.py']
+    with pytest.raises(ValueError, match='reproduc|finding|pytest'):
+        maker._check_reply(inputs, reply)
+
+
+def test_failed_checks_do_not_require_new_tests(maker_request):
+    inputs = maker_request['inputs']
+    inputs.update(round=1, feedback=[{
+        'kind': 'failed_check', 'report': 'CI test failed.', 'goal_ids': ['greeting'],
+    }])
+    maker._check_reply(inputs, DONE)
+
+
 def test_standing_rule_feedback_needs_no_goal_citation(maker_request):
     maker_request['inputs']['round'] = 1
     maker_request['inputs']['feedback'] = [{

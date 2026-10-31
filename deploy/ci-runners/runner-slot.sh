@@ -3,15 +3,30 @@ set +x
 set -euo pipefail
 umask 077
 
-slot=${1:?Usage: runner-slot.sh SLOT}
-[[ "$slot" =~ ^[1-6]$ ]] || { echo 'Slot must be 1 through 6' >&2; exit 1; }
+slot=${1:?Usage: runner-slot.sh SLOT [SERVICE_PREFIX]}
+prefix=${2:-tl3-ci-runner}
+case "$prefix" in
+    tl3-ci-runner)
+        repository=RobTand/trustladderiii
+        label=tl3-fleet
+        runner_prefix=tl3-dl380g10
+        [[ "$slot" =~ ^[1-6]$ ]] || exit 1
+        ;;
+    tl3-ci-runner-sandbox)
+        repository=RobTand/tl3-sandbox
+        label=tl3-sandbox-fleet
+        runner_prefix=tl3-sandbox-dl380g10
+        [[ "$slot" =~ ^[1-2]$ ]] || exit 1
+        ;;
+    *) echo 'Unknown runner service prefix' >&2; exit 1 ;;
+esac
 [[ ${CI_RUNNER_IMAGE:-} =~ ^sha256:[a-f0-9]{64}$ ]] || {
     echo 'CI_RUNNER_IMAGE must be the installed immutable image ID' >&2
     exit 1
 }
 
-container="tl3-ci-runner-$slot"
-runner="tl3-dl380g10-slot-$slot-$(date +%s)-${RANDOM}"
+container="$prefix-$slot"
+runner="$runner_prefix-slot-$slot-$(date +%s)-${RANDOM}"
 options=()
 cpuset=${CI_RUNNER_CPUSET:-40-79}
 [[ "$cpuset" =~ ^[0-9,-]+$ ]] || exit 1
@@ -19,10 +34,10 @@ options+=(--cpuset-cpus "$cpuset")
 
 # Only this host process uses gh's login. Never trace or persist the JIT response.
 jit_config=$(gh api --method POST \
-    repos/RobTand/trustladderiii/actions/runners/generate-jitconfig \
+    "repos/$repository/actions/runners/generate-jitconfig" \
     -f "name=$runner" -F runner_group_id=1 -f work_folder=_work \
     -f 'labels[]=self-hosted' -f 'labels[]=linux' -f 'labels[]=x64' \
-    -f 'labels[]=tl3-fleet' --jq .encoded_jit_config 2>/dev/null) || {
+    -f "labels[]=$label" --jq .encoded_jit_config 2>/dev/null) || {
     status=$?
     echo "JIT registration failed for slot $slot (gh exit $status); systemd will back off" >&2
     exit 1

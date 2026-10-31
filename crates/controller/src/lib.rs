@@ -1499,6 +1499,29 @@ impl Controller {
             },
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
+                if let Some(n) = world.nodes.get(node.0 as usize)
+                    && n.phase == tl3_kernel::Phase::Rebasing
+                    && let Some(mut fixes) = self
+                        .store
+                        .worker_document(&node.0.to_string(), "review_fixes")?
+                    && fixes["head_sha"].as_str() == commit_sha(snapshot, n.head)
+                {
+                    fixes["head_sha"] = json!(sha);
+                    if let Some(reviewed) = &run.reviewed_sha {
+                        fixes["reviewed_sha"] = json!(reviewed);
+                    }
+                    if let Some(reason) = &run.reproducing_unavailable {
+                        for finding in fixes["findings"].as_array_mut().unwrap() {
+                            if finding.get("tests").is_some() {
+                                finding.as_object_mut().unwrap().remove("tests");
+                                finding["reason"] = json!(reason);
+                            }
+                        }
+                    }
+                    commit
+                        .rows
+                        .push(put("review_fixes", node.0.to_string(), fixes));
+                }
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
@@ -1638,11 +1661,12 @@ impl Controller {
                             .as_array_mut()
                             .ok_or(Error::Invalid("invalid maker findings"))?;
                         let mut remaining = findings::MAX_REPORT_CHARS;
-                        for finding in reply["blocking_findings"]
+                        for (index, finding) in reply["blocking_findings"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .take(findings::MAX_REVIEW_FINDINGS)
+                            .enumerate()
                         {
                             let report = format!(
                                 "{}: {}",
@@ -1666,6 +1690,15 @@ impl Controller {
                                 Vec::new()
                             };
                             reports.push(serde_json::to_value(findings::Finding {
+                                id: Some(format!("review-{generation}-{index}")),
+                                reviewed_sha: Some(
+                                    criteria["head_sha"]
+                                        .as_str()
+                                        .ok_or(Error::Invalid(
+                                            "review finding needs its exact commit",
+                                        ))?
+                                        .to_owned(),
+                                ),
                                 kind: findings::Kind::ReviewFinding,
                                 report,
                                 goal_ids,
@@ -1755,12 +1788,52 @@ impl Controller {
                             goals.iter().map(|g| g["id"].as_str()).collect();
                         let checked: BTreeSet<_> =
                             checks.iter().map(|c| c["goal_id"].as_str()).collect();
+                        let feedback = self
+                            .store
+                            .worker_document(&node.0.to_string(), "maker_findings")?
+                            .unwrap_or(json!([]));
+                        let previous = commit_sha(snapshot, n.head);
+                        let reviewed = if n.round == 1 { previous } else { None };
+                        let fixes =
+                            adapters::workers::reproducing::check(&reply, &feedback, reviewed);
                         if expected != checked || checks.len() != goals.len() {
                             Reply::RunFailed
-                        } else {
+                        } else if let Ok(fixes) = fixes {
+                            if !fixes.evidence["findings"].as_array().unwrap().is_empty() {
+                                let mut run = check_run(snapshot, node, Some(&sha))?
+                                    .or(check_run(snapshot, node, previous)?)
+                                    .ok_or(Error::Invalid(
+                                        "review fix needs its original check plan",
+                                    ))?;
+                                run.plan.retain(|check| {
+                                    check.kind != adapters::prismabuild::Kind::Reproducing
+                                });
+                                run.plan.extend(fixes.checks);
+                                run.reviewed_sha = run
+                                    .plan
+                                    .iter()
+                                    .any(|check| {
+                                        check.kind == adapters::prismabuild::Kind::Reproducing
+                                    })
+                                    .then_some(reviewed)
+                                    .flatten()
+                                    .map(str::to_owned);
+                                commit.rows.push(put(
+                                    "check_plans",
+                                    format!("{}:{sha}", node.0),
+                                    json!(run),
+                                ));
+                                let mut evidence = fixes.evidence;
+                                evidence["head_sha"] = json!(sha);
+                                commit
+                                    .rows
+                                    .push(put("review_fixes", node.0.to_string(), evidence));
+                            }
                             Reply::MakerDone {
                                 head: self.head(node, &sha)?,
                             }
+                        } else {
+                            Reply::RunFailed
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
@@ -1783,6 +1856,17 @@ impl Controller {
                         }
                     }
                 };
+                if role == "reviewer" {
+                    commit.rows.push(put(
+                        "reviewer_session",
+                        node.0.to_string(),
+                        json!({"attempt": n.attempt, "replanned": n.replanned,
+                            "generation": generation,
+                            "head_sha": n.head.and_then(|head| snapshot.interned.iter()
+                                .find(|i| i.kind == tl3_store::InternKind::Commit && i.id == head.0 as i64)
+                                .map(|i| i.value.clone()))}),
+                    ));
+                }
                 if role == "maker" && mapped != Reply::RunFailed {
                     commit.rows.push(put(
                         "maker_session",
@@ -1947,6 +2031,8 @@ impl Controller {
                 .worker_document(&node.0.to_string(), "maker_findings")?
                 .unwrap_or(json!([]));
             let finding = findings::Finding {
+                id: None,
+                reviewed_sha: None,
                 kind,
                 report: findings::clipped(&report, findings::MAX_REPORT_CHARS),
                 goal_ids,
@@ -2128,4 +2214,13 @@ fn check_run(
         .map(|r| serde_json::from_value(r.value.clone()))
         .transpose()
         .map_err(Into::into)
+}
+
+fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {
+    let head = head?;
+    snapshot
+        .interned
+        .iter()
+        .find(|item| item.kind == tl3_store::InternKind::Commit && item.id == head.0 as i64)
+        .map(|item| item.value.as_str())
 }

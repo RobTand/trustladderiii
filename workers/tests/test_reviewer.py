@@ -210,6 +210,171 @@ def test_prompt_blocks_test_report_tampering():
     assert "is not\ntampering" in prompt
 
 
+@pytest.fixture
+def session_model(monkeypatch):
+    observed = []
+    responses = []
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(copy.deepcopy(messages))
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, "create_model", lambda request: Model(responses=responses))
+    return observed, responses
+
+
+def start_review_session(request, session_model, tmp_path):
+    observed, responses = session_model
+    request["session_file"] = str(tmp_path / "sessions/35/plan-0/reviewer-attempt-1.json")
+    request["resume_session"] = False
+    responses[:] = [AIMessage(content=json.dumps(changes(blocker())),
+                              additional_kwargs={"reasoning_content": "The implementation contradicts g1."})]
+    runtime.run(request, lambda event: None)
+    request["last_accepted_generation"] = request["operation"]["generation"]
+    request["operation"]["generation"] += 2
+    request["resume_session"] = True
+    request["inputs"].update(base_sha=HEAD, head_sha="c" * 40, diff="fix greeting",
+                              checks=[])
+    observed.clear()
+    responses[:] = [AIMessage(content=json.dumps({**APPROVE, "head_sha": "c" * 40}))]
+
+
+def test_round_one_sees_round_zero_findings_and_reasoning(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    runtime.run(review_request, lambda event: None)
+    history = observed[0]
+    humans = [json.loads(m.content) for m in history if m.type == "human"]
+    assert len(humans) == 2
+    assert humans[0]["head_sha"] == HEAD
+    assert humans[1] == review_request["inputs"]
+    previous = next(m for m in history if m.type == "ai")
+    assert json.loads(previous.content) == changes(blocker())
+    assert previous.additional_kwargs["reasoning_content"] == "The implementation contradicts g1."
+
+
+def test_new_attempt_starts_fresh_reviewer_session(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    review_request["session_file"] = str(tmp_path / "sessions/35/plan-0/reviewer-attempt-2.json")
+    review_request["resume_session"] = False
+    review_request.pop("last_accepted_generation")
+    runtime.run(review_request, lambda event: None)
+    assert len([m for m in observed[0] if m.type == "human"]) == 1
+    assert not any(m.type == "ai" for m in observed[0])
+    from pathlib import Path
+    assert Path(review_request["session_file"]).is_file()
+
+
+@pytest.mark.parametrize("crash_event", ["model_turn", "reply"])
+@pytest.mark.parametrize("new_generation", [False, True])
+def test_round_one_crash_and_retry_do_not_duplicate_turns(
+        review_request, session_model, tmp_path, crash_event, new_generation):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+
+    def crash(event):
+        if event.get("unit", event["event"]) == crash_event:
+            raise RuntimeError("injected crash after durable completion")
+
+    with pytest.raises(RuntimeError, match="injected crash"):
+        runtime.run(review_request, crash)
+    if new_generation:
+        review_request["operation"]["generation"] += 1
+    events = []
+    runtime.run(review_request, events.append)
+    assert len(observed) == 1, "retry must recover the completed model turn"
+    assert events[-1]["reply"]["head_sha"] == "c" * 40
+    from pathlib import Path
+    checkpoint = Path(review_request["session_file"]).read_bytes()
+    runtime.run(review_request, events.append)
+    assert len(observed) == 1
+    assert Path(review_request["session_file"]).read_bytes() == checkpoint
+
+
+@pytest.mark.parametrize("crash_unit", ["model_turn", "tool_result"])
+def test_round_one_retry_keeps_completed_tool_exchange(review_request, session_model, tmp_path, crash_unit):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, responses = session_model
+    responses.insert(0, AIMessage(content="", tool_calls=[{
+        "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}]))
+
+    def crash(event):
+        if event.get("unit") == crash_unit:
+            raise RuntimeError("injected crash during tool exchange")
+
+    with pytest.raises(RuntimeError, match="during tool exchange"):
+        runtime.run(review_request, crash)
+    responses.pop(0)
+    review_request["operation"]["generation"] += 1
+    runtime.run(review_request, lambda event: None)
+    assert len(observed) == 2
+    assert len([m for m in observed[-1] if m.type == "human"]) == 2
+    assert len([m for m in observed[-1] if m.type == "tool"]) == 1
+    assert len([m for m in observed[-1] if m.type == "ai" and m.tool_calls]) == 1
+
+
+def test_accepted_round_one_recheck_is_a_new_visit(review_request, session_model, tmp_path):
+    start_review_session(review_request, session_model, tmp_path)
+    observed, _ = session_model
+    runtime.run(review_request, lambda event: None)
+    review_request["last_accepted_generation"] = review_request["operation"]["generation"]
+    review_request["operation"]["generation"] += 2
+    runtime.run(review_request, lambda event: None)
+    assert len(observed) == 2
+    assert len([m for m in observed[-1] if m.type == "human"]) == 3
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+@pytest.mark.parametrize("usage", [None, {"input_tokens": 127_499, "output_tokens": 1,
+                                        "total_tokens": 127_500}])
+def test_reviewer_stops_before_context_exhaustion(review_request, session_model, tmp_path,
+                                                 with_session, usage):
+    observed, responses = session_model
+    review_request["inputs"]["context_size"] = 150_000 if usage else 1_000
+    if with_session:
+        review_request["session_file"] = str(tmp_path / "reviewer.json")
+    responses[:] = [AIMessage(content=json.dumps(APPROVE), usage_metadata=usage)]
+    events = []
+    with pytest.raises(ValueError, match="reviewer out of room"):
+        runtime.run(review_request, events.append)
+    assert not any(event["event"] == "reply" for event in events)
+    if with_session:
+        with pytest.raises(ValueError, match="reviewer out of room"):
+            runtime.run(review_request, events.append)
+        assert len(observed) == 1, "retry must not repeat an exhausted model turn"
+
+
+@pytest.mark.parametrize("field,value", [("diff", "different fix"), ("checks", [])])
+def test_review_retry_rejects_changed_evidence(review_request, session_model, tmp_path, field, value):
+    observed, responses = session_model
+    review_request["session_file"] = str(tmp_path / "reviewer.json")
+    responses[:] = [AIMessage(content=json.dumps(APPROVE))]
+    runtime.run(review_request, lambda event: None)
+    review_request["inputs"][field] = value
+    with pytest.raises(ValueError, match="review retry evidence changed before acceptance"):
+        runtime.run(review_request, lambda event: None)
+    assert len(observed) == 1
+
+
+def test_exhausted_reviewer_does_not_execute_pending_reads(review_request, session_model, tmp_path):
+    observed, responses = session_model
+    review_request["session_file"] = str(tmp_path / "reviewer.json")
+    review_request["inputs"]["context_size"] = 1_000
+    responses[:] = [AIMessage(content="", tool_calls=[{
+        "name": "read", "args": {"path": "greeting.py"}, "id": "inspect", "type": "tool_call"}])]
+    events = []
+    for _ in range(2):
+        with pytest.raises(ValueError, match="reviewer out of room"):
+            runtime.run(review_request, events.append)
+    assert not events
+    assert len(observed) == 1
+
+
 @pytest.mark.parametrize("length,valid", [(1000, True), (1001, False)])
 def test_review_check_message_bound(review_request, length, valid):
     from jsonschema import Draft202012Validator
@@ -217,3 +382,10 @@ def test_review_check_message_bound(review_request, length, valid):
 
     review_request["inputs"]["checks"][0]["tests"][0]["message"] = "é" * length
     assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"]) == valid
+
+
+@pytest.mark.parametrize('count,valid', [(20, True), (21, False)])
+def test_blocking_findings_are_bounded(count, valid):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+    assert Draft202012Validator(schema('reviewer-reply')).is_valid(changes(*[blocker()] * count)) == valid
