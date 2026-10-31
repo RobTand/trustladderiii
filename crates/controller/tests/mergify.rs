@@ -284,7 +284,7 @@ impl Respond for Api {
                     let response = ResponseTemplate::new(state.command_status)
                         .set_body_json(json!({"message":"Resource not accessible by integration"}));
                     return if state.command_status == 429 {
-                        response.insert_header("retry-after", "1")
+                        response.insert_header("retry-after", "0")
                     } else { response };
                 }
                 let comment = json!({"id":1000 + state.requeues,"body":body["body"],

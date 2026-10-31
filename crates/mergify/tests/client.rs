@@ -27,7 +27,9 @@ fn recorded(name: &str) -> (PullRequest, Vec<CheckRun>) {
 }
 
 fn dequeue_completion(rule_name: &str) -> (PullRequest, Vec<CheckRun>) {
-    let (pull, mut checks) = recorded("interrupted");
+    let (pull, _) = recorded("running");
+    let mut checks: Vec<CheckRun> =
+        serde_json::from_value(fixture("interrupted", "checks")).unwrap();
     let queue = checks
         .iter_mut()
         .find(|check| check.name == tl3_mergify::QUEUE_CHECK)
