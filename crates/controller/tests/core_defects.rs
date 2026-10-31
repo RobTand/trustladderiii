@@ -216,6 +216,15 @@ fn serialized_names_match_store_sql() {
         json!({"Closed":"Merged"})
     );
     assert_eq!(json!(Upstream::Workers), "Workers");
+    for upstream in [
+        Upstream::GitHub,
+        Upstream::Mergify,
+        Upstream::PrismaBuild,
+        Upstream::Workers,
+        Upstream::Worktrees,
+    ] {
+        assert_eq!(json!(upstream), upstream.kind());
+    }
     let output = json!(Output::Effect {
         node: NodeId(7),
         seq: 1,
@@ -284,6 +293,27 @@ fn completion_and_look_deduplicate_old_inbox_formats() {
             .filter(|r| r.table == "inbox")
             .collect();
         assert_eq!(inbox.len(), 1, "legacy {mode} row must deduplicate");
+        assert!(c.drive_once().unwrap());
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new("old-found-state", json!(null), &snapshot);
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+            .unwrap();
+        let mut value = row.value.clone();
+        value["found"] = Value::Null;
+        change.rows.push(put("allowances", &key, value));
+        store.commit(&change).unwrap();
+        c.look_key(&key).unwrap();
+        assert!(
+            !c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "inbox"),
+            "consumed legacy {mode} evidence must stay consumed"
+        );
     }
     db.stop();
 }
@@ -361,6 +391,15 @@ fn steering_creates_allowance_with_classifier() {
         .iter()
         .find(|e| e.key.starts_with("classify:"))
         .unwrap();
+    assert!(
+        Store::open(&settings)
+            .unwrap()
+            .worker_watches()
+            .unwrap()
+            .iter()
+            .any(|(key, _)| key == &effect.key),
+        "controller watches must match the store SQL contract"
+    );
     assert!(
         snapshot
             .rows

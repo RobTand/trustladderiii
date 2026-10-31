@@ -25,8 +25,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use tl3_kernel::{Ack, Event, Fact, HeadId, NodeId, Out, Reply, World};
 use tl3_store::{
-    Commit, CreditEntry, Effect, EffectState, EffectTransition, NewEffect, RowChange, Snapshot,
-    Store,
+    Commit, CreditEntry, Effect, EffectState, EffectTransition, RowChange, Snapshot, Store,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -400,6 +399,39 @@ impl Controller {
         Ok(())
     }
 
+    pub(crate) fn queue_observation(
+        &mut self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        key: &str,
+        index: usize,
+        observation: &Observation,
+    ) -> Result<()> {
+        let id = inbox_key(key, index, observation)?;
+        let aliases = [
+            id.clone(),
+            format!("{key}:{index:08}"),
+            format!("external:look:{key}:{index}:{}", evidence_key(observation)?),
+        ];
+        let value = json!(observation);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" && aliases.contains(&row.id) && row.value == value)
+            || self.store.event_matches(
+                &aliases
+                    .iter()
+                    .map(|id| format!("consume:{id}"))
+                    .collect::<Vec<_>>(),
+                &value,
+            )?
+        {
+            return Ok(());
+        }
+        commit.rows.push(put("inbox", id, value));
+        Ok(())
+    }
+
     /// Only news from an effect's own upstream releases its holds.
     pub fn retry_held_effects(&mut self, source: executor::Upstream) {
         self.held_effects.remove(&source);
@@ -688,11 +720,13 @@ impl Controller {
                     self.retry_held_effects(executor::upstream(delivery.output));
                 }
                 for (index, observation) in completion.observations.iter().enumerate() {
-                    commit.rows.push(put(
-                        "inbox",
-                        format!("{}:{index:08}:{}", delivery.key, evidence_key(observation)?),
-                        json!(observation),
-                    ));
+                    self.queue_observation(
+                        &snapshot,
+                        &mut commit,
+                        &delivery.key,
+                        index,
+                        observation,
+                    )?;
                 }
             }
             let quota = commit.rows.iter().any(|row| matches!(row, RowChange::Put { table, value, .. } if table == "inbox" && value.get("Quota").is_some()));
@@ -885,11 +919,7 @@ impl Controller {
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
-            commit.rows.push(put(
-                "inbox",
-                format!("{key}:{index:08}"),
-                json!(observation),
-            ));
+            self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
         self.store.commit(&commit)?;
         self.remove_hold(&delivery);
@@ -1114,9 +1144,14 @@ impl Controller {
                 ..
             } = output
             {
-                let id = format!("{}.{}", snapshot.revision.get() + 1, index);
+                let id = looks::incident_id(snapshot, index);
                 let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
-                let signature = format!("{source:?}:{class}");
+                let signature = looks::IncidentSignature {
+                    upstream: source,
+                    class: class.clone(),
+                };
+                let needs_rob =
+                    looks::incident_needs_rob(looks::IncidentCause::Kernel { needs_rob });
                 let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)
@@ -1139,9 +1174,11 @@ impl Controller {
                         post_key: Some(key.clone()),
                     }),
                 ));
-                delivery.note = Some(format!(
-                    "{summary} Request: https://github.com/{}/{}/issues/{}. Reply with \"clear incident {id}\" on this issue after fixing the cause.",
-                    delivery.repository.owner, delivery.repository.name, delivery.issue
+                delivery.note = Some(looks::incident_note(
+                    &delivery.repository,
+                    delivery.issue,
+                    &id,
+                    &summary,
                 ));
                 delivery.question_context = Some(json!({"issue_title":request.title,
                     "request":format!("{} (https://github.com/{}/{}/issues/{})", request.title,
@@ -1171,11 +1208,7 @@ impl Controller {
                     .push(put("watches", key.clone(), json!(delivery)));
             }
             commit.rows.push(self.allowance_row(delivery.clone()));
-            commit.effects.push(NewEffect {
-                key,
-                kind: format!("{:?}", executor::upstream(output.into())),
-                payload: json!(delivery),
-            });
+            commit.effects.push(delivery.into_effect());
         }
         for (index, node) in world.nodes.iter().enumerate() {
             let old = previous
@@ -2122,6 +2155,10 @@ fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
         });
     }
     Ok(delivery)
+}
+
+fn inbox_key(key: &str, index: usize, observation: &Observation) -> Result<String> {
+    Ok(format!("{key}:{index:08}:{}", evidence_key(observation)?))
 }
 
 fn evidence_key(observation: &Observation) -> Result<String> {
