@@ -22,7 +22,7 @@ If the file already exists, use the existing app's **Install App** page in GitHu
 Replace `https://tl3-webhook.invalid/github/events` in the app's webhook settings when the deploy ticket provides the receiver URL.
 Enable the webhook at that point. It stays inactive while the placeholder is in use.
 
-`manifest.json` requests issues, pull requests, checks, and contents with write access, plus read-only metadata.
+`manifest.json` requests actions, issues, pull requests, checks, and contents with write access, plus read-only metadata.
 It also requests `merge_queues: read`, which GitHub requires for the `merge_group` event.
 The app is private, so only its owning account can install it.
 The wizard replaces the manifest's redirect URL with its actual loopback port and checks a random state on the callback.
@@ -45,7 +45,8 @@ GitHub references:
 
 Recovery of cancelled, timed-out, or infrastructure-failed required checks needs
 repository permission **Actions: Read and write** on TL3's GitHub App. The original
-manifest does not request this permission. Rob must grant it in the App's
+manifest omitted this permission; the current manifest requests it for new installations.
+Rob must still grant it in the existing App's
 repository permissions and approve the updated permissions for the installation,
 including sandbox installation `176903725`.
 
