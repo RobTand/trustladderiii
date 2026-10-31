@@ -76,6 +76,13 @@ Qualification must run worker tests on dl380g10, sparky and sparklina because
 they include subprocesses and socket deadlines. A pass is evidence for the
 observed runs, not proof that a suite can never flake.
 
+The four-process qualification passed all 699 tests twice on dl380g10 in
+238.85s and 260.36s, and once each on sparky and sparklina in 85.91s and
+85.37s. PrismaBuild used four CPUs and a six-GiB memory budget per action.
+These runs used physical cores and do not establish CI's SMT performance.
+Terminal records and CAS receipt references are in
+`ci-batch-evidence/prismabuild.json`.
+
 Rust already uses `RUST_TEST_THREADS=4` and `CARGO_BUILD_JOBS=4`. Cargo runs
 integration executables in sequence, including custom `harness = false`
 executables. Several run `uv sync` against the same `workers/.venv` and then
