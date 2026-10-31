@@ -9,7 +9,12 @@ retained for the coordinator to retire; the private sandbox still uses them.
 `HOSTED_TEST_JOBS` in `.github/workflows/light-checks.yml` is the single
 default shard count. Ten means eight Rust jobs and two Python jobs. Each
 language alternates `ubuntu-24.04-arm` and `ubuntu-24.04`. Rust lint runs
-separately. The final `Rust` and `Python` checks require every prerequisite
+separately. Two compile-only jobs run alongside the test shards: workspace
+feature combinations on ARM and Kani proof compilation on x64. Loom supports
+only controller library unit tests, so that combination uses `--lib --no-run`;
+other combinations build all test targets with `--no-run`. Kani uses
+`--only-codegen`, with no proof verification. Each compile job records its
+time in an uploaded JSON artifact. The final `Rust` and `Python` checks require every prerequisite
 to succeed, including planning and lint. Failed, cancelled, skipped or missing
 results fail aggregation. `.mergify.yml` keeps its existing check names.
 
@@ -29,7 +34,8 @@ per-test timings as an artifact. Every runner uses at most four Cargo or
 test processes, with native library thread counts bounded to one.
 
 The main-branch cache warmer builds dependencies for both architectures
-without running tests. Rust caches use an architecture-specific shared key
+without running tests. It also caches the pinned Kani compiler and its Rust
+toolchain so later proof compilation avoids setup. Rust caches use an architecture-specific shared key
 and a lockfile-scoped prefix. PR caches cannot warm unrelated PRs, while
 main caches are readable by future PRs. Dependencies are cached; changed
 workspace crates still need compilation. A cold build is a separate cost
