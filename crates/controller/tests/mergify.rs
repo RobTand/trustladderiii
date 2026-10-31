@@ -82,6 +82,7 @@ struct State {
     deletes: usize,
     remove_after_post: bool,
     pull_reads: usize,
+    changing_reads: usize,
     reads: usize,
 }
 impl State {
@@ -107,6 +108,7 @@ impl State {
             deletes: 0,
             remove_after_post: false,
             pull_reads: 0,
+            changing_reads: 0,
             reads: 0,
         }
     }
@@ -189,6 +191,12 @@ impl Respond for Api {
         match (method, path) {
             ("GET", "/repos/owner/sandbox/pulls/100") => {
                 state.pull_reads += 1;
+                if state.changing_reads > 0 {
+                    state.changing_reads -= 1;
+                    state.pull["updated_at"] = json!(format!(
+                        "2026-10-31T16:51:{:02}Z", state.pull_reads % 60
+                    ));
+                }
                 ResponseTemplate::new(200).set_body_json(state.pull.clone())
             },
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
@@ -385,6 +393,70 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
+fn observation_race(settings: &tl3_config::Store, mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued(settings, &api, root.path(), true);
+    let reads = api.state.lock().unwrap().pull_reads;
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("interrupted", "checks");
+        match mode {
+            "settles" => state.changing_reads = 2,
+            "churn" | "reconcile" => state.changing_reads = usize::MAX,
+            "transport" => state.fail_reads = true,
+            "permanent" => state.http_failure = Some(403),
+            "quota" => state.rate_limit = Some(429),
+            _ => unreachable!(),
+        }
+    }
+    if mode == "reconcile" {
+        assert!(
+            controller.drive_once().is_ok(),
+            "reconcile failure must not exit the controller"
+        );
+    } else {
+        let mut body = webhook_fixture();
+        body["action"] = json!("completed");
+        body["check_run"] = api.state.lock().unwrap().queue_check();
+        deliver(settings, &api, "check_run", &body);
+        assert!(
+            ingress::drain(&mut controller).is_ok(),
+            "observation failure must not exit the controller"
+        );
+    }
+    if matches!(mode, "churn" | "reconcile") {
+        assert_eq!(
+            api.state.lock().unwrap().pull_reads - reads,
+            6,
+            "at most three immediate observation samples"
+        );
+    }
+    if mode != "settles" {
+        assert!(
+            queue_facts(&mut controller).is_empty(),
+            "failed reads are not facts"
+        );
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    }
+    {
+        let mut state = api.state.lock().unwrap();
+        state.changing_reads = 0;
+        state.fail_reads = false;
+        state.http_failure = None;
+        state.rate_limit = None;
+    }
+    drain(&mut controller);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        2,
+        "the later stable observation must re-enqueue"
+    );
+    assert_eq!(queue_facts(&mut controller).len(), 1);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    println!("test observation_race_{mode} ... ok");
+}
+
 fn terminal_without_enqueue_ack(
     settings: &tl3_config::Store,
     generic: bool,
@@ -1829,6 +1901,14 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--observation-race") {
+        let mut database = support::Database::start();
+        let mode = std::env::args().nth(2).unwrap();
+        observation_race(&database.create(&format!("race_{mode}")), &mode);
+        database.stop();
+        return;
+    }
+
     if std::env::args().nth(1).as_deref() == Some("--terminal-without-ack") {
         let mut database = support::Database::start();
         for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
@@ -1974,5 +2054,15 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("56 Mergify scenarios passed; no skips; no live upstream calls");
+    for mode in [
+        "settles",
+        "churn",
+        "reconcile",
+        "transport",
+        "permanent",
+        "quota",
+    ] {
+        observation_race(&database.create(&format!("race_{mode}")), mode);
+    }
+    println!("62 Mergify scenarios passed; no skips; no live upstream calls");
 }
