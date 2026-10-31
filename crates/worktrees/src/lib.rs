@@ -386,8 +386,8 @@ impl Worktrees {
         Ok(())
     }
 
-    /// Called on worktree events; expiry never schedules a wakeup.
-    pub fn prune_scratch(&self, now_secs: u64) -> Result<(), Error> {
+    /// Discover expiry candidates before the caller journals their removal.
+    pub fn expired_scratch(&self, now_secs: u64) -> Result<Vec<(String, CommitId)>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let output = self.run(
             &self.repo,
@@ -399,6 +399,7 @@ impl Worktrees {
             ],
         )?;
         let text = std::str::from_utf8(&output.stdout).map_err(|_| Error::Response)?;
+        let mut expired = Vec::new();
         for line in text.lines() {
             let mut fields = line.split_whitespace();
             let reference = fields.next().ok_or(Error::Response)?;
@@ -409,12 +410,24 @@ impl Worktrees {
                 .parse()
                 .map_err(|_| Error::Response)?;
             if now_secs.saturating_sub(saved) >= 30 * 24 * 60 * 60 {
-                self.run(
-                    &self.repo,
-                    "expire saved scratch",
-                    ["update-ref", "-d", reference, head],
-                )?;
+                expired.push((reference.to_owned(), CommitId::new(head)?));
             }
+        }
+        Ok(expired)
+    }
+
+    /// A missing ref confirms an earlier deletion when replaying a journalled prune.
+    pub fn prune_scratch(&self, reference: &str, expected: &CommitId) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if !reference.starts_with("refs/tl3/scratch/") {
+            return Err(Error::Recovery);
+        }
+        if self.resolve_optional(reference)?.is_some() {
+            self.run(
+                &self.repo,
+                "expire saved scratch",
+                ["update-ref", "-d", reference, expected.as_str()],
+            )?;
         }
         Ok(())
     }

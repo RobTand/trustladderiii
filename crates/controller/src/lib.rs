@@ -908,14 +908,19 @@ impl Controller {
         });
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
-            if let Observation::ScratchSaved { node, reference } = observation {
-                commit.rows.push(put(
+            match observation {
+                Observation::ScratchSaved { node, reference } => commit.rows.push(put(
                     "saved_scratch",
                     reference.clone(),
                     json!({
                         "node": node, "reference": reference,
                     }),
-                ));
+                )),
+                Observation::ScratchPruned { reference } => commit.rows.push(RowChange::Delete {
+                    table: "saved_scratch".into(),
+                    id: reference.clone(),
+                }),
+                _ => {}
             }
         }
         if let DeliveryOutput::Effect { node, seq, .. } = delivery.output {
@@ -972,6 +977,12 @@ impl Controller {
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
+            if matches!(
+                observation,
+                Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. }
+            ) {
+                continue;
+            }
             self.queue_observation(&snapshot, &mut commit, key, index, observation)?;
         }
         self.store.commit(&commit)?;
@@ -1508,12 +1519,8 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
-            Observation::ScratchSaved { node, reference } => {
-                commit.rows.push(put(
-                    "saved_scratch",
-                    reference.clone(),
-                    json!({"node":node,"reference":reference}),
-                ));
+            // Older controllers queued ScratchSaved after writing it with completion.
+            Observation::ScratchSaved { .. } | Observation::ScratchPruned { .. } => {
                 return Ok(None);
             }
             Observation::Progress { key, checkpoint } => {
@@ -2299,7 +2306,9 @@ fn observation_upstream(
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
-        Observation::Rebased { .. } | Observation::ScratchSaved { .. } => Some(Upstream::Worktrees),
+        Observation::Rebased { .. }
+        | Observation::ScratchSaved { .. }
+        | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
             Some(Upstream::Mergify)
         }

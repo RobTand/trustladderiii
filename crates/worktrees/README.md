@@ -31,7 +31,7 @@ let files = repo.changed_files(&base, &head)?;
 | `finish_prepare` | Repair Git-locked initialization only at the durable base |
 | `verify_removal_clean`, `resume_removal` | Verify clean or initializing checkouts, then resume interrupted removal |
 | `save_scratch`, `clean_saved_scratch` | Save teardown edits on a durable ref before cleaning |
-| `prune_scratch` | Expire saved scratch after 30 days on a worktree event |
+| `expired_scratch`, `prune_scratch` | Journal expiry candidates, then remove their refs on a worktree event |
 | `changed_files` | Paths changed between two commits, including both sides of a rename |
 
 All handles sharing a common Git directory serialize operations with an in-process
@@ -118,8 +118,9 @@ intent. Saving changes neither working files nor the live index. A retry reuses
 the saved ref. Cleanup then resets the checkout and removes untracked files.
 The completion records the ref, and the closing notice lists it as plain text.
 Use `git show <ref>:<path>` to recover a file, or `<ref>^2:<path>` for staged content.
-Scratch refs stay for 30 days. New worktree deliveries prune expired refs in that
-repository. No timer runs for retention. Rebase and publish still reject dirty
+Scratch refs stay for 30 days. New worktree deliveries journal expiry candidates,
+then prune their refs and metadata. Housekeeping errors are logged and do not block
+worktree operations. No timer runs for retention. Rebase and publish still reject dirty
 worktrees as permanent failures.
 
 For a clean checkout, the controller records a clean preflight in its Remove intent. Git's
