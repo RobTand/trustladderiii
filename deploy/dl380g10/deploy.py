@@ -446,7 +446,8 @@ def check(home):
             connection.close()
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
-    credentials = [("model credential", config / "secrets/model-key")]
+    credentials = [("model credential", config / "secrets/model-key"),
+                   ("Hindsight credential", config / "secrets/hindsight-key")]
     if managed:
         credentials.append(("Cloudflare token", config / "secrets/cloudflared-token"))
     for label, path in credentials:
