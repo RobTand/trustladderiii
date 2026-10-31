@@ -252,7 +252,15 @@ Delivery ids remain unique while retained. After retirement, repeated deliveries
 still use the same durable intake and observation keys. A crash between applying
 an input and advancing its consumer cursor replays the same intake or observation key.
 
-`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+`Webhooks::bind` starts receipt immediately, before controller recovery or source
+registration. Until registration, receipt retains one pending wake bit; it then
+forwards wakes directly to the controller source channel. Catch-up reads its snapshot through a separate read-only connection
+and fetches GitHub evidence on its own thread. The receipt
+loop remains the only ingress writer and commits each completed catch-up batch
+and its cursor together. At most one fetch runs at a time; gaps during a fetch
+request another pass after that batch commits.
+
+Source registration starts the first catch-up. Ticket #19 wires the tunnel supervisor
 to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
 receiver's blocking channel. There is no polling timer. A failed persistence or
 response marks a gap, which is retried at the next receiver event. Catch-up stores

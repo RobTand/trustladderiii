@@ -878,6 +878,68 @@ fn auth_header_is_scoped_to_github() {
 }
 
 #[test]
+fn review_abort_rebase_preserves_spawn_failure() {
+    let f = Fixture::new();
+    assert!(
+        matches!(f.manager.abort_rebase(&f.worktree), Err(Error::Spawn)),
+        "a missing working directory must remain a transient spawn failure"
+    );
+}
+
+#[test]
+fn review_recovery_error_preserves_transient_failures() {
+    for error in [Error::Io, Error::Spawn, Error::Poisoned] {
+        let expected = std::mem::discriminant(&error);
+        assert_eq!(std::mem::discriminant(&recovery_error(error)), expected);
+    }
+}
+
+#[test]
+fn review_recovery_error_maps_git_and_dirty_failures() {
+    for error in [
+        Error::Git {
+            operation: "abort",
+            code: Some(1),
+        },
+        Error::DirtyWorktree,
+    ] {
+        assert!(matches!(recovery_error(error), Error::Recovery));
+    }
+}
+
+#[test]
+fn review_unreadable_gitlink_is_transient() {
+    let f = Fixture::new();
+    f.branch();
+    fs::create_dir_all(&f.worktree).unwrap();
+    std::os::unix::fs::symlink(".git", f.worktree.join(".git")).unwrap();
+    assert!(
+        matches!(
+            f.manager.create_worktree(&f.name, &f.worktree),
+            Err(Error::Io)
+        ),
+        "a symlink loop reading the gitlink does not prove another checkout owns the path"
+    );
+}
+
+#[test]
+fn review_missing_or_directory_gitlink_is_occupied() {
+    for directory in [false, true] {
+        let f = Fixture::new();
+        f.branch();
+        fs::create_dir_all(&f.worktree).unwrap();
+        fs::write(f.worktree.join("keep.txt"), "other checkout").unwrap();
+        if directory {
+            fs::create_dir(f.worktree.join(".git")).unwrap();
+        }
+        assert!(matches!(
+            f.manager.create_worktree(&f.name, &f.worktree),
+            Err(Error::WorktreeOccupied)
+        ));
+    }
+}
+
+#[test]
 fn scratch_preserves_live_index_working_files_and_untracked_files() {
     let f = Fixture::new();
     f.checkout();
@@ -922,6 +984,22 @@ fn scratch_preserves_live_index_working_files_and_untracked_files() {
         assert_eq!(git(&f.repo, ["show", &revision]), content);
     }
     let head = f.manager.resolve(&reference).unwrap();
+    let missing = format!("{reference}-missing");
+    let error = f
+        .manager
+        .clean_saved_scratch(&f.name, &f.worktree, &missing)
+        .unwrap_err();
+    assert!(matches!(error, Error::Recovery));
+    assert_eq!(error.permanent_class(), Some("worktree_recovery"));
+    assert_eq!(fs::read(&index).unwrap(), before);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"working\n"
+    );
+    assert_eq!(
+        fs::read(f.worktree.join("untracked.txt")).unwrap(),
+        b"untracked\n"
+    );
     f.manager
         .clean_saved_scratch(&f.name, &f.worktree, &reference)
         .unwrap();

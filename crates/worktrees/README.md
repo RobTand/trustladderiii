@@ -140,9 +140,11 @@ deletion after success has no effect.
 Rebase requires a clean checkout. Ignored build files are allowed. A dirty checkout
 is rejected without changing its files. An interrupted rebase for the requested branch
 is aborted before retrying. A conflicting rebase captures the unmerged paths,
-aborts, and verifies a clean checkout at the old head before returning. Filesystem
-or Git failures during abort return `Recovery` so the controller retains the
-resource and reports the problem. There is no automatic conflict resolution.
+aborts, and verifies a clean checkout at the old head before returning.
+I/O, process creation and poisoned lock errors remain transient.
+Git failures during abort or the following status check, and a dirty checkout
+left after abort, return `Recovery` so the controller retains the resource and
+reports the problem. There is no automatic conflict resolution.
 A per-checkout marker recovers detached rebases interrupted before or after the atomic branch and base update.
 
 Pushes use immutable commit ids and explicit refs. `publish` requires the
