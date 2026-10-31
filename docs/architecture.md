@@ -483,7 +483,9 @@ The completed row suppresses duplicate questions for that PR.
 For adoption, branch creation atomically records the author start in
 `refs/tl3/starts/<branch>` separately from `refs/tl3/bases/<branch>`. Preparation
 reports that durable base before check dispatch. Checks compare against it;
-review uses an ancestor of the checked head. Fixes keep the same branch.
+the initial full review uses an ancestor of the checked head. A review fix keeps
+its explicit reviewed-tree comparison, including a replayed tree after a rebase.
+Fixes keep the same branch.
 After TL3's PR merges, summary delivery also reconciles a fixed note and closes
 the original PR. It verifies the landed PR's merge before doing so. A failed or
 stopped request continues to close only TL3's own PR.
