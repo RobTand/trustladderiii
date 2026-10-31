@@ -174,19 +174,14 @@ fn observe(
     repository: &Path,
     base: &str,
 ) {
-    if let Observation::WorkerReply {
-        node,
-        generation,
-        reply,
-        ..
-    } = &observation
-        && controller
-            .world()
-            .unwrap()
-            .nodes
-            .get(node.0 as usize)
-            .is_some_and(|n| n.run == Some(*generation) && n.generation == *generation)
+    if let Observation::WorkerReply { node, reply, .. } = &observation
         && let Some(sha) = reply.get("head").and_then(Value::as_str)
+        && !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "check_plans" && row.id == format!("{}:{sha}", node.0))
     {
         controller
             .observe(

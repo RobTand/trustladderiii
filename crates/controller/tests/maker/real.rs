@@ -367,11 +367,8 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     let reviewed = flow.record()["head"].as_str().unwrap().to_owned();
     if rebase {
         // Force reconciliation to reach Checking before the source seeds this head.
-        let mut missing = tl3_store::Commit::new(
-            "late-first-maker-plan",
-            json!({}),
-            &store.load().unwrap(),
-        );
+        let mut missing =
+            tl3_store::Commit::new("late-first-maker-plan", json!({}), &store.load().unwrap());
         missing.rows.push(tl3_store::RowChange::Delete {
             table: "check_plans".into(),
             id: format!("0:{reviewed}"),
@@ -394,13 +391,23 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
             &flow.worktree,
             &flow.base,
         );
-        while flow.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "inbox") {
+        while flow
+            .controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox")
+        {
             assert!(flow.controller.drive_once().unwrap());
         }
         assert!(
-            flow.controller.snapshot().unwrap().rows.iter().any(|row| {
-                row.table == "check_plans" && row.id == format!("0:{reviewed}")
-            }),
+            flow.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| { row.table == "check_plans" && row.id == format!("0:{reviewed}") }),
             "a late first maker source reply must seed its missing fixture plan"
         );
     }
