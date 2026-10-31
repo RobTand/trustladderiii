@@ -32,7 +32,7 @@ base = {
 }
 if mode == "hosts":
     rows = [dict(base, tags=[host], argv=[
-        "cargo", "test", "-p", "tl3-controller", "--locked",
+        "cargo", "test", "-p", "tl3-controller", "--locked", "--lib",
         "--test", "github", "--test", "simulation",
         "--test", "crash_safety", "--test", "ingress_loom",
     ]) for host in ("dl380g10", "sparky", "sparklina")]
