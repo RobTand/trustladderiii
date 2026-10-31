@@ -125,8 +125,11 @@ def collect_binaries(manifest):
             binaries.append({'name': f"{package}/{target['name']}",
                              'command': [artifact['executable']], 'custom': custom})
     # Start the longest binaries first to avoid a serial tail at the end of the gate.
-    order = {'workers': 0, 'github-flow': 1, 'github-notices': 2, 'publishing': 3, 'crash_safety': 4}
-    return sorted(binaries, key=lambda binary: (order.get(binary['name'].split('/')[-1], 4), binary['name']))
+    longest = ['workers', 'github-flow', 'github-notices', 'publishing', 'mergify',
+               'prismabuild', 'crash_safety', 'simulation', 'looks', 'hindsight',
+               'postgres', 'tl3_controller', 'worktrees', 'fixture_lifecycle']
+    order = {name: index for index, name in enumerate(longest)}
+    return sorted(binaries, key=lambda binary: (order.get(binary['name'].split('/')[-1], len(order)), binary['name']))
 
 
 def baseline_policy(config):
