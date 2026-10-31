@@ -258,7 +258,7 @@ loop remains the only ingress writer and commits each completed catch-up batch
 and its cursor together. At most one fetch runs at a time; gaps during a fetch
 request another pass after that batch commits.
 
-`Webhooks` runs catch-up once at startup. Ticket #19 wires the tunnel supervisor
+Source registration starts the first catch-up. Ticket #19 wires the tunnel supervisor
 to `WebhookControl::gap` after an outage. Gap and stop notifications wake the
 receiver's blocking channel. There is no polling timer. A failed persistence or
 response marks a gap, which is retried at the next receiver event. Catch-up stores

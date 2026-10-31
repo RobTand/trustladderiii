@@ -634,7 +634,7 @@ impl Source for WebhookReceiver {
             .unwrap_or(Err(Error::Invalid("webhook HTTP server panicked")));
             let _ = exits.send(WebhookMessage::ServerExit(result));
         });
-        let mut gap = true;
+        let mut gap = false;
         let mut retry_ready = true;
         let mut catching_up = None;
         let result = (|| {

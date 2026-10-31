@@ -40,6 +40,7 @@ impl Webhooks {
 
 impl Source for Webhooks {
     fn run(mut self, sender: Sender<Input>) -> Result<()> {
+        self.control.gap();
         for input in &self.receiver {
             if sender.send(input).is_err() {
                 self.control.stop();
