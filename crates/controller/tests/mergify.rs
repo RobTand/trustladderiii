@@ -1698,7 +1698,124 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
     println!("test permanent_github_read_{status} ... ok");
 }
 
+fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Mergify,
+        api.adapter(&root.path().join("mergify"), 0),
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "held-enqueue".into(),
+            owner: "owner".into(),
+            repo: "sandbox".into(),
+            installation: 3,
+            number: 12,
+            title: "change".into(),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    let mut enqueue = None;
+    for _ in 0..300 {
+        if !controller
+            .drive_once_with(|boundary, key| {
+                if boundary == Boundary::BeforeDispatch {
+                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                    if matches!(
+                        delivery.output,
+                        Out::Effect {
+                            kind: EffectKind::Enqueue,
+                            ..
+                        }
+                    ) {
+                        enqueue = Some(key.to_owned());
+                        let mut state = api.state.lock().unwrap();
+                        state.pull["head"]["sha"] = json!(delivery.head_sha);
+                        state.http_failure = Some(503);
+                    }
+                }
+            })
+            .unwrap()
+        {
+            break;
+        }
+    }
+    let key = enqueue.expect("enqueue was attempted");
+    api.state.lock().unwrap().http_failure = None;
+    // Recovery alone sees absence but must respect the hold. An unrelated source wake does too.
+    ingress::apply(&mut controller, tl3_controller::cli::Input::Wake).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        tl3_store::EffectState::Uncertain
+    );
+    assert_eq!(api.state.lock().unwrap().posts, 0);
+    api._runtime.block_on(async {
+        Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/repos/owner/sandbox/issues"))
+            .respond_with(ResponseTemplate::new(503))
+            .with_priority(1)
+            .mount(&api.server)
+            .await;
+    });
+    let source = Webhooks::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        Store::open(settings).unwrap(),
+        bootstrap(),
+        b"test-secret".to_vec(),
+        Some(CatchUp::new(api.clients()).unwrap()),
+    )
+    .unwrap();
+    let control = source.control();
+    let (sender, receiver) = mpsc::channel();
+    let running = thread::spawn(move || source.run(sender));
+    let wake = receiver.recv_timeout(Duration::from_secs(10));
+    control.stop();
+    running.join().unwrap().unwrap();
+    let wake = wake.expect("failed catch-up must wake the held enqueue without a webhook");
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .pending_ingress()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-catch-up")
+            .unwrap()
+            .is_none()
+    );
+    ingress::apply(&mut controller, wake).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.effect(&key).unwrap().unwrap().state,
+        tl3_store::EffectState::Confirmed
+    );
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let state = api.state.lock().unwrap();
+    assert!(state.label);
+    assert_eq!(
+        state.posts, 1,
+        "wake must retry the label write exactly once"
+    );
+    println!("test failed_catch_up_retries_held_enqueue ... ok");
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--failed-catchup-wake") {
+        let mut database = support::Database::start();
+        failed_catch_up_retries_held_enqueue(&database.create("failed_catchup_wake"));
+        database.stop();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--permanent-github-read") {
         let mut database = support::Database::start();
         for (status, class) in [
@@ -1746,6 +1863,7 @@ fn main() {
             class,
         );
     }
+    failed_catch_up_retries_held_enqueue(&database.create("failed_catchup_wake"));
     in_progress_confirms_enqueue(&database.create("progress"));
     late_merge_after_close(&database.create("late_webhook"), true);
     late_merge_after_close(&database.create("late_catchup"), false);
