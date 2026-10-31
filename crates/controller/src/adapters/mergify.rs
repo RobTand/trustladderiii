@@ -80,11 +80,21 @@ pub enum Evidence {
     },
     CiFailed {
         check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
         head: String,
         infra: bool,
     },
     Conflict {
         check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
+        head: String,
+    },
+    DequeuedByCommand {
+        check: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_at: Option<String>,
         head: String,
     },
     DequeuedByPerson {
@@ -119,17 +129,36 @@ impl QueueFact {
             Evidence::CiFailed { .. }
                 | Evidence::Conflict { .. }
                 | Evidence::DequeuedByPerson { .. }
+                | Evidence::DequeuedByCommand { .. }
         )
     }
     pub(crate) fn identity(&self) -> String {
-        let evidence = match &self.evidence {
+        let mut evidence = match &self.evidence {
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed { check, .. } => format!("ci:{check}"),
             Evidence::Conflict { check, .. } => format!("conflict:{check}"),
+            Evidence::DequeuedByCommand { check, .. } => format!("command-dequeued:{check}"),
             Evidence::DequeuedByPerson { event } => format!("dequeued:{event}"),
             Evidence::ClosedByPerson { event } => format!("closed:{event}"),
             Evidence::PushByOther { head } => format!("push:{head}"),
         };
+        // Mergify can reuse one check ID across successive queue attempts.
+        if let Evidence::CiFailed {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::Conflict {
+            completed_at: Some(time),
+            ..
+        }
+        | Evidence::DequeuedByCommand {
+            completed_at: Some(time),
+            ..
+        } = &self.evidence
+        {
+            evidence.push(':');
+            evidence.push_str(time);
+        }
         format!(
             "{}/{}/{}/{}/{evidence}",
             self.repository.owner.to_ascii_lowercase(),
@@ -188,6 +217,16 @@ struct Attempt {
     before: Option<CheckRun>,
     last_event: u64,
 }
+impl Attempt {
+    fn check_changed(&self, current: &Option<CheckRun>) -> bool {
+        let mut current = current.clone();
+        // Old intents predate completed_at. Its presence alone does not prove acceptance.
+        if let Some(check) = &mut current {
+            check.completed_at = self.before.as_ref().and_then(|before| before.completed_at);
+        }
+        self.before != current
+    }
+}
 
 pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
@@ -222,8 +261,7 @@ impl Adapter {
         let repo = full_name(&delivery.repository);
         let state = self
             .runtime
-            .block_on(Mergify::new(github.clone()).read(&repo, number, head))
-            .map_err(adapter_error)?;
+            .block_on(read_queue(github, &repo, number, head))?;
         if is_merge_queue_pr(&state.pull_request) {
             return Err(Error::Invalid("cannot queue a Mergify draft PR"));
         }
@@ -259,7 +297,10 @@ impl Adapter {
         let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
         let terminal = matches!(
             state.state,
-            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
+            QueueState::Dequeued
+                | QueueState::FailedCi
+                | QueueState::Conflict
+                | QueueState::DequeuedByPerson
         );
         let mut person_removed = false;
         if let Some(attempt) = &baseline {
@@ -293,7 +334,7 @@ impl Adapter {
                     || (terminal
                         && baseline
                             .as_ref()
-                            .is_some_and(|before| before.before != state.check))))
+                            .is_some_and(|before| before.check_changed(&state.check)))))
         {
             let mut completion = Completion::confirmed(observations);
             completion.progress = Some(crate::executor::ProgressToken::Mergify(Progress::from(
@@ -380,7 +421,10 @@ impl Executor for Adapter {
         if !issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
             || matches!(
                 state.state,
-                QueueState::FailedCi | QueueState::Conflict | QueueState::Dequeued
+                QueueState::FailedCi
+                    | QueueState::Conflict
+                    | QueueState::Dequeued
+                    | QueueState::DequeuedByPerson
             )
         {
             self.fence(delivery)?;
@@ -456,6 +500,22 @@ fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
             .ok_or(Error::Invalid("enqueue needs an approved head"))?,
     ))
 }
+async fn read_queue(
+    github: &GitHub,
+    repo: &str,
+    number: u64,
+    head: &str,
+) -> Result<tl3_mergify::Observation> {
+    let mergify = Mergify::new(github.clone());
+    let mut retries = 2;
+    loop {
+        match mergify.read(repo, number, head).await {
+            Err(tl3_mergify::Error::ChangedDuringRead) if retries > 0 => retries -= 1,
+            result => return result.map_err(adapter_error),
+        }
+    }
+}
+
 fn adapter_error(error: tl3_mergify::Error) -> Error {
     match error {
         tl3_mergify::Error::GitHub(error) => error.into(),
@@ -514,11 +574,29 @@ async fn queue_facts(
             }
             QueueState::FailedCi => state.check.as_ref().map(|check| Evidence::CiFailed {
                 check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                 head: pull.head.sha.clone(),
                 infra: tl3_mergify::ci_is_infrastructure(check),
             }),
+            QueueState::DequeuedByPerson => {
+                state
+                    .check
+                    .as_ref()
+                    .map(|check| Evidence::DequeuedByCommand {
+                        check: check.id,
+                        completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                        head: pull.head.sha.clone(),
+                    })
+            }
+            QueueState::Dequeued => state.check.as_ref().map(|check| Evidence::CiFailed {
+                check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                head: pull.head.sha.clone(),
+                infra: true,
+            }),
             QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
                 check: check.id,
+                completed_at: check.completed_at.map(|time| time.to_rfc3339()),
                 head: pull.head.sha.clone(),
             }),
             _ => None,
@@ -765,10 +843,12 @@ impl Translator {
         Ok(facts.into_iter().map(QueueFact::input).collect())
     }
     fn look(&self, github: &GitHub, repo: &Repository, item: &Tracked) -> Result<Vec<QueueFact>> {
-        let state = self
-            .runtime
-            .block_on(Mergify::new(github.clone()).read(&full_name(repo), item.number, &item.head))
-            .map_err(adapter_error)?;
+        let state = self.runtime.block_on(read_queue(
+            github,
+            &full_name(repo),
+            item.number,
+            &item.head,
+        ))?;
         self.runtime
             .block_on(queue_facts(github, repo, &state, &item.approved))
     }

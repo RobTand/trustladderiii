@@ -1,0 +1,5 @@
+{
+  "source": "https://api.github.com/repos/RobTand/tl3-sandbox/check-runs/124588287914",
+  "recorded_at": "2026-10-31",
+  "scenario": "Live D5 add/add conflict; terminal check has no embedded machine payload"
+}

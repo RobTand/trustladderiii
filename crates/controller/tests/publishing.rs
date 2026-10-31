@@ -90,6 +90,7 @@ fn workers(
     real: impl Executor + 'static,
     fake: impl Executor + 'static,
     fixture: Arc<Fixture>,
+    add_add: bool,
 ) -> impl Executor {
     support::workers::Workers::new(
         Some(Box::new(real)),
@@ -98,10 +99,26 @@ fn workers(
         move |d, c| {
             for o in &mut c.observations {
                 match o {
-                    Observation::Plan { paths, .. } => *paths = vec!["value.py".into()],
+                    Observation::Plan { paths, .. } => {
+                        *paths = vec!["value.py".into()];
+                        if add_add {
+                            paths.push("pkg/new.py".into());
+                        }
+                    }
                     Observation::Made { sha, .. } => {
                         let checkout = fixture.adapter().checkout(d);
-                        if fs::read_to_string(checkout.join("value.py")).unwrap()
+                        if add_add {
+                            fs::create_dir_all(checkout.join("pkg")).unwrap();
+                            if fixture.source.join("pkg/new.py").exists() {
+                                let target = git(&fixture.remote, &["rev-parse", "main"]);
+                                git(&checkout, &["rebase", "-X", "theirs", &target]);
+                                *sha = commit(&checkout, "pkg/new.py", "def leaf(): return 2\n");
+                            } else {
+                                fs::write(checkout.join("pkg/new.py"), "def leaf(): return 1\n")
+                                    .unwrap();
+                                *sha = commit(&checkout, "value.py", "def value(): return 2\n");
+                            }
+                        } else if fs::read_to_string(checkout.join("value.py")).unwrap()
                             == "def value(): return 2\n"
                         {
                             *sha = commit(&checkout, "value.py", "def value():\n    return 2\n");
@@ -607,6 +624,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             supervisor,
             adapters::workers::Fake::new(&root.path().join("fakes")),
             f.clone(),
+            mode == "add-add",
         ),
     );
     registry.register(Upstream::Worktrees, f.adapter());
@@ -751,6 +769,88 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             );
         }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
+    } else if mode == "add-add" {
+        let checkout = f.adapter().checkout(&d);
+        assert_eq!(
+            git(&checkout, &["show", "HEAD:pkg/new.py"]),
+            "def leaf(): return 1"
+        );
+        assert!(!f.source.join("pkg/new.py").exists());
+        fs::create_dir_all(f.source.join("pkg")).unwrap();
+        let target = commit(&f.source, "pkg/new.py", "def upstream(): return 3\n");
+        git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.queue_fixture = "dequeued";
+            let pull = state.pull.as_mut().unwrap();
+            pull["mergeable"] = json!(false);
+            pull["mergeable_state"] = json!("dirty");
+        }
+        for _ in 0..10 {
+            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+                break;
+            }
+            assert!(
+                c.drive_once().unwrap(),
+                "PR_DEQUEUED must yield a Conflict fact"
+            );
+        }
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
+        let mut saw_maker_fallback = false;
+        for _ in 0..100 {
+            assert!(c.drive_once().unwrap());
+            let phase = c.world().unwrap().nodes[0].phase;
+            saw_maker_fallback |= phase == Phase::Making;
+            if phase == Phase::Checking {
+                break;
+            }
+        }
+        assert!(
+            saw_maker_fallback,
+            "the real add/add rebase must fall back to the maker"
+        );
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Checking);
+        let new_head = f.head(&d);
+        assert_ne!(new_head, first_head);
+        assert_eq!(git(&checkout, &["merge-base", &new_head, &target]), target);
+        assert_eq!(
+            git(&checkout, &["show", "HEAD:pkg/new.py"]),
+            "def leaf(): return 2"
+        );
+        assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.queue_fixture = "running";
+            let pull = state.pull.as_mut().unwrap();
+            pull["mergeable"] = json!(true);
+            pull["mergeable_state"] = json!("clean");
+        }
+        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            reviews.len(),
+            2,
+            "the new head needs a fresh independent review"
+        );
+        assert_eq!(reviews[1]["inputs"]["head_sha"], new_head);
+        assert!(
+            !reviews[1]["inputs"]["checks"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "review must see checks on the new head"
+        );
+        assert!(
+            c.snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .all(|row| !matches!(row.table.as_str(), "incidents" | "questions"))
+        );
     } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
@@ -813,7 +913,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             3
         } else if matches!(
             mode,
-            "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest"
+            "push" | "rebase" | "changes" | "before-enqueue" | "reports-latest" | "add-add"
         ) {
             2
         } else {
@@ -1272,6 +1372,7 @@ fn main() {
             support::executor_probe::Probe,
             support::executor_probe::Probe,
             Arc::new(Fixture::create(root.path())),
+            false,
         );
         support::executor_probe::assert_retire_delivery(&mut router);
         if std::env::args().len() > 1 {
@@ -1303,6 +1404,7 @@ fn main() {
         "push",
         "rebase",
         "round-one-rebase",
+        "add-add",
         "unapproved",
         "changes",
         "new-attempt",
