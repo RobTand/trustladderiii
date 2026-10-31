@@ -1185,5 +1185,7 @@ fn main() {
         println!("test {mode} ... ok");
     }
     database.stop();
-    println!("All publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
+    println!(
+        "All publishing scenarios passed; recorded upstreams; no nested submissions; no skips"
+    );
 }
