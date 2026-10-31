@@ -442,3 +442,17 @@ def test_scope_rule_requires_quoted_hunk(tmp_path, review_request, evidence, val
     assert result.exit_code == (0 if valid else 1), result.stderr
     if valid:
         assert result.events[-1]["reply"] == changes(finding)
+
+
+def test_scope_blocker_can_quote_unchanged_hunk_on_fix_round(tmp_path, review_request):
+    from tl3_workers.roles.reviewer import check_reply
+    inputs = review_request['inputs']
+    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
+    inputs['diff'] = '-def requested(): return 1\n+def requested(): return 2\n'
+    inputs['scope_diff'] = inputs['diff'] + '+def unrelated(): return 42\n'
+    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
+               'problem': 'The extra helper still serves none of the supplied goals.',
+               'evidence': '+def unrelated(): return 42'}
+    check_reply(inputs, changes(finding))
+    result = start_worker(tmp_path, review_request, [{'content': json.dumps(changes(finding))}])
+    assert result.exit_code == 0, result.stderr
