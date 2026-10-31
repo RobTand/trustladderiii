@@ -69,6 +69,13 @@ impl<F: FnMut(&Delivery, &mut Completion)> Workers<F> {
 }
 
 impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
+    fn intake_question(
+        &mut self,
+        question: &tl3_controller::adoption::Clarification,
+        epoch: i64,
+    ) -> Result<()> {
+        self.primary().intake_question(question, epoch)
+    }
     fn implementation(&self) -> &'static str {
         match &self.real {
             Some(real) => real.implementation(),
