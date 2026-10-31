@@ -19,3 +19,8 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 name = "postgres"
 path = "tests/postgres.rs"
 harness = false
+
+[[test]]
+name = "fixture_lifecycle"
+path = "tests/fixture_lifecycle.rs"
+harness = false
