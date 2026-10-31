@@ -225,10 +225,15 @@ fn safety() {
         .set_times(FileTimes::new().set_modified(SystemTime::now()))
         .unwrap();
     let unrelated = leftover("another-project-pg", &format!("{}\n", dead_pid()));
+    let writable = leftover("tl3-store-pg-uncertain-owner", &format!("{}\n", dead_pid()));
+    fs::set_permissions(&writable, fs::Permissions::from_mode(0o777)).unwrap();
     let link = std::env::temp_dir().join("tl3-store-pg-symlink");
     symlink(&unrelated, &link).unwrap();
     let linked_data = std::env::temp_dir().join("tl3-store-pg-linked-data");
-    fs::create_dir(&linked_data).unwrap();
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&linked_data)
+        .unwrap();
     symlink(unrelated.join("data"), linked_data.join("data")).unwrap();
     old(&linked_data);
     let (database, root) = fixture();
@@ -243,6 +248,7 @@ fn safety() {
         &missing,
         &recent,
         &unrelated,
+        &writable,
         &link,
         &linked_data,
     ] {
