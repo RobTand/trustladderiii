@@ -364,6 +364,10 @@ pub(super) fn answers(settings: &tl3_config::Store) {
     );
     d.send(11001, "My answer is unclear");
     d.classified(11001);
+    assert!(
+        d.node()["question"]["id"].is_u64(),
+        "an unclear answer must open a clarification question"
+    );
     let clarified = d.node()["question"]["id"].as_u64().unwrap();
     assert_ne!(original, clarified);
     assert_eq!(d.node()["question"]["clarified"], true);
@@ -602,7 +606,8 @@ pub(super) fn answer_recovery(settings: &tl3_config::Store) {
     assert_eq!(jobs[0].attempt, 0);
     fs::write(d.marker.with_extension("answer"), "go").unwrap();
     d.classified(15001);
-    d.wait(|s| s.node()["phase"] == json!({"Closed": "Merged"}));
+    d.wait(|s| s.node()["phase"].get("Closed").is_some());
+    assert_eq!(d.node()["phase"], json!({"Closed": "Merged"}));
     d.settled();
     assert_eq!(
         d.requests()
