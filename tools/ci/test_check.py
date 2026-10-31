@@ -9,6 +9,20 @@ import check
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_workers_use_four_isolated_pytest_processes_and_other_projects_stay_serial(self):
+        files = list(map(Path, [
+            "workers/pyproject.toml", "workers/uv.lock", "workers/tests/test_workers.py",
+            "harness/pyproject.toml", "harness/tests/test_harness.py",
+        ]))
+        with patch.object(check, "run") as run:
+            check.python(files)
+        calls = {call.kwargs["cwd"].relative_to(check.ROOT): call.args
+                 for call in run.call_args_list if "pytest" in call.args}
+        workers = calls[Path("workers")]
+        self.assertIn("pytest-xdist==3.8.0", workers)
+        self.assertEqual(workers[workers.index("-n") + 1], "4")
+        self.assertNotIn("-n", calls[Path("harness")])
+
     def test_rust_finds_new_crates_and_root_but_ignores_spikes_and_fixtures(self):
         files = list(map(Path, [
             "Cargo.toml", "crates/github/Cargo.toml", "crates/new/nested/Cargo.toml",

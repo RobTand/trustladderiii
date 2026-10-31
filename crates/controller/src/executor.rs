@@ -84,6 +84,13 @@ pub struct Delivery {
 }
 
 impl Delivery {
+    pub(crate) fn into_effect(self) -> tl3_store::NewEffect {
+        tl3_store::NewEffect {
+            key: self.key.clone(),
+            kind: upstream(self.output).kind().into(),
+            payload: serde_json::json!(self),
+        }
+    }
     pub fn marker_key(&self) -> &str {
         self.marker_key.as_deref().unwrap_or(&self.key)
     }
@@ -342,6 +349,18 @@ pub enum Upstream {
     PrismaBuild,
     Workers,
     Worktrees,
+}
+
+impl Upstream {
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::GitHub => "GitHub",
+            Self::Mergify => "Mergify",
+            Self::PrismaBuild => "PrismaBuild",
+            Self::Workers => "Workers",
+            Self::Worktrees => "Worktrees",
+        }
+    }
 }
 
 pub fn upstream(output: Output) -> Upstream {

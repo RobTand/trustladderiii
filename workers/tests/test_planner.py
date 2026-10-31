@@ -463,3 +463,19 @@ def test_planner_exact_node_ids_agree_with_harness(vector, planner_request, monk
     except ValueError:
         valid = False
     assert valid == vector["valid"]
+
+
+@pytest.mark.parametrize('proposal', [LEAF, SPLIT, CANT_MEET])
+def test_planner_schema_follower_succeeds_without_code_only_fields(
+        tmp_path, planner_request, monkeypatch, proposal):
+    from test_sizing import FORGED
+    from worker_process import fill_visible_fields
+
+    fill_visible_fields(monkeypatch, {'forecast': FORGED['forecast'], 'violations': []})
+    result = run_reply(tmp_path, planner_request, proposal)
+    assert result.exit_code == 0, result.stderr
+    actual = result.events[-1]['reply']
+    assert actual['forecast']['fit_tokens'] == planner_request['inputs']['forecast']['fit_tokens']
+    assert {key: value for key, value in actual.items()
+            if key not in {'forecast', 'violations'}} == proposal
+    assert bool(actual['violations']) == (proposal['kind'] == 'split')

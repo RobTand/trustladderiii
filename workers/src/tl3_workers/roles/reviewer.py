@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, validate
 from tl3_workers.roles.base import Role
-from tl3_workers.roles.maker import _ContextCharacters, _out_of_room, _save
+from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import build_tools
 
 
@@ -44,10 +44,10 @@ def run(model, request, worktree, emit):
     if isinstance(model, ChatOpenAI):
         model.stream_usage = True
     agent = build_agent(model, ROLE, worktree)
-    characters = _ContextCharacters()
+    characters = ContextCharacters()
     session = Path(request["session_file"]) if "session_file" in request else None
     saved = read_json(session.read_text()) if session and session.exists() else None
-    retry = saved is not None and saved["generation"] > request.get("last_accepted_generation", -1)
+    retry = is_unaccepted_session(request, saved)
     if retry and saved["inputs"] != request["inputs"]:
         raise ValueError("review retry evidence changed before acceptance")
     if retry and saved.get("out_of_room"):
@@ -63,7 +63,7 @@ def run(model, request, worktree, emit):
     state = {"generation": saved["generation"] if retry else request["operation"]["generation"],
              "inputs": request["inputs"], "messages": messages_to_dict(history)}
     if session:
-        _save(session, state)
+        save(session, state)
     if calls := _pending_calls(history):
         # Resume only the pending reads, without asking the model for another turn.
         graph = StateGraph(MessagesState)
@@ -75,7 +75,7 @@ def run(model, request, worktree, emit):
         history.extend(results)
         state["messages"] = messages_to_dict(history)
         if session:
-            _save(session, state)
+            save(session, state)
         for message in results:
             emit({"event": "progress", "unit": "tool_result"})
     stream = agent.stream({"messages": history}, config={"callbacks": [characters]},
@@ -87,12 +87,12 @@ def run(model, request, worktree, emit):
                         for message in result.get("messages", [])]
             history.extend(messages)
             for message in messages:
-                if isinstance(message, AIMessage) and _out_of_room(
+                if isinstance(message, AIMessage) and out_of_room(
                         message, request["inputs"].get("context_size", 150_000), characters.prompt):
                     state["out_of_room"] = True
                     state["messages"] = messages_to_dict(history)
                     if session:
-                        _save(session, state)
+                        save(session, state)
                     raise ValueError("reviewer out of room")
                 if isinstance(message, AIMessage) and session is None:
                     emit({"event": "progress", "unit": "model_turn"})
@@ -105,7 +105,7 @@ def run(model, request, worktree, emit):
                     state["reply"] = reply
             state["messages"] = messages_to_dict(history)
             if session:
-                _save(session, state)
+                save(session, state)
             for message in messages:
                 if isinstance(message, AIMessage) and session is not None:
                     emit({"event": "progress", "unit": "model_turn"})
@@ -131,4 +131,5 @@ ROLE = Role(
     },
     check_reply=check_reply,
     run=run,
+    validates_reply=True,
 )

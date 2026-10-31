@@ -899,7 +899,10 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         .iter()
         .find(|r| r.table == "incidents" && r.value["open"] == true)
         .unwrap();
-    assert_eq!(incident.value["signature"], "Mergify:queue_unfinished");
+    assert_eq!(
+        incident.value["signature"],
+        serde_json::json!({"upstream":"Mergify", "class":"queue_unfinished"})
+    );
     let summary = incident.value["summary"].as_str().unwrap();
     assert!(
         summary.contains("GitHub merged the change at 2026-10-30T01:00:00Z"),

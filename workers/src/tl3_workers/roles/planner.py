@@ -87,6 +87,7 @@ ROLE = Role(
     prompt="planner.md",
     input_schema="planner-input",
     reply_schema="planner-reply",
+    code_only_fields=("forecast", "violations"),
     tools={
         "list": "List worktree directories to locate material for the plan.",
         "read": "Read worktree text to identify files and checks for the goals.",

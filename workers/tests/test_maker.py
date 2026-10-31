@@ -351,7 +351,7 @@ def test_usage_fallback_includes_history_and_tool_results(maker_request, monkeyp
 @pytest.mark.parametrize("characters,expected", [(2547, False), (2548, True), (2550, True)])
 def test_usage_estimate_rounds_up_before_applying_85_percent(usage, characters, expected):
     message = AIMessage(content="x", usage_metadata=usage)
-    assert maker._out_of_room(message, 1000, characters - 1) is expected
+    assert maker.out_of_room(message, 1000, characters - 1) is expected
 
 
 def test_done_schema_is_selected_by_kind(maker_request, monkeypatch):
@@ -805,7 +805,7 @@ def test_new_generation_recovers_commit_before_reply(tmp_path, maker_request, mo
     injection = """
 from tl3_workers.roles import maker
 commit = maker._commit
-save = maker._save
+save = maker.save
 def crash_commit(*args):
     commit(*args)
     import os, signal
@@ -816,7 +816,7 @@ def fail_save(path, value):
     save(path, value)
 """
     injection += ("maker._commit = crash_commit\n" if failure == 'killed'
-                  else "maker._save = fail_save\n")
+                  else "maker.save = fail_save\n")
     monkeypatch.setattr(worker_process, 'LAUNCH', launcher.replace('def no_network', injection + '\ndef no_network'))
     for index in range(failures):
         turns = [write_turn(content="def greet(): return 'hello fixed'\n")] if index == 0 else []

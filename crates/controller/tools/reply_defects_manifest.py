@@ -14,17 +14,11 @@ env = {
     "RUST_TEST_THREADS": "2", "RAYON_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
     "UV_CONCURRENT_DOWNLOADS": "2", "UV_CONCURRENT_BUILDS": "2",
-    "TL3_TEST_UV": "/home/rob/.local/bin/uv",
+    "TL3_TEST_UV": "/home/rob/.local/bin/uv", "TMPDIR": "/home/rob/tmp",
 }
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 6}, "env": env}
 def shell(command):
-    # The shared fleet TMPDIR has a small quota. Keep each action's scratch private
-    # and its path short enough for Unix sockets in the process scenarios.
-    return ["bash", "-ec", """
-tl3_test_tmp=$(mktemp -d /home/rob/tmp/tl3-reply.XXXXXX)
-trap 'rm -rf "$tl3_test_tmp"' EXIT
-export TMPDIR="$tl3_test_tmp"
-""" + command]
+    return ["bash", "-ec", command]
 
 
 rows = []
@@ -35,15 +29,12 @@ if args.suite in {"hosts", "all"}:
         "--test publishing --test github --test reproducing_rebase"
     )} for host in ("dl380g10", "sparky", "sparklina"))
 if args.suite in {"python", "all"}:
-    rows.append({**common, "anywhere": True, "argv": shell("""
+    # CI now runs four Python worker processes. This interpreter is on dl380g10.
+    rows.append({**common, "cpus": 4, "demand": {"mem_gb": 8},
+                 "tags": ["dl380g10"], "argv": shell("""
 cargo build --locked -p tl3-controller --example tl3-deploy
 export TL3_DEPLOY_HELPER="$PWD/target/debug/examples/tl3-deploy"
-if [ -x /usr/bin/python3.14 ]; then
-    tl3_python=/usr/bin/python3.14
-else
-    tl3_python=$(/home/rob/.local/bin/uv python find 3.14+gil)
-fi
-"$tl3_python" tools/ci/check.py python
+/usr/bin/python3.14 tools/ci/check.py python
 """)})
 if args.suite in {"workspace", "all"}:
     rows.append({**common, "anywhere": True,

@@ -3,7 +3,7 @@ use crate::{Controller, Error, Repository, Request, Result, put, request, snapsh
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tl3_kernel::{Answer, Command, Event, NodeId, Outcome, Phase, QKind, World};
-use tl3_store::{Commit, NewEffect, RowChange, Snapshot};
+use tl3_store::{Commit, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Task {
@@ -97,6 +97,7 @@ impl Controller {
                 id: row.id.clone(),
             });
             queue_comment(
+                self,
                 commit,
                 Delivery {
                     key: format!("replacement-dropped:{}", row.id),
@@ -221,7 +222,7 @@ impl Controller {
             json!({"classify": row.id}),
             snapshot,
         );
-        queue_classifier(&mut commit, delivery);
+        queue_classifier(self, &mut commit, delivery);
         self.store.commit(&commit)?;
         Ok(true)
     }
@@ -331,7 +332,7 @@ impl Controller {
                 table: "watches".into(),
                 id: key.into(),
             });
-            queue_classifier(commit, retry);
+            queue_classifier(self, commit, retry);
             return Ok(None);
         }
         let reply = reply.unwrap_or(json!({"kind": "unsure", "question": "I couldn't act on your comment. Could you rephrase it?"}));
@@ -381,7 +382,7 @@ impl Controller {
                 question,
                 excerpt: excerpt(inputs["comment"]["body"].as_str().unwrap()),
             });
-            queue_comment(commit, clarification);
+            queue_comment(self, commit, clarification);
             return Ok(None);
         }
         if kind == "complaint" && n.phase.is_closed() {
@@ -406,7 +407,7 @@ impl Controller {
                     .into(),
                 comment_issue: comment.value["issue"].as_u64().unwrap(),
             });
-            queue_comment(commit, correction);
+            queue_comment(self, commit, correction);
             return Ok(None);
         }
         if n.phase.is_closed() {
@@ -653,12 +654,9 @@ pub(crate) fn replacement_issue(
     })
 }
 
-fn queue_comment(commit: &mut Commit, delivery: Delivery) {
-    commit.effects.push(NewEffect {
-        key: delivery.key.clone(),
-        kind: "GitHub".into(),
-        payload: json!(delivery),
-    });
+fn queue_comment(controller: &Controller, commit: &mut Commit, delivery: Delivery) {
+    commit.rows.push(controller.allowance_row(delivery.clone()));
+    commit.effects.push(delivery.into_effect());
 }
 
 fn comment_binding<'a>(
@@ -686,18 +684,15 @@ fn comment_binding<'a>(
     crate::latest_request(snapshot, repository, issue)
 }
 
-fn queue_classifier(commit: &mut Commit, delivery: Delivery) {
+fn queue_classifier(controller: &Controller, commit: &mut Commit, delivery: Delivery) {
+    commit.rows.push(controller.allowance_row(delivery.clone()));
     commit
         .rows
         .push(put("comment_jobs", delivery.key.clone(), json!(delivery)));
     commit
         .rows
         .push(put("watches", delivery.key.clone(), json!(delivery)));
-    commit.effects.push(NewEffect {
-        key: delivery.key.clone(),
-        kind: "Workers".into(),
-        payload: json!(delivery),
-    });
+    commit.effects.push(delivery.into_effect());
 }
 
 fn excerpt(text: &str) -> String {
