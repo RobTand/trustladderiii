@@ -86,7 +86,8 @@ pub(super) fn inputs(
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
     if base != run.base_sha {
-        let scope_diff = repository.diff(&run.base_sha, &head_id)?;
+        let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
+        let scope_diff = repository.diff(&scope_base, &head_id)?;
         if scope_diff.len() > 512 * 1024 {
             return Err(Error::Invalid("scope diff exceeds the input bound"));
         }

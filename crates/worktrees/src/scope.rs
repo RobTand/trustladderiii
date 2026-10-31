@@ -96,6 +96,15 @@ impl Worktrees {
                 self.require_clean(&path)?;
                 let source = self.resolve(&name.reference())?;
                 let base = self.resolve(&name.base_ref())?;
+                let ancestor = commit_line(
+                    &self
+                        .run(
+                            &self.repo,
+                            "scope merge base",
+                            ["merge-base", base.as_str(), source.as_str()],
+                        )?
+                        .stdout,
+                )?;
                 let mut args = vec![
                     "diff".to_owned(),
                     "--no-ext-diff".into(),
@@ -103,7 +112,7 @@ impl Worktrees {
                     "--no-renames".into(),
                     "--name-only".into(),
                     "-z".into(),
-                    base.as_str().into(),
+                    ancestor.as_str().into(),
                     source.as_str().into(),
                     "--".into(),
                 ];
@@ -114,7 +123,7 @@ impl Worktrees {
                     paths(&self.run(&self.repo, "protected scope paths", args)?.stdout)
                 };
                 let removed: Vec<_> = self
-                    .changed_files_locked(&base, &source)?
+                    .changed_files_locked(&ancestor, &source)?
                     .into_iter()
                     .filter(|p| !footprint.contains(p) || protected_files.contains(p))
                     .collect();

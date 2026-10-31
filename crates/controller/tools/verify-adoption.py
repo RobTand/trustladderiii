@@ -10,7 +10,7 @@ commands = [
     ["cargo", "test", "--locked", "-p", "tl3-worktrees", "adoption_"],
     ["cargo", "test", "--locked", "-p", "tl3-github", "--test", "adoption"],
     *[["cargo", "test", "--locked", "-p", "tl3-controller", "--test", "publishing", "--", mode]
-      for mode in ("adoption-pass", "adoption-fix", "adoption-negative")],
+      for mode in ("adoption-pass", "adoption-fix", "adoption-extras", "adoption-negative")],
 ]
 if args.proofs:
     commands.extend(["python3", "crates/kernel/run.py", "prove", name]
