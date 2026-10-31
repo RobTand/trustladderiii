@@ -126,7 +126,7 @@ fn read_wait(
         .and_then(|repository| repository.is_ancestor(&parent, &repository.head()?))
     {
         Ok(alive) => alive,
-        Err(tl3_worktrees::Error::Io) if !checkout.try_exists()? => false,
+        Err(tl3_worktrees::Error::Io | tl3_worktrees::Error::Spawn) if !checkout.try_exists()? => false,
         Err(
             error @ (tl3_worktrees::Error::Spawn
             | tl3_worktrees::Error::Io
@@ -773,6 +773,7 @@ exit "$status"
             return;
         }
         let f = Repo::new();
+        // Linked checkouts retain their common Git directory after this checkout disappears.
         let checkout = if linked {
             let checkout = f.root.path().join("checkout");
             crate::git_tests::git(
