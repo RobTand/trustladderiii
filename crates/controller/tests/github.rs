@@ -3,6 +3,8 @@ use tl3_controller::executor::Output as Out;
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
 mod real_writer;
+#[path = "github/startup_ack.rs"]
+mod startup_ack;
 #[path = "github/steering.rs"]
 mod steering;
 mod support;
@@ -501,6 +503,11 @@ fn main() {
         return;
     }
     let mut database = support::Database::start();
+    if args.get(1).is_some_and(|arg| arg == "--startup-ack") {
+        startup_ack::run(&mut database);
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--notice-incidents") {
         notice_incidents::run(&mut database);
         database.stop();
@@ -519,6 +526,7 @@ fn main() {
         database.stop();
         return;
     }
+    startup_ack::run(&mut database);
     receiver_is_durable(&database.create("receiver"));
     println!("test receiver_is_durable ... ok");
     gap_catch_up(&database.create("gap"));
