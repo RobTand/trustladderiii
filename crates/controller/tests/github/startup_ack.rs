@@ -15,8 +15,13 @@ impl Respond for BlockCatchUp {
 }
 
 pub(super) fn run(database: &mut support::Database) {
-    during_catch_up(&database.create("startup_ack"));
+    let during = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        during_catch_up(&database.create("startup_ack"));
+    }));
     before_source_run(&database.create("bound_ack"));
+    if let Err(error) = during {
+        std::panic::resume_unwind(error);
+    }
 }
 
 fn during_catch_up(settings: &tl3_config::Store) {
@@ -79,20 +84,47 @@ fn during_catch_up(settings: &tl3_config::Store) {
     }
     control.stop();
     source_thread.join().unwrap().unwrap();
-    let (statuses, elapsed) = timely.expect("signed POSTs must finish while startup catch-up is blocked");
+    let (statuses, elapsed) =
+        timely.expect("signed POSTs must finish while startup catch-up is blocked");
     assert_eq!(statuses, [202; 3]);
     assert!(elapsed < Duration::from_secs(1));
     assert_eq!(pending.len(), 2, "2xx deliveries must already be durable");
     assert!(pending.iter().all(|row| row.source == "github-webhook"));
-    assert!(Store::open(settings).unwrap().ingress_cursor("github-catch-up").unwrap().is_some());
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-catch-up")
+            .unwrap()
+            .is_some()
+    );
     ingress::drain(&mut controller).unwrap();
     let snapshot = controller.snapshot().unwrap();
-    assert_eq!(controller.world().unwrap().nodes.len(), 1, "catch-up label and webhook have one request");
-    assert_eq!(snapshot.rows.iter().filter(|row| row.table == "github_comments").count(), 1, "catch-up and webhook apply the comment once");
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        1,
+        "catch-up label and webhook have one request"
+    );
+    assert_eq!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "github_comments")
+            .count(),
+        1,
+        "catch-up and webhook apply the comment once"
+    );
     ingress::drain(&mut controller).unwrap();
     assert_eq!(controller.snapshot().unwrap().revision, snapshot.revision);
-    assert!(Store::open(settings).unwrap().pending_ingress().unwrap().is_empty());
-    println!("test startup_ack_during_catch_up ... ok ({elapsed:?}; durable before catch-up finished)");
+    assert!(
+        Store::open(settings)
+            .unwrap()
+            .pending_ingress()
+            .unwrap()
+            .is_empty()
+    );
+    println!(
+        "test startup_ack_during_catch_up ... ok ({elapsed:?}; durable before catch-up finished)"
+    );
 }
 
 fn before_source_run(settings: &tl3_config::Store) {
@@ -108,7 +140,14 @@ fn before_source_run(settings: &tl3_config::Store) {
     let control = source.control();
     let (sent, response) = mpsc::channel();
     let request = thread::spawn(move || {
-        sent.send(post(address, "before-source-run", false, fixture(false), true)).unwrap();
+        sent.send(post(
+            address,
+            "before-source-run",
+            false,
+            fixture(false),
+            true,
+        ))
+        .unwrap();
     });
     let timely = response.recv_timeout(Duration::from_secs(1));
     let pending = Store::open(settings).unwrap().pending_ingress().unwrap();
@@ -117,7 +156,11 @@ fn before_source_run(settings: &tl3_config::Store) {
     request.join().unwrap();
     control.stop();
     running.join().unwrap().unwrap();
-    assert_eq!(timely.expect("bound listener must answer before controller startup or source registration"), 202);
+    assert_eq!(
+        timely
+            .expect("bound listener must answer before controller startup or source registration"),
+        202
+    );
     assert_eq!(pending.len(), 1);
     println!("test startup_ack_before_source_run ... ok");
 }
