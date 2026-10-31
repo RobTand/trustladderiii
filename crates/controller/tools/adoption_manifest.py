@@ -24,11 +24,9 @@ env = {
 common = {"cwd": str(root), "cpus": 2, "demand": {"mem_gb": 8}, "env": env}
 rows = []
 if args.suite in {"hosts", "all"}:
-    # Every maker scenario is part of the workers executable.
+    # Include every process/socket/crash fixture, alongside the required scenario families.
     rows.extend({**common, "tags": [host], "argv": [
-        "cargo", "test", "--locked", "-p", "tl3-controller", "--lib",
-        "--test", "publishing", "--test", "workers", "--test", "reproducing_rebase",
-        "--test", "prismabuild",
+        "cargo", "test", "--workspace", "--all-targets", "--locked",
     ]} for host in ("dl380g10", "sparky", "sparklina"))
 if args.suite in {"python", "all"}:
     rows.append({**common, "cpus": 4, "anywhere": True, "argv": [
