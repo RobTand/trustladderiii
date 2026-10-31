@@ -230,7 +230,7 @@ fn completion(
         node: job.delivery.node(),
         generation: job.delivery.generation,
         action_key: job.action.to_string(),
-        base_sha: job.run.base_sha.clone(),
+        base_sha: job.run.base_sha.as_str().to_owned(),
         sha: job
             .delivery
             .head_sha
@@ -256,9 +256,14 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
     let report: Report = serde_json::from_str(reports[0]).ok()?;
     if report.schema != "tl3.checks.v1"
         || report.effect_key != job.delivery.key
-        || report.base != job.run.base_sha
+        || report.base != job.run.base_sha.as_str()
         || Some(&report.head) != job.delivery.head_sha.as_ref()
-        || report.reviewed != job.run.reviewed_sha
+        || report.reviewed.as_deref()
+            != job
+                .run
+                .reviewed_sha
+                .as_ref()
+                .map(tl3_worktrees::CommitId::as_str)
         || report.results.len() != job.run.plan.len()
     {
         return None;
