@@ -48,10 +48,12 @@ the selected ref. Remove `ci` after optional debugging.
 
 A push to `main` only runs `Warm Rust cache`. It compiles all test targets
 with `--no-run` and builds the deployment helper. It executes no test suite.
-All three jobs use the same lockfile-scoped prefix and `shared-key: ci`, so
-the warmer publishes the dependency cache that both jobs restore. The old
-job-specific keys cannot warm the new shared key; expect one cold build when
-the scheme changes. The warmer's 15-minute budget is separate from the gates.
+All three jobs use the same lockfile-scoped prefix and `shared-key: rust`, so
+the warmer publishes the dependency cache that both jobs restore. Existing
+main Rust caches already use the `rust` job key, so this preserves their
+namespace instead of forcing a cold migration. Compiler or lockfile changes
+can still require a cold build. The warmer's 15-minute budget is separate
+from the gates.
 
 PR caches belong to their PR merge ref. Other drafts cannot restore them.
 The default branch cache remains readable across drafts, so deleting every

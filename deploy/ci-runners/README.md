@@ -68,8 +68,10 @@ stay intact. Mergify allows
 
 Each container has `--cpus=4 --cpuset-cpus=40-79 --memory=6g --memory-swap=6g`
 and at most 1,024 processes. Six slots use at most 24 CPU equivalents and 36 GiB
-RAM, enough for three Mergify batches with two jobs each. Native thread limits remain in the
-workflow and image. Image builds also have a two-CPU, six-GiB limit.
+RAM, enough for three Mergify batches with two jobs each. The build-only cache
+warmer shares these slots and can briefly leave a batch job queued. Native
+thread limits remain in the workflow and image. Image builds also have a
+two-CPU, six-GiB limit.
 
 On 2026-10-30, the published PrismaBuild configuration at
 `/mnt/shared/prismabuild-fleet/repo/tools/fleet/fleet_boxes.json` declares 16
@@ -117,8 +119,9 @@ projects have untagged images in the same store.
 Use `install.sh 0` to install without starting slots. This does not stop slots
 that are already active.
 
-Open the workflow PR. Its own workflow targets the new runner, so `Rust` and
-`Python` run sequentially on the canary slot. Read their jobs API records and
+Open the workflow PR and request CI with a workflow dispatch at its branch.
+Its workflow targets the new runner, so `Rust` and `Python` run sequentially
+on the canary slot. Read their jobs API records and
 check conclusions, `runner_name`, labels, and check-run links. If GitHub refuses
 self-hosted jobs because of billing, stop and report its exact message to Rob.
 After both jobs pass, enable the remaining slots without another push:

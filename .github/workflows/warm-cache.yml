@@ -44,7 +44,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
-          shared-key: ci
+          shared-key: rust
       - name: Build test dependencies without running tests
         run: cargo test --workspace --all-targets --locked --no-run
       - name: Build deployment helper without running tests
