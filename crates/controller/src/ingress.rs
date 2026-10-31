@@ -494,7 +494,7 @@ impl CatchUpBatch {
 }
 
 enum WebhookMessage {
-    Request(http::Request, mpsc::SyncSender<u16>),
+    Request(http::Request, std::sync::mpsc::SyncSender<u16>),
     Gap,
     Stop,
     ServerExit(Result<()>),
@@ -640,7 +640,7 @@ impl WebhookReceiver {
                         Ok(request) if request.method != "POST" => (405, request.method == "HEAD"),
                         Ok(request) if request.path != "/github/events" => (404, false),
                         Ok(request) => {
-                            let (reply, response) = mpsc::sync_channel(1);
+                            let (reply, response) = std::sync::mpsc::sync_channel(1);
                             if requests
                                 .send(WebhookMessage::Request(request, reply))
                                 .is_err()
