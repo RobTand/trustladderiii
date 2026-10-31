@@ -75,6 +75,7 @@ struct State {
     posts: usize,
     fail_reads: bool,
     rate_limit: Option<u16>,
+    http_failure: Option<u16>,
     lag: bool,
     fail_post: bool,
     events: Vec<Value>,
@@ -99,6 +100,7 @@ impl State {
             posts: 0,
             fail_reads: false,
             rate_limit: None,
+            http_failure: None,
             lag: false,
             fail_post: false,
             events: vec![],
@@ -156,6 +158,10 @@ impl Respond for Api {
         }
         if method == "GET" {
             state.reads += 1;
+        }
+        if let Some(status) = state.http_failure.filter(|_| method == "GET") {
+            return ResponseTemplate::new(status)
+                .set_body_json(json!({"message": "fixture failure"}));
         }
         if let Some(status) = state.rate_limit.filter(|_| method == "GET") {
             return ResponseTemplate::new(status)
@@ -1610,7 +1616,96 @@ fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
     println!("test rate_limited_read_defers_quota_{status} ... ok");
 }
 
+fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Mergify,
+        api.adapter(&root.path().join("mergify"), 0),
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "rate-limited".into(),
+            owner: "owner".into(),
+            repo: "sandbox".into(),
+            installation: 3,
+            number: 12,
+            title: "change".into(),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    for _ in 0..300 {
+        if !controller
+            .drive_once_with(|boundary, key| {
+                if boundary == Boundary::BeforeDispatch {
+                    let effect = Store::open(settings).unwrap().effect(key).unwrap().unwrap();
+                    let delivery: Delivery = serde_json::from_value(effect.payload).unwrap();
+                    if matches!(
+                        delivery.output,
+                        Out::Effect {
+                            kind: EffectKind::Enqueue,
+                            ..
+                        }
+                    ) {
+                        let mut state = api.state.lock().unwrap();
+                        state.pull["head"]["sha"] = json!(delivery.head_sha);
+                        state.http_failure = Some(status);
+                    }
+                }
+            })
+            .unwrap()
+        {
+            break;
+        }
+    }
+    let snapshot = controller.snapshot().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|row| {
+            row.table == "incidents" && row.value["signature"] == format!("Mergify:{class}")
+        })
+        .expect("permanent GitHub failure must raise an incident with its kind");
+    assert!(
+        !incident.value["summary"]
+            .as_str()
+            .unwrap()
+            .contains("could not be reached")
+    );
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "allowances")
+            .any(|row| row.value["failure"] == class)
+    );
+    assert_eq!(api.state.lock().unwrap().posts, 0);
+    println!("test permanent_github_read_{status} ... ok");
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--permanent-github-read") {
+        let mut database = support::Database::start();
+        for (status, class) in [
+            (401, "permission"),
+            (403, "permission"),
+            (404, "not_found"),
+            (410, "not_found"),
+            (422, "invalid_request"),
+        ] {
+            permanent_github_read(
+                &database.create(&format!("permanent_{status}")),
+                status,
+                class,
+            );
+        }
+        database.stop();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--rate-limited-read") {
         let mut database = support::Database::start();
         for status in [403, 429] {
@@ -1626,6 +1721,19 @@ fn main() {
     let mut database = support::Database::start();
     for status in [403, 429] {
         rate_limited_read_defers_quota(&database.create(&format!("quota_{status}")), status);
+    }
+    for (status, class) in [
+        (401, "permission"),
+        (403, "permission"),
+        (404, "not_found"),
+        (410, "not_found"),
+        (422, "invalid_request"),
+    ] {
+        permanent_github_read(
+            &database.create(&format!("permanent_{status}")),
+            status,
+            class,
+        );
     }
     in_progress_confirms_enqueue(&database.create("progress"));
     late_merge_after_close(&database.create("late_webhook"), true);
@@ -1672,5 +1780,5 @@ fn main() {
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     database.stop();
-    println!("40 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("45 Mergify scenarios passed; no skips; no live upstream calls");
 }

@@ -5,6 +5,7 @@ mod bell;
 mod support;
 #[path = "fixtures/waits/mod.rs"]
 mod waits;
+mod worktree_fixture;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeSet,
@@ -956,7 +957,85 @@ fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     c.look_due().unwrap();
     assert_eq!(c.snapshot().unwrap(), before);
 }
+fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = worktree_fixture::Fixture::create(root.path());
+    let mut boot = bootstrap();
+    boot.repos = vec![worktree_fixture::identity()];
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Worktrees, fixture.adapter());
+    let mut c = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    c.intake(LabelledIssue {
+        delivery: "dirty-worktree".into(),
+        owner: "RobTand".into(),
+        repo: "tl3-sandbox".into(),
+        installation: 1,
+        number: 42,
+        title: "Fix a greeting".into(),
+        actor: 42,
+        label: "tl3".into(),
+    })
+    .unwrap();
+    let delivery = fixture.delivery(EffectKind::PrepareWorktree, 1);
+    let checkout = fixture.adapter().checkout(&delivery);
+    for _ in 0..300 {
+        if checkout.exists() {
+            break;
+        }
+        assert!(c.drive_once().unwrap());
+    }
+    assert!(checkout.exists());
+    std::fs::write(checkout.join("unfinished.txt"), "Keep this work.").unwrap();
+    c.observe(
+        "stop-dirty-worktree",
+        Observation::Kernel(Event::Command {
+            node: NodeId(0),
+            id: 100,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    let snapshot = c.snapshot().unwrap();
+    let allowance = snapshot
+        .rows
+        .iter()
+        .find(|r| {
+            r.table == "allowances"
+                && r.value["delivery"]["output"]["Effect"]["kind"] == "RemoveWorktree"
+        })
+        .unwrap();
+    let key = allowance.value["delivery"]["key"].as_str().unwrap();
+    assert_eq!(
+        c.effect(key).unwrap().unwrap().state,
+        EffectState::Failed,
+        "a dirty worktree must permanently fail, not retry as transport"
+    );
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "incidents" && r.value["signature"] == "Worktrees:dirty_worktree")
+        .expect("dirty-worktree incident cause");
+    let summary = incident.value["summary"].as_str().unwrap();
+    assert!(
+        summary.contains("uncommitted or untracked files"),
+        "wrong incident cause: {summary}"
+    );
+    assert!(!summary.contains("could not be reached"));
+    assert_eq!(
+        std::fs::read_to_string(checkout.join("unfinished.txt")).unwrap(),
+        "Keep this work."
+    );
+    println!("test dirty_worktree_is_permanent ... ok");
+}
+
 fn main() {
+    if std::env::args().any(|arg| arg == "--dirty-worktree") {
+        let mut db = support::Database::start();
+        dirty_worktree_is_permanent(&db.create("dirty_worktree"));
+        db.stop();
+        return;
+    }
     if let Some(case) = std::env::args()
         .nth(1)
         .and_then(|s| s.strip_prefix("--r4-").map(str::to_owned))
@@ -1031,6 +1110,7 @@ fn main() {
     println!("test pb_owns_progress_failure ... ok");
     owner_progress_contract(&db.create("queue_stall"), Upstream::Mergify);
     println!("test queue_stall_incident ... ok");
+    dirty_worktree_is_permanent(&db.create("dirty_worktree"));
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");
     progress_releases_nothing(&db.create("progress_holds"));

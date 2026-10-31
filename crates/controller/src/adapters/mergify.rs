@@ -914,3 +914,47 @@ impl GitHubTranslator for Translator {
         }
     }
 }
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn github_failure_class_survives_mergify() {
+        for (status, expected) in [
+            (401, "permission"),
+            (403, "permission"),
+            (404, "not_found"),
+            (410, "not_found"),
+            (422, "invalid_request"),
+            (500, "upstream_server"),
+            (503, "upstream_server"),
+        ] {
+            let direct = Error::from(tl3_github::Error::Http { status });
+            let wrapped = adapter_error(tl3_mergify::Error::GitHub(tl3_github::Error::Http {
+                status,
+            }));
+            assert_eq!(
+                crate::looks::failure_class(&direct),
+                expected,
+                "direct HTTP {status}"
+            );
+            assert_eq!(
+                crate::looks::failure_class(&wrapped),
+                expected,
+                "wrapped HTTP {status}"
+            );
+        }
+        for error in [tl3_github::Error::Transport, tl3_github::Error::Response] {
+            let expected = if matches!(error, tl3_github::Error::Transport) {
+                "transport"
+            } else {
+                "invalid_response"
+            };
+            assert_eq!(
+                crate::looks::failure_class(&adapter_error(tl3_mergify::Error::GitHub(error))),
+                expected
+            );
+        }
+    }
+}
