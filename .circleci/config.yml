@@ -1,14 +1,10 @@
 version: 2.1
 
-parameters:
-  full:
-    type: boolean
-    default: false
-
 commands:
   prepare:
     steps:
-      - checkout
+      - checkout:
+          method: full
       - run:
           name: Verify isolated runner identity
           command: |
@@ -39,15 +35,12 @@ executors:
 jobs:
   rust:
     executor: fast
-    parallelism: 3
+    parallelism: 1
     steps:
       - prepare
       - run:
-          name: Format, lint, and run Rust binaries by prior timing
-          command: |
-            args=()
-            if [ '<< pipeline.parameters.full >>' = true ]; then args+=(--full); fi
-            uv run --no-project --python 3.14 python tools/ci/circleci.py rust "${args[@]}"
+          name: Format, lint, and run the shared Rust budget gate
+          command: uv run --no-project --python 3.14 python tools/ci/circleci.py rust
           no_output_timeout: 30m
       - store_test_results:
           path: test-results
