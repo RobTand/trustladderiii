@@ -1,0 +1,32 @@
+[
+  {
+    "id": 34734753277,
+    "event": "renamed",
+    "actor": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "label": null,
+    "created_at": "2026-10-30T21:37:26Z"
+  },
+  {
+    "id": 34734753595,
+    "event": "closed",
+    "actor": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "label": null,
+    "created_at": "2026-10-30T21:37:26Z"
+  },
+  {
+    "id": 34734755434,
+    "event": "head_ref_deleted",
+    "actor": {
+      "id": 37929162,
+      "login": "mergify[bot]"
+    },
+    "label": null,
+    "created_at": "2026-10-30T21:37:28Z"
+  }
+]

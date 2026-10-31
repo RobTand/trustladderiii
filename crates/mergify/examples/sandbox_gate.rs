@@ -1,7 +1,10 @@
 //! Live sandbox operations. Credentials and installation tokens stay in process.
 use chrono::Utc;
 use serde_json::json;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tl3_github::{
     AppConfig, CheckConclusion, CheckStatus, ClientOptions, CloseReason, GitHub, NewCheckRun,
     NewPullRequest,
@@ -76,16 +79,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if path.exists() {
                     continue;
                 }
-                let detail: serde_json::Value = http
-                    .get(format!("https://api.github.com/app/hook/deliveries/{id}"))
-                    .header("User-Agent", "tl3-sandbox-gate")
-                    .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
-                    .bearer_auth(&jwt)
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await?;
+                let detail = github_json(
+                    http.get(format!("https://api.github.com/app/hook/deliveries/{id}"))
+                        .header("User-Agent", "tl3-sandbox-gate")
+                        .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+                        .bearer_auth(&jwt)
+                        .send()
+                        .await?,
+                )
+                .await?;
                 let payload = &detail["request"]["payload"];
                 if payload["repository"]["full_name"] != "RobTand/tl3-sandbox" {
                     continue;
@@ -110,16 +112,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Err("delivery pagination limit reached".into());
     }
-    let installation: serde_json::Value = http
-        .get("https://api.github.com/repos/RobTand/tl3-sandbox/installation")
-        .header("User-Agent", "tl3-sandbox-gate")
-        .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
-        .bearer_auth(jwt)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let installation = github_json(
+        http.get("https://api.github.com/repos/RobTand/tl3-sandbox/installation")
+            .header("User-Agent", "tl3-sandbox-gate")
+            .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+            .bearer_auth(jwt)
+            .send()
+            .await?,
+    )
+    .await?;
     let github = GitHub::new(
         app,
         installation["id"].as_u64().ok_or("installation missing")?,
@@ -128,13 +129,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let repo = "RobTand/tl3-sandbox";
     match operation.as_str() {
         "open" => {
-            let pull = github.open_pull_request(repo, &NewPullRequest {
-                title: head.ok_or("title required")?,
-                head: subject,
-                base: "main".into(),
-                body: "Correct the live-trial configuration deadlock from RobTand/trustladderiii#17. Keep TL3 approval on the original head and sandbox CI on the draft. GitHub still enforces both checks on the original PR, with no ruleset bypass. Requires coordinator review before bootstrap recovery.".into(),
-            }).await?;
+            let request = trial_pull_request(
+                subject,
+                head.ok_or("title required")?,
+                args.next().ok_or("trial body required")?,
+            );
+            let pull = github.open_pull_request(repo, &request).await?;
             println!("sandbox PR {}", pull.number);
+        }
+        "tree" | "commit" => {
+            let sha = post_git_object_file(
+                &http,
+                &github,
+                "https://api.github.com",
+                &operation,
+                Path::new(&subject),
+            )
+            .await?;
+            println!("{sha}");
         }
         "approve" => {
             let check = github
@@ -164,7 +176,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .send()
                 .await?;
             println!("branch creation HTTP {}", response.status());
-            response.error_for_status()?;
+            github_json(response).await?;
         }
         "close-issue" => {
             github
@@ -193,5 +205,236 @@ async fn main() {
     if let Err(error) = run().await {
         eprintln!("Sandbox operation failed: {error}. Inspect REST state before retrying.");
         std::process::exit(1);
+    }
+}
+
+fn trial_pull_request(branch: String, title: String, body: String) -> NewPullRequest {
+    NewPullRequest {
+        head: branch,
+        base: "main".into(),
+        title,
+        body,
+    }
+}
+
+async fn github_json(
+    response: reqwest::Response,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let status = response.status();
+    let url = response.url().clone();
+    let body = response.text().await?;
+    if !status.is_success() {
+        let message = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|body| body["message"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "GitHub returned no JSON error message".into());
+        return Err(format!("GitHub request failed ({status}) at {url}: {message}").into());
+    }
+    Ok(serde_json::from_str(&body)?)
+}
+
+async fn post_git_object_file(
+    http: &reqwest::Client,
+    github: &GitHub,
+    api_url: &str,
+    operation: &str,
+    payload_path: &Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let resource = match operation {
+        "tree" => "trees",
+        "commit" => "commits",
+        _ => return Err("unknown Git object operation".into()),
+    };
+    let payload = serde_json::from_slice(&fs::read(payload_path)?)?;
+    post_git_object(http, github, api_url, resource, &payload).await
+}
+
+async fn post_git_object(
+    http: &reqwest::Client,
+    github: &GitHub,
+    api_url: &str,
+    resource: &str,
+    payload: &serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let object = github_json(
+        http.post(format!(
+            "{api_url}/repos/RobTand/tl3-sandbox/git/{resource}"
+        ))
+        .header("User-Agent", "tl3-sandbox-gate")
+        .header("X-GitHub-Api-Version", tl3_github::API_VERSION)
+        .bearer_auth(github.installation_token().await?)
+        .json(payload)
+        .send()
+        .await?,
+    )
+    .await?;
+    Ok(object["sha"]
+        .as_str()
+        .ok_or("Git object SHA missing")?
+        .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_request_preserves_the_callers_trial_description() {
+        let request = trial_pull_request(
+            "tl3/issue-17-node-201".into(),
+            "Verify the approved head while main advances".into(),
+            "Merge a separate approved PR, then confirm this head is unchanged.".into(),
+        );
+        assert_eq!(request.head, "tl3/issue-17-node-201");
+        assert_eq!(request.base, "main");
+        assert_eq!(
+            request.title,
+            "Verify the approved head while main advances"
+        );
+        assert_eq!(
+            request.body,
+            "Merge a separate approved PR, then confirm this head is unchanged."
+        );
+    }
+
+    async fn assert_app_git_write(operation: &str, resource: &str, payload: serde_json::Value) {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{body_json, header, method, path},
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/app/installations/3/access_tokens"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "token": "fake-app-installation-token",
+                "expires_at": "2099-01-01T00:00:00Z"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("/repos/RobTand/tl3-sandbox/git/{resource}")))
+            .and(header(
+                "authorization",
+                "Bearer fake-app-installation-token",
+            ))
+            .and(header("X-GitHub-Api-Version", tl3_github::API_VERSION))
+            .and(body_json(&payload))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(json!({"sha": "created-object"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let github = GitHub::new(
+            AppConfig {
+                id: 123,
+                slug: "factory".into(),
+                pem: include_str!("../tests/fixtures/throwaway-key.pem").into(),
+                webhook_secret: "fake".into(),
+            },
+            3,
+            ClientOptions {
+                api_url: format!("{}/", server.uri()).parse().unwrap(),
+                max_retries: 0,
+                ..ClientOptions::default()
+            },
+        )
+        .unwrap();
+        let payload_path = std::env::temp_dir().join(format!(
+            "tl3-sandbox-gate-{}-{}.json",
+            std::process::id(),
+            server.address().port()
+        ));
+        fs::write(&payload_path, serde_json::to_vec(&payload).unwrap()).unwrap();
+        let result = post_git_object_file(
+            &reqwest::Client::new(),
+            &github,
+            &server.uri(),
+            operation,
+            &payload_path,
+        )
+        .await;
+        fs::remove_file(payload_path).unwrap();
+        let sha = result.unwrap();
+        assert_eq!(sha, "created-object");
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn tree_post_uses_app_installation_token_and_preserves_content() {
+        assert_app_git_write("tree", "trees", json!({
+            "base_tree": "original-tree",
+            "tree": [{"path": "trial.txt", "mode": "100644", "type": "blob", "content": "trial\n"}]
+        })).await;
+    }
+
+    #[tokio::test]
+    async fn commit_post_uses_app_installation_token_and_preserves_parent() {
+        assert_app_git_write(
+            "commit",
+            "commits",
+            json!({
+                "message": "Sandbox trial", "tree": "new-tree", "parents": ["original-main"]
+            }),
+        )
+        .await;
+    }
+    #[tokio::test]
+    async fn refused_git_write_reports_github_message() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/app/installations/3/access_tokens"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "token": "fake-app-installation-token",
+                "expires_at": "2099-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/RobTand/tl3-sandbox/git/trees"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "message": "Tree does not exist"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let github = GitHub::new(
+            AppConfig {
+                id: 123,
+                slug: "factory".into(),
+                pem: include_str!("../tests/fixtures/throwaway-key.pem").into(),
+                webhook_secret: "fake".into(),
+            },
+            3,
+            ClientOptions {
+                api_url: format!("{}/", server.uri()).parse().unwrap(),
+                max_retries: 0,
+                ..ClientOptions::default()
+            },
+        )
+        .unwrap();
+        let error = post_git_object(
+            &reqwest::Client::new(),
+            &github,
+            &server.uri(),
+            "trees",
+            &json!({"base_tree": "absent"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("422"), "{error}");
+        assert!(
+            error.contains("/repos/RobTand/tl3-sandbox/git/trees"),
+            "{error}"
+        );
+        assert!(error.contains("Tree does not exist"), "{error}");
+        server.verify().await;
     }
 }

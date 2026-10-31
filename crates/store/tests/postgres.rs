@@ -23,6 +23,7 @@ fn main() {
             "mvp_schema_6_upgrades_to_hindsight",
             mvp_schema_6_upgrades_to_hindsight as fn(&tl3_config::Store),
         ),
+        ("review_fixes_worker_document", review_fixes_worker_document),
         (
             "atomic_commit_and_idempotency",
             atomic_commit_and_idempotency as fn(&tl3_config::Store),
@@ -74,6 +75,29 @@ fn raw(settings: &tl3_config::Store) -> Client {
         .password("tl3-disposable-test-password")
         .connect(NoTls)
         .unwrap()
+}
+
+fn review_fixes_worker_document(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(store.worker_document("0", "review_fixes").unwrap(), None);
+    let evidence = json!({
+        "reviewed_sha": "a".repeat(40),
+        "head_sha": "b".repeat(40),
+        "findings": [{"id": "review-7-0", "report": "Clarify the wording", "reason": "Documentation only"}]
+    });
+    let mut change = Commit::new("fix-evidence", json!(null), &store.load().unwrap());
+    change.rows.push(RowChange::Put {
+        table: "review_fixes".into(),
+        id: "0".into(),
+        value: evidence.clone(),
+    });
+    store.commit(&change).unwrap();
+    let mut recovered = Store::open(settings).unwrap();
+    assert_eq!(
+        recovered.worker_document("0", "review_fixes").unwrap(),
+        Some(evidence)
+    );
+    assert!(recovered.worker_document("0", "not_a_document").is_err());
 }
 
 fn put(id: &str, value: serde_json::Value) -> RowChange {

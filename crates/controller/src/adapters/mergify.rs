@@ -251,6 +251,7 @@ impl Adapter {
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
             return Ok(Reconciliation::Found(Completion {
                 ack: Ack::Retryable,
+                failure_class: None,
                 observations,
                 progress: None,
             }));

@@ -45,7 +45,8 @@
           "items": {
             "$ref": "#/$defs/blocking_finding"
           },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 20
         },
         "findings": {
           "type": "array",

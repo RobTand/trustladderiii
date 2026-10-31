@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langchain_openai import ChatOpenAI
@@ -15,6 +14,7 @@ from jsonschema import Draft202012Validator
 from tl3_workers.contracts import read_json, schema
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
+from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts
 
 
@@ -40,6 +40,18 @@ def _check_reply(inputs, reply):
             raise ValueError("self-check must cover every goal exactly once")
         if any(check["status"] != "met" for check in reply["self_check"]):
             raise ValueError("done requires every goal to be met; use cant_meet with a report")
+        findings = {item["id"] for item in inputs.get("feedback", [])
+                    if inputs["round"] == 1 and inputs.get("reviewed_sha")
+                    and item["kind"] == "review_finding"
+                    and item.get("reviewed_sha") == inputs["reviewed_sha"]}
+        reproductions = reply.get("reproductions", [])
+        mapped = [item["finding_id"] for item in reproductions]
+        if len(mapped) != len(findings) or set(mapped) != findings:
+            raise ValueError("reproductions must cover each current review finding exactly once")
+        from tl3_harness import Check, Kind
+        for item in reproductions:
+            if "tests" in item:
+                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]))
     elif reply["kind"] == "needs_files":
         for item in reply["files"]:
             if not _parts(item["path"]):
@@ -63,21 +75,6 @@ def _git(request, *args, check=True):
     )
 
 
-def _save(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("w") as handle:
-        json.dump(value, handle, ensure_ascii=False, allow_nan=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
-
-
 def _starting_head(request, session):
     root = _git(request, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(root).resolve() != Path(request["worktree"]).resolve():
@@ -86,13 +83,12 @@ def _starting_head(request, session):
     generation = request['operation']['generation']
     if checkpoint and checkpoint.exists():
         saved = read_json(checkpoint.read_text())
-        # RunFailed advances the generation, but only an accepted reply ends a visit.
-        if saved['generation'] > request.get('last_accepted_generation', -1):
+        if is_unaccepted_session(request, saved):
             return saved['head']
     head = _git(request, "rev-parse", "--verify", "HEAD").stdout.strip()
     if checkpoint:
         # Replace the previous visit so retries cannot grow an open attempt's files.
-        _save(checkpoint, {"generation": generation, "head": head})
+        save(checkpoint, {"generation": generation, "head": head})
     return head
 
 
@@ -110,39 +106,6 @@ def _commit(request, starting_head):
     if head == starting_head:
         raise ValueError("done requires code changes")
     return head
-
-
-def _message_characters(message):
-    content = message.content
-    count = len(content) if isinstance(content, str) else len(json.dumps(content, ensure_ascii=False))
-    if isinstance(message, AIMessage) and message.tool_calls:
-        count += len(json.dumps(message.tool_calls, ensure_ascii=False))
-    return count
-
-
-class _ContextCharacters(BaseCallbackHandler):
-    prompt = 0
-
-    def on_chat_model_start(self, serialized, messages, **kwargs):
-        # Count the actual prompt, including the schema, history and tool results.
-        self.prompt = sum(_message_characters(message) for message in messages[0])
-        tools = kwargs.get("invocation_params", {}).get("tools")
-        if tools:
-            self.prompt += len(json.dumps(tools, ensure_ascii=False))
-
-
-def _out_of_room(message, context_size, prompt_characters):
-    usage = message.usage_metadata
-    tokens = 0
-    if usage is not None:
-        counts = [usage.get("input_tokens"), usage.get("output_tokens")]
-        if any(type(count) is not int or count < 0 for count in counts):
-            raise ValueError("invalid model usage metadata")
-        tokens = sum(counts)
-    if tokens == 0:
-        tokens = (prompt_characters + _message_characters(message) + 2) // 3
-    # Each prompt resends the conversation. Summing turn totals double-counts it.
-    return tokens * 100 >= context_size * 85
 
 
 def run(model, request, worktree, emit):
@@ -169,7 +132,7 @@ def run(model, request, worktree, emit):
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal)
-    characters = _ContextCharacters()
+    characters = ContextCharacters()
     last_message = None
     history = []
     session = Path(request["session_file"]) if "session_file" in request else None
@@ -182,7 +145,7 @@ def run(model, request, worktree, emit):
         config={"callbacks": [characters]},
         stream_mode="updates",
     )
-    out_of_room = False
+    exhausted = False
     try:
         for update in stream:
             for result in update.values():
@@ -192,19 +155,19 @@ def run(model, request, worktree, emit):
                     history.append(message)
                     if isinstance(message, AIMessage):
                         emit({"event": "progress", "unit": "model_turn"})
-                        if _out_of_room(message, inputs["context_size"], characters.prompt):
-                            out_of_room = True
+                        if out_of_room(message, inputs["context_size"], characters.prompt):
+                            exhausted = True
                             break
                         last_message = message
                     elif isinstance(message, ToolMessage):
                         emit({"event": "progress", "unit": "tool_result"})
-                if out_of_room:
+                if exhausted:
                     break
-            if out_of_room:
+            if exhausted:
                 break
     finally:
         stream.close()
-    if out_of_room:
+    if exhausted:
         return {"kind": "out_of_room"}
     if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
         raise ValueError("missing final maker reply")
@@ -233,7 +196,7 @@ def run(model, request, worktree, emit):
                 size += inputs["fit_tokens"]
         reply["fits"] = size < inputs["fit_tokens"]
     if session and reply["kind"] != "out_of_room":
-        _save(session, messages_to_dict(history))
+        save(session, messages_to_dict(history))
     return reply
 
 

@@ -25,4 +25,4 @@ progress credit, a forecast or a plan. Code does that later.
 
 Return only the JSON object, without Markdown fences or surrounding prose.
 
-When forecast settings are supplied, also declare `files`, the repository-relative files this request needs to read or change. Include planned new files. Code measures these files and the brief to size the request. Do not supply a forecast yourself.
+When forecast settings are supplied, also declare `files`, the repository-relative files this request needs to read or change. Include planned new files. Code measures these files and the brief to size the request.

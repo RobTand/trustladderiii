@@ -1316,7 +1316,11 @@ fn change_comment(controller: &mut Controller, id: u64) {
         .unwrap();
 }
 
-fn stopping_replacement(settings: &tl3_config::Store, root: &Path, api: &Server) -> Controller {
+pub(super) fn stopping_replacement(
+    settings: &tl3_config::Store,
+    root: &Path,
+    api: &Server,
+) -> Controller {
     fs::write(root.join("hold-merges"), "hold").unwrap();
     let mut controller = race_controller(
         settings,

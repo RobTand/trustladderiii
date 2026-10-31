@@ -27,7 +27,7 @@ dev = ["pytest==9.0.2"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-tl3_workers = ["schemas/*.json", "prompts/*.md"]
+tl3_workers = ["schemas/*.json", "prompts/*.md", "evaluation/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

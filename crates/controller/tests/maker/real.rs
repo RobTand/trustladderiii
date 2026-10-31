@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::mpsc::Receiver;
+use std::{io::Write, sync::mpsc::Receiver};
 use tl3_controller::{Repository, adapters::worktrees::Real};
 
 pub(super) struct Flow {
@@ -359,6 +359,146 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
     while flow.controller.drive_once().unwrap() {}
 }
 
+pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut flow = Flow::start_mode(settings, root.path(), "review-fix", rebase);
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "goals".into(),
+        id: "0".into(),
+        value: json!([{"id":"greeting", "description":"Return hello.", "verification":"test"}]),
+    });
+    store.commit(&commit).unwrap();
+    let reviewed = flow.record()["head"].as_str().unwrap().to_owned();
+    flow.until(|phase| phase == Phase::Making);
+    let feedback = store
+        .worker_document("0", "maker_findings")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        feedback.as_array().unwrap().len(),
+        2,
+        "each blocking finding needs its own mapping"
+    );
+    for finding in feedback.as_array().unwrap() {
+        assert!(finding["id"].is_string(), "review findings need stable ids");
+        assert_eq!(finding["reviewed_sha"], reviewed);
+    }
+    flow.until(|phase| phase == Phase::Checking);
+    let fixed = flow.record()["head"].as_str().unwrap().to_owned();
+    let snapshot = flow.controller.snapshot().unwrap();
+    let run = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "check_plans" && row.id == format!("0:{fixed}"))
+        .unwrap();
+    assert_eq!(run.value["reviewed_sha"], reviewed);
+    let checks = run.value["plan"].as_array().unwrap();
+    assert_eq!(checks.len(), 2, "the original plan and reproducer both run");
+    assert_eq!(checks[1]["kind"], "reproducing");
+    assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
+    if rebase {
+        flow.until(|phase| phase == Phase::Queued);
+        let upstream = root.path().join("repo");
+        fs::OpenOptions::new()
+            .append(true)
+            .open(upstream.join("pyproject.toml"))
+            .unwrap()
+            .write_all(b"\n# upstream configuration\n")
+            .unwrap();
+        fs::write(upstream.join("conftest.py"), "# upstream fixture\n").unwrap();
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "-m", "Upstream configuration"]);
+        git(
+            &upstream,
+            &["push", flow.remote.to_str().unwrap(), "HEAD:main"],
+        );
+        flow.controller
+            .observe(
+                "clean-review-fix-rebase",
+                Observation::Kernel(Event::Fact {
+                    node: NodeId(0),
+                    fact: tl3_kernel::Fact::Conflict,
+                }),
+            )
+            .unwrap();
+        flow.until(|phase| phase == Phase::Checking);
+        flow.until(|phase| phase == Phase::Queued);
+        let head = git(&flow.worktree, &["rev-parse", "HEAD"]);
+        let snapshot = flow.controller.snapshot().unwrap();
+        let plan = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "check_plans" && row.id == format!("0:{head}"))
+            .unwrap();
+        let rebased_reviewed = plan.value["reviewed_sha"].as_str().unwrap();
+        assert_ne!(rebased_reviewed, reviewed);
+        let evidence = store.worker_document("0", "review_fixes").unwrap().unwrap();
+        assert_eq!(evidence["head_sha"], head);
+        assert_eq!(evidence["reviewed_sha"], rebased_reviewed);
+        let reviews = fs::read_dir(flow.config.workers.runs.join("reviewer-requests"))
+            .unwrap()
+            .map(|e| {
+                serde_json::from_slice::<Value>(&fs::read(e.unwrap().path()).unwrap()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let next = reviews
+            .iter()
+            .find(|r| r["inputs"]["head_sha"] == head)
+            .unwrap();
+        assert_eq!(next["inputs"]["base_sha"], rebased_reviewed);
+        assert_eq!(next["inputs"]["check_base_sha"], plan.value["base_sha"]);
+        assert_eq!(
+            next["inputs"]["review_fixes"]["reviewed_sha"],
+            rebased_reviewed
+        );
+        assert_eq!(
+            next["inputs"]["review_fixes"]["findings"][1]["reason"],
+            "This is a documentation correction."
+        );
+        flow.controller
+            .observe(
+                "rebased-fix-merged",
+                Observation::Merged {
+                    node: NodeId(0),
+                    sha: head,
+                    checks_passed: true,
+                },
+            )
+            .unwrap();
+    }
+    flow.until(|phase| phase.is_closed());
+    let reviews = fs::read_dir(flow.config.workers.runs.join("reviewer-requests"))
+        .unwrap()
+        .map(|entry| {
+            serde_json::from_slice::<Value>(&fs::read(entry.unwrap().path()).unwrap()).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let next = reviews
+        .iter()
+        .find(|request| request["inputs"]["head_sha"] == fixed)
+        .unwrap();
+    assert_eq!(next["inputs"]["base_sha"], reviewed);
+    assert_eq!(next["inputs"]["check_base_sha"], flow.base);
+    assert_eq!(next["inputs"]["review_fixes"]["reviewed_sha"], reviewed);
+    let fixes = next["inputs"]["review_fixes"]["findings"]
+        .as_array()
+        .unwrap();
+    assert_eq!(fixes[0]["tests"], json!(["test_greeting.py::test_empty"]));
+    assert_eq!(fixes[1]["reason"], "This is a documentation correction.");
+    assert!(
+        fixes[1]["report"]
+            .as_str()
+            .unwrap()
+            .contains("Explain the greeting")
+    );
+    assert_eq!(
+        flow.controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(tl3_kernel::Outcome::Merged)
+    );
+}
+
 struct HeldQueue;
 impl Executor for HeldQueue {
     fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
@@ -472,6 +612,17 @@ pub(super) fn review_feedback(settings: &tl3_config::Store) {
     let mut flow = Flow::start_mode(settings, root.path(), "review-feedback", false);
     flow.until(|phase| phase == Phase::Making);
     flow.until(|phase| phase == Phase::Checking);
+    let snapshot = flow.controller.snapshot().unwrap();
+    let head = git(&flow.worktree, &["rev-parse", "HEAD"]);
+    let plan = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "check_plans" && r.id == format!("0:{head}"))
+        .unwrap();
+    assert!(
+        plan.value.get("reviewed_sha").is_none(),
+        "reasons alone need no reviewed tree"
+    );
     let runs = requests(&flow.config);
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[1]["inputs"]["round"], 1);

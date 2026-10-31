@@ -112,95 +112,24 @@ fn fixture(
     (config, worktree, base)
 }
 
-struct Workers {
-    real: Supervisor,
-    fake: adapters::workers::Fake,
+fn workers(
+    real: impl Executor + 'static,
+    fake: impl Executor + 'static,
     review: bool,
-}
-impl Workers {
-    fn plan(completion: &mut Completion) {
+) -> impl Executor {
+    let roles = if review {
+        vec![Role::Make, Role::Review]
+    } else {
+        vec![Role::Make]
+    };
+    support::workers::Workers::new(Some(Box::new(real)), fake, roles, |_, completion| {
         for observation in &mut completion.observations {
             if let Observation::Plan { paths, .. } = observation {
                 *paths = vec!["greeting.py".into(), "test_greeting.py".into()];
             }
         }
-    }
-}
-impl Executor for Workers {
-    fn look(
-        &mut self,
-        delivery: &Delivery,
-    ) -> tl3_controller::Result<tl3_controller::executor::Look> {
-        if matches!(
-            delivery.output,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Make),
-                ..
-            }
-        ) {
-            self.real.look(delivery)
-        } else {
-            self.fake.look(delivery)
-        }
-    }
-
-    fn stop_stalled(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        self.real.stop_stalled(delivery)
-    }
-
-    fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
-        self.real.retire(store)
-    }
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        if (self.review
-            && matches!(
-                delivery.output,
-                Out::Effect {
-                    kind: EffectKind::StartRun(Role::Review),
-                    ..
-                }
-            ))
-            || matches!(
-                delivery.output,
-                Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                    ..
-                }
-            )
-        {
-            self.real.execute(delivery)
-        } else {
-            let mut result = self.fake.execute(delivery)?;
-            Self::plan(&mut result);
-            Ok(result)
-        }
-    }
-    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        if (self.review
-            && matches!(
-                delivery.output,
-                Out::Effect {
-                    kind: EffectKind::StartRun(Role::Review),
-                    ..
-                }
-            ))
-            || matches!(
-                delivery.output,
-                Out::Effect {
-                    kind: EffectKind::StartRun(Role::Make) | EffectKind::StopRun,
-                    ..
-                }
-            )
-        {
-            self.real.reconcile(delivery)
-        } else {
-            let mut result = self.fake.reconcile(delivery)?;
-            if let Reconciliation::Found(completion) = &mut result {
-                Self::plan(completion);
-            }
-            Ok(result)
-        }
-    }
+    })
+    .transform_reconciled()
 }
 
 fn registry(
@@ -213,15 +142,15 @@ fn registry(
     let source = real.source();
     registry.register(
         Upstream::Workers,
-        Workers {
+        workers(
             real,
-            fake: adapters::workers::Fake::new(root),
-            review: config
+            adapters::workers::Fake::new(root),
+            config
                 .workers
                 .command
                 .get(1)
-                .is_some_and(|mode| mode == "review-feedback"),
-        },
+                .is_some_and(|mode| mode == "review-fix" || mode == "review-feedback"),
+        ),
     );
     let (client, settings) = super::prismabuild_fixture::settings(
         &root.join("checks"),
@@ -253,6 +182,9 @@ fn observe(
                     run: adapters::prismabuild::CheckRun {
                         repository: repository.into(),
                         base_sha: base.into(),
+
+                        reviewed_sha: None,
+                        reproducing_unavailable: None,
                         plan: vec![adapters::prismabuild::Check {
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
@@ -878,6 +810,9 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
+    real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
+    println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");
     declared_wait(&database.create("maker_declared_wait"));
     println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
     real::review_feedback(&database.create("maker_review_feedback"));
@@ -1028,4 +963,17 @@ pub(super) fn declared_wait(settings: &tl3_config::Store) {
         )
         .unwrap();
     while controller.drive_once().unwrap() {}
+}
+
+pub(super) fn router_regression(look: bool) {
+    let mut router = workers(
+        support::executor_probe::Probe,
+        support::executor_probe::Probe,
+        true,
+    );
+    if look {
+        support::executor_probe::assert_look(&mut router);
+    } else {
+        support::executor_probe::assert_retire_delivery(&mut router);
+    }
 }

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from copy import deepcopy
 from importlib.resources import files
 import json
 from pathlib import Path
@@ -83,8 +84,13 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
         register_harness_profile(f"{provider}:{identifier}", profile)
     prompt = files("tl3_workers").joinpath("prompts", role.prompt).read_text()
     prompt += "\n\nReply with one JSON object matching this schema:\n"
-    prompt += json.dumps(schema(role.reply_schema) if reply_schema is None else reply_schema,
-                         ensure_ascii=False)
+    proposal = deepcopy(schema(role.reply_schema)) if reply_schema is None else reply_schema
+    for variant in proposal.get("oneOf", [proposal]):
+        for name in role.code_only_fields:
+            variant["properties"].pop(name, None)
+    for name in role.code_only_fields:
+        proposal.get("$defs", {}).pop(name, None)
+    prompt += json.dumps(proposal, ensure_ascii=False)
     # Deep Agents requires read_file in its filesystem middleware. The profile
     # excludes it at both model and dispatch boundaries; StateBackend holds no host files.
     filesystem = FilesystemMiddleware(
@@ -130,9 +136,10 @@ def _run(request, emit):
             reply = _run_agent(agent, request, emit)
         else:
             reply = role.run(model, request, worktree, emit)
-    validate(role.reply_schema, reply)
-    if role.check_reply is not None:
-        role.check_reply(request["inputs"], reply)
+    if not role.validates_reply:
+        validate(role.reply_schema, reply)
+        if role.check_reply is not None:
+            role.check_reply(request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
     return reply
 

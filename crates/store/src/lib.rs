@@ -549,6 +549,14 @@ impl Store {
             .get(0))
     }
 
+    /// Match durable event identities and payloads without replaying history.
+    pub fn event_matches(&mut self, keys: &[String], value: &serde_json::Value) -> Result<bool> {
+        Ok(self.client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM tl3_events WHERE event_key = ANY($1) AND payload = $2)",
+            &[&keys, &value],
+        )?.get(0))
+    }
+
     /// Audit only. A newer kernel must load the snapshot rather than replay these records.
     pub fn events_after(&mut self, revision: Revision, limit: u32) -> Result<Vec<EventRecord>> {
         load_events(&mut self.client, revision, limit)
@@ -583,7 +591,9 @@ impl Store {
                 | "audits"
                 | "maker_replies"
                 | "maker_findings"
+                | "review_fixes"
                 | "maker_session"
+                | "reviewer_session"
                 | "plans"
                 | "findings"
         ) {
@@ -651,8 +661,8 @@ impl Store {
             "SELECT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'nodes' AND row_id = $1 AND value->'phase' ? 'Closed')
              AND NOT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'inbox')
              AND NOT EXISTS (SELECT 1 FROM tl3_worker_progress WHERE node_id = $1)
-             AND NOT EXISTS (SELECT 1 FROM tl3_effects WHERE state NOT IN ('Confirmed', 'Failed', 'Cancelled') AND COALESCE(payload #>> '{output,Effect,node}', payload #>> '{output,Notice,node}') = $1)
-             AND NOT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'watches' AND COALESCE(value #>> '{output,Effect,node}', value #>> '{output,Notice,node}') = $1)",
+             AND NOT EXISTS (SELECT 1 FROM tl3_effects WHERE state NOT IN ('Confirmed', 'Failed', 'Cancelled') AND COALESCE(payload #>> '{output,Effect,node}', payload #>> '{output,Notice,node}', payload #>> '{output,Comment,node}') = $1)
+             AND NOT EXISTS (SELECT 1 FROM tl3_world WHERE table_name = 'watches' AND COALESCE(value #>> '{output,Effect,node}', value #>> '{output,Notice,node}', value #>> '{output,Comment,node}') = $1)",
             &[&node],
         )?.get(0))
     }

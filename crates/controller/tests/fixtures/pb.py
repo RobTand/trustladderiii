@@ -34,11 +34,11 @@ def finish(key, request):
     save(root / state / f"{key}.json", value)
     (root / "ready" / f"{key}.json").unlink(missing_ok=True)
     report = {"schema": "tl3.checks.v1", "effect_key": request["effect_key"],
-              "base": request["base"], "head": request["head"], "results": []}
+              "base": request["base"], "head": request["head"], "reviewed": request.get("reviewed"), "results": []}
     for check in request["plan"]:
         report["results"].append({"name": check["name"], "kind": check["kind"],
             "custody": "in-process", "verdict": "pass", "tests": [
-                {"test": test, "base": "assertion" if check["kind"] == "demonstrating" else "passed",
+                {"test": test, "base": "assertion" if check["kind"] in ("demonstrating", "reproducing") else "passed",
                  "head": "passed", "pre_existing": False, "passed": True} for test in check["tests"]]})
     if mode in ("check_fail", "infrastructure"):
         result = report["results"][0]
