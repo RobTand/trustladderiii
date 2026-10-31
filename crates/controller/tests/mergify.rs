@@ -2327,10 +2327,12 @@ fn legacy_intent_ignores_completed_at() {
         state.pull["head"]["sha"] = json!(d.head_sha);
         state.checks = fixture("interrupted", "checks");
         state.queue_check_mut()["completed_at"] = json!("2026-10-31T16:31:59Z");
+        state.queue_check_mut()["check_suite"] = json!({"id": 999});
         state.label = true;
     }
     let mut before = api.state.lock().unwrap().queue_check();
     before.as_object_mut().unwrap().remove("completed_at");
+    before.as_object_mut().unwrap().remove("check_suite");
     let intent = root
         .path()
         .join(format!("{}.intent", hex::encode(d.key.as_bytes())));
@@ -2342,7 +2344,7 @@ fn legacy_intent_ignores_completed_at() {
     let mut adapter = api.adapter(root.path(), 1);
     assert!(
         matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending),
-        "completed_at added after deploy must not confirm a stale terminal check"
+        "metadata added after deploy must not confirm a stale terminal check"
     );
     api.state.lock().unwrap().queue_check_mut()["output"]["title"] =
         json!("Dequeued — checks interrupted");
