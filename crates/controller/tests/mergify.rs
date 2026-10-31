@@ -1677,7 +1677,8 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str)
         .rows
         .iter()
         .find(|row| {
-            row.table == "incidents" && row.value["signature"] == format!("Mergify:{class}")
+            row.table == "incidents"
+                && row.value["signature"] == json!({"upstream":"Mergify", "class":class})
         })
         .expect("permanent GitHub failure must raise an incident with its kind");
     assert!(

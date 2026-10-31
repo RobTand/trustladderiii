@@ -1018,7 +1018,11 @@ fn dirty_worktree_is_permanent(settings: &tl3_config::Store) {
     let incident = snapshot
         .rows
         .iter()
-        .find(|r| r.table == "incidents" && r.value["signature"] == "Worktrees:dirty_worktree")
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["signature"]
+                    == serde_json::json!({"upstream":"Worktrees", "class":"dirty_worktree"})
+        })
         .expect("dirty-worktree incident cause");
     let summary = incident.value["summary"].as_str().unwrap();
     assert!(
