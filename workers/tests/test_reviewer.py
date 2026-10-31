@@ -424,6 +424,55 @@ def test_reviewer_reply_is_validated_exactly_once(
     assert evidence_checks == [APPROVE]
 
 
+@pytest.mark.parametrize("evidence,valid", [("+def unrelated(): return 42", True),
+                                           ("greeting.py has extra work", False),
+                                           ("+invented_hunk()", False)])
+def test_scope_rule_requires_quoted_hunk(tmp_path, review_request, evidence, valid):
+    from importlib.resources import files
+    prompt = files("tl3_workers").joinpath("prompts", "reviewer.md").read_text()
+    assert "request-scope" in prompt
+    assert "Do not invent goals or rules, widen scope" in prompt
+    review_request["inputs"]["standing_rules"].append({"id": "request-scope", "description": "Remove edits serving none of the supplied goals."})
+    review_request["inputs"]["diff"] += '+def unrelated(): return 42\n'
+    finding = {"citation": {"kind": "standing_rule", "id": "request-scope"},
+               "problem": "The unrelated helper serves none of the supplied goals.", "evidence": evidence}
+    result = start_worker(tmp_path, review_request, [{"content": json.dumps(changes(finding))}])
+    assert result.exit_code == (0 if valid else 1), result.stderr
+    if valid:
+        assert result.events[-1]["reply"] == changes(finding)
+
+
+def test_scope_blocker_can_quote_unchanged_hunk_on_fix_round(tmp_path, review_request):
+    from tl3_workers.roles.reviewer import check_reply
+    inputs = review_request['inputs']
+    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
+    inputs['diff'] = '-def requested(): return 1\n+def requested(): return 2\n'
+    inputs['scope_diff'] = inputs['diff'] + '+def unrelated(): return 42\n'
+    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
+               'problem': 'The extra helper still serves none of the supplied goals.',
+               'evidence': '+def unrelated(): return 42'}
+    check_reply(inputs, changes(finding))
+    result = start_worker(tmp_path, review_request, [{'content': json.dumps(changes(finding))}])
+    assert result.exit_code == 0, result.stderr
+
+
+@pytest.mark.parametrize('evidence,valid', [('+}', False), ('+       x', False),
+    ('+abcdefg', False), ('+abcdefgh', True), ('+unrelated_action() suffix', False),
+    ('The unrelated helper:\n+unrelated_action()', True)])
+def test_scope_blocker_requires_whole_meaningful_changed_line(review_request, evidence, valid):
+    from tl3_workers.roles.reviewer import check_reply
+    inputs = review_request['inputs']
+    inputs['standing_rules'].append({'id': 'request-scope', 'description': 'Request goals only.'})
+    inputs['diff'] = '+}\n+       x\n+abcdefg\n+abcdefgh\n+unrelated_action()\n'
+    finding = {'citation': {'kind': 'standing_rule', 'id': 'request-scope'},
+               'problem': 'The helper serves no request goal.', 'evidence': evidence}
+    if valid:
+        check_reply(inputs, changes(finding))
+    else:
+        with pytest.raises(ValueError, match='scope blocker must quote'):
+            check_reply(inputs, changes(finding))
+
+
 def test_q44_reviewer_reports_exhaustion_through_process_protocol(tmp_path, review_request):
     review_request["inputs"]["context_size"] = 1_000
     result = start_worker(tmp_path, review_request, [{"content": json.dumps(APPROVE)}])

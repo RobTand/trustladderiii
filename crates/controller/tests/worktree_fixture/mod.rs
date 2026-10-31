@@ -151,6 +151,7 @@ impl Fixture {
             question: None,
             marker_key: None,
             note: None,
+            scope_removals: None,
             question_context: None,
             steering: None,
             request_text: None,

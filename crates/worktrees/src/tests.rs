@@ -877,6 +877,279 @@ fn auth_header_is_scoped_to_github() {
     assert!(f.remote.credentials(Some(&f.token)).is_none());
 }
 
+fn scope_fixture() -> (Fixture, CommitId, CommitId) {
+    let f = Fixture::new();
+    write_commit(&f.repo, "outside.txt", "base outside\n", "outside base");
+    write_commit(&f.repo, "pyproject.toml", "base config\n", "config base");
+    let base = f.checkout().base;
+    write_commit(&f.worktree, "shared.txt", "requested\n", "request");
+    write_commit(&f.worktree, "outside.txt", "unrelated\n", "outside edit");
+    write_commit(&f.worktree, "extra.txt", "unrelated\n", "outside add");
+    write_commit(
+        &f.worktree,
+        "pyproject.toml",
+        "unrelated\n",
+        "protected edit",
+    );
+    let head = f.manager.head_locked(&f.name).unwrap();
+    (f, base, head)
+}
+
+fn scope_trim(f: &Fixture) -> ScopeTrim {
+    f.manager
+        .trim_scope(
+            &f.name,
+            &f.worktree,
+            &["shared.txt".into(), "pyproject.toml".into()],
+            &["pyproject.toml".into()],
+        )
+        .unwrap()
+}
+
+#[test]
+fn scope_extra_file_deleted() {
+    let (f, _, original) = scope_fixture();
+    let result = scope_trim(&f);
+    assert!(!f.worktree.join("extra.txt").exists());
+    assert!(result.removed_paths.contains(&PathBuf::from("extra.txt")));
+    assert_eq!(
+        git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+        original.as_str().as_bytes()
+    );
+    assert_eq!(
+        git(&f.worktree, ["show", "-s", "--format=%an <%ae>"]).trim_ascii(),
+        b"TL3 <tl3@localhost>"
+    );
+}
+
+#[test]
+fn scope_file_to_directory_swap_restores_base() {
+    scope_tree_swap(false);
+}
+
+#[test]
+fn scope_directory_to_file_swap_restores_base() {
+    scope_tree_swap(true);
+}
+
+fn scope_tree_swap(base_is_directory: bool) {
+    let f = Fixture::new();
+    fs::create_dir_all(f.repo.join("dir")).unwrap();
+    let original = if base_is_directory {
+        "dir/f/g"
+    } else {
+        "dir/f"
+    };
+    if base_is_directory {
+        fs::create_dir(f.repo.join("dir/f")).unwrap();
+    }
+    write_commit(&f.repo, original, "base\n", "base shape");
+    let base = f.checkout().base;
+    git(&f.worktree, ["rm", "-r", "dir/f"]);
+    fs::create_dir_all(f.worktree.join("dir")).unwrap();
+    let added = if base_is_directory {
+        "dir/f"
+    } else {
+        "dir/f/g"
+    };
+    if !base_is_directory {
+        fs::create_dir_all(f.worktree.join("dir/f")).unwrap();
+    }
+    write_commit(&f.worktree, added, "unrelated\n", "swap shape");
+    write_commit(&f.worktree, "shared.txt", "requested\n", "request");
+    let trim = scope_trim(&f);
+    assert_eq!(fs::read(f.worktree.join(original)).unwrap(), b"base\n");
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        trim.removed_paths,
+        vec![PathBuf::from("dir/f"), "dir/f/g".into()]
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
+    assert_eq!(scope_trim(&f), trim);
+    f.assert_clean();
+}
+
+#[test]
+fn scope_replay_cleans_abandoned_temporary_indexes_and_receipt_files() {
+    let (f, _, _) = scope_fixture();
+    let trim = scope_trim(&f);
+    let journal = f.manager.common.join("tl3-scope");
+    let index = tempfile::tempdir_in(&journal).unwrap().keep();
+    fs::write(index.join("index"), "abandoned").unwrap();
+    let temporary = tempfile::NamedTempFile::new_in(&journal)
+        .unwrap()
+        .keep()
+        .unwrap()
+        .1;
+    assert_eq!(scope_trim(&f), trim);
+    assert!(
+        !index.exists(),
+        "replay must remove its abandoned index directory"
+    );
+    assert!(
+        !temporary.exists(),
+        "replay must remove its abandoned receipt file"
+    );
+}
+
+#[test]
+fn scope_outside_edit_restored() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("outside.txt")).unwrap(),
+        b"base outside\n"
+    );
+}
+
+#[test]
+fn scope_protected_path_restored_even_in_footprint() {
+    let (f, _, _) = scope_fixture();
+    scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("pyproject.toml")).unwrap(),
+        b"base config\n"
+    );
+}
+
+#[test]
+fn scope_footprint_edits_kept() {
+    let (f, base, _) = scope_fixture();
+    let trim = scope_trim(&f);
+    assert_eq!(
+        fs::read(f.worktree.join("shared.txt")).unwrap(),
+        b"requested\n"
+    );
+    assert_eq!(
+        f.manager.changed_files(&base, &trim.head).unwrap(),
+        vec![PathBuf::from("shared.txt")]
+    );
+    f.assert_clean();
+}
+
+#[test]
+fn scope_restart_at_each_boundary_is_idempotent_and_preserves_later_maker_work() {
+    for crash in [
+        TrimBoundary::Recorded,
+        TrimBoundary::CheckoutRestored,
+        TrimBoundary::HeadUpdated,
+    ] {
+        let (f, _, original) = scope_fixture();
+        assert!(
+            f.manager
+                .trim_scope_with(
+                    &f.name,
+                    &f.worktree,
+                    &["shared.txt".into(), "pyproject.toml".into()],
+                    &["pyproject.toml".into()],
+                    |at| if at == crash { Err(Error::Io) } else { Ok(()) }
+                )
+                .is_err()
+        );
+        let manager = Worktrees::open(&f.repo, f.worktree.parent().unwrap()).unwrap();
+        let trim = manager
+            .trim_scope(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+            )
+            .unwrap();
+        assert_eq!(
+            trim.removed_paths,
+            vec![
+                PathBuf::from("extra.txt"),
+                "outside.txt".into(),
+                "pyproject.toml".into()
+            ]
+        );
+        assert_eq!(
+            git(&f.worktree, ["rev-parse", "HEAD^"]).trim_ascii(),
+            original.as_str().as_bytes()
+        );
+        f.assert_clean();
+        write_commit(
+            &f.worktree,
+            "shared.txt",
+            "later maker commit\n",
+            "later maker",
+        );
+        fs::write(f.worktree.join("scratch.txt"), "maker scratch").unwrap();
+        assert_eq!(scope_trim(&f), trim);
+        assert_eq!(
+            fs::read(f.worktree.join("shared.txt")).unwrap(),
+            b"later maker commit\n"
+        );
+        assert_eq!(
+            fs::read(f.worktree.join("scratch.txt")).unwrap(),
+            b"maker scratch"
+        );
+    }
+}
+
+#[test]
+fn scope_restart_finishes_after_git_ref_writer_was_killed() {
+    let (f, _, _) = scope_fixture();
+    assert!(
+        f.manager
+            .trim_scope_with(
+                &f.name,
+                &f.worktree,
+                &["shared.txt".into(), "pyproject.toml".into()],
+                &["pyproject.toml".into()],
+                |_| Err(Error::Io)
+            )
+            .is_err()
+    );
+    let branch_lock = f
+        .manager
+        .common
+        .join(format!("{}.lock", f.name.reference()));
+    fs::write(&branch_lock, "interrupted ref write").unwrap();
+    let index_lock = path_line(&git(
+        &f.worktree,
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    ))
+    .unwrap();
+    fs::write(&index_lock, "interrupted index write").unwrap();
+    let unrelated = f.manager.common.join("refs/heads/unrelated.lock");
+    fs::write(&unrelated, "preserve this").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!branch_lock.exists());
+    assert!(!index_lock.exists());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"preserve this");
+}
+
+#[test]
+fn scope_restart_before_intent_finishes_its_private_pin() {
+    let (f, _, _) = scope_fixture();
+    let reference = f
+        .manager
+        .common
+        .join(format!("refs/tl3/scope/{}", f.name.as_str()));
+    fs::create_dir_all(reference.parent().unwrap()).unwrap();
+    let lock = reference.with_file_name(format!(
+        "{}.lock",
+        reference.file_name().unwrap().to_str().unwrap()
+    ));
+    fs::write(&lock, "interrupted pin write").unwrap();
+    scope_trim(&f);
+    f.assert_clean();
+    assert!(!lock.exists());
+}
+
 fn hostile_query(name: &str, query: impl FnOnce(&Fixture, &CommitId, &CommitId, &CommitId)) {
     if std::env::var_os("TL3_HOSTILE_QUERY_CHILD").is_none() {
         let foreign = Fixture::new();

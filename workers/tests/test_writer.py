@@ -337,3 +337,11 @@ def test_structural_rules_are_left_to_controller(tmp_path, writer_request, kind,
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 0, result.stderr
     assert result.events[-1] == {"event": "reply", "role": "writer", "reply": reply}
+
+
+def test_scope_removals_reach_writer_as_facts(tmp_path, writer_request):
+    writer_request["inputs"] = inputs_for("summary")
+    writer_request["inputs"]["facts"]["removed_changes"] = "Changes not part of this request were removed: extra.txt, pyproject.toml."
+    result = start_worker(tmp_path, writer_request, [{"content": json.dumps(SUMMARY)}])
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]["reply"] == SUMMARY

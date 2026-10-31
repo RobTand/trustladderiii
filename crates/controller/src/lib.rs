@@ -13,6 +13,7 @@ pub mod looks;
 pub mod memory;
 mod notices;
 pub mod production;
+mod scope;
 mod snapshot;
 pub mod status;
 pub mod status_web;
@@ -1216,6 +1217,7 @@ impl Controller {
                 question: n.question,
                 marker_key: None,
                 note: None,
+                scope_removals: None,
                 question_context,
                 steering: None,
                 request_text: request.source,
@@ -1227,6 +1229,7 @@ impl Controller {
                     ..
                 }
             ) {
+                delivery.scope_removals = scope::summary(snapshot, node)?;
                 let mut references = std::collections::BTreeSet::new();
                 for value in snapshot
                     .rows
