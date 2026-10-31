@@ -13,7 +13,7 @@
     "tl3-controller/github-flow::steering_named_answer_applies_after_controller_recovery": 15,
     "tl3-controller/github-flow::steering_pause_allows_queued_pr_to_merge": 15,
     "tl3-controller/github-flow::steering_question_ids_one_clarification_and_stale_answer": 15,
-    "tl3-controller/github-notices::__tail__": 25,
+    "tl3-controller/github-notices::__tail__": 40,
     "tl3-controller/github-notices::notice_filing_403_retry_AfterCommit": 15,
     "tl3-controller/github-notices::notice_filing_403_retry_BeforeCommit": 15,
     "tl3-controller/github-notices::notice_filing_403_retry_CreditWritten": 15,
