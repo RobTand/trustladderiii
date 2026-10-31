@@ -447,6 +447,7 @@ impl Executor for Adapter {
                 Ok(Reconciliation::Found(completion))
             }
             Ok(result) => Ok(result),
+            Err(error) if error.is_github_not_found() => Err(error),
             Err(_) => Ok(Reconciliation::Pending),
         }
     }
