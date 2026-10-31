@@ -135,7 +135,8 @@ class WizardTests(unittest.TestCase):
         self.assertEqual({"url": "https://tl3-webhook.invalid/github/events", "active": False},
                          manifest["hook_attributes"])
         self.assertEqual({"issues": "write", "pull_requests": "write", "checks": "write",
-                          "contents": "write", "metadata": "read", "merge_queues": "read"},
+                          "contents": "write", "metadata": "read", "merge_queues": "read",
+                          "actions": "write"},
                          manifest["default_permissions"])
         self.assertEqual({"issues", "issue_comment", "pull_request", "check_run",
                           "check_suite", "merge_group"}, set(manifest["default_events"]))

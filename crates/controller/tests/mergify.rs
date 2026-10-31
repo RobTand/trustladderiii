@@ -92,6 +92,7 @@ struct State {
     workflow: Option<Value>,
     reruns: usize,
     rerun_status: u16,
+    rerun_message: String,
     rerun_lost_response: bool,
     required: bool,
     queued_before_rerun: bool,
@@ -125,6 +126,7 @@ impl State {
             workflow: None,
             reruns: 0,
             rerun_status: 201,
+            rerun_message: "Resource not accessible by integration".into(),
             rerun_lost_response: false,
             required: true,
             queued_before_rerun: false,
@@ -227,7 +229,10 @@ impl Respond for Api {
                     run["status"] = json!("queued");
                     run["conclusion"] = Value::Null;
                 }
-                ResponseTemplate::new(if state.rerun_lost_response { 503 } else { state.rerun_status }).set_body_json(json!({}))
+                if state.rerun_status == 403 && state.rerun_message.contains("already in progress") {
+                    state.workflow.as_mut().unwrap()["status"] = json!("in_progress");
+                }
+                ResponseTemplate::new(if state.rerun_lost_response { 503 } else { state.rerun_status }).set_body_json(json!({"message":state.rerun_message}))
             }
             ("GET", "/repos/owner/sandbox/pulls/100") => {
                 state.pull_reads += 1;
@@ -2597,6 +2602,12 @@ fn main() {
         "restart",
         "otherhead",
         "optional",
+        "workflow-running",
+        "forbidden-running",
+        "forbidden-old",
+        "forbidden-other",
+        "grant-retry",
+        "request-retry",
     ] {
         head_checks::scenario(&database.create(&format!("head_{mode}")), mode);
     }
