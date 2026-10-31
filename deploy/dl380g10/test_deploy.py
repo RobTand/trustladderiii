@@ -244,8 +244,10 @@ class DeployTests(unittest.TestCase):
         deploy.write_file(destination, config.read_bytes())
         key = destination.parent / "secrets/model-key"
         token = destination.parent / "secrets/cloudflared-token"
+        # tl3d's unit loads hindsight-key unconditionally, so a missing file stops the service.
+        hindsight = destination.parent / "secrets/hindsight-key"
         for content, mode in ((b"", 0o600), (b"fixture", 0o644), (b"fixture", 0o600)):
-            for path in (key, token):
+            for path in (key, token, hindsight):
                 deploy.write_file(path, content, mode)
             with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
                  patch.object(deploy.http.client, "HTTPConnection"), \
@@ -254,6 +256,7 @@ class DeployTests(unittest.TestCase):
             prefix = "OK" if content and mode == 0o600 else "MISSING"
             self.assertIn(f"{prefix} model credential\n", output.getvalue())
             self.assertIn(f"{prefix} Cloudflare token\n", output.getvalue())
+            self.assertIn(f"{prefix} Hindsight credential\n", output.getvalue())
 
     def test_external_tunnel_needs_no_token_or_tl3_connector(self):
         config, _ = self.config()
