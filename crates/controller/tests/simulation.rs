@@ -95,8 +95,14 @@ fn main() {
         ),
         ("mixed_registry", mixed_registry),
         ("mixed_registry_conflict", mixed_registry_conflict),
-        ("merged_discards_rebase_context", merged_discards_rebase_context),
-        ("stopped_discards_rebase_context", stopped_discards_rebase_context),
+        (
+            "merged_discards_rebase_context",
+            merged_discards_rebase_context,
+        ),
+        (
+            "stopped_discards_rebase_context",
+            stopped_discards_rebase_context,
+        ),
         (
             "publication_main_advance_clean",
             publication_main_advance_clean,
@@ -1929,14 +1935,15 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     let root = tempfile::tempdir().unwrap();
     let mut controller = open(settings, root.path());
     controller.intake(labelled()).unwrap();
+    let phase = if stopped { Phase::Making } else { Phase::Queued };
     for _ in 0..100 {
-        if controller.world().unwrap().nodes[0].phase == Phase::Queued {
+        if controller.world().unwrap().nodes[0].phase == phase {
             break;
         }
         assert!(controller.drive_once().unwrap());
     }
     let world = controller.world().unwrap();
-    assert_eq!(world.nodes[0].phase, Phase::Queued);
+    assert_eq!(world.nodes[0].phase, phase);
     let mut store = Store::open(settings).unwrap();
     let mut saved = Commit::new("rebase-context-before-close", json!({}), &store.load().unwrap());
     saved.rows.push(RowChange::Put {
@@ -1946,22 +1953,52 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     });
     store.commit(&saved).unwrap();
     let event = if stopped {
-        Event::Command { node: NodeId(0), id: 1, command: Control::Stop }
+        Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Control::Stop,
+        }
     } else {
-        Event::Fact { node: NodeId(0), fact: Fact::PrMerged {
-            head: world.nodes[0].head.unwrap(), checks_passed: true,
-        }}
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrMerged {
+                head: world.nodes[0].head.unwrap(),
+                checks_passed: true,
+            },
+        }
     };
-    controller.observe("close-with-rebase-context", Observation::Kernel(event)).unwrap();
+    controller
+        .observe("close-with-rebase-context", Observation::Kernel(event))
+        .unwrap();
     if !stopped {
-        assert!(!controller.snapshot().unwrap().rows.iter().any(|r| r.table == "rebase_conflicts"),
-            "a merge must discard rebase context before teardown finishes");
+        assert!(
+            !controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.table == "rebase_conflicts"),
+            "a merge must discard rebase context before teardown finishes"
+        );
     }
     drain(&mut controller);
-    assert_eq!(controller.world().unwrap().nodes[0].phase,
-        Phase::Closed(if stopped { Outcome::Stopped } else { Outcome::Merged }));
-    assert!(!controller.snapshot().unwrap().rows.iter().any(|r| r.table == "rebase_conflicts"),
-        "a closed node must not retain rebase context");
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(if stopped {
+            Outcome::Stopped
+        } else {
+            Outcome::Merged
+        })
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "rebase_conflicts"),
+        "a closed node must not retain rebase context"
+    );
 }
 
 fn publication_main_advance_clean(settings: &tl3_config::Store) {
