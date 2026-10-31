@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 commands = [
+    ["cargo", "test", "--locked", "-p", "tl3-controller", "--test", "publishing", "--", "--q46-open"],
     ["cargo", "test", "--locked", "-p", "tl3-kernel", "--test", "scenarios", "publishing_conflict", "--", "--nocapture"],
     ["cargo", "test", "--locked", "-p", "tl3-controller", "--test", "reproducing_rebase", "publication_", "--", "--nocapture"],
     *[["cargo", "test", "--locked", "-p", "tl3-controller", "--test", "publishing", "--", mode]

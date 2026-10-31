@@ -340,6 +340,17 @@ impl Respond for Api {
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
                     "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
                     );
+                    let merge = Command::new("git")
+                        .current_dir(&self.fixture.remote)
+                        .args([
+                            "merge-tree",
+                            "--write-tree",
+                            "main",
+                            s.pull.as_ref().unwrap()["head"]["sha"].as_str().unwrap(),
+                        ])
+                        .output()
+                        .unwrap();
+                    s.pull.as_mut().unwrap()["mergeable"] = json!(merge.status.success());
                     s.pull.clone().unwrap()
                 }
                 ("GET", "/pulls/100") => {
@@ -1328,6 +1339,51 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     drop(c);
     drop(server.runtime);
 }
+fn publication_open_conflict() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Arc::new(Fixture::create(root.path()));
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    f.adapter().execute(&prepare).unwrap();
+    let head = commit(&f.adapter().checkout(&prepare), "shared.txt", "leaf side\n");
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(head);
+    f.adapter().execute(&push).unwrap();
+    f.advance_main(true);
+    let server = Server::new(f);
+    let mut open = push.clone();
+    open.key = "open-conflict".into();
+    open.output = Out::Effect {
+        node: NodeId(0),
+        seq: 3,
+        kind: EffectKind::OpenPr,
+        head: None,
+    };
+    let mut adapter = server.adapter(&root.path().join("github"), 1);
+    let result = adapter.execute(&open).unwrap();
+    assert!(
+        result.observations.iter().any(|o| matches!(
+            o,
+            Observation::Kernel(tl3_kernel::Event::Fact {
+                fact: tl3_kernel::Fact::Conflict,
+                ..
+            })
+        )),
+        "opening a conflicting PR must report Conflict: {result:?}"
+    );
+    assert!(
+        result
+            .observations
+            .iter()
+            .any(|o| matches!(o, Observation::PullRequest { number: 100, .. })),
+        "keep the PR binding for re-publication and teardown"
+    );
+    assert!(
+        matches!(adapter.reconcile(&open).unwrap(), Reconciliation::Found(c)
+        if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
+    );
+    assert!(!server.api.state.lock().unwrap().labels);
+}
+
 fn publication_recovery() {
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
@@ -1546,6 +1602,12 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--q46-open") {
+        publication_open_conflict();
+        println!("test publication_open_conflict ... ok");
+        return;
+    }
+    publication_open_conflict();
     if let Some(case) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
