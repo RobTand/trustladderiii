@@ -234,9 +234,16 @@ fn publication_conflict_reports_a_fact_without_pushing() {
     let mut push = f.delivery(EffectKind::Push, 2);
     push.head_sha = Some(head.clone());
     let result = adapter.execute(&push).unwrap();
-    assert!(result.observations.iter().any(|o| matches!(o,
-        Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. })
-    )), "publication conflict with {target} must report a Conflict fact: {result:?}");
+    assert!(
+        result.observations.iter().any(|o| matches!(
+            o,
+            Observation::Kernel(tl3_kernel::Event::Fact {
+                fact: tl3_kernel::Fact::Conflict,
+                ..
+            })
+        )),
+        "publication conflict with {target} must report a Conflict fact: {result:?}"
+    );
     assert!(
         git(
             &f.remote,

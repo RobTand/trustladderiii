@@ -350,11 +350,22 @@ impl Respond for Api {
                         ));
                     }
                     if let Some(pull) = &mut s.pull {
-                        let output = Command::new("git").current_dir(&self.fixture.remote)
-                            .args(["merge-tree", "--write-tree", "main", pull["head"]["sha"].as_str().unwrap()])
-                            .output().unwrap();
+                        let output = Command::new("git")
+                            .current_dir(&self.fixture.remote)
+                            .args([
+                                "merge-tree",
+                                "--write-tree",
+                                "main",
+                                pull["head"]["sha"].as_str().unwrap(),
+                            ])
+                            .output()
+                            .unwrap();
                         pull["mergeable"] = json!(output.status.success());
-                        pull["mergeable_state"] = json!(if output.status.success() { "clean" } else { "dirty" });
+                        pull["mergeable_state"] = json!(if output.status.success() {
+                            "clean"
+                        } else {
+                            "dirty"
+                        });
                     }
                     s.pull.clone().unwrap()
                 }
@@ -389,6 +400,15 @@ impl Respond for Api {
                     assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
                         && c["head_sha"] == *head
                         && c["app"]["id"] == 123));
+                    let merge = Command::new("git")
+                        .current_dir(&self.fixture.remote)
+                        .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
+                        .output()
+                        .unwrap();
+                    assert!(
+                        merge.status.success(),
+                        "a conflicting checked head must rebase before enqueue"
+                    );
                     s.operations.push("enqueue".into());
                     s.labels = true;
                     json!([{"name":"tl3-queue"}])
@@ -523,6 +543,11 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 break;
             }
         }
+        assert_ne!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::AwaitingRob,
+            "publication must recover without asking Rob"
+        );
         source.poll_once(store, &sender).unwrap();
         let mut observed = false;
         for input in receiver.try_iter() {
@@ -682,22 +707,30 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
                 _ => panic!("unknown Q46 mode"),
             };
-            if reached { break; }
+            if reached {
+                break;
+            }
             c.drive_once().unwrap();
             source.poll_once(&mut store, &sender).unwrap();
-            for input in receiver.try_iter() { tl3_controller::ingress::apply(&mut c, input).unwrap(); }
+            for input in receiver.try_iter() {
+                tl3_controller::ingress::apply(&mut c, input).unwrap();
+            }
             assert!(start.elapsed() < Duration::from_secs(90));
         }
-        if mode != "q46-clean" { commit(&f.source, "value.py", "def value(): return 3\n"); }
-        let main = commit(&f.source, "main-moved.txt", "main moved before publication\n");
+        if mode != "q46-clean" {
+            commit(&f.source, "value.py", "def value(): return 3\n");
+        }
+        commit(
+            &f.source,
+            "main-moved.txt",
+            "main moved before publication\n",
+        );
         git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
         if mode == "q46-enqueue" {
             let mut state = server.api.state.lock().unwrap();
             state.pull.as_mut().unwrap()["mergeable"] = json!(false);
             state.pull.as_mut().unwrap()["mergeable_state"] = json!("dirty");
         }
-        // The fixture's next read reflects the resolved head after the maker merges main.
-        let _ = main;
     }
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
@@ -797,8 +830,13 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         let checkout = f.adapter().checkout(&d);
         let contains_main = git(&checkout, &["merge-base", &first_head, &main]) == main;
         assert_eq!(contains_main, mode != "q46-clean");
-        assert_eq!(fs::read_to_string(root.path().join("reviews.jsonl")).unwrap().lines().count(),
-            if mode == "q46-clean" { 1 } else { 2 });
+        assert_eq!(
+            fs::read_to_string(root.path().join("reviews.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            if mode == "q46-clean" { 1 } else { 2 }
+        );
     }
 
     let d = f.delivery(EffectKind::Push, 100);
