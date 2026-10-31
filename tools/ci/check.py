@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tomllib
 
+import rust_gate
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,8 +53,7 @@ def rust(files):
         run("cargo", "fmt", "--manifest-path", manifest, "--all", "--", "--check")
         run("cargo", "clippy", "--manifest-path", manifest, "--workspace",
             "--all-targets", "--locked", "--", "-D", "warnings")
-        run("cargo", "test", "--manifest-path", manifest, "--workspace",
-            "--all-targets", "--locked")
+        rust_gate.test_workspace(manifest)
 
 
 def python_projects(files):
