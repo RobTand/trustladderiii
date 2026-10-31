@@ -34,10 +34,13 @@ def execute_binary(binary, custom, arguments=()):
     if not custom:
         command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1'])
     command.extend(arguments)
-    env = {**os.environ, 'RUSTC_BOOTSTRAP': '1'}
+    env = dict(os.environ)
+    if not custom:
+        env['RUSTC_BOOTSTRAP'] = '1'
     started = previous = time.monotonic()
     results = {}
     suite = False
+    passed = 0
     failures = []
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True, env=env) as process:
@@ -66,6 +69,7 @@ def execute_binary(binary, custom, arguments=()):
                         results[key] = event['exec_time']
             if event.get('type') == 'suite' and event.get('event') in {'ok', 'failed'}:
                 suite = True
+                passed += event.get('passed', 0)
                 if event.get('failed', 0) or event.get('ignored', 0):
                     failures.append(f'{name}: failed or skipped suite')
         returncode = process.wait()
@@ -77,8 +81,8 @@ def execute_binary(binary, custom, arguments=()):
     if custom:
         # This also budgets setup-only binaries and work after the last named scenario.
         results[f'{name}::__tail__'] = time.monotonic() - previous
-    elif not suite:
-        failures.append(f'{name}: missing suite result')
+    elif not suite or len(results) != passed:
+        failures.append(f'{name}: missing suite or test result')
     if failures:
         raise RuntimeError('\n'.join(failures))
     return results

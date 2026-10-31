@@ -79,6 +79,7 @@ class GateTests(unittest.TestCase):
         for content in [
             'print("unrelated output")',
             'print(\'{"type":"test","event":"ignored","name":"missing"}\')',
+            'print(\'{"type":"suite","event":"ok","passed":1}\')',
         ]:
             with tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / 'fixture.py'
