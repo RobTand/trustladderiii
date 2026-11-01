@@ -140,6 +140,8 @@ class ExplorationMiddleware(AgentMiddleware):
         self.spent = 0
         self.final = False
         self.compacted = False
+        # Only a compaction that freed room has a later threshold to approach again.
+        self.compacted_below = False
         self.compaction_prefix = []
         self.compaction_offset = 0
 
@@ -165,6 +167,7 @@ class ExplorationMiddleware(AgentMiddleware):
             request = request.override(messages=messages)
             bound = input_estimate(request)
             context = self._context(bound)
+            self.compacted_below = context < self.context_size * 0.7
 
         cold_weight = (max(self.weights.uncached, self.weights.creation)
                        if self.cache_active else self.weights.uncached)
@@ -178,7 +181,7 @@ class ExplorationMiddleware(AgentMiddleware):
         reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
         # A compaction may invalidate cached evidence. Reserve a cold final call.
         reserve = math.ceil(max(reserve, context) * cold_weight)
-        context_full = (self.compacted and not compact_now and len(source) > self.compaction_offset
+        context_full = (self.compacted_below and not compact_now and len(source) > self.compaction_offset
                         and context >= self.context_size * 0.7)
         final = (self.turns >= self.budget.tool_turns or context_full
                  or self.spent + predicted + reserve > self.budget.input_tokens)

@@ -88,8 +88,11 @@ all human instructions in order, and recent complete call/result groups up to
 Oversized content and call arguments become marked excerpts while call IDs
 stay paired with their results. Edits remain in the worktree and can be read
 again. Later turns append to that compacted prefix without further trimming.
-If context approaches 70% again, the role must finish. Maker's existing 85%
-context check also remains active.
+If compaction brought context below 70% and it approaches 70% again, the role
+must finish. When the instructions alone stay above 70%, such as a fix round
+with long accumulated feedback, compaction frees no room. The run then keeps
+working under the tool-turn cap, the input allowance and maker's existing 85%
+context check.
 
 Input usage comes from provider-reported input_tokens. Without usage, the
 fallback is serialized UTF-8 bytes divided by three, rounded up, including
