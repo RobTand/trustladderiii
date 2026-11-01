@@ -910,10 +910,14 @@ pub(super) fn repository_images(database: &mut Database) {
             override_image.unwrap_or(config.prismabuild.container_image),
             "staged maker input must use its repository image or the global fallback"
         );
-        assert_eq!(
-            request["inputs"]["tests"]["exec_scratch"], enabled,
-            "maker scratch opt-in must use its repository, with a false fallback"
-        );
+        if enabled {
+            assert_eq!(request["inputs"]["tests"]["exec_scratch"], true);
+        } else {
+            assert!(
+                request["inputs"]["tests"].get("exec_scratch").is_none(),
+                "omit disabled scratch so older worker schemas accept maker input"
+            );
+        }
     }
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }

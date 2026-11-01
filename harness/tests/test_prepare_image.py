@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import shlex
 
 import pytest
 
@@ -38,5 +39,16 @@ def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profil
     assert 'https://download.pytorch.org/whl/cpu' in script
     assert 'python3.14-dev' in script and 'g++' in script and 'make' in script
     assert script.index('setuptools==80.10.2') < script.index('--no-build-isolation')
+    installs = [shlex.split(line) for line in script.splitlines()
+                if line.startswith('/opt/tl3/bin/python -m pip ')]
+    torch_installs = [command for command in installs
+                      if 'https://download.pytorch.org/whl/cpu' in command]
+    assert len(torch_installs) == 1
+    assert 'torch==2.11.0+cpu' in torch_installs[0], 'only torch may use the PyTorch index'
+    assert '--no-deps' in torch_installs[0] and '-r' not in torch_installs[0]
+    assert '--extra-index-url' not in script
+    for command in installs:
+        if command != torch_installs[0]:
+            assert command[command.index('--index-url') + 1] == 'https://pypi.org/simple'
     assert '-e .' not in script and 'pip install .' not in script
     assert commands[-1][:3] == ['docker', 'rm', '--force']
