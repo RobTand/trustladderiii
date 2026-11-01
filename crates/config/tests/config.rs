@@ -843,7 +843,7 @@ fn gate_width_accepts_approved_limits() {
 
 #[test]
 fn gate_width_rejects_values_outside_approval() {
-    for w in [0, 4, 8, 255, 256, i64::from(u32::MAX)] {
+    for w in [256, 4, 8, 255, 0, i64::from(u32::MAX)] {
         let mut document: Value = EXAMPLE.parse().unwrap();
         document["limits"]["w"] = Value::Integer(w);
         let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();

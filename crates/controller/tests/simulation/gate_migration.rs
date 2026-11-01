@@ -43,15 +43,15 @@ fn open_at(settings: &tl3_config::Store, root: &Path, slots: u8) -> Controller {
 fn seed(settings: &tl3_config::Store, root: &Path, slots: u8) -> Snapshot {
     let mut c = open_at(settings, root, slots);
     for number in 1..=3 {
-        c.intake(LabelledIssue {
+        assert!(c.intake(LabelledIssue {
             delivery: format!("gate-{number}"), owner: "owner".into(), repo: "gate-migration".into(),
             installation: 1, number, title: format!("Disjoint leaf {number}"), actor: 42, label: "tl3".into(),
-        }).unwrap();
+        }).unwrap());
         drain(&mut c);
     }
     let w = c.world().unwrap();
     assert_eq!(w.gates[0].w, slots);
-    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), usize::from(slots));
+    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), usize::from(slots), "{w:?}; rows={:?}", c.snapshot().unwrap().rows);
     if slots == 1 {
         assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
     }
