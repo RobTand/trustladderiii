@@ -6,7 +6,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path(), true);
-    if mode == "gaps" {
+    if let Some(source) = mode.strip_prefix("reopen-") {
+        reopen(&mut controller, &api, source);
+    } else if mode == "gaps" {
         for (index, gaps) in [
             vec!["Contents: read unavailable"],
             vec!["Commit statuses: read unavailable"],
@@ -184,4 +186,122 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         );
     }
     println!("test check_reads_{mode} ... ok");
+}
+
+fn report_gap(controller: &mut Controller, api: &Server, source: &str) {
+    let snapshot = controller.snapshot().unwrap();
+    if source == "look" {
+        let key = &snapshot
+            .rows
+            .iter()
+            .find(|row| {
+                row.table == "allowances"
+                    && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
+            })
+            .unwrap()
+            .id;
+        controller.look_key(key).unwrap();
+    } else {
+        let mut body = webhook_fixture();
+        body["action"] = json!("completed");
+        body["check_run"] = api.state.lock().unwrap().queue_check();
+        for input in Translator::new(api.clients())
+            .unwrap()
+            .webhook(&parsed("check_run", body), &snapshot, &bootstrap().repos)
+            .unwrap()
+        {
+            ingress::apply(controller, input).unwrap();
+        }
+    }
+    drain(controller);
+}
+
+fn clear_gap(controller: &mut Controller, id: &str, sequence: u64) {
+    controller
+        .observe(
+            &format!("clear-gap-{sequence}"),
+            Observation::GitHubComment {
+                repository: bootstrap().repos[0].clone(),
+                issue: 12,
+                comment: tl3_github::Comment {
+                    id: 90000 + sequence,
+                    body: format!("clear incident {id}"),
+                    user: tl3_github::Actor {
+                        id: 42,
+                        login: "fixture".into(),
+                    },
+                    created_at: chrono::DateTime::UNIX_EPOCH,
+                    updated_at: chrono::DateTime::UNIX_EPOCH,
+                    issue_url: "https://api.github.com/repos/owner/sandbox/issues/12".into(),
+                },
+            },
+        )
+        .unwrap();
+    drain(controller);
+    assert_eq!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.table == "incidents" && row.id == id)
+            .unwrap()
+            .value["open"],
+        false,
+        "Rob's clear must close the incident before new evidence arrives"
+    );
+}
+
+fn reopen(controller: &mut Controller, api: &Server, source: &str) {
+    {
+        let mut state = api.state.lock().unwrap();
+        state.checks = fixture("waiting", "checks");
+        state.restricted = Some(("branch".into(), 403));
+    }
+    report_gap(controller, api, source);
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.table == "incidents")
+        .unwrap();
+    assert_eq!(incident.value["open"], true);
+    for sequence in 1..=2 {
+        clear_gap(controller, &incident.id, sequence);
+        report_gap(controller, api, source);
+        let snapshot = controller.snapshot().unwrap();
+        let incidents: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "incidents")
+            .collect();
+        assert_eq!(
+            incidents.len(),
+            1,
+            "reopening must keep the incident's identity"
+        );
+        assert_eq!(incidents[0].id, incident.id);
+        assert_eq!(
+            incidents[0].value["open"], true,
+            "a persisting permission gap must reopen after clear on the next {source}"
+        );
+        assert_eq!(incidents[0].value["blocking"], false);
+        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    }
+    clear_gap(controller, &incident.id, 3);
+    api.state.lock().unwrap().restricted = None;
+    report_gap(controller, api, source);
+    assert_eq!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.table == "incidents" && row.id == incident.id)
+            .unwrap()
+            .value["open"],
+        false,
+        "a resolved gap must stay cleared"
+    );
 }

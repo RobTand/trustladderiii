@@ -2692,7 +2692,7 @@ fn main() {
     scenario!(label_removed_before_confirmation());
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
-    for mode in ["gaps", "adapter", "source"] {
+    for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {
         scenario!(check_reads::scenario(
             &database.create(&format!("check_read_{mode}")),
             mode
