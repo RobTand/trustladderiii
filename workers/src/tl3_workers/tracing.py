@@ -124,10 +124,26 @@ def failure_tags(error):
     safe_messages = {
         "done requires code changes", "could not inspect staged changes",
         "maker requires the worktree root", "missing final maker reply",
-        "missing final model reply",
+        "missing final model reply", "reply cites a memory it was not given",
+        "only code may supply a forecast", "sized briefs must declare their root files",
+        "duplicate JSON key", "non-finite JSON number",
+        "ingest input exceeds exploration budget", "audit input exceeds exploration budget",
+        "maker input exceeds exploration budget",
+        "declared files must use canonical relative paths",
+        "declared file exceeds the 1048576-byte limit",
+        "declared file must be UTF-8 text without binary control bytes",
+        "o200k_base tokenizer data must be preloaded in TIKTOKEN_CACHE_DIR",
+        "fit limit must be smaller than context size",
     }
     message = "worker run failed"
-    if isinstance(error, ValueError):
+    from jsonschema import ValidationError
+    if isinstance(error, json.JSONDecodeError):
+        message = f"invalid JSON at line {error.lineno}, column {error.colno}"
+    elif isinstance(error, ValidationError):
+        # Validator names and schema paths come from our schemas, never instance values.
+        path = "/".join(str(part) for part in error.absolute_schema_path)
+        message = f"schema validation failed: {error.validator} at schema {path}"
+    elif isinstance(error, ValueError):
         message = "invalid worker data"
         if (type(error) is ValueError and len(error.args) == 1
                 and isinstance(error.args[0], str) and error.args[0] in safe_messages):
@@ -136,7 +152,7 @@ def failure_tags(error):
         message = "worker I/O failed"
     elif isinstance(error, subprocess.CalledProcessError):
         message = "worker subprocess failed"
-    return {"failure_class": type(error).__name__[:64], "failure_message": message}
+    return {"failure_class": type(error).__name__[:64], "failure_message": message[:512]}
 
 
 @contextmanager

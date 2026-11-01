@@ -68,9 +68,67 @@ Models use `langchain_openai.ChatOpenAI` with Chat Completions explicitly
 selected, pointed at `base_url`. `name` passes through unchanged. `effort` maps
 to `reasoning_effort` and can be null to omit it. `budget_tokens` is the positive
 per-response `max_completion_tokens`, including model reasoning where the
-provider supports it. It is not a total run budget. The proxy decides supported
+provider supports it. Ingest and audit also have the exploration budget below. The proxy decides supported
 model names and effort values. Calls stream tokens. Provider retries are off,
 so failures return to the supervisor rather than replaying a model call here.
+
+Ingest and audit allow at most four exploration model turns, followed by one
+final answer. Their input allowance is 300,000 cache-weighted tokens per run.
+Maker permits 64 tool turns and 6,000,000 cache-weighted tokens. Before another
+exploration call, the runtime reserves enough input for a final answer. At that
+boundary it removes tools and asks for the final JSON. Schema validation and the
+role's reply checks still apply. An exhausted no-change maker done becomes
+cant_meet without another model call. Planner and reviewer can select a budget
+through the same role field.
+
+History stays append-only until the estimated raw context reaches 70% of
+context_size. The runtime then compacts once. It retains the original request,
+all human instructions in order, and recent complete call/result groups up to
+32 KiB for intake or 64 KiB for maker. The newest group always survives.
+Oversized content and call arguments become marked excerpts while call IDs
+stay paired with their results. Edits remain in the worktree and can be read
+again. Later turns append to that compacted prefix without further trimming.
+If compaction brought context below 70% and it approaches 70% again, the role
+must finish. When the instructions alone stay above 70%, such as a fix round
+with long accumulated feedback, compaction frees no room. The run then keeps
+working under the tool-turn cap, the input allowance and maker's existing 85%
+context check.
+
+Input usage comes from provider-reported input_tokens. Without usage, the
+fallback is serialized UTF-8 bytes divided by three, rounded up, including
+messages, tool schemas and framing. Context estimates calibrate to the latest
+provider count, then add the estimated new text. Context size uses raw tokens;
+cache discounts never enlarge the context window.
+
+The input charge uses input_token_details: uncached tokens times 1,
+cache_creation times 1.25, and cache_read times 0.1, rounded up per call. Missing
+cache fields count as uncached. Configure the weights with
+TL3_CACHE_UNCACHED_WEIGHT, TL3_CACHE_CREATION_WEIGHT and TL3_CACHE_READ_WEIGHT.
+They must be finite and nonnegative. The next-call estimate allows cheap reads
+only after cache usage is observed on the unchanged prefix. Final-answer
+reserves allow a cold call because compaction or removal of tools may invalidate
+the cache. An original input larger than the entire allowance fails with a
+fixed diagnostic naming the role.
+
+The allowances retain headroom above the recorded PrismaBuild paths. Ingest
+#1968 used four exploration turns and 447,698 raw input tokens with a 101,064
+peak context. With a reusable prefix, most of the later input costs 0.1 times
+its raw size; 300k still permits a cold initial call and reserved final answer.
+The offline paired intake replay checks the allowance against actual orientation
+and confined repository reads. Maker's recorded 51-call session used 1,871,909
+raw input tokens. Even charging every token as a cache write and scaling to 65
+calls gives about 2.98M weighted tokens. The longer-input offline replay provides
+a second sizing check. Six million leaves room for a larger request and one
+cold compaction while the 64-turn cap stops endless work. Replay costs assume
+unchanged prefixes remain cached, without provider minimums, rounding or
+eviction. They are estimates, not provider billing or live cache-hit evidence.
+
+Every model request sends one stable attempt identity through both X-Session-ID
+and model_kwargs.prompt_cache_key. It contains node, generation and attempt,
+never the model key. An unaccepted maker or reviewer visit reuses its saved
+generation, so a worker retry keeps its affinity. A later attempt gets a new
+identity. Streamed usage uses the last usage chunk per call. Totals on finish and
+trailing chunks are never summed, including in recorded usage.
 
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
@@ -472,8 +530,13 @@ The request envelope can also supply `mlflow` settings and `trace` correlation
 metadata. Neither enters role inputs or prompts. The supervisor supplies repo,
 issue, request, attempt and round. The runtime adds node, generation, role,
 model, effort, outcome and input, output and total token counts. Failed runs
-also record `failure_class` and `failure_message`. The message is a fixed
-diagnostic or an allowlisted internal error, never arbitrary exception text.
+also record `failure_class` and `failure_message`. The same diagnostic is saved
+in the run summary before the exception propagates. The controller retains it
+before retiring the attempt and includes it in status and worker incidents.
+Messages are limited to 512 characters. Internal errors use allowlisted messages.
+JSON errors include their line and column. Schema errors include the validator
+and schema path, without the rejected values. Arbitrary provider exception text
+remains private because it can contain credentials and request content.
 
 MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
 A pinned SDK adapter replaces its network exporter with in-memory capture.
