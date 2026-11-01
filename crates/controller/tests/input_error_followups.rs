@@ -193,6 +193,10 @@ fn broken_look(corruption: bool) {
             "corrupt stored effect payload must stop ingress instead of opening a setup incident"
         );
         assert!(
+            !matches!(result, Err(Error::Json(_))),
+            "stored effect decoding must have a distinct fatal error"
+        );
+        assert!(
             !c.snapshot()
                 .unwrap()
                 .rows
@@ -222,10 +226,15 @@ fn corrupt_stored_inbox_stops_ingress() {
     let settings = db.create("corrupt_inbox");
     let root = tempfile::tempdir().unwrap();
     let mut c = open(&settings, root.path());
-    sql(
-        &settings,
-        "INSERT INTO tl3_world (table_name, row_id, value) VALUES ('inbox', 'broken', '{}');",
-    );
+    let mut store = Store::open(&settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("broken-inbox", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "inbox".into(),
+        id: "broken".into(),
+        value: json!({}),
+    });
+    store.commit(&commit).unwrap();
     assert!(
         run(&mut c, Input::Wake).is_err(),
         "corrupt stored inbox must stop ingress"
