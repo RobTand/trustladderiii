@@ -1275,7 +1275,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         state.checks.len(),
         if mode == "round-one-rebase" {
             2
-        } else if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+        } else if matches!(
+            mode,
+            "changes" | "new-attempt" | "review-retry" | "q46-checking" | "q46-reviewing"
+        ) {
             1
         } else {
             reviews.len()
