@@ -1247,6 +1247,7 @@ struct FailedPublishState {
     reads: usize,
     writes: usize,
     hold_cleanup: bool,
+    hold_publish_cancellation: bool,
 }
 struct FailedPublish {
     fake: adapters::worktrees::Fake,
@@ -1288,6 +1289,10 @@ impl Executor for FailedPublish {
         self.fake.execute(delivery)
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        let state = self.state.borrow();
+        if state.hold_publish_cancellation && state.key.as_deref() == Some(&delivery.key) {
+            return Ok(Reconciliation::Pending);
+        }
         self.fake.reconcile(delivery)
     }
     fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<Look> {
@@ -1557,6 +1562,118 @@ fn look_that_closes_request(settings: &tl3_config::Store) {
     assert!(c.next_look_in().unwrap().is_none());
 }
 
+fn pending_cancellation_keeps_look(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(FailedPublishState {
+        hold_publish_cancellation: true,
+        ..FailedPublishState::default()
+    }));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Worktrees,
+        FailedPublish {
+            fake: adapters::worktrees::Fake::new(root.path()),
+            state: state.clone(),
+            permanent: false,
+        },
+    );
+    let key = state.borrow().key.clone().unwrap();
+    assert_eq!(c.effect(&key).unwrap().unwrap().state, EffectState::Uncertain);
+    c.observe(
+        "stop-uncertain-publish",
+        Observation::Kernel(Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    assert!(matches!(c.world().unwrap().nodes[0].phase, Phase::Stopping(_)));
+    assert_eq!(c.effect(&key).unwrap().unwrap().state, EffectState::Cancelling);
+    assert!(c.effect(&key).unwrap().unwrap().payload["generation"].as_u64().unwrap()
+        < c.world().unwrap().nodes[0].generation);
+    assert!(
+        c.snapshot().unwrap().rows.iter().any(|row| row.table == "allowances" && row.id == key),
+        "Stop must retain the old-generation pending cancellation allowance"
+    );
+    drop(c);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Worktrees, FailedPublish {
+        fake: adapters::worktrees::Fake::new(root.path()),
+        state: state.clone(),
+        permanent: false,
+    });
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(), registry, bootstrap(), clock,
+    ).unwrap();
+    assert!(
+        c.snapshot().unwrap().rows.iter().any(|row| row.table == "allowances" && row.id == key),
+        "startup must retain a cancellation allowance until upstream settlement"
+    );
+    state.borrow_mut().hold_publish_cancellation = false;
+    drain(&mut c);
+    assert_eq!(c.effect(&key).unwrap().unwrap().state, EffectState::Cancelled);
+    assert_eq!(state.borrow().writes, 1, "cancellation must not dispatch again");
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Closed(tl3_kernel::Outcome::Stopped));
+    assert!(!c.snapshot().unwrap().rows.iter().any(|row| row.table == "allowances" && row.id == key));
+    assert!(c.next_look_in().unwrap().is_none());
+}
+
+fn closed_pending_effect_is_cancelled(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(FailedPublishState::default()));
+    let mut c = open(
+        settings, root.path(), &clock, Upstream::Worktrees,
+        FailedPublish {
+            fake: adapters::worktrees::Fake::new(root.path()),
+            state: state.clone(),
+            permanent: true,
+        },
+    );
+    let original = state.borrow().key.clone().unwrap();
+    let mut allowance = c.snapshot().unwrap().rows.into_iter()
+        .find(|row| row.table == "allowances" && row.id == original).unwrap();
+    let mut delivery: Delivery = serde_json::from_value(c.effect(&original).unwrap().unwrap().payload).unwrap();
+    stop_request(&mut c);
+    delivery.key = "effect:0:9999".into();
+    if let Out::Effect { seq, .. } = &mut delivery.output {
+        *seq = 9999;
+    }
+    let snapshot = c.snapshot().unwrap();
+    assert_eq!(delivery.epoch, snapshot.epoch.get(), "fixture must use the current epoch, not epoch fencing");
+    allowance.id = delivery.key.clone();
+    allowance.value["delivery"] = serde_json::json!(delivery);
+    let mut commit = tl3_store::Commit::new(
+        "stray-closed-effect", serde_json::json!({"fixture":"legacy pending effect on Closed node"}), &snapshot,
+    );
+    commit.effects.push(tl3_store::NewEffect {
+        key: delivery.key.clone(), kind: "worktrees".into(), payload: serde_json::json!(delivery),
+    });
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: allowance.table, id: allowance.id, value: allowance.value,
+    });
+    let mut store = Store::open(settings).unwrap();
+    store.commit(&commit).unwrap();
+    assert_eq!(c.effect(&delivery.key).unwrap().unwrap().state, EffectState::Intended);
+    drain(&mut c);
+    assert_eq!(
+        c.effect(&delivery.key).unwrap().unwrap().state, EffectState::Cancelled,
+        "a stray current-epoch effect on a Closed node must settle through cancel_absent"
+    );
+    assert!(store.events_after(snapshot.revision, 100).unwrap().iter()
+        .any(|event| event.payload["cancelled_absent"] == delivery.key));
+    assert_eq!(state.borrow().writes, 1, "a Closed node must not dispatch its stray effect");
+    assert!(!c.snapshot().unwrap().rows.iter().any(|row| row.table == "allowances" && row.id == delivery.key));
+    c.look_key(&delivery.key).unwrap();
+    assert_eq!(state.borrow().reads, 0);
+    assert!(c.next_look_in().unwrap().is_none());
+}
+
 fn closed_looks_regressions(db: &mut support::Database) -> usize {
     let mut failed = 0;
     for case in [
@@ -1566,6 +1683,8 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
         "healthy",
         "closing",
         "stopping",
+        "pending-cancel",
+        "closed-pending",
     ] {
         let settings = db.create(&format!("closed_looks_{case}"));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1573,6 +1692,10 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
                 healthy_stop_looks(&settings);
             } else if case == "closing" {
                 look_that_closes_request(&settings);
+            } else if case == "pending-cancel" {
+                pending_cancellation_keeps_look(&settings);
+            } else if case == "closed-pending" {
+                closed_pending_effect_is_cancelled(&settings);
             } else {
                 closed_publish_looks(&settings, case);
             }
@@ -1587,6 +1710,17 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
 }
 
 fn main() {
+    for (flag, test) in [
+        ("--pending-cancel-look", pending_cancellation_keeps_look as fn(&tl3_config::Store)),
+        ("--closed-pending-effect", closed_pending_effect_is_cancelled as fn(&tl3_config::Store)),
+    ] {
+        if std::env::args().any(|arg| arg == flag) {
+            let mut db = support::Database::start();
+            test(&db.create("closed_look_guard"));
+            db.stop();
+            return;
+        }
+    }
     if std::env::args().any(|arg| arg == "--closed-looks") {
         let mut db = support::Database::start();
         let failed = closed_looks_regressions(&mut db);
