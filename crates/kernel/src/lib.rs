@@ -2671,7 +2671,8 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// Oldest slot waiter, or oldest waiter for the agent pool.
+/// Older slot waiters block runnable or overlapping younger leaves.
+/// The agent pool retains strict ticket order.
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
@@ -2686,7 +2687,10 @@ fn first_in_line(w: &World, i: usize) -> bool {
         } else {
             !matches!(n.phase, Phase::Ready(_))
         };
-        if same_line && theirs < mine {
+        if same_line
+            && theirs < mine
+            && (!for_slot || slot_free(w, j) || !w.footprints_disjoint(n.footprint, me.footprint))
+        {
             return false;
         }
     }

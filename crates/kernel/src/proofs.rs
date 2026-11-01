@@ -911,17 +911,41 @@ fn check_gate_grant(width: u8) {
             if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
                 if theirs < mine {
                     older_blocked |= !slot_free(&before, j);
-                    assert!(
-                        !after.nodes[0].holds,
-                        "an older slot ticket prevents this grant"
-                    );
+                    if slot_free(&before, j)
+                        || !before.footprints_disjoint(other.footprint, n.footprint)
+                    {
+                        assert!(
+                            !after.nodes[0].holds,
+                            "a runnable or overlapping older ticket prevents this grant"
+                        );
+                    }
+                    if after.nodes[0].holds {
+                        assert!(!slot_free(&before, j));
+                        assert!(before.footprints_disjoint(other.footprint, n.footprint));
+                    }
                 }
             }
         }
     }
     kani::cover!(
-        !after.nodes[0].holds && older_blocked && slot_free(&before, 0) && !n.paused,
-        "a file-blocked older waiter keeps its place despite spare capacity"
+        after.nodes[0].holds && older_blocked,
+        "a truly disjoint younger leaf passes a file-blocked older waiter"
+    );
+    kani::cover!(
+        n.ticket.is_some()
+            && !n.paused
+            && slot_free(&before, 0)
+            && before.nodes.iter().enumerate().any(|(j, older)| {
+                j != 0
+                    && matches!(older.phase, Phase::Ready(_))
+                    && older
+                        .ticket
+                        .is_some_and(|theirs| theirs < n.ticket.unwrap())
+                    && !slot_free(&before, j)
+                    && !before.footprints_disjoint(older.footprint, n.footprint)
+            })
+            && !after.nodes[0].holds,
+        "a file-blocked older waiter prevents a younger leaf taking another needed file"
     );
     assert_eq!(&after.nodes[1..], &before.nodes[1..]);
     if after.nodes[0].holds {
