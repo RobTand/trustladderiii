@@ -268,6 +268,7 @@ impl Controller {
             allowances: tl3_config::Allowances::default(),
         };
         controller.reconcile_gates()?;
+        controller.cleanup_ended_looks()?;
         Ok(controller)
     }
 
@@ -694,9 +695,12 @@ impl Controller {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
-                    DeliveryOutput::Effect { node, seq, .. } => world.nodes
-                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
-                    .effect_cancelling(seq),
+                    DeliveryOutput::Effect { node, seq, .. } => {
+                        let node = &world.nodes
+                            [node.index().ok_or(Error::Invalid("node index overflow"))?];
+                        node.effect_cancelling(seq)
+                            || matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    }
                     DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                 };
             if cancelling {
@@ -1561,6 +1565,7 @@ impl Controller {
                 });
             }
         }
+        self.retire_ended_effect_looks(snapshot, &world, commit)?;
         Ok(())
     }
 
