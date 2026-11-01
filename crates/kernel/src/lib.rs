@@ -1569,6 +1569,13 @@ pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
     (world, out)
 }
 
+/// Settle after the controller reconciles stored gate or agent capacity.
+pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
+    let mut out = Vec::new();
+    settle(&mut world, &mut out, None);
+    (world, out)
+}
+
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
 pub fn step_with_passes(mut world: World, event: Event) -> (World, Vec<Out>, u32) {

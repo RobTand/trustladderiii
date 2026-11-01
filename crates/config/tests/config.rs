@@ -228,18 +228,7 @@ fn invalid_values_name_the_setting_and_the_fix() {
             "limits.fit_tokens",
             "less than",
         ),
-        (
-            vec!["limits", "w"],
-            Value::Integer(0),
-            "limits.w",
-            "slice one",
-        ),
-        (
-            vec!["limits", "w"],
-            Value::Integer(2),
-            "limits.w",
-            "slice one",
-        ),
+        (vec!["limits", "w"], Value::Integer(0), "limits.w", "1..=3"),
         (
             vec!["github", "rob", "id"],
             Value::Integer(0),
@@ -834,6 +823,28 @@ fn planning_overhead_must_leave_room_under_the_fit_limit() {
     let mut config = Config::parse(EXAMPLE).unwrap();
     config.planning.overhead_tokens = [("prompt".into(), u32::MAX), ("making".into(), 1)].into();
     assert!(config.validate().is_err(), "sum must not overflow");
+}
+
+#[test]
+fn gate_width_accepts_approved_limits() {
+    for w in [1, 2, 3] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["limits"]["w"] = Value::Integer(w);
+        let config = Config::parse(&toml::to_string(&document).unwrap())
+            .expect("Q29 amended permits gate widths one through three");
+        assert_eq!(i64::from(config.limits.w), w);
+    }
+}
+
+#[test]
+fn gate_width_rejects_values_outside_approval() {
+    for w in [256, 4, 8, 255, 0, i64::from(u32::MAX)] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["limits"]["w"] = Value::Integer(w);
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();
+        assert!(error.to_string().contains("limits.w"), "{w}: {error}");
+        assert!(error.to_string().contains("1..=3"), "{w}: {error}");
+    }
 }
 
 #[test]
