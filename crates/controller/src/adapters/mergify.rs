@@ -130,6 +130,24 @@ impl QueueFact {
         }
         Ok(None)
     }
+    pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
+        if let Evidence::ChecksUnavailable { permissions } = &self.evidence {
+            let Some(node) = self.node(snapshot)? else {
+                return Ok(false);
+            };
+            return Ok(permissions.iter().all(|permission| {
+                let id = crate::looks::check_setup_incident_id(node, permission);
+                snapshot.rows.iter().any(|row| {
+                    row.table == "incidents" && row.id == id && row.value["open"] == true
+                })
+            }));
+        }
+        let identity = self.identity();
+        Ok(snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "queue_facts" && row.id == identity))
+    }
     pub(crate) fn needs_queue_ack(&self) -> bool {
         matches!(
             self.evidence,
@@ -143,7 +161,15 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
-            Evidence::ChecksUnavailable { .. } => "required-checks-setup".into(),
+            Evidence::ChecksUnavailable { permissions } => {
+                let mut gaps = permissions.clone();
+                gaps.sort();
+                gaps.dedup();
+                format!(
+                    "required-checks-setup:{}",
+                    serde_json::to_string(&gaps).unwrap()
+                )
+            }
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed {
                 check, head_check, ..
@@ -755,7 +781,13 @@ async fn queue_facts(
             QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
         )
     {
-        let checks = head_checks::read(github, &full_name(repo), pull).await?;
+        let repo_name = full_name(repo);
+        let requirements = github
+            .required_status_checks(&repo_name, &pull.base.branch)
+            .await?;
+        let checks =
+            head_checks::evaluate(github, &repo_name, pull, requirements, &state.check_runs)
+                .await?;
         head_infrastructure = checks.infrastructure();
         if !checks.unavailable.is_empty() {
             facts.push(QueueFact {
