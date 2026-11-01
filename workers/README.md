@@ -549,23 +549,41 @@ It has three layers, and runs before export:
 
 - **Patterns.** Credential formats (private key blocks, JWTs, vendor
   token prefixes such as `ghp_`, `glrt-`, `whsec_`, `ya29.` and `hvs.`,
-  webhook URLs), passwords in URLs, authorization headers,
-  command-line flags such as `--password`, `curl --user`, `sshpass -p` and
-  `mysql -pPW`, and values after a secret label in env, YAML, TOML, INI, JSON,
-  netrc and markdown forms. A label is judged by its words: `DB_PASS=` and
-  `_authToken=` are secret labels, `input_tokens` and `TokenBucket` are not.
+  webhook URLs, password hashes), passwords in URLs, authorization headers and
+  cookie jar lines. Command-line flags with one or two dashes, such as
+  `--password`, `-db-password` and PowerShell `-Password`, and commands such as
+  `curl --user`, `sshpass -p`, `mysql -p`, `net use`, `ConvertTo-SecureString`
+  and redis `requirepass` and `AUTH`. Values after a secret label in env, YAML,
+  TOML, INI, JSON, netrc and markdown forms, XML elements and `name`/`key`
+  properties, CSV columns, SQL `WITH PASSWORD` and `IDENTIFIED BY`, and
+  name/value pairs in Kubernetes YAML and JSON. A label is judged by its words:
+  `DB_PASS` and `_authToken` are secret labels, `input_tokens` and `TokenBucket`
+  are not. In prose, a password-like token on the same line within 48
+  characters after `password`, `secret`, `token`, `api key` or `credentials` is
+  redacted, as in "the password for staging is X" or "password used: X".
   Values that are code, types, numbers, templates or prose stay.
 - **Structure.** A string that is wholly JSON is parsed and judged by field
-  name. A tool result from a sensitive file becomes
-  `[omitted: content of sensitive file PATH]`: `.env*`, `*.pem`, `*.key`, SSH
-  `id_*` keys, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `*credentials*`,
-  `*secret*`, `*.ppk`, `*.p12`, `*.pfx`, docker `config.json` and kube configs.
-  This covers the tool span, the tool message in later model inputs, grep
-  matches, and write or edit arguments.
+  name. Every value in a Kubernetes `Secret` manifest's `data` block is
+  redacted. A tool result from a sensitive file becomes
+  `[omitted: content of sensitive file PATH]`. Files are judged by their path
+  components: `.env*`, `*.env`, `env.*`, any file under `secrets/`,
+  `credentials/`, `.ssh/` or `.gnupg/`, `*.pem`, `*.key`, `*.p12`, `*.pfx`,
+  `*.p8`, `*.pk8`, `*.jks`, `*.keystore`, `*.ppk`, `*.tfvars`, `*.tfstate`,
+  `id_*` keys and their backups (not `*.pub`), `.netrc`, `.npmrc`, `.pypirc`,
+  `.pgpass`, `.htpasswd`, `.my.cnf`, `.dockercfg`, `.s3cfg`, `.boto`, vault
+  password files, `.git-credentials`, `token.json`, `auth.json`,
+  `service-account*.json`, `wp-config.php`, `shadow`, docker `config.json`, kube
+  configs, and names containing `secret` or `credentials`. Source and docs
+  files (`.py`, `.rs`, `.md` and similar) under the broad rules keep their
+  content: `src/credentials.rs` and `docs/secret-scanning.md` are code. This
+  covers the tool span, the tool message in later model inputs, grep matches,
+  and write or edit arguments.
 - **Entropy.** A token of 24 or more characters that mixes upper case, lower
-  case and digits like a random string is redacted without a label. Exact 40-
-  and 64-character hex digests (git SHAs, sha256), UUIDs, MLflow trace IDs and
-  `sha512-` integrity strings stay.
+  case and digits like a random string is redacted without a label. Readable
+  names such as `FileNotFoundError` stay. Exact 40- and 64-character hex
+  digests (git SHAs, sha256), UUIDs and prefixed UUIDs such as `GPU-<uuid>`,
+  MLflow trace IDs, PrismaBuild scope names and `sha512-` integrity strings
+  stay.
 
 The runtime supplies the already-loaded model key, so tracing never opens
 credential files. Headers, provider metadata and raw exceptions are omitted.
@@ -573,25 +591,35 @@ Integer usage counts always survive.
 
 What redaction does not catch:
 
-- Unlabeled secrets with low entropy: a short or word-like password, a value
-  with one character class (upper case and digits only), a 40- or
-  64-character hex secret, which looks like a digest, or a secret shaped like a
-  UUID.
+- Hex secrets under neutral labels. A 64-character hex secret looks exactly like
+  a sha256 digest, and a 40-character one like a git SHA, so
+  `HMAC_SEED=<openssl rand -hex 32 output>` or `{"v": "<64 hex>"}` stays. The
+  same value after a secret label (`SIGNING_SECRET=`) is redacted.
+- Other unlabeled secrets with low entropy: a short or word-like password, a
+  value with one character class (upper case and digits only), a secret shaped
+  like a UUID, or a bare value on its own line, such as the output of
+  `kubectl get secret … | base64 -d`.
 - Weakly labeled values that don't look random. `key`, `pass`, `auth`, `pwd`,
   `pw`, `sig` and `session` also name ordinary things, so `pass=hunter` stays.
   A bare lowercase name in a code-style assignment (`token = runtime`) is
   treated as a variable. A value made only of words, one of which is `fake`,
   `fixture`, `test`, `example` or a similar word, is treated as a fixture.
 - An unquoted value with spaces after a label: `password=two words` keeps
-  `words`. Credentials in `user:pw@host` without a scheme.
+  `words`. Credentials in `user:pw@host` without a scheme. A password in prose
+  more than 48 characters after its keyword, or on the next line.
 - Re-encoded secrets: base64 of a short secret, URL-encoding, string
-  concatenation, or values a tool or the model split or rewrote.
+  concatenation, labels spelled with JSON escapes (`p\u0061ssword`) inside
+  other text, or values a tool or the model split or rewrote. A secret split
+  across two tool results is redacted only if each half is recognizable alone.
 - New token prefixes, unless the token itself looks random.
 - Multi-line forms (YAML block scalars, Kubernetes name and value pairs, TOML
   sections, markdown tables) inside JSON that is embedded in other text, where
   newlines are escaped.
-- Sensitive files read without a path argument, and personal or business data
-  in repository text.
+- Sensitive files read without a path argument, or named in ways the rules
+  don't list: `.git/config`, `config/database.yml`,
+  `appsettings.Production.json`, look-alike Unicode names. Labeled values inside
+  them are still redacted.
+- Personal or business data in repository text.
 
 Treat every trace as readable by anyone on the LAN.
 
@@ -603,6 +631,8 @@ the middle. A cut never starts inside a private key block or a token, and
 redaction sees 1 KiB of text beyond each cut, so a cut cannot separate a label
 from its value. Serialized JSON is bounded by field first, so model replies and
 tool arguments remain readable. Message lists keep their newest items.
+JSON text that is changed or too long to keep verbatim (pretty-printed JSON
+over about 10 KiB) is re-serialized on one line.
 
 Each span input and output is at most 64 KiB, and the trace has a 1 MiB export
 budget. The root keeps its inputs and the final reply. Model and tool spans
