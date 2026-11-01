@@ -1637,7 +1637,8 @@ impl Controller {
             id.clone(),
             json!(Incident {
                 id: id.clone(),
-                node,
+                node: Some(node),
+                input_failure: None,
                 open: true,
                 needs_rob: false,
                 blocking: false,
