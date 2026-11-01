@@ -2741,6 +2741,7 @@ fn main() {
         "failure",
         "stale-failure",
         "runner",
+        "runner-code",
         "missing",
         "app",
         "status",

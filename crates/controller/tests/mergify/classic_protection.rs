@@ -85,7 +85,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 "app":{"id":if mode == "app" {99} else {15368},"slug":"github-actions"},
                 "check_suite":{"id":800}})];
         }
-        if mode == "runner" {
+        if matches!(mode, "runner" | "runner-code") {
             state.annotations = json!([{"annotation_level":"failure",
                 "message":"The runner has lost communication with the server"}]);
             state.workflow = Some(json!({"id":700,"check_suite_id":800,"head_sha":head,
@@ -97,7 +97,42 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         }
     }
     assert!(controller.drive_once().unwrap());
-    if matches!(mode, "failure" | "stale-failure") {
+    if mode == "runner-code" {
+        assert!(controller.drive_once().unwrap());
+        assert!(
+            controller.world().unwrap().nodes[0]
+                .effect
+                .unwrap()
+                .cancelling
+        );
+        finish_head(&api);
+        let check: tl3_github::CheckRun = {
+            let mut state = api.state.lock().unwrap();
+            state.head_checks[0]["conclusion"] = json!("failure");
+            state.annotations = json!([]);
+            serde_json::from_value(state.head_checks[0].clone()).unwrap()
+        };
+        controller
+            .observe(
+                "failure-during-enqueue-cancellation",
+                tl3_controller::executor::Observation::Queue(
+                    tl3_controller::adapters::mergify::QueueFact {
+                        repository: bootstrap().repos[0].clone(),
+                        number: 100,
+                        evidence: tl3_controller::adapters::mergify::Evidence::CiFailed {
+                            check: check.id,
+                            completed_at: check.completed_at.map(|time| time.to_rfc3339()),
+                            head: check.head_sha,
+                            infra: false,
+                            head_check: true,
+                        },
+                    },
+                ),
+            )
+            .unwrap();
+        assert!(controller.drive_once().unwrap());
+    }
+    if matches!(mode, "failure" | "stale-failure" | "runner-code") {
         // Consume only until the fix round starts, so the fake maker cannot finish it.
         for _ in 0..20 {
             if controller.world().unwrap().nodes[0].phase == Phase::Making {
