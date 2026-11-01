@@ -69,6 +69,13 @@ impl<F: FnMut(&Delivery, &mut Completion)> Workers<F> {
 }
 
 impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
+    fn input_incident(
+        &mut self,
+        notice: &tl3_controller::input_errors::IncidentNotice,
+        epoch: i64,
+    ) -> Result<()> {
+        self.primary().input_incident(notice, epoch)
+    }
     fn intake_question(
         &mut self,
         question: &tl3_controller::adoption::Clarification,

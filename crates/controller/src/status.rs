@@ -104,7 +104,9 @@ pub fn load_request_details(
     for row in tx.query("SELECT row_id, value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
         let id: String = row.get(0);
         let incident: crate::looks::Incident = serde_json::from_value(row.get(1))?;
-        details.entry(incident.node).or_default().open_incidents.push(format!("{} (clear: clear incident {id})", incident.summary));
+        if let Some(node) = incident.node {
+            details.entry(node).or_default().open_incidents.push(format!("{} (clear: clear incident {id})", incident.summary));
+        }
     }
     Ok(details)
 }
