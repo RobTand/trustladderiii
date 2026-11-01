@@ -154,13 +154,24 @@ def cargo_receipts(paths, files):
     return {'rust': binaries, 'python': python_modules(files)}
 
 
+def read_receipt(outputs):
+    """A test's inventory.json from its test.outputs directory, zipped or not."""
+    plain, archive = outputs / 'inventory.json', outputs / 'outputs.zip'
+    if plain.is_file():
+        return json.loads(plain.read_text())
+    if archive.is_file():
+        with zipfile.ZipFile(archive) as zipped:
+            if 'inventory.json' in zipped.namelist():
+                return json.loads(zipped.read('inventory.json'))
+    return None
+
+
 def bazel_receipts(directory):
     inventory = {'rust': {}, 'python': []}
-    for archive in directory.rglob('test.outputs/outputs.zip'):
-        with zipfile.ZipFile(archive) as outputs:
-            if 'inventory.json' not in outputs.namelist():
-                continue
-            receipt = json.loads(outputs.read('inventory.json'))
+    for outputs in sorted(directory.rglob('test.outputs')):
+        receipt = read_receipt(outputs)
+        if receipt is None:
+            continue
         for binary, names in receipt.get('rust', {}).items():
             if binary in inventory['rust']:
                 raise RuntimeError(f'duplicate Bazel binary receipt: {binary}')

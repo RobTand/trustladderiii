@@ -53,4 +53,4 @@ build:ci --execution_log_compact_file=execution_log.binpb.zst
 build:ci --build_metadata=ROLE=CI
 build:ci --build_metadata=REPO_URL=https://github.com/RobTand/trustladderiii
 # Parity reads each test's inventory receipt.
-build:ci --remote_download_regex=.*/test\.outputs/outputs\.zip$
+build:ci --remote_download_regex=.*/test\.outputs/.*
