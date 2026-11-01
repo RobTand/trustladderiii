@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45 and Q46. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -58,7 +58,7 @@ Kani proves the rules inductively. A harness builds an arbitrary world within th
 
 Because the starting world is arbitrary, a counter can start at any value. No harness has to replay a long history to reach a threshold. Thresholds are parameters, and harnesses check them at 1 and 2.
 
-For slice one, the bounds are 2 requests, or 3 after a new one arrives; 2 repos of 4 files each; W and the agent pool at most 2; and abstract commit ids. They rise to 3 or more requests when slice two lets a repo have more than one change in flight (Q10).
+For slice one, the bounds are 2 requests, or 3 after a new one arrives; 2 repos of 4 files each; W at most 3 and the agent pool at most 2; and abstract commit ids. Four-request gate harnesses cover W = 2 and W = 3, including full gates and waiters (Q29 amended, Rob 2026-10-31).
 
 **When the proofs run.** The proofs are a required Mergify check on any change that touches the kernel or its proofs, and a nightly run covers them all. Other changes skip them. Both run as Mergify CI on the fleet's runners, at most 8 proofs at a time (Q9, Q18).
 
@@ -335,13 +335,14 @@ goals and forecast settings:
 
 ### Ready(resume point)
 
-A leaf waits here for a slot, holding nothing. Settle grants it a slot and its files when all three hold:
+A leaf waits here for a slot, holding nothing. Settle grants it a slot and its files when all four hold:
 
 - it isn't paused;
 - it isn't waiting on an incident;
-- the gate has room.
+- the gate has room;
+- all its files are free.
 
-In slice one, the gate grants first come, first served. A grant moves the leaf straight to its resume point.
+In slice one, the gate grants first come, first served in ticket order. A leaf waiting on files keeps its place and blocks younger leaves. A grant moves the leaf straight to its resume point.
 
 | Resume point | Next | Effects, in order |
 |---|---|---|
@@ -615,11 +616,15 @@ Every effect carries the controller's epoch, and executors refuse effects from a
 
 The gate is part of the world, so its changes are atomic with the step that makes them.
 
-**Slice one:** W is 1. Leaves are served first come, first served. A leaf gets its slot and all its files together.
+**Slice one (Q29 amended, Rob 2026-10-31):** W is configurable from 1 through 3. Rob approved raising W from 1 to 3 slots per repo once built and proven.
+
+A leaf gets its slot and all its files together. Leaves are served in ticket order, including a leaf waiting on files. A leaf waiting for a slot holds neither a slot nor files and keeps its place in line.
 
 **Slice two:**
 
 - W is 2 per repo to start, tuned later from measured capacity (Q29).
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - A queued leaf is eligible when it isn't paused and isn't waiting on an incident. A leaf that isn't eligible reserves nothing.
 - A leaf is runnable when it is eligible and all its files are free.
 - Each free slot goes to the runnable leaf with the highest rank, with ties going to the older leaf. The rank is defined under "Status, bottlenecks and ranking". When two leaves want the same file, the one that unblocks more gets it (Q30, Q36, Q38).
@@ -707,7 +712,7 @@ A newer kernel never replays older events. They stay for audit.
 - **Rank:** the number of other nodes waiting on a node, directly or through a chain of waits. Higher ranks go first, and ties go to the older node (Q36). The wait graph has no cycles, so the count is always finite.
 - **Wait reason:** what every open node is waiting on.
 
-There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one nothing waits on anything else, so every rank is 0, and serving requests first come, first served is the same rule.
+There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the gate serves them first come, first served. Ranking starts in slice two.
 
 File waits and pauses count in the wait graph, and neither can close a cycle:
 
@@ -734,7 +739,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 
 - every phase under "Node phases, slice one";
 - Rob's pause, resume, stop and request changes, by answer or by comment;
-- one gate with W of 1, first come, first served;
+- one gate with an approved W of 3, first come, first served in ticket order (Q29 amended, Rob 2026-10-31);
 - one model account, first come, first served;
 - the effect machine, progress credit, looks and stalls, and containment;
 - the plain status view, and code grades.
@@ -772,7 +777,7 @@ It leaves out ranking, bottleneck scoring, Hindsight writes and the orphan sweep
 - the parent phases and Escalated;
 - dependencies;
 - pauses owned by deciders;
-- the slice-two gate with W of 2, the multi-account agent pool, ranking and bottleneck scoring;
+- the slice-two gate, the multi-account agent pool, ranking and bottleneck scoring;
 - recursive escalation;
 - decision batches checked against current facts;
 - "accept as is";

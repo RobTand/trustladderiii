@@ -1,9 +1,8 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use rand::rngs::OsRng;
 use rsa::{
     RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding},
+    pkcs8::{DecodePrivateKey, EncodePublicKey, LineEnding},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,9 +20,10 @@ use wiremock::{
 };
 
 static KEYS: LazyLock<(String, String)> = LazyLock::new(|| {
-    let key = RsaPrivateKey::new(&mut OsRng, 2048).unwrap();
+    let pem = include_str!("../../mergify/tests/fixtures/throwaway-key.pem");
+    let key = RsaPrivateKey::from_pkcs8_pem(pem).unwrap();
     (
-        key.to_pkcs8_pem(LineEnding::LF).unwrap().to_string(),
+        pem.into(),
         key.to_public_key()
             .to_public_key_pem(LineEnding::LF)
             .unwrap(),

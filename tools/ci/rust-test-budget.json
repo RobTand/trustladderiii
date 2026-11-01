@@ -35,9 +35,6 @@
     "tl3-controller/mergify::terminal_without_enqueue_ack_generic_false_look_false_titles_false": 70,
     "tl3-controller/prismabuild::__tail__": 15,
     "tl3-controller/prismabuild::live_waits_do_not_look_on_bell_reset": 45,
-    "tl3-controller/production::configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply": 15,
-    "tl3-controller/production::production_refuses_missing_and_invalid_credential_paths_before_opening_store": 20,
-    "tl3-controller/production::production_registers_every_real_adapter_and_source": 15,
     "tl3-controller/publishing::__tail__": 20,
     "tl3-controller/publishing::publishing_add-add": 20,
     "tl3-controller/publishing::publishing_before-enqueue": 20,
@@ -54,7 +51,6 @@
     "tl3-controller/publishing::publishing_review-retry": 20,
     "tl3-controller/publishing::publishing_round-one-rebase": 25,
     "tl3-controller/simulation::status_page_and_command": 50,
-    "tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge": 15,
     "tl3-controller/workers::__tail__": 20,
     "tl3-controller/workers::announced_quota_resumes_same_operation_without_failure": 25,
     "tl3-controller/workers::confirmed_absence_reports_one_failure_and_retries_with_new_key": 25,
@@ -86,7 +82,6 @@
     "tl3-controller/workers::sigkill_worker_retry_is_idempotent_by_key": 15,
     "tl3-controller/worktrees::__tail__": 30,
     "tl3-controller/writer_references::checker_feedback_reaches_real_writer_protocol_and_fake_model": 30,
-    "tl3-github/rest::all_slice_one_rest_operations_use_the_documented_routes": 15,
     "tl3-store/fixture_lifecycle::__tail__": 30,
     "tl3-store/postgres::reader_restart": 50
   }
