@@ -18,6 +18,14 @@ review classification fits. Check citations against the supplied evidence.
 For an early end, independently check the reason for duplicate, already_done
 or not_actionable. Missing evidence is grounds for an objection.
 
+Check that briefs ask only for available steps: the maker has TL3 worktree file
+tools, run_tests through PrismaBuild and read-only recall; the reviewer has
+read-only worktree tools, the supplied diff and check verdicts. Do not require
+another repo, a fetched page or a shell. Preserve outside facts as the request
+gives them, name their source and mark them unverified. Require goals that tests
+or review can judge inside this repo without outside verification. Unavailable
+outside corroboration alone is not an objection to a brief.
+
 Return verdict "agree" with an empty objections list only if the reading holds.
 Otherwise return verdict "disagree" and specific, nonempty objections tied to
 the issue or missing evidence. Do not rewrite the request, resolve the dispute,
