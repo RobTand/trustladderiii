@@ -4,7 +4,6 @@ The model reads real repository files, writes an isolated marker and reads it
 back before done. This exercises retention and code-owned commits; it does not
 implement #1968 or claim its checks passed. Run only inside PrismaBuild.
 """
-from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
