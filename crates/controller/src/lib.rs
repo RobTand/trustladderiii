@@ -25,6 +25,7 @@ mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
+pub mod release;
 mod scope;
 mod snapshot;
 pub mod status;

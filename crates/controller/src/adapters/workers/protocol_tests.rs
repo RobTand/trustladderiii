@@ -96,3 +96,30 @@ fn split_forecast_keys_are_the_union_of_piece_files() {
     reply["forecast"]["file_tokens"]["extra.py"] = json!(0);
     assert!(map_reply("planner", &reply).is_err());
 }
+
+#[test]
+fn blocked_maker_reply_needs_cited_evidence() {
+    for evidence in [
+        json!({"action_key": "c".repeat(64)}),
+        json!({"tool_error": "tool-error-1"}),
+    ] {
+        let reply = json!({"kind": "blocked", "evidence": evidence, "report": "PrismaBuild failed."});
+        assert!(
+            matches!(
+                map_reply("maker", &reply),
+                Ok(MappedReply::Kernel(Reply::RunFailed))
+            ),
+            "{reply}"
+        );
+    }
+    for reply in [
+        json!({"kind": "blocked", "report": "The sandbox refused to run the tests."}),
+        json!({"kind": "blocked", "evidence": {}, "report": "Broken."}),
+        json!({"kind": "blocked", "evidence": {"action_key": "short"}, "report": "Broken."}),
+        json!({"kind": "blocked", "evidence": {"tool_error": "anything"}, "report": "Broken."}),
+        json!({"kind": "blocked", "evidence": {"action_key": "c".repeat(64), "tool_error": "tool-error-1"}, "report": "Broken."}),
+        json!({"kind": "blocked", "evidence": {"action_key": "c".repeat(64)}, "report": " "}),
+    ] {
+        assert!(map_reply("maker", &reply).is_err(), "{reply}");
+    }
+}
