@@ -19,6 +19,11 @@ maker_request = test_maker.maker_request
 request_doc = test_workers.request_doc
 
 
+class ToolModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
 def capture_budget(monkeypatch):
     instances = []
     original = runtime.ExplorationMiddleware
@@ -39,10 +44,10 @@ def payload(messages):
 
 def test_append_only_prefix_and_one_threshold_compaction(maker_request, monkeypatch):
     maker_request["inputs"]["context_size"] = 100_000
-    Path(maker_request["worktree"], "evidence.txt").write_text("source evidence\n" * 1400)
+    Path(maker_request["worktree"], "evidence.txt").write_text(("source evidence " * 7 + "\n") * 200)
     seen = []
 
-    class Explorer(test_maker.ToolModel):
+    class Explorer(ToolModel):
         def _generate(self, messages, **kwargs):
             seen.append(deepcopy(messages))
             index = len(seen)
@@ -85,7 +90,7 @@ def test_cache_weighted_budget_uses_reported_components(tmp_path, monkeypatch, d
     usage = {"input_tokens": 100_000, "output_tokens": 1, "total_tokens": 100_001}
     if details is not None:
         usage["input_token_details"] = details
-    model = test_maker.ToolModel(responses=[AIMessage(content=json.dumps(test_workers.BRIEF), usage_metadata=usage)])
+    model = ToolModel(responses=[AIMessage(content=json.dumps(test_workers.BRIEF), usage_metadata=usage)])
     monkeypatch.setattr(runtime, "create_model", lambda _: model)
     runtime.run({"role": "ingest", "worktree": str(tmp_path), "inputs": {}}, lambda _: None)
     assert budgets[0].spent == expected
@@ -95,7 +100,7 @@ def test_cached_intake_keeps_four_exploration_rounds(tmp_path, monkeypatch):
     Path(tmp_path, "evidence.txt").write_text("source evidence")
     seen = []
 
-    class Explorer(test_maker.ToolModel):
+    class Explorer(ToolModel):
         def _generate(self, messages, **kwargs):
             seen.append(messages)
             index = len(seen)
@@ -158,11 +163,12 @@ def test_session_identity_reaches_header_and_body_across_turns_and_resume(reques
     Path(request_doc["session_file"]).with_suffix(".head").write_text(json.dumps(
         {"generation": 7, "head": "a" * 40}))
     sent = []
+    stream_options = []
 
     def respond(request):
         body = json.loads(request.content)
         sent.append((request.headers.get("X-Session-ID"), body.get("prompt_cache_key")))
-        assert body["stream_options"] == {"include_usage": True}
+        stream_options.append(body.get("stream_options"))
         return response_frames("A fixture reply.")
 
     proxy = runtime.ProxyChatOpenAI
@@ -180,4 +186,5 @@ def test_session_identity_reaches_header_and_body_across_turns_and_resume(reques
     expected = f"tl3-{request_doc['operation']['node']}-7-1"
     assert sent[:3] == [(expected, expected)] * 3, "affinity and cache identity survive a worker retry"
     assert sent[3][0] == sent[3][1] and sent[3][0] != expected
+    assert all(options == {"include_usage": True} for options in stream_options)
     assert "fixture-only-key" not in json.dumps(sent)
