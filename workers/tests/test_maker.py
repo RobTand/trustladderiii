@@ -589,6 +589,7 @@ def test_plan_check_kinds_reach_maker_test_tool(maker_request):
 def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
     assert "pre-existing only for tests named in regression checks" in prompt
+    assert "fails-on-base means this test also failed or errored on base, but no regression check names it." in prompt
     assert "fails-on-base does not excuse demonstrating, reproducing or behavior-preserving checks" in prompt
     assert "Never edit unrelated code, pins or tests to make it pass" in prompt
     assert "Name it and both runs in your self-check; it is not a reason for cant_meet" in prompt
