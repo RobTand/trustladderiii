@@ -189,7 +189,7 @@ fn random_walks_keep_every_rule() {
     for seed in 1..=400u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let pool = &POOLS[seed as usize % POOLS.len()];
-        let gates = [1 + rng.below(2) as u8, 1 + rng.below(2) as u8, 1];
+        let gates = [1 + rng.below(3) as u8, 1 + rng.below(3) as u8, 1];
         let mut w = World::new(&gates, 1 + rng.below(2) as u8);
         for _ in 0..500 {
             let event = if rng.below(4) == 0 {

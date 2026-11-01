@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45 and Q46 from 2026-10-31 are listed with them. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -68,7 +68,7 @@ Proposed rules:
    - **Delivered (merged or done):** the waiting nodes are released.
    - **Abandoned, stopped or replaced:** each waiting node gets an event, and its owner replans.
    - **Waiting on Rob or on an incident:** the waiting nodes stay blocked, and the status view shows the reason.
-5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one has a single slot, served first come, first served, which is the same rule when nothing waits on anything. The state table has the exact rule.
+5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one serves leaves in ticket order, with 3 slots approved under the Q29 amendment of 2026-10-31. A leaf waiting on files keeps its place and blocks younger leaves. The state table has the exact rule.
 
 ### Priority inheritance
 
@@ -301,6 +301,8 @@ Proposed:
 
 - **One PR per leaf.**
 - **At most W leaves in flight per repo,** starting at 2 in slice two and later adapting to measured capacity (Q29). Slice one uses 1. W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **Plan just in time.** A repo's next node gets planned when fewer than W leaves are waiting for a slot.
 - **Leaves span one repo.** A request that touches several repos splits into one child per repo, so no lock ever spans two gates.
 - **The parent checks the combined result.** After its last child closes, the parent runs its own acceptance check.
@@ -385,7 +387,7 @@ Version 4 of the state table fixes these:
 - isolated CI;
 - upgrades that keep pending actions.
 
-Slice one also shrank to one slot, one model account and a plain status view.
+Slice one uses one model account and a plain status view. Rob later approved raising its gate from 1 to 3 slots under the Q29 amendment of 2026-10-31.
 
 Both reviewers asked for proof to be tested before more design work. The next step is a kernel spike: slice one's kernel and its Kani harnesses, run on PrismaBuild.
 
@@ -428,6 +430,8 @@ Settled in the grilling:
 - **Kinds of request.** Slices one and two take only code changes in one repo (Q1), and a code change is done when its PR merges with every goal confirmed (Q12). Research questions, reviews of existing PRs and work spanning several repos each get their own grilling and definition of done after slice two is solid (Q35).
 - **The decomposition trial.** Before slice two's splitting goes live, a dry run decomposes a handful of real requests, changing no code, to calibrate the fit limit and the forecast (Q34).
 - **W, the fit limit and the starting credit reserve:** 2 per repo in slice two (Q29), 100k (Q4), and 3 (Q6).
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **The status view:** a read-only web page on the LAN plus a `tl3 status` command (Q24).
 
 Still open:
@@ -481,6 +485,8 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 **Order of work**
 
 - **Q29 W:** 2 changes in flight per repo in slice two, tuned later.
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **Q30 What runs first:** Rob: "we should be pulling work off that blocks the most other work. I don't really care about starvation." So there is no rule against starvation.
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later.
@@ -490,7 +496,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 **Proofs**
 
 - **Q9 When they run:** as a required Mergify check on changes to the kernel or its proofs, plus a nightly full run.
-- **Q10 Bounds:** 2 to 3 requests, W of at most 2, and abstract commit ids. They rise to 3 or more requests when slice two allows more than one change per repo.
+- **Q10 Bounds:** general event proofs use 2 requests, or 3 after a new request, W at most 3, and abstract commit ids. Focused gate proofs use 4 requests at W = 2 and W = 3 after the Q29 amendment.
 - **Q18 Where they run:** as Mergify CI on the fleet's runners, at most 8 at a time.
 - **Q27 Changing the rules:** the state table is the single source of truth. A rule change needs Rob's approval, including a rule that comes from a bug Kani or a test finds. A clarification doesn't.
 

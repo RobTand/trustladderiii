@@ -1782,6 +1782,9 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
             "closed_looks {case}: {}",
             if result.is_ok() { "PASS" } else { "FAIL" }
         );
+        if result.is_ok() {
+            println!("test closed_looks_{case} ... ok");
+        }
         failed += usize::from(result.is_err());
     }
     failed

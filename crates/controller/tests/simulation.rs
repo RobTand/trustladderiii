@@ -54,15 +54,62 @@ fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
     .unwrap()
 }
 
+#[path = "simulation/gate_migration.rs"]
+mod gate_migration;
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--child") {
         child(&args);
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--gate-migration-child") {
+        gate_migration::child(&args);
+        return;
+    }
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("agent_capacity_reopen", gate_migration::pool_reopen),
+        ("agent_capacity_downgrade", gate_migration::pool_downgrade),
+        (
+            "agent_capacity_idle_downgrade",
+            gate_migration::pool_idle_downgrade,
+        ),
+        (
+            "gate_capacity_ended_look",
+            gate_migration::ended_look_and_gate,
+        ),
+        ("agent_capacity_crash_rows", |s| {
+            gate_migration::pool_crash(s, "RowsWritten")
+        }),
+        ("agent_capacity_crash_effects", |s| {
+            gate_migration::pool_crash(s, "EffectsWritten")
+        }),
+        ("agent_capacity_crash_before_commit", |s| {
+            gate_migration::pool_crash(s, "BeforeCommit")
+        }),
+        ("agent_capacity_crash_after_commit", |s| {
+            gate_migration::pool_crash(s, "AfterCommit")
+        }),
+        ("gate_capacity_reopen", gate_migration::reopen),
+        ("gate_capacity_downgrade", gate_migration::downgrade),
+        (
+            "gate_capacity_idle_downgrade",
+            gate_migration::idle_downgrade,
+        ),
+        ("gate_capacity_crash_rows", |s| {
+            gate_migration::crash(s, "RowsWritten")
+        }),
+        ("gate_capacity_crash_effects", |s| {
+            gate_migration::crash(s, "EffectsWritten")
+        }),
+        ("gate_capacity_crash_before_commit", |s| {
+            gate_migration::crash(s, "BeforeCommit")
+        }),
+        ("gate_capacity_crash_after_commit", |s| {
+            gate_migration::crash(s, "AfterCommit")
+        }),
         ("write_outage_goes_idle", write_outage_goes_idle),
         ("labelled_issue_closes", labelled_issue_closes),
         (

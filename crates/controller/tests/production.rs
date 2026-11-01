@@ -1,11 +1,6 @@
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
-use rand::rngs::OsRng;
-use rsa::{
-    RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, LineEnding},
-};
 use serde_json::json;
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::Path};
 use tl3_controller::{executor::Upstream, production};
@@ -27,16 +22,39 @@ fn config(root: &Path) -> tl3_config::Config {
     config.github.repos[0].installation_id = 987;
     config.github.app_credentials_file = root.join("github-app.json");
     config.models.key_file = root.join("model-key");
-    let pem = RsaPrivateKey::new(&mut OsRng, 2048)
-        .unwrap()
-        .to_pkcs8_pem(LineEnding::LF)
-        .unwrap();
-    fs::write(&config.github.app_credentials_file, serde_json::to_vec(&json!({"id":123,"slug":"fixture","pem":pem.as_str(),"webhook_secret":"fixture-secret"})).unwrap()).unwrap();
+    let pem = include_str!("../../mergify/tests/fixtures/throwaway-key.pem");
+    fs::write(
+        &config.github.app_credentials_file,
+        serde_json::to_vec(
+            &json!({"id":123,"slug":"fixture","pem":pem,"webhook_secret":"fixture-secret"}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     fs::write(&config.models.key_file, "fixture-model-key").unwrap();
     for path in [&config.github.app_credentials_file, &config.models.key_file] {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
     config
+}
+
+#[test]
+fn fixture_credentials_are_fast_and_repeatable() {
+    let root = tempfile::tempdir().unwrap();
+    let started = std::time::Instant::now();
+    let first = config(root.path());
+    let before = fs::read(&first.github.app_credentials_file).unwrap();
+    let second = config(root.path());
+    let after = fs::read(&second.github.app_credentials_file).unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "fixture credentials took {:?}; key generation must not be test work",
+        started.elapsed()
+    );
+    assert_eq!(
+        before, after,
+        "fixture credentials must not depend on entropy"
+    );
 }
 
 #[test]

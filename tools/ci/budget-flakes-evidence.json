@@ -1,0 +1,2244 @@
+{
+  "issue": "https://github.com/RobTand/trustladderiii/issues/240",
+  "hosted": {
+    "classes": {
+      "ARM64": {
+        "near_limit": {
+          "tl3-controller/production::configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply": {
+            "n": 25,
+            "median": 5.036303233,
+            "p95": 13.86428253,
+            "max": 19.429581394,
+            "max_run": 41278476832,
+            "base_budget": 15,
+            "effective_limit": 17.25,
+            "max_ratio": 1.12635254457971
+          },
+          "tl3-controller/production::production_registers_every_real_adapter_and_source": {
+            "n": 25,
+            "median": 5.941392933,
+            "p95": 12.016097438,
+            "max": 16.984515326,
+            "max_run": 41274104777,
+            "base_budget": 15,
+            "effective_limit": 17.25,
+            "max_ratio": 0.984609584115942
+          },
+          "tl3-controller/publishing::publishing_repo-conventions": {
+            "n": 15,
+            "median": 9.596717598999987,
+            "p95": 10.630631502,
+            "max": 10.630631502,
+            "max_run": 41264516344,
+            "base_budget": 10,
+            "effective_limit": 11.5,
+            "max_ratio": 0.9244027393043478
+          }
+        },
+        "coverage": {
+          "41259402428": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261652115": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261861254": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261939645": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41263440109": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41263774234": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264060476": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264134325": {
+            "shards": [
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": false
+          },
+          "41264329020": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264349067": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264516344": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264624873": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41266300726": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41266875650": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41267138627": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41272790655": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41273066131": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41274104777": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41274638383": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41275036896": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41275293647": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41276470943": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41276610913": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41278217632": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41278476832": {
+            "shards": [
+              0,
+              2,
+              4,
+              6
+            ],
+            "total": 8,
+            "complete": true
+          }
+        },
+        "complete_runs": 24,
+        "writer": {
+          "n": 25,
+          "median": 5.036303233,
+          "p95": 13.86428253,
+          "max": 19.429581394,
+          "max_run": 41278476832,
+          "base_budget": 15,
+          "effective_limit": 17.25,
+          "max_ratio": 1.12635254457971
+        }
+      },
+      "X64": {
+        "near_limit": {
+          "tl3-controller/looks::cancelling_github_respects_quota": {
+            "n": 14,
+            "median": 6.398781491999998,
+            "p95": 15.825755519999987,
+            "max": 15.825755519999987,
+            "max_run": 41278217632,
+            "base_budget": 10,
+            "effective_limit": 12.5,
+            "max_ratio": 1.266060441599999
+          },
+          "tl3-controller/scope::scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary": {
+            "n": 11,
+            "median": 2.649028756,
+            "p95": 11.251069221,
+            "max": 11.251069221,
+            "max_run": 41261861254,
+            "base_budget": 10,
+            "effective_limit": 12.5,
+            "max_ratio": 0.90008553768
+          }
+        },
+        "coverage": {
+          "41259402428": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261652115": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261861254": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41261939645": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41263440109": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41263774234": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264060476": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264134325": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264329020": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264349067": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264516344": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41264624873": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41266300726": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41266671298": {
+            "shards": [
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": false
+          },
+          "41266875650": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41267138627": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41272790655": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41273066131": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41274104777": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41274638383": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41275036896": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41275293647": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41276470943": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41276610913": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41278217632": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          },
+          "41278476832": {
+            "shards": [
+              1,
+              3,
+              5,
+              7
+            ],
+            "total": 8,
+            "complete": true
+          }
+        },
+        "complete_runs": 25,
+        "writer": null
+      }
+    },
+    "inputs": [
+      {
+        "file": "41259402428-rust-times-0-ARM64.zip",
+        "sha256": "6abfddfb47aa2bb4d9a30bb0b2e0116037709041053c980f36713078df6d4fd1",
+        "artifact_id": 13064826238
+      },
+      {
+        "file": "41259402428-rust-times-1-X64.zip",
+        "sha256": "fef96b1dd96714fa11cf318b3d78b631e6a5ce8fd4a2d52c1b8bdb24259dd9cb",
+        "artifact_id": 13064471581
+      },
+      {
+        "file": "41259402428-rust-times-2-ARM64.zip",
+        "sha256": "109b07581b1bfad362c1a99e0d77dbb637b2e8c8352c38c274ee84ad43485144",
+        "artifact_id": 13064801661
+      },
+      {
+        "file": "41259402428-rust-times-3-X64.zip",
+        "sha256": "e2c5d6428e0f6c95fbc2361eb0132b789a5ce98dc8accc3aaad79bb6efcdcd11",
+        "artifact_id": 13064328202
+      },
+      {
+        "file": "41259402428-rust-times-4-ARM64.zip",
+        "sha256": "65efd93fde615c0b8146fec9cac1425b7b5cca1b337a53c5b2fa92846d1b9144",
+        "artifact_id": 13064148500
+      },
+      {
+        "file": "41259402428-rust-times-5-X64.zip",
+        "sha256": "85c60cf352f41130d60fb9279fb99639377f4c8c106e3a357ba5ba028863a03e",
+        "artifact_id": 13064991145
+      },
+      {
+        "file": "41259402428-rust-times-6-ARM64.zip",
+        "sha256": "178ba463d64192d5136966cdbe11e09cfa0f9634438f877c8aef69f5f9ed2eeb",
+        "artifact_id": 13064536448
+      },
+      {
+        "file": "41259402428-rust-times-7-X64.zip",
+        "sha256": "e80e5f4c44fc4e0e7ae687ca794f9b48df775b2d77e0e62d53e97093cb50e68d",
+        "artifact_id": 13064442465
+      },
+      {
+        "file": "41261652115-rust-times-0-ARM64.zip",
+        "sha256": "df4d685306733d2b05a860aa1eb97943ead236c974b62f663adbb36e52a3d51b",
+        "artifact_id": 13064819347
+      },
+      {
+        "file": "41261652115-rust-times-1-X64.zip",
+        "sha256": "5a391669a63f4e920055c3dd695d53cadfbbef17ade39127ac57b82071d9f45c",
+        "artifact_id": 13065093633
+      },
+      {
+        "file": "41261652115-rust-times-2-ARM64.zip",
+        "sha256": "e5f8f535c979fa11be4387a4b0327e455618255571239e290620ee7162afbf64",
+        "artifact_id": 13065746752
+      },
+      {
+        "file": "41261652115-rust-times-3-X64.zip",
+        "sha256": "af715b9900d559d256e137582f379552f57eb381eb6234523f752dcc01fa2c73",
+        "artifact_id": 13064504614
+      },
+      {
+        "file": "41261652115-rust-times-4-ARM64.zip",
+        "sha256": "fe3b2c1a1cb05c1afb945fb0874bae72bdf7731b5db70cb1ebae0d76ee04bf2f",
+        "artifact_id": 13064724231
+      },
+      {
+        "file": "41261652115-rust-times-5-X64.zip",
+        "sha256": "b054b64b3d2c84e1ad6981db36ce0dfdae8c83e409de8b595e3d7ea436e783c8",
+        "artifact_id": 13065068409
+      },
+      {
+        "file": "41261652115-rust-times-6-ARM64.zip",
+        "sha256": "09a67777d262d1d5c8181e85d5e8f032c1fc7eee817871fbcde482558942e10e",
+        "artifact_id": 13065507511
+      },
+      {
+        "file": "41261652115-rust-times-7-X64.zip",
+        "sha256": "8d7f2c4532848577181d22a341bd118caba68ea8eabce0b2552e3f7295514432",
+        "artifact_id": 13064968615
+      },
+      {
+        "file": "41261861254-rust-times-0-ARM64.zip",
+        "sha256": "9cdc991865be2ab14ef3c1bb212dae110c504f53bc5fae2e437a320b728c0ee1",
+        "artifact_id": 13065886723
+      },
+      {
+        "file": "41261861254-rust-times-1-X64.zip",
+        "sha256": "4b5d980a222698f3f10643f6512707abefb973483964e460db180ff85b46f225",
+        "artifact_id": 13065168614
+      },
+      {
+        "file": "41261861254-rust-times-2-ARM64.zip",
+        "sha256": "9e824412ce26ea192164046fce20a6552e93b4f8af10e2a41f9fd3115aff6075",
+        "artifact_id": 13065682391
+      },
+      {
+        "file": "41261861254-rust-times-3-X64.zip",
+        "sha256": "d27714414cf04390f21bde56b837042f1f298fca03958dae39297032bf5e1f39",
+        "artifact_id": 13065811682
+      },
+      {
+        "file": "41261861254-rust-times-4-ARM64.zip",
+        "sha256": "f734e4a6ed912e132790e3a30cfa52dff2cbb4640766cf1048983a9f19db89c1",
+        "artifact_id": 13064709562
+      },
+      {
+        "file": "41261861254-rust-times-5-X64.zip",
+        "sha256": "0252157ae5574f46a57d5b7de87aecab31859f990aeb5ae1da392da037d4baf4",
+        "artifact_id": 13065602573
+      },
+      {
+        "file": "41261861254-rust-times-6-ARM64.zip",
+        "sha256": "93b0c180e532933105dfd1b12fc75d6a56928632b005c67528f0c354fd7e7956",
+        "artifact_id": 13065168520
+      },
+      {
+        "file": "41261861254-rust-times-7-X64.zip",
+        "sha256": "3763eeb661701b933115bb900ba63e8eb680f82ea01b83af1b69f316355923e1",
+        "artifact_id": 13065911004
+      },
+      {
+        "file": "41261939645-rust-times-0-ARM64.zip",
+        "sha256": "8d858ef75d8f80e4b57429b1815797eb0bd7588a7324bf77460b79a315325734",
+        "artifact_id": 13065876849
+      },
+      {
+        "file": "41261939645-rust-times-1-X64.zip",
+        "sha256": "7ba2ea9a829927ed1ec8426bb5b8008d755bfc8cd46b0679fcd6a5341afc9b2e",
+        "artifact_id": 13065418278
+      },
+      {
+        "file": "41261939645-rust-times-2-ARM64.zip",
+        "sha256": "87fa9cc5a095cf1b9b4796a07d627f016f011cef805dfbcdfb594d0318424759",
+        "artifact_id": 13065836566
+      },
+      {
+        "file": "41261939645-rust-times-3-X64.zip",
+        "sha256": "58719ba9d9b47be171c0128bf41b9bd3cb0a5f526c87376f577a71eafcc34ec0",
+        "artifact_id": 13065975497
+      },
+      {
+        "file": "41261939645-rust-times-4-ARM64.zip",
+        "sha256": "6a9020ac702591da114e827f6e2741f9ce57ecd2851461be8ff85c8eb0f5e0a0",
+        "artifact_id": 13065173712
+      },
+      {
+        "file": "41261939645-rust-times-5-X64.zip",
+        "sha256": "8726b5141f27eba61e391e144af4dd95d0cd74b7c7ca9040fa5f389607952e8c",
+        "artifact_id": 13065263857
+      },
+      {
+        "file": "41261939645-rust-times-6-ARM64.zip",
+        "sha256": "49f5b11085de97d94d94d4ff2a34192fc5e3c4b95477c36c01c210c5fe5baf7b",
+        "artifact_id": 13065458213
+      },
+      {
+        "file": "41261939645-rust-times-7-X64.zip",
+        "sha256": "0b3d9fb41863a20c7866b37aec03f65b381ca0706bf6e49c79d0ffcb0b92fe0f",
+        "artifact_id": 13065960638
+      },
+      {
+        "file": "41263440109-rust-times-0-ARM64.zip",
+        "sha256": "04380a8f73183c95bd44323e71d383f26a443667584dc5f62e724b2aca931b07",
+        "artifact_id": 13066930563
+      },
+      {
+        "file": "41263440109-rust-times-1-X64.zip",
+        "sha256": "26259f16096b177d128dbb86ab14de75ea8ae3e13dac83f194cd811d5c53881d",
+        "artifact_id": 13066365995
+      },
+      {
+        "file": "41263440109-rust-times-2-ARM64.zip",
+        "sha256": "bc03075db42329fe393862ca0544c983b8d146d357a4559767fa88e4d4ff7194",
+        "artifact_id": 13066765726
+      },
+      {
+        "file": "41263440109-rust-times-3-X64.zip",
+        "sha256": "624cdb6411c7f8135d5e5b42913c92a79b1087cc59078dd19777a96e480a2189",
+        "artifact_id": 13065809564
+      },
+      {
+        "file": "41263440109-rust-times-4-ARM64.zip",
+        "sha256": "5ef06e3c6e133f2480e9134e97e3797024f11b29624f6edc0745572bd53631ef",
+        "artifact_id": 13066740774
+      },
+      {
+        "file": "41263440109-rust-times-5-X64.zip",
+        "sha256": "0d0ff04b782254f738152ba4fa7361bda341814a2569b3bd3c9abeed5d9f41ef",
+        "artifact_id": 13065967191
+      },
+      {
+        "file": "41263440109-rust-times-6-ARM64.zip",
+        "sha256": "91698acedda307ead642d9f20e9cf861cb0c27896a5a4c4982b7f76836bd3c49",
+        "artifact_id": 13066266077
+      },
+      {
+        "file": "41263440109-rust-times-7-X64.zip",
+        "sha256": "ac20842465a435792c30cf746a6732ca083f81c5bf4a3235c9a54385650684f6",
+        "artifact_id": 13066051519
+      },
+      {
+        "file": "41263774234-rust-times-0-ARM64.zip",
+        "sha256": "215676be5c4166c082c528051b8effa4a75e4627409339c4672ec2a25ff3c981",
+        "artifact_id": 13066341632
+      },
+      {
+        "file": "41263774234-rust-times-1-X64.zip",
+        "sha256": "ad086becd07d35812f8b0edf88ea11bb75c194dffd021fa892a2808ac6ba9d17",
+        "artifact_id": 13066616830
+      },
+      {
+        "file": "41263774234-rust-times-2-ARM64.zip",
+        "sha256": "812d2f57eec147495dd37b6f1794268313184b00c5e91ed36e68e22b3ff26f07",
+        "artifact_id": 13066012469
+      },
+      {
+        "file": "41263774234-rust-times-3-X64.zip",
+        "sha256": "8a63d32fc7df1429d5d9e51c1857149add1d148acea1741d81062e8f839e96ae",
+        "artifact_id": 13066526771
+      },
+      {
+        "file": "41263774234-rust-times-4-ARM64.zip",
+        "sha256": "3573fb3af434609f3e3f66c494f430e943c4ddde4bd526ef0514fa923e3ae3c1",
+        "artifact_id": 13066462073
+      },
+      {
+        "file": "41263774234-rust-times-5-X64.zip",
+        "sha256": "40113246c617144300889388733fce09a3ed8202aec77ebecc6c713d8117264e",
+        "artifact_id": 13066656516
+      },
+      {
+        "file": "41263774234-rust-times-6-ARM64.zip",
+        "sha256": "b2b96f67e4a4b98873e8a04f8aef347488c44d4b342194ac7c41ec37205bda5a",
+        "artifact_id": 13066406348
+      },
+      {
+        "file": "41263774234-rust-times-7-X64.zip",
+        "sha256": "0eb264cefa859bd26c7e9e87d9f8588a268da867a62b96517bf1d2a6427927fe",
+        "artifact_id": 13066631430
+      },
+      {
+        "file": "41264060476-rust-times-0-ARM64.zip",
+        "sha256": "635a1b4a853b6e0086ded6b9829ef0b524957979fc2bcac5b2cbfe6779014a83",
+        "artifact_id": 13066817126
+      },
+      {
+        "file": "41264060476-rust-times-1-X64.zip",
+        "sha256": "fb70013cd5f19d6c91d768a1bce5d5a7fbe16d287cade6e92c645dae5c8fe4e5",
+        "artifact_id": 13065979754
+      },
+      {
+        "file": "41264060476-rust-times-2-ARM64.zip",
+        "sha256": "14cb530d5d34721b61cfd8fbc09d83c6bc975c51e08fc4b417567f32a6900caa",
+        "artifact_id": 13066132272
+      },
+      {
+        "file": "41264060476-rust-times-3-X64.zip",
+        "sha256": "199cdf183c4b0a0d168e4f111f6bf877edd3e5453a5a366342e874400e727eb0",
+        "artifact_id": 13067150220
+      },
+      {
+        "file": "41264060476-rust-times-4-ARM64.zip",
+        "sha256": "1931509c8ca480bbd6fbde03df0de378325cf14dc1263836e6abe572eea1c479",
+        "artifact_id": 13066612278
+      },
+      {
+        "file": "41264060476-rust-times-5-X64.zip",
+        "sha256": "dca9dc149e3ceaaad89a9286af05aab9e2550f58dccde7b01dce85dc58c19195",
+        "artifact_id": 13067090427
+      },
+      {
+        "file": "41264060476-rust-times-6-ARM64.zip",
+        "sha256": "de70ffdcd5d75b667314c2d67f0f26ca8063b7cfd361e2380a8beaadc6121b76",
+        "artifact_id": 13066037689
+      },
+      {
+        "file": "41264060476-rust-times-7-X64.zip",
+        "sha256": "5f866e01a1695d7df51b6ddc6506540a503f8216156f7f9036795c12aa5da924",
+        "artifact_id": 13066317840
+      },
+      {
+        "file": "41264134325-rust-times-1-X64.zip",
+        "sha256": "90fc78db3a6d881d977a9fd5bb4f1d0f309ce55660aecfc0df69554992c4723a",
+        "artifact_id": 13066627546
+      },
+      {
+        "file": "41264134325-rust-times-2-ARM64.zip",
+        "sha256": "fae7c6b6b93c3fc528290773481fd41420409f8182c6ec6500b9660ac45a38b2",
+        "artifact_id": 13065979924
+      },
+      {
+        "file": "41264134325-rust-times-3-X64.zip",
+        "sha256": "f007c21b81b410a4443bf9a4d794acdd4bc92445f3296223d386d3e916c21bfe",
+        "artifact_id": 13066162284
+      },
+      {
+        "file": "41264134325-rust-times-4-ARM64.zip",
+        "sha256": "4f01f386f3dd61705c590f24c46f1e6b7853392df7b0e7754150ed938f905568",
+        "artifact_id": 13066672412
+      },
+      {
+        "file": "41264134325-rust-times-5-X64.zip",
+        "sha256": "96c8a3660a3bcf31617378c378a8df05a1c9420dce033e5764ecead6acdb3b8f",
+        "artifact_id": 13066237094
+      },
+      {
+        "file": "41264134325-rust-times-6-ARM64.zip",
+        "sha256": "0de8795bfeb499da4afff5ad2e4dc8cdaa3c33fce590ec26ddc76f41103ad9b7",
+        "artifact_id": 13066602556
+      },
+      {
+        "file": "41264134325-rust-times-7-X64.zip",
+        "sha256": "2e4195148f2e977e067cae8fac68e7168c8aa0091376a94b4bb4f6108d2565f2",
+        "artifact_id": 13066022935
+      },
+      {
+        "file": "41264329020-rust-times-0-ARM64.zip",
+        "sha256": "f8e3222696923916d7e816f50867711fbca1911437d0ae1085e44ec3a9aa6229",
+        "artifact_id": 13066788005
+      },
+      {
+        "file": "41264329020-rust-times-1-X64.zip",
+        "sha256": "b63223df502a03d3252d24d2df039865c0a454c6cb79ae2feeeac29380efbda3",
+        "artifact_id": 13066956788
+      },
+      {
+        "file": "41264329020-rust-times-2-ARM64.zip",
+        "sha256": "1a6a6591142f8561fa7ce520adde0f090e0096993258198af1ca9def0dd50064",
+        "artifact_id": 13067190516
+      },
+      {
+        "file": "41264329020-rust-times-3-X64.zip",
+        "sha256": "d5db81ed88a116c8064a71a9a8909b9cb95461d052f7f88ca48591eb03e4eefc",
+        "artifact_id": 13067141127
+      },
+      {
+        "file": "41264329020-rust-times-4-ARM64.zip",
+        "sha256": "56f7cf9f71e42f697a2dfe4b290c78aca450c80de2f670c43999e790f588746c",
+        "artifact_id": 13067126180
+      },
+      {
+        "file": "41264329020-rust-times-5-X64.zip",
+        "sha256": "6ecb508ed88cada1c912c924540358870c035b515191aa70ccf2ed5bed28e7ae",
+        "artifact_id": 13066527994
+      },
+      {
+        "file": "41264329020-rust-times-6-ARM64.zip",
+        "sha256": "21d0c18e5fe63e1e9551ca27018e6d35dec71875bfbf832e8d4dfdc5155f5f75",
+        "artifact_id": 13066683067
+      },
+      {
+        "file": "41264329020-rust-times-7-X64.zip",
+        "sha256": "e5c0394b33018f875f93cc722a2c47b128ad31f71ac59c0b7aaf3e2f5e3aa236",
+        "artifact_id": 13066287392
+      },
+      {
+        "file": "41264349067-rust-times-0-ARM64.zip",
+        "sha256": "08c2320494d9a24de09cad93e45e1106b70a4e18337dda6b4a754b76e4b9ed74",
+        "artifact_id": 13066778147
+      },
+      {
+        "file": "41264349067-rust-times-1-X64.zip",
+        "sha256": "dbc8381a46c726eeca8fa5dbf598bf01d8b7b0da22dddecbbfc09a96fc9486ea",
+        "artifact_id": 13066692854
+      },
+      {
+        "file": "41264349067-rust-times-2-ARM64.zip",
+        "sha256": "30b955e4f965b485eb4c32189472ca682fae0d88089af479126159aaf18ba707",
+        "artifact_id": 13066243903
+      },
+      {
+        "file": "41264349067-rust-times-3-X64.zip",
+        "sha256": "f2f273a532c048dacf69a1da982507cac8b3e88072af75cccab71f361e3ca514",
+        "artifact_id": 13066063104
+      },
+      {
+        "file": "41264349067-rust-times-4-ARM64.zip",
+        "sha256": "9e3491015466c3ff04dc86e0883b2bc2b322bc03623a91f9de42b6dd8f6ab13b",
+        "artifact_id": 13067151004
+      },
+      {
+        "file": "41264349067-rust-times-5-X64.zip",
+        "sha256": "501bd0af61999673a8cc83cf7a15dd4026fea6bba6da0608471a73fb9786a680",
+        "artifact_id": 13066137684
+      },
+      {
+        "file": "41264349067-rust-times-6-ARM64.zip",
+        "sha256": "7e4b4d00abec68f030421c7e117e452a268df2333ab32724cb91661b73d27430",
+        "artifact_id": 13066073096
+      },
+      {
+        "file": "41264349067-rust-times-7-X64.zip",
+        "sha256": "3663236e0c3f8df6807a369c0cbc3fea1edd08f0a73bd6bd14d4b141163a4157",
+        "artifact_id": 13066862162
+      },
+      {
+        "file": "41264516344-rust-times-0-ARM64.zip",
+        "sha256": "879dcf578238f9e9304b421b272ed59775d099c303d65d8d2891c62090ac648f",
+        "artifact_id": 13066743465
+      },
+      {
+        "file": "41264516344-rust-times-1-X64.zip",
+        "sha256": "3ed6e224270caadf32fa907557ea4570b49a479104bfb65b43c7aca89381a8cf",
+        "artifact_id": 13066143111
+      },
+      {
+        "file": "41264516344-rust-times-2-ARM64.zip",
+        "sha256": "f99d823f9b57bdf1ee9f747f91851ec5608d39631e911bcb41b8179efcc4d2ce",
+        "artifact_id": 13066653265
+      },
+      {
+        "file": "41264516344-rust-times-3-X64.zip",
+        "sha256": "d22ea9d73fd0b0f8bedc849f86bfff785d8bacca2f4c85a0c3537ddb249ea731",
+        "artifact_id": 13066453843
+      },
+      {
+        "file": "41264516344-rust-times-4-ARM64.zip",
+        "sha256": "99382443f291625fb19feb170308b12e42bcebab05d6e1042e7d850c48795cf8",
+        "artifact_id": 13067190736
+      },
+      {
+        "file": "41264516344-rust-times-5-X64.zip",
+        "sha256": "8d2e7ca1224f694303b1fb631f66ab2257ac0b2b9b6afd52870eb5e9bc82bc1a",
+        "artifact_id": 13066647969
+      },
+      {
+        "file": "41264516344-rust-times-6-ARM64.zip",
+        "sha256": "dd376c101429a426dc4f8a86357d2462a5e68fa9495f5919a02889a1c8230459",
+        "artifact_id": 13066518392
+      },
+      {
+        "file": "41264516344-rust-times-7-X64.zip",
+        "sha256": "e6cbe39087160cd8cf7801c8631a785999ec756adb424953087f7e9ad7d3df33",
+        "artifact_id": 13067036730
+      },
+      {
+        "file": "41264624873-rust-times-0-ARM64.zip",
+        "sha256": "c6613e022d285973f9dd2c947705576b315beca3813193912923220377974463",
+        "artifact_id": 13067215040
+      },
+      {
+        "file": "41264624873-rust-times-1-X64.zip",
+        "sha256": "5627771fbd7a2922e9cd7c63b5a53852b56d46e047847a2d93039e2651def453",
+        "artifact_id": 13067131900
+      },
+      {
+        "file": "41264624873-rust-times-2-ARM64.zip",
+        "sha256": "a25989c61dc051dc0950a53ffa8d403ecb1a9e33ab1b0c68e74ed7dd81a3f7cd",
+        "artifact_id": 13066449164
+      },
+      {
+        "file": "41264624873-rust-times-3-X64.zip",
+        "sha256": "d61a3f0d6077adeca37e601cf82e1d8319d9b279f2aa661a507cfa079f93c624",
+        "artifact_id": 13066509058
+      },
+      {
+        "file": "41264624873-rust-times-4-ARM64.zip",
+        "sha256": "e498b8e53dd668584291607c4bad6f604144259730e04d0bac5430c0e69e7263",
+        "artifact_id": 13066493966
+      },
+      {
+        "file": "41264624873-rust-times-5-X64.zip",
+        "sha256": "9cabc317e6cf8c22d4dd4e05bfea885fa723c94ae8f64926cdcaca0b486eeca1",
+        "artifact_id": 13066493819
+      },
+      {
+        "file": "41264624873-rust-times-6-ARM64.zip",
+        "sha256": "17d5e75b58d5de2ae4f54b1cd6a98493c7803851425bab358ab287c5130f5075",
+        "artifact_id": 13067136473
+      },
+      {
+        "file": "41264624873-rust-times-7-X64.zip",
+        "sha256": "90a9ebcb330210862a70d6a61579af5263e6a8f116b71e4be4d6efac7a32195d",
+        "artifact_id": 13066972309
+      },
+      {
+        "file": "41266300726-rust-times-0-ARM64.zip",
+        "sha256": "945963f4fc54885700487d89ee31d1f2b5e4eab89897ba86caaa44cc80734aff",
+        "artifact_id": 13067456820
+      },
+      {
+        "file": "41266300726-rust-times-1-X64.zip",
+        "sha256": "923cd302461ebeeeb416b1a7c86d3f9bb59a40a7e1e18343a34f774eb22fbc01",
+        "artifact_id": 13067267056
+      },
+      {
+        "file": "41266300726-rust-times-2-ARM64.zip",
+        "sha256": "37139bf78811772df326306e2207b9ac75d4edc9b1e72a85e14a85df24778e64",
+        "artifact_id": 13067600735
+      },
+      {
+        "file": "41266300726-rust-times-3-X64.zip",
+        "sha256": "2a54a3b61e8a00ff9a143e4a4c6c8974e8e9afa5cabec86bd4bc765f56671c28",
+        "artifact_id": 13067915479
+      },
+      {
+        "file": "41266300726-rust-times-4-ARM64.zip",
+        "sha256": "e0a26ad44a145f1c14ca545343e28b83158299d025302d04d454ec442d033c71",
+        "artifact_id": 13067311797
+      },
+      {
+        "file": "41266300726-rust-times-5-X64.zip",
+        "sha256": "78ea16bf9b78e92f5ab384f66fd9487fa4c642605c504407473cfaca5ec47561",
+        "artifact_id": 13067755262
+      },
+      {
+        "file": "41266300726-rust-times-6-ARM64.zip",
+        "sha256": "5521321b5ce0d230d5d4fe659cba4e65fd6658dc8c98903e41fcc22cf75df91c",
+        "artifact_id": 13067975359
+      },
+      {
+        "file": "41266300726-rust-times-7-X64.zip",
+        "sha256": "32123bac12135ac4769b698fd08b61be638a6c4ac1b99d6b2d0e4f58363dfc60",
+        "artifact_id": 13067296666
+      },
+      {
+        "file": "41266671298-rust-times-3-X64.zip",
+        "sha256": "a370f7b0007db4739a2edf646859f0f542f1f8d6163a9184257ccd36d7a5f60b",
+        "artifact_id": 13067871279
+      },
+      {
+        "file": "41266671298-rust-times-5-X64.zip",
+        "sha256": "0e8a3e29f4896f40e7ed548d972995c65db4bffbad39cef8a2c05f5da035b459",
+        "artifact_id": 13067916045
+      },
+      {
+        "file": "41266671298-rust-times-7-X64.zip",
+        "sha256": "1b43329b36aeb4c581c8a204d2f95359e2bb6cf2060c8768317b9a2394c4f7d9",
+        "artifact_id": 13067262470
+      },
+      {
+        "file": "41266875650-rust-times-0-ARM64.zip",
+        "sha256": "07f62e2694448511c387bb3c10d6a58736f535200ed1cbf259307f01aa430c2d",
+        "artifact_id": 13067791369
+      },
+      {
+        "file": "41266875650-rust-times-1-X64.zip",
+        "sha256": "3e0e1b61f9fb3077fe94da3ed1f6ee91b249371c05451844fcae0c4b69303d18",
+        "artifact_id": 13067636314
+      },
+      {
+        "file": "41266875650-rust-times-2-ARM64.zip",
+        "sha256": "536331b9d014760ac9519127ae00329ea10425787567201e937315eb40bd29da",
+        "artifact_id": 13067861052
+      },
+      {
+        "file": "41266875650-rust-times-3-X64.zip",
+        "sha256": "4a331b9d462593dd2b393c7133572f57902e38cbee5e1dd8084e51f9096cf58a",
+        "artifact_id": 13068350497
+      },
+      {
+        "file": "41266875650-rust-times-4-ARM64.zip",
+        "sha256": "0cd3225a2c3ca3121cd42596d06f4cc38bd88b513b0905339509abe4588321c5",
+        "artifact_id": 13067347853
+      },
+      {
+        "file": "41266875650-rust-times-5-X64.zip",
+        "sha256": "12e7dd3b4081d1f3a11f76d083b3170fbec2d392da36711e1d18840f20165535",
+        "artifact_id": 13067965829
+      },
+      {
+        "file": "41266875650-rust-times-6-ARM64.zip",
+        "sha256": "9a0f041adfff0cffd1473a84701499ea87717f30871a1833b01ac296bb777e7c",
+        "artifact_id": 13068015722
+      },
+      {
+        "file": "41266875650-rust-times-7-X64.zip",
+        "sha256": "e71b2d6b773957a5eb51708906558cabb9863beb8e0b763e9d911597c4ed7ef6",
+        "artifact_id": 13066759808
+      },
+      {
+        "file": "41267138627-rust-times-0-ARM64.zip",
+        "sha256": "66331a43f27df0f939e9029d0c189f957099bd5614007d8ccbcab89f1895a514",
+        "artifact_id": 13067014855
+      },
+      {
+        "file": "41267138627-rust-times-1-X64.zip",
+        "sha256": "7ec551770c5cf5a313ce95b342a0c4d99aa8806ab7d623ddd3c64fe956f12c19",
+        "artifact_id": 13067702582
+      },
+      {
+        "file": "41267138627-rust-times-2-ARM64.zip",
+        "sha256": "7544ba2a0c58c3f86b99b65ed497de6994c93f100a8a140695e0d5e5699e9d82",
+        "artifact_id": 13067732441
+      },
+      {
+        "file": "41267138627-rust-times-3-X64.zip",
+        "sha256": "f1b089333b843f84ae45c10bf61ccedb69a691ad1a06405be5c64a2c45a3d95d",
+        "artifact_id": 13067512821
+      },
+      {
+        "file": "41267138627-rust-times-4-ARM64.zip",
+        "sha256": "32815b2f836054cd441f8a1d28393844404d9e142318ac39c2630d182d353a79",
+        "artifact_id": 13067966229
+      },
+      {
+        "file": "41267138627-rust-times-5-X64.zip",
+        "sha256": "c2e8295929716738372214cb05169e38f3410d2ec0644e069bc7a04ff819f113",
+        "artifact_id": 13067901146
+      },
+      {
+        "file": "41267138627-rust-times-6-ARM64.zip",
+        "sha256": "be62c441dff57c08727248d777749f85dbfab2173ab48e748c8f19f95a87f413",
+        "artifact_id": 13067398226
+      },
+      {
+        "file": "41267138627-rust-times-7-X64.zip",
+        "sha256": "55b8fe76dec80634a61c5cccf8b4e4e50bb1bbc06dbcb2ec45cc7db8a39246b0",
+        "artifact_id": 13068075869
+      },
+      {
+        "file": "41272790655-rust-times-0-ARM64.zip",
+        "sha256": "17c4583405f5cb6cd6bb0f0dbff72cc030ca1e85d3eee9b17428b3c711450bc6",
+        "artifact_id": 13069259422
+      },
+      {
+        "file": "41272790655-rust-times-1-X64.zip",
+        "sha256": "11bf1e54a10a143b02d204c12388f2adf55843e5cefafce6d7e11dc5f3c512e3",
+        "artifact_id": 13069923484
+      },
+      {
+        "file": "41272790655-rust-times-2-ARM64.zip",
+        "sha256": "855a65890aeaa933fdb9c11882dd1f900ba3cc9d9deec07cf987f1e38ca384dd",
+        "artifact_id": 13069393893
+      },
+      {
+        "file": "41272790655-rust-times-3-X64.zip",
+        "sha256": "4089545d5fb7c0138fa83a98942b8044b38d02d41ef1d02077a4e35bc87b3c52",
+        "artifact_id": 13070038089
+      },
+      {
+        "file": "41272790655-rust-times-4-ARM64.zip",
+        "sha256": "b47a0ac87ae43f181dac66695e7fd005a906a6023e11dbf9e70f0988a942751f",
+        "artifact_id": 13069773933
+      },
+      {
+        "file": "41272790655-rust-times-5-X64.zip",
+        "sha256": "95f88492d0cdd14ccaf9a4bfeb07ee53cc4a8b89ab7af764292100b8fdcbd328",
+        "artifact_id": 13069019852
+      },
+      {
+        "file": "41272790655-rust-times-6-ARM64.zip",
+        "sha256": "05633c0cb5c47f275f8e55d22c8009eea09b9fb09c12219900f72ab3af4231ad",
+        "artifact_id": 13069654311
+      },
+      {
+        "file": "41272790655-rust-times-7-X64.zip",
+        "sha256": "17ad55d2213ffc0e7593562f018f3814d152658a14b3f888bef45ccd5338b7b0",
+        "artifact_id": 13069808665
+      },
+      {
+        "file": "41273066131-rust-times-0-ARM64.zip",
+        "sha256": "5b0f1188e8ea748cfa637bac20072681c0cee5e2f1c9c85d04eb83825dc0df2e",
+        "artifact_id": 13070158227
+      },
+      {
+        "file": "41273066131-rust-times-1-X64.zip",
+        "sha256": "76d509acf3495b059a45685cadc9aef0fb05405c92870f7d4dc2cb5b6a99a4b5",
+        "artifact_id": 13069927534
+      },
+      {
+        "file": "41273066131-rust-times-2-ARM64.zip",
+        "sha256": "9e81ab925be8fe494f6ef28ed0cb0e1a593aa7b8d0fd89b7f02418bd942e58c3",
+        "artifact_id": 13069284544
+      },
+      {
+        "file": "41273066131-rust-times-3-X64.zip",
+        "sha256": "a6a759a7cdc3c32bd3b1ffd91d301d1aece9d3308e4bd74e1827f9dbf05d6f82",
+        "artifact_id": 13070336919
+      },
+      {
+        "file": "41273066131-rust-times-4-ARM64.zip",
+        "sha256": "2fb69e421ca4c9a39c9f349544af8ad3612f19ce16a9f8c371f24c3e18bb2181",
+        "artifact_id": 13069704663
+      },
+      {
+        "file": "41273066131-rust-times-5-X64.zip",
+        "sha256": "40595521a20c0b6d0b95b9ba302fc7e1eefa80a60ba41001545c2f113968df4b",
+        "artifact_id": 13070311955
+      },
+      {
+        "file": "41273066131-rust-times-6-ARM64.zip",
+        "sha256": "42e4b6855212d0938f4476036ca56a77a909fe4b635852a8c207f8454e46049a",
+        "artifact_id": 13070053377
+      },
+      {
+        "file": "41273066131-rust-times-7-X64.zip",
+        "sha256": "621ed4115c11a4362c9b3c9029bc199d4eb5fc6e3ffcf6d3499645ca9d1eb9f3",
+        "artifact_id": 13070262337
+      },
+      {
+        "file": "41274104777-rust-times-0-ARM64.zip",
+        "sha256": "96aa4bdf7e392e5aab58847dea80cab26abe001f6cc4de77ad66d879b886a48b",
+        "artifact_id": 13070401711
+      },
+      {
+        "file": "41274104777-rust-times-1-X64.zip",
+        "sha256": "70c61edcde61f52b165f5c0139261420b638f62b4da8ab31595b7f86824f1c48",
+        "artifact_id": 13070338821
+      },
+      {
+        "file": "41274104777-rust-times-2-ARM64.zip",
+        "sha256": "3ff57ab422e3bc5257feffa89860b9144f55070e8d2d0feacaabf50da3d2538a",
+        "artifact_id": 13070219649
+      },
+      {
+        "file": "41274104777-rust-times-3-X64.zip",
+        "sha256": "baa7e7027f3dbfebb50678e696733465acbc9200ffe9958bb13bce9f2a8d690d",
+        "artifact_id": 13070936026
+      },
+      {
+        "file": "41274104777-rust-times-4-ARM64.zip",
+        "sha256": "fc326d4f39d646dd6f6ed2d801c8cc928de9c60bcb19928bf8abe48f59720608",
+        "artifact_id": 13071095679
+      },
+      {
+        "file": "41274104777-rust-times-5-X64.zip",
+        "sha256": "e6e3cbf86872e2654f0348170558f7639dae7668cec815d23d0d4800a41e5ecf",
+        "artifact_id": 13070284143
+      },
+      {
+        "file": "41274104777-rust-times-6-ARM64.zip",
+        "sha256": "05305dad0204a75b3fb282c19a4b789da15444d6eadd4a51a6ef5006800e2ffa",
+        "artifact_id": 13070183162
+      },
+      {
+        "file": "41274104777-rust-times-7-X64.zip",
+        "sha256": "a07f84cc50ecc2560d07a708f311bbf9ded0a71e7587ad9bad039e0c9c1bd9f4",
+        "artifact_id": 13070139922
+      },
+      {
+        "file": "41274638383-rust-times-0-ARM64.zip",
+        "sha256": "dc38f2ac39b48c06e3ebb5ec4a034d5e05e9198866586baed5b031bc5ba1974f",
+        "artifact_id": 13071415838
+      },
+      {
+        "file": "41274638383-rust-times-1-X64.zip",
+        "sha256": "abd4db0ba6f90452546d2f724d7b7a16098cf0305c72848d09eab574f9c94b40",
+        "artifact_id": 13071355851
+      },
+      {
+        "file": "41274638383-rust-times-2-ARM64.zip",
+        "sha256": "eb597e9ed9513811a252a91aa787fe8552b3a76c3b84857c909dba5e377fd359",
+        "artifact_id": 13070438187
+      },
+      {
+        "file": "41274638383-rust-times-3-X64.zip",
+        "sha256": "619696ec16ec439c985d17d1f1e2deaa69dd0e513e00be817a62df740e7a6216",
+        "artifact_id": 13071345941
+      },
+      {
+        "file": "41274638383-rust-times-4-ARM64.zip",
+        "sha256": "340e6e4c7d78da8692fff14a884caf68fc1240a0da016aa1b14de0fbab63f8ea",
+        "artifact_id": 13071465181
+      },
+      {
+        "file": "41274638383-rust-times-5-X64.zip",
+        "sha256": "112beb015934c93e77621a1a48821b3023ba6f4f3b7b7c0fd6bfb4d7deae06d2",
+        "artifact_id": 13069739816
+      },
+      {
+        "file": "41274638383-rust-times-6-ARM64.zip",
+        "sha256": "1391f425d5b58c45a37e2e794711908afdc3962791c8002421fd4041e1400f89",
+        "artifact_id": 13070481781
+      },
+      {
+        "file": "41274638383-rust-times-7-X64.zip",
+        "sha256": "5c845b885d207ec815c833a6df57c7fddb806fd6c36abeb227ab9f1aa2eda232",
+        "artifact_id": 13071045842
+      },
+      {
+        "file": "41275036896-rust-times-0-ARM64.zip",
+        "sha256": "7f7086d907585bf9552f571b9ce3076f350740b602136d7b12ee513b8255edf6",
+        "artifact_id": 13070853133
+      },
+      {
+        "file": "41275036896-rust-times-1-X64.zip",
+        "sha256": "0c67a60f827dd4943c8c2fc773409e9df7acb7ab9e8e056320716040b5f63920",
+        "artifact_id": 13071366649
+      },
+      {
+        "file": "41275036896-rust-times-2-ARM64.zip",
+        "sha256": "7e16524316990c9bc0b4f2fbed20a97b8537634b18f39e7c7d12b96a44ecc89e",
+        "artifact_id": 13071001580
+      },
+      {
+        "file": "41275036896-rust-times-3-X64.zip",
+        "sha256": "4d9bcf0c51c8574ed9762396bc61b0b2da2199b282848557b4b84f3f78114b83",
+        "artifact_id": 13070882940
+      },
+      {
+        "file": "41275036896-rust-times-4-ARM64.zip",
+        "sha256": "0821fa8b082af3b51d02ad915c8f4cecfd6db2625998058fb67287c4d000c975",
+        "artifact_id": 13071147543
+      },
+      {
+        "file": "41275036896-rust-times-5-X64.zip",
+        "sha256": "3886c0dfa1f5518eac09f12ea2d1b6e6deacb5edacb4122883c380c5269b5a38",
+        "artifact_id": 13071381342
+      },
+      {
+        "file": "41275036896-rust-times-6-ARM64.zip",
+        "sha256": "caaf34e3aedc7e7b6ecc5cff71fbee8c86669eed756563bc130127d639dc6607",
+        "artifact_id": 13071091507
+      },
+      {
+        "file": "41275036896-rust-times-7-X64.zip",
+        "sha256": "bffa48f7ad1653c269adc9f7441daf2204798c90d78e41d7af1aaf19f9100b85",
+        "artifact_id": 13070817688
+      },
+      {
+        "file": "41275293647-rust-times-0-ARM64.zip",
+        "sha256": "f4c20a1dc1aab3b16e4c703bb2bacf141d848ce0cd37e84fd79e9da4de65b9dc",
+        "artifact_id": 13071560573
+      },
+      {
+        "file": "41275293647-rust-times-1-X64.zip",
+        "sha256": "4d87fa9f0db4c11cd0478c05fb938cb6672c4aab1c88ddf2a6b7079c3e980f9a",
+        "artifact_id": 13071307302
+      },
+      {
+        "file": "41275293647-rust-times-2-ARM64.zip",
+        "sha256": "f9542a625288af75fc359751fa262604435129404ed31f03dc12e52e6cc55ed2",
+        "artifact_id": 13070893240
+      },
+      {
+        "file": "41275293647-rust-times-3-X64.zip",
+        "sha256": "1133139f632dc5f8750de912fd2001aec30918f023076dcbd477fa207aefe6d0",
+        "artifact_id": 13071501182
+      },
+      {
+        "file": "41275293647-rust-times-4-ARM64.zip",
+        "sha256": "0617eacd022cf765d5c0d47e1b981eb55e8f2483af232c2aa8f6cc0ad5cb2742",
+        "artifact_id": 13071436575
+      },
+      {
+        "file": "41275293647-rust-times-5-X64.zip",
+        "sha256": "c36aed8e9b126fa271ad7a6a656025ac1b9f9d2bba400d63ba5f5e2affc3eba7",
+        "artifact_id": 13070592218
+      },
+      {
+        "file": "41275293647-rust-times-6-ARM64.zip",
+        "sha256": "547aa66710c3eefc82058c4b76db3e2230f5f38de114f4dcab41aa7ce1f52811",
+        "artifact_id": 13071357086
+      },
+      {
+        "file": "41275293647-rust-times-7-X64.zip",
+        "sha256": "01ec7d8a296a66c405abba6973c9f861fa9678b885cb6c45f41d22bdf6fab75e",
+        "artifact_id": 13071031650
+      },
+      {
+        "file": "41276470943-rust-times-0-ARM64.zip",
+        "sha256": "264f6379b0eab756e7e45e9a25493f64499c210c6b49b323c8d3f11afa3b1496",
+        "artifact_id": 13072015260
+      },
+      {
+        "file": "41276470943-rust-times-1-X64.zip",
+        "sha256": "cdf8c2b7bab39d6778c7750fdb3d4eaaf6ff44bea826108b83068671184777f9",
+        "artifact_id": 13071377643
+      },
+      {
+        "file": "41276470943-rust-times-2-ARM64.zip",
+        "sha256": "549cd05d306d2cb0fc2b615a5fecd6ee7df6216b17f554f0b3667e0e3d8fe024",
+        "artifact_id": 13071900096
+      },
+      {
+        "file": "41276470943-rust-times-3-X64.zip",
+        "sha256": "6a3cd8b5cfcfa4b1812b05b183a9ead35598ad45ad28b81caca0d92141047937",
+        "artifact_id": 13071339351
+      },
+      {
+        "file": "41276470943-rust-times-4-ARM64.zip",
+        "sha256": "ff654d450294476d9e16b3d5c301a649843f2096130c4768b61f4203433895d4",
+        "artifact_id": 13071815459
+      },
+      {
+        "file": "41276470943-rust-times-5-X64.zip",
+        "sha256": "3cb7314dae31601bc28b52b3e84ea74007a51254a2b4f4ca774186d5ea5e96e4",
+        "artifact_id": 13071104992
+      },
+      {
+        "file": "41276470943-rust-times-6-ARM64.zip",
+        "sha256": "d79f42f8be7092e4dbf1e0d5b577cfe5b9a0cc5a47aeebdee2bef7c70c0acd39",
+        "artifact_id": 13071453507
+      },
+      {
+        "file": "41276470943-rust-times-7-X64.zip",
+        "sha256": "0c560568ce376816460f5a339b5cdca1e0cc838f1b8527ce1f21e15797810041",
+        "artifact_id": 13071640821
+      },
+      {
+        "file": "41276610913-rust-times-0-ARM64.zip",
+        "sha256": "75c31eff1861640acd03a02d0082dd2c9d59e24432781ff59b2168fd287c1b86",
+        "artifact_id": 13071434368
+      },
+      {
+        "file": "41276610913-rust-times-1-X64.zip",
+        "sha256": "6d5f0eb6b6fc4a1779eebbff5337a5c031d741f283616f9326a5b3d58a803253",
+        "artifact_id": 13070778976
+      },
+      {
+        "file": "41276610913-rust-times-2-ARM64.zip",
+        "sha256": "8b14ee9996c02ba45022c48acf7fcb34f2f4f9c35f77d31f9d283751058a404d",
+        "artifact_id": 13070933593
+      },
+      {
+        "file": "41276610913-rust-times-3-X64.zip",
+        "sha256": "767d32b39f00f99e9831d12b11ce44f4a1390bf7529bab93349fbe1ba827bc5e",
+        "artifact_id": 13071538431
+      },
+      {
+        "file": "41276610913-rust-times-4-ARM64.zip",
+        "sha256": "014fb917b4036fcac02b53a4c223ad3f1f67d6df1ca10d9f9e829d9013ed5a78",
+        "artifact_id": 13071795640
+      },
+      {
+        "file": "41276610913-rust-times-5-X64.zip",
+        "sha256": "15433450a59f17b5882ffe85245392ad4fb1f79a7af647136dc75a6e7c007f25",
+        "artifact_id": 13071895198
+      },
+      {
+        "file": "41276610913-rust-times-6-ARM64.zip",
+        "sha256": "8fd158c9bf405f4cca7b826c035a205b5b577642108bb6556389bfb4f6b533b7",
+        "artifact_id": 13071895269
+      },
+      {
+        "file": "41276610913-rust-times-7-X64.zip",
+        "sha256": "b09640744ab22f241f3c4328600d256211032615ee65a422e1c096bf0e950264",
+        "artifact_id": 13071178201
+      },
+      {
+        "file": "41278217632-rust-times-0-ARM64.zip",
+        "sha256": "29ea0a5f8b030dd043126eebc53efd723dfbaac908b44c0cf5339b0815f26f61",
+        "artifact_id": 13072507061
+      },
+      {
+        "file": "41278217632-rust-times-1-X64.zip",
+        "sha256": "0266e25cbdfbad091d0f90c3ea7bbda6400a170cbefbcc0e9dacc93f2622a967",
+        "artifact_id": 13071629457
+      },
+      {
+        "file": "41278217632-rust-times-2-ARM64.zip",
+        "sha256": "36365e26b51deeb36aefe538f15d18f4581d6803a255321116ad0a9992227cbb",
+        "artifact_id": 13072441902
+      },
+      {
+        "file": "41278217632-rust-times-3-X64.zip",
+        "sha256": "daa4f5a8ce55a521213762742b32d8effe4a5f217af8ff6e9fe3ddf27d10af30",
+        "artifact_id": 13071644285
+      },
+      {
+        "file": "41278217632-rust-times-4-ARM64.zip",
+        "sha256": "17bc71538aba28d0d71b6658445f9213dba98c9789d369827404cb2ec6a3df85",
+        "artifact_id": 13072391062
+      },
+      {
+        "file": "41278217632-rust-times-5-X64.zip",
+        "sha256": "6feca556c5f79b58a1c680077a2e9ebb0b338975783c785d4f3ae864cc5efb50",
+        "artifact_id": 13071808497
+      },
+      {
+        "file": "41278217632-rust-times-6-ARM64.zip",
+        "sha256": "f792cd1a5284d5bf40773f533c59f09322ee9025fd7674e3910b7be426b2089b",
+        "artifact_id": 13072460895
+      },
+      {
+        "file": "41278217632-rust-times-7-X64.zip",
+        "sha256": "0a539dd89b2cb616e187ead3337dd6036b6f1fa652823ba7e3d0c7402ec22704",
+        "artifact_id": 13072181316
+      },
+      {
+        "file": "41278476832-rust-times-0-ARM64.zip",
+        "sha256": "ca091d4ad790d1cb7afcd1d4bac9631ea362c4352f211c8147fa09fb1a851fd6",
+        "artifact_id": 13071939068
+      },
+      {
+        "file": "41278476832-rust-times-1-X64.zip",
+        "sha256": "a3ccfc28d024c34e4a6df32b56da4c49988b73d993818f01c78ce3e56a622c9d",
+        "artifact_id": 13072785348
+      },
+      {
+        "file": "41278476832-rust-times-2-ARM64.zip",
+        "sha256": "d0ee3132f4c79d87085b6fb4c03be664bd505f9df27c2851b3f457ea57f3475b",
+        "artifact_id": 13072008555
+      },
+      {
+        "file": "41278476832-rust-times-3-X64.zip",
+        "sha256": "89d57c30d5090d1a39448bff73f03f6f11de7edb0c27d602dca89999daf04670",
+        "artifact_id": 13071878776
+      },
+      {
+        "file": "41278476832-rust-times-4-ARM64.zip",
+        "sha256": "029d998ee4433d2a7ed20f05aba0d7885701263291159e2e65f67336384bd28b",
+        "artifact_id": 13071794072
+      },
+      {
+        "file": "41278476832-rust-times-5-X64.zip",
+        "sha256": "e3c5af5efe4b50d0fd5314ddc9ed31dc239f9e61dffeeb0cdde6e88770843329",
+        "artifact_id": 13071659486
+      },
+      {
+        "file": "41278476832-rust-times-6-ARM64.zip",
+        "sha256": "963199c459221fff865f64ffbd4ca1a02b8f82bcf501af1fa107e7efc3c22fe9",
+        "artifact_id": 13072042123
+      },
+      {
+        "file": "41278476832-rust-times-7-X64.zip",
+        "sha256": "0e59eab8581f93d0fa9ea57fcfa09c9b90b47231573fd219959065835f5755de",
+        "artifact_id": 13071868987
+      }
+    ],
+    "policy_sha256": "6e651b827e76057b62efbbee45ba5bb1715e082f49ff658a7fe880482f9f5e39",
+    "workflow_runs": 26,
+    "archive_count": 202,
+    "first_run_created_at": "2026-11-01T01:03:00Z",
+    "last_run_created_at": "2026-11-01T05:50:41Z",
+    "baseline_ref": "079b13de8051e686fc99b16dcdbd9ed909c27767",
+    "github_archive_digests_verified": true,
+    "percentile": "Empirical nearest-rank p95; all available per-test observations retained, including partial runs.",
+    "runner_limitations": "The fixed eight-shard layout assigns production to ARM64. No hosted X64 writer samples exist in these artifacts; no X64 writer percentile is inferred from fleet measurements."
+  },
+  "resources": {
+    "cpus": 4,
+    "mem_gb": 8,
+    "priority": -10,
+    "native_threads": 1,
+    "build_jobs": 4,
+    "host_pins": "Required three-host timing qualification; portable checks used anywhere placement."
+  },
+  "actions": [
+    {
+      "action_key": "c6ce45088f74bd7f7253df8fc526ba90bcec83696d4ce715fb8b3ce16b4c5ac3",
+      "host": "dl380g10",
+      "status": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 241.6328887939453,
+      "logs_sha256": {
+        "stdout": "d17ee8eb6f98defef899d25b0b68f9024672508eb27a0c470299fcc4e92410ee",
+        "stderr": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f"
+      },
+      "receipt_sha256": null,
+      "cleanup_complete": true,
+      "commit": "dd76fdfffcfed047fd37c2f11528d537ad8a34d3"
+    },
+    {
+      "action_key": "2ca4a2516fe99cb1abacf316edc69e3121c964b2d306fb0807df4c0df4002f9e",
+      "host": "dl380g10",
+      "status": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 1.2760076522827148,
+      "logs_sha256": {
+        "stdout": "ec5b73529d83039eb869953a5035ef76c84107fc4edbc2e7fa0feff51f370e52",
+        "stderr": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f"
+      },
+      "receipt_sha256": null,
+      "cleanup_complete": true,
+      "commit": "6ca90a05fdfde6ef03e0294974c4ef52937021a6"
+    },
+    {
+      "action_key": "3b097bfc5fefc76e7ad050a2172be79aee38f19525ec828f8292ca6aa9e8c3e0",
+      "host": "dl380g10",
+      "status": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 315.8985278606415,
+      "logs_sha256": {
+        "stdout": "676c2d2a50e5e05f8ae8669065779ee4c198b4303a6eb0677309535a9858dcec",
+        "stderr": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f"
+      },
+      "receipt_sha256": null,
+      "cleanup_complete": true,
+      "commit": "67bee4b1709af889625b9ab3cd3dceb1b1295065"
+    },
+    {
+      "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+      "host": "sparky",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 218.72989082336426,
+      "logs_sha256": {
+        "stdout": "438da00667abf689ead35c290e1748b095c05bc2e5b44426a80cfbfc6e57a713",
+        "stderr": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+      },
+      "receipt_sha256": "e6e922ec516f01b96ec00ca430f094e5c8fff075b788f48d2edde228f51a9193",
+      "cleanup_complete": true,
+      "commit": "67bee4b1709af889625b9ab3cd3dceb1b1295065"
+    },
+    {
+      "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+      "host": "sparklina",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 179.0915653705597,
+      "logs_sha256": {
+        "stdout": "371ee3e52b4b116864b369190c2d6f6116e9d638dc732e465a1654fd3f7a6c53",
+        "stderr": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+      },
+      "receipt_sha256": "fa2c1f2367e1cf382d9cd95f63f1c24763ea139805e394f0fb362c2807038d90",
+      "cleanup_complete": true,
+      "commit": "67bee4b1709af889625b9ab3cd3dceb1b1295065"
+    },
+    {
+      "action_key": "8bc66c897746594a5433d34056996eb215b0fad8f02b72a2c728272edfc5d19f",
+      "host": "dl380g10",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 329.06522822380066,
+      "logs_sha256": {
+        "stdout": "3b00ead76d788995e13b40dde378f2ef7322b3482f98cea3a15053aa62797af2",
+        "stderr": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+      },
+      "receipt_sha256": "b953dc7185f1d598d86e740d7a0b523794adf5a6e61618dc88836827733d5324",
+      "cleanup_complete": true,
+      "commit": "67bee4b1709af889625b9ab3cd3dceb1b1295065"
+    },
+    {
+      "action_key": "4e48525d23bce9fbdbad46f3665c3de672448802976fc460b82dedcaffa60bba",
+      "host": "dl380g10",
+      "status": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 26.429006338119507,
+      "logs_sha256": {
+        "stdout": "c68055afbbcfc297538b230080e7f6801661f160afa9aedf6924f2344a9db9f7",
+        "stderr": "ed7c5c6362a4aa56504b351a2484ea9fae1075cc8eb924ca9ecca3719567493f"
+      },
+      "receipt_sha256": null,
+      "cleanup_complete": true,
+      "commit": "7d6fa80c9db531c2d3d51119f6d9eac5a70876d3"
+    },
+    {
+      "action_key": "7143f59ebdeafcd4d0ee4c9171973374963dcf71a8f62bf3e1fc10e598f2dfa3",
+      "host": "dl380g10",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 255.6778929233551,
+      "logs_sha256": {
+        "stdout": "aba36c34f4e22038749890211ee18b71723053bbc5074099a3a8052531290058",
+        "stderr": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+      },
+      "receipt_sha256": "6002a144343009c56b3e881cb787efc3c3e67934fa3dc54dd243864412781dd9",
+      "cleanup_complete": true,
+      "commit": "5bdd86075f9ada1b9a1a49a5d22abce9acbeb247"
+    },
+    {
+      "action_key": "ef698291e2fc9bc562050f2c67487d9ef745799156d0d2ccc7e4fd4f769dd1f4",
+      "host": "sparky",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 53.07450032234192,
+      "logs_sha256": {
+        "stdout": "13abd45aedbfc647d76be130fb3dfc445ae5ce98dd43c3f248caeb50ab3f2908",
+        "stderr": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+      },
+      "receipt_sha256": "726578d0d1b9bf46d24b5afd8f551cfb11cd7ad6b3071f3a3f22f93e5d348f31",
+      "cleanup_complete": true,
+      "commit": "5bdd86075f9ada1b9a1a49a5d22abce9acbeb247"
+    },
+    {
+      "action_key": "e16817bdee926839132e17b52c3ebe4dccecbba9f45c6e5b9d1e1b5815351d58",
+      "host": "sparklina",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 53.17705059051514,
+      "logs_sha256": {
+        "stdout": "b3e2a0bd72554daa7e0f64de69c8f6da95693b5a1f688bec64f894e7353b1c83",
+        "stderr": "6ae22e28d8e7d3c9541ecc30e0edf8b3931838f003d6d63a9b15a9f79f0f4b0f"
+      },
+      "receipt_sha256": "0f001c4b01149880ee7be2bdd3914d33e8f0028ec835e818e65acc219dbd217b",
+      "cleanup_complete": true,
+      "commit": "5bdd86075f9ada1b9a1a49a5d22abce9acbeb247"
+    },
+    {
+      "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+      "host": "dl380g10",
+      "status": "executed",
+      "exit_code": 0,
+      "elapsed_seconds": 165.71464681625366,
+      "logs_sha256": {
+        "stdout": "2f913b7ccb61c32cd7a7fe025bec21c85fae34df7a85be04ef28b26e42a69317",
+        "stderr": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+      },
+      "receipt_sha256": "cb3dd95a822612a6a7d7b0ad5e00e92d65212a633066cd1e6cb84f3cb8b57bcc",
+      "cleanup_complete": true,
+      "commit": "5bdd86075f9ada1b9a1a49a5d22abce9acbeb247"
+    }
+  ],
+  "fleet_repeats": {
+    "sparky": {
+      "tl3-controller/production::configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.028536427,
+          0.019184967,
+          0.033426264
+        ]
+      },
+      "tl3-controller/production::fixture_credentials_are_fast_and_repeatable": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.00272002,
+          0.002584867,
+          0.002587426
+        ]
+      },
+      "tl3-controller/production::production_refuses_missing_and_invalid_credential_paths_before_opening_store": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.001527387,
+          0.001447242,
+          0.001409257
+        ]
+      },
+      "tl3-controller/production::production_registers_every_real_adapter_and_source": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.624157224,
+          0.641132034,
+          0.871650165
+        ]
+      },
+      "tl3-controller/scope::scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.9349426,
+          0.935278039,
+          1.456951822
+        ]
+      },
+      "tl3-controller/looks::closed_looks_permanent": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.765795443992829,
+          0.8389722389983945,
+          1.2262231729982886
+        ]
+      },
+      "tl3-controller/looks::closed_looks_startup": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.3901188370073214,
+          0.4328465180005878,
+          0.8357053979998454
+        ]
+      },
+      "tl3-controller/looks::closed_looks_held": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.3567281040013768,
+          0.4314636269991752,
+          0.8456501710170414
+        ]
+      },
+      "tl3-controller/looks::closed_looks_healthy": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.10883566900156438,
+          0.09063705400330946,
+          0.17377074400428683
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closing": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.45136530400486663,
+          0.4067591010243632,
+          0.8546697039855644
+        ]
+      },
+      "tl3-controller/looks::closed_looks_stopping": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.4380224719934631,
+          0.4162215029937215,
+          0.9077931120118592
+        ]
+      },
+      "tl3-controller/looks::closed_looks_pending-cancel": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.35604206600692123,
+          0.3859742179920431,
+          0.8259075329988264
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closed-pending": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.37546153098810464,
+          0.4329360529955011,
+          0.8481352230010089
+        ]
+      },
+      "tl3-controller/looks::cancelling_github_respects_quota": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.2726042089925613,
+          0.3714425149955787,
+          0.7590927470009774
+        ]
+      },
+      "tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.027158384,
+          0.026095526,
+          0.023139951
+        ]
+      },
+      "tl3-github/rest::all_slice_one_rest_operations_use_the_documented_routes": {
+        "action_key": "8b183d244806ce3a34a04954c81ae5afd39f5c7524c3a43190c1769a1b281183",
+        "seconds": [
+          0.025781174,
+          0.019610777,
+          0.019714264
+        ]
+      },
+      "tl3-controller/publishing::publishing_repo-conventions": {
+        "action_key": "ef698291e2fc9bc562050f2c67487d9ef745799156d0d2ccc7e4fd4f769dd1f4",
+        "seconds": [
+          4.705985205015168,
+          3.269223173003411,
+          3.2574593919853214
+        ]
+      }
+    },
+    "sparklina": {
+      "tl3-controller/production::configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.028049586,
+          0.020797449,
+          0.024583836
+        ]
+      },
+      "tl3-controller/production::fixture_credentials_are_fast_and_repeatable": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.002621235,
+          0.002835523,
+          0.002427971
+        ]
+      },
+      "tl3-controller/production::production_refuses_missing_and_invalid_credential_paths_before_opening_store": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.001565026,
+          0.001504081,
+          0.00149173
+        ]
+      },
+      "tl3-controller/production::production_registers_every_real_adapter_and_source": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.597030654,
+          0.596705307,
+          0.603699119
+        ]
+      },
+      "tl3-controller/scope::scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.932602402,
+          0.883988235,
+          0.877952135
+        ]
+      },
+      "tl3-controller/looks::closed_looks_permanent": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.7513358469877858,
+          0.7241707840003073,
+          0.8425339009845629
+        ]
+      },
+      "tl3-controller/looks::closed_looks_startup": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.3539480729959905,
+          0.36436519399285316,
+          0.37779793300433084
+        ]
+      },
+      "tl3-controller/looks::closed_looks_held": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.35638881201157346,
+          0.3686602070229128,
+          0.3538536019914318
+        ]
+      },
+      "tl3-controller/looks::closed_looks_healthy": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.09109732499928214,
+          0.10345245699863881,
+          0.087548900017282
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closing": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.38912264301325195,
+          0.361468357994454,
+          0.39040087501052767
+        ]
+      },
+      "tl3-controller/looks::closed_looks_stopping": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.38415646099019796,
+          0.42659912299131975,
+          0.43671254298533313
+        ]
+      },
+      "tl3-controller/looks::closed_looks_pending-cancel": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.3496618109929841,
+          0.36681313201552257,
+          0.3024547589884605
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closed-pending": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.40054052899358794,
+          0.36977246397873387,
+          0.36399254100979306
+        ]
+      },
+      "tl3-controller/looks::cancelling_github_respects_quota": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.3851506850041915,
+          0.28946486601489596,
+          0.3392259370011743
+        ]
+      },
+      "tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.021301321,
+          0.012347343,
+          0.012113438
+        ]
+      },
+      "tl3-github/rest::all_slice_one_rest_operations_use_the_documented_routes": {
+        "action_key": "258b87c7436294557b530b6504cc020ad41fed80015dcf4b6d41acaf667b08bc",
+        "seconds": [
+          0.024892045,
+          0.019734822,
+          0.020579879
+        ]
+      },
+      "tl3-controller/publishing::publishing_repo-conventions": {
+        "action_key": "e16817bdee926839132e17b52c3ebe4dccecbba9f45c6e5b9d1e1b5815351d58",
+        "seconds": [
+          4.738228725007502,
+          3.23844979700516,
+          3.126410462980857
+        ]
+      }
+    },
+    "dl380g10": {
+      "tl3-controller/publishing::publishing_repo-conventions": {
+        "action_key": "7143f59ebdeafcd4d0ee4c9171973374963dcf71a8f62bf3e1fc10e598f2dfa3",
+        "seconds": [
+          9.649497445003362,
+          8.122019351023482,
+          6.76748055301141
+        ]
+      },
+      "tl3-controller/production::configured_writer_executes_the_writer_ladder_and_reuses_its_durable_reply": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.030587412,
+          0.028432931,
+          0.030769446
+        ]
+      },
+      "tl3-controller/production::fixture_credentials_are_fast_and_repeatable": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.005422531,
+          0.004861524,
+          0.005201298
+        ]
+      },
+      "tl3-controller/production::production_refuses_missing_and_invalid_credential_paths_before_opening_store": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.003126314,
+          0.002774519,
+          0.002859017
+        ]
+      },
+      "tl3-controller/production::production_registers_every_real_adapter_and_source": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.94517598,
+          1.193875431,
+          0.937086966
+        ]
+      },
+      "tl3-controller/scope::scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          1.46945727,
+          2.19393924,
+          1.559503015
+        ]
+      },
+      "tl3-controller/looks::closed_looks_permanent": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          1.186263360985322,
+          1.315382350992877,
+          1.3019713910180144
+        ]
+      },
+      "tl3-controller/looks::closed_looks_startup": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.6047806999995373,
+          0.6867601780104451,
+          0.6021163949917536
+        ]
+      },
+      "tl3-controller/looks::closed_looks_held": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.5650670780159999,
+          0.5639740609913133,
+          0.560920118005015
+        ]
+      },
+      "tl3-controller/looks::closed_looks_healthy": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.3485514209896792,
+          0.19644012302160263,
+          0.19149770800140686
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closing": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.7129584030190017,
+          0.6842124149843585,
+          0.6831206759961788
+        ]
+      },
+      "tl3-controller/looks::closed_looks_stopping": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.778963776974706,
+          0.781190556997899,
+          0.8026509220071603
+        ]
+      },
+      "tl3-controller/looks::closed_looks_pending-cancel": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.674747673998354,
+          0.6831311559944879,
+          0.7550148919981439
+        ]
+      },
+      "tl3-controller/looks::closed_looks_closed-pending": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.7368545880017336,
+          0.6962210049969144,
+          0.7476039009925444
+        ]
+      },
+      "tl3-controller/looks::cancelling_github_respects_quota": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.708574554999359,
+          0.6647538940014783,
+          0.6839991569868289
+        ]
+      },
+      "tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.013261926,
+          0.012358898,
+          0.012564172
+        ]
+      },
+      "tl3-github/rest::all_slice_one_rest_operations_use_the_documented_routes": {
+        "action_key": "b987d754145a4ded3a7cfb221f28d97f58ac041713796335c997f4a3bf87ab9a",
+        "seconds": [
+          0.023871309,
+          0.025134273,
+          0.021267563
+        ]
+      }
+    }
+  },
+  "red_claims": [
+    {
+      "commit": "dd76fdff",
+      "action_key": "c6ce45088f74bd7f7253df8fc526ba90bcec83696d4ce715fb8b3ce16b4c5ac3",
+      "claims": [
+        "Credential fixture took 13.924236573s for two configurations, exceeding its 1s assertion.",
+        "Scope fixture made five proposal commits instead of one.",
+        "Publishing fixture made three setup commits instead of one.",
+        "All eight closed-look timing entries were absent."
+      ]
+    },
+    {
+      "commit": "6ca90a05",
+      "action_key": "2ca4a2516fe99cb1abacf316edc69e3121c964b2d306fb0807df4c0df4002f9e",
+      "claims": [
+        "Both timing-audit tests failed on the intended NotImplementedError stub."
+      ]
+    },
+    {
+      "commit": "7d6fa80c",
+      "action_key": "4e48525d23bce9fbdbad46f3665c3de672448802976fc460b82dedcaffa60bba",
+      "claims": [
+        "Memory flush failed with ConnectionRefused at the intentionally closed fixture port."
+      ]
+    }
+  ],
+  "qualification_findings": [
+    {
+      "action_key": "3b097bfc5fefc76e7ad050a2172be79aee38f19525ec828f8292ca6aa9e8c3e0",
+      "exit_code": 1,
+      "finding": "First focused publishing interval was 12.595s against baseline 10s. Functional tests passed. The action emitted 272 memory retry diagnostics. This action is retained as a failure, not green evidence."
+    },
+    {
+      "actions": [
+        "7143f59ebdeafcd4d0ee4c9171973374963dcf71a8f62bf3e1fc10e598f2dfa3",
+        "ef698291e2fc9bc562050f2c67487d9ef745799156d0d2ccc7e4fd4f769dd1f4",
+        "e16817bdee926839132e17b52c3ebe4dccecbba9f45c6e5b9d1e1b5815351d58"
+      ],
+      "finding": "All three final publishing actions passed with zero memory retry diagnostics."
+    }
+  ],
+  "checks": {
+    "action_key": "7143f59ebdeafcd4d0ee4c9171973374963dcf71a8f62bf3e1fc10e598f2dfa3",
+    "format": "pass",
+    "workspace_all_target_clippy": "pass",
+    "ci_unittest_count": 32,
+    "full_publishing_binary": "pass"
+  },
+  "skips": [],
+  "discarded_probe": {
+    "action_key": "0ca2394ca6aa577a2641bd911c18ff4f6399d7f736db4e8e67f698e111962e59",
+    "reason": "Initial driver also selected CLI executables. Corrected the Cargo target filter and reran the complete red action from a detached clean checkout."
+  }
+}

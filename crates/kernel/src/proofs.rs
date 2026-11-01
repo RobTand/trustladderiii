@@ -19,7 +19,7 @@
 //! reach.
 //!
 //! Worlds have exactly two requests and two repos of four files each, with W
-//! and the agent pool at most 2. A closed request is inert, so this covers a
+//! at most 3 and the agent pool at most 2. A closed request is inert, so this covers a
 //! world with one open request as well. A new request makes three.
 
 use super::*;
@@ -68,7 +68,7 @@ fn any_world(phase: Option<Phase>) -> World {
         file_sets: Vec::new(),
     };
     kani::assume(world.pool_capacity <= 2);
-    kani::assume(world.gates[0].w <= 2 && world.gates[1].w <= 2);
+    kani::assume(world.gates[0].w <= 3 && world.gates[1].w <= 3);
     kani::assume(world.next_ticket < LIMIT && world.next_question < LIMIT);
     kani::assume(small(&world.nodes[0]) && small(&world.nodes[1]));
     kani::assume(world.consistent());
@@ -823,6 +823,351 @@ proof!(
     apply_adoption_has_no_maker_credit,
     check_adoption_has_no_maker_credit()
 );
+
+// Four-node gate worlds cover a full W=3 gate and a waiter. The general
+// event/phase proofs retain their two-node bounds.
+fn gate_world(width: u8) -> World {
+    gate_world_in_phase(width, None)
+}
+
+fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
+    gate_world_with_waiters(width, first, false)
+}
+
+fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) -> World {
+    let mut w = World::new(&[width], 4);
+    w.next_ticket = 8;
+    for i in 0..4 {
+        let mut n = Node::new(RepoId(0));
+        n.credit.ready = true;
+        n.credit.start = 4;
+        n.attempt = 1;
+        let files: u64 = kani::any();
+        kani::assume(files > 0 && files < 16);
+        n.footprint = Footprint::inline(files);
+        n.paused = !waiting_only && kani::any();
+        let phase: u8 = kani::any();
+        kani::assume(phase < if waiting_only { 2 } else { 4 });
+        n.phase = match phase {
+            0 => Phase::Ready(Resume::Making),
+            1 if waiting_only => Phase::Unplanned,
+            1 => Phase::Queued,
+            2 => Phase::Making,
+            _ => Phase::Unplanned,
+        };
+        if i == 0
+            && let Some(first) = first
+        {
+            n.phase = first;
+        }
+        if n.phase == Phase::Queued {
+            n.holds = true;
+            n.head = Some(HeadId(1));
+            n.checked = n.head;
+            n.approved = n.head;
+            n.had_pr = true;
+            n.pr_open = true;
+            n.worktree = true;
+        } else if n.phase == Phase::Making {
+            n.holds = true;
+            n.worktree = true;
+            n.pos = 2;
+            n.run = Some(n.generation);
+            n.pool = true;
+        } else if matches!(n.phase, Phase::Ready(_)) {
+            n.ticket = kani::any();
+        }
+        w.nodes.push(n);
+    }
+    kani::assume(w.consistent());
+    w
+}
+
+fn check_gate_grant(width: u8) {
+    let before = gate_world(width);
+    kani::assume(matches!(before.nodes[0].phase, Phase::Ready(_)));
+    let n = before.nodes[0];
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out);
+    require_consistent(&after);
+    let holders = before.nodes.iter().filter(|n| n.holds).count();
+    kani::cover!(
+        after.nodes[0].holds && holders == usize::from(width - 1),
+        "last available slot granted"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && !slot_free(&before, 0),
+        "full gate or overlapping footprint blocks"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0),
+        "older ticket keeps its place"
+    );
+    let mut older_blocked = false;
+    for j in 1..before.nodes.len() {
+        let other = before.nodes[j];
+        if matches!(other.phase, Phase::Ready(_)) && !other.paused {
+            if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
+                if theirs < mine {
+                    older_blocked |= !slot_free(&before, j);
+                    assert!(
+                        !after.nodes[0].holds,
+                        "an older slot ticket prevents this grant"
+                    );
+                }
+            }
+        }
+    }
+    kani::cover!(
+        !after.nodes[0].holds && older_blocked && slot_free(&before, 0) && !n.paused,
+        "a file-blocked older waiter keeps its place despite spare capacity"
+    );
+    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
+    if after.nodes[0].holds {
+        assert!(slot_free(&before, 0) && first_in_line(&before, 0) && !n.paused);
+        assert!(after.nodes[0].ticket.is_none());
+    } else {
+        assert!(!after.nodes[0].pool);
+        if n.ticket.is_some() && !n.paused {
+            assert_eq!(after.nodes[0].ticket, n.ticket);
+        }
+    }
+    if changed {
+        assert!(after.nodes[0].settle_rank() < n.settle_rank());
+    }
+    check_nodes(&before, &after);
+    check_outputs(&before, &after, &out, None);
+}
+
+fn check_gate_planning(width: u8) {
+    let before = gate_world(width);
+    kani::assume(before.nodes[0].phase == Phase::Unplanned);
+    kani::assume(!before.nodes[0].paused);
+    let waiting = before
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some())
+        .count();
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out);
+    require_consistent(&after);
+    assert_eq!(changed, waiting < usize::from(width));
+    assert!(!after.nodes[0].holds && !after.nodes[0].pool);
+    kani::cover!(
+        waiting == usize::from(width) && !changed,
+        "W waiters block planning"
+    );
+    kani::cover!(
+        waiting == usize::from(width - 1) && changed,
+        "fewer than W waiters admit planning"
+    );
+    if changed {
+        assert!(after.nodes[0].settle_rank() < before.nodes[0].settle_rank());
+    }
+}
+
+fn check_gate_progress(width: u8) {
+    let mut before = gate_world(width);
+    // Every mixed gate world either has a witness or is waiting-only. The
+    // separate waiting proof establishes that the latter cannot be settled.
+    let Some(event) = before.witness() else {
+        for n in &before.nodes {
+            assert!(!n.paused && !n.holds && !n.pool && n.run.is_none());
+            assert!(matches!(n.phase, Phase::Ready(_) | Phase::Unplanned));
+        }
+        kani::cover!(true, "without a witness every leaf is an unpaused waiter");
+        return;
+    };
+    kani::cover!(
+        before.nodes.iter().filter(|n| n.holds).count() == usize::from(width),
+        "a full gate has a progress event"
+    );
+    kani::cover!(
+        before.nodes.iter().filter(|n| n.pool).count() == usize::from(width),
+        "all W leaves have admitted maker runs"
+    );
+    // A symbolic actor in apply duplicates large Node reads and exhausted
+    // 64 GiB. These independent roots are interchangeable; keep the actor at 0.
+    let (actor, event) = match event {
+        Event::Reply {
+            node,
+            generation,
+            reply,
+        } => (
+            node,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
+        ),
+        Event::Ack { node, seq, ack } => (
+            node,
+            Event::Ack {
+                node: NodeId(0),
+                seq,
+                ack,
+            },
+        ),
+        Event::Fact { node, fact } => (
+            node,
+            Event::Fact {
+                node: NodeId(0),
+                fact,
+            },
+        ),
+        Event::Command { node, id, command } => (
+            node,
+            Event::Command {
+                node: NodeId(0),
+                id,
+                command,
+            },
+        ),
+        Event::NewRequest { .. } | Event::NewAdoption { .. } => unreachable!(),
+    };
+    let measure = before.measure();
+    for i in 1..4 {
+        if actor == NodeId(i as u64) {
+            before.nodes.swap(0, i);
+        }
+    }
+    require_consistent(&before);
+    assert_eq!(before.measure(), measure);
+    match event {
+        Event::Reply {
+            generation,
+            reply: Reply::MakerDone { head },
+            ..
+        } => {
+            let n = before.nodes[0];
+            assert!(n.phase == Phase::Making && !n.paused);
+            assert_eq!(n.run, Some(generation));
+            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
+        }
+        Event::Fact {
+            fact:
+                Fact::PrMerged {
+                    head,
+                    checks_passed,
+                },
+            ..
+        } => {
+            let n = before.nodes[0];
+            assert!(n.phase == Phase::Queued && !n.paused && checks_passed);
+            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
+        }
+        Event::Command {
+            id,
+            command: Command::Resume,
+            ..
+        } => {
+            assert!(before.nodes[0].paused);
+            assert_eq!(id, before.nodes[0].last_cmd + 1);
+        }
+        _ => unreachable!("gate worlds have only maker, merge or resume witnesses"),
+    }
+}
+
+fn check_gate_waiting_progress(width: u8) {
+    let before = gate_world_with_waiters(width, None, true);
+    assert!(before.witness().is_none());
+    assert!(!before.is_settled());
+    kani::cover!(
+        before
+            .nodes
+            .iter()
+            .all(|n| matches!(n.phase, Phase::Ready(_))),
+        "a world with only ready leaves can advance"
+    );
+    kani::cover!(
+        before.nodes.iter().all(|n| n.phase == Phase::Unplanned),
+        "a world with only unplanned leaves can advance"
+    );
+}
+
+// Together the witness and waiting proofs establish these preconditions for
+// every settled gate world. Prove each application separately to keep the event
+// payload and actor concrete, as in the general per-event proofs.
+fn check_gate_maker_progress(width: u8) {
+    let mut world = gate_world_in_phase(width, Some(Phase::Making));
+    kani::assume(!world.nodes[0].paused);
+    let generation = world.nodes[0].generation;
+    let head = world.nodes[0].head.unwrap_or(HeadId(0));
+    let before_measure = world.measure();
+    let mut out = Outbox::new();
+    // apply dispatches this fixed, valid node directly to on_reply.
+    on_reply(
+        &mut world,
+        0,
+        generation,
+        Reply::MakerDone { head },
+        &mut out,
+    );
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
+    kani::cover!(true, "maker completion lowers the gate world's measure");
+}
+
+fn check_gate_merge_progress(width: u8) {
+    let mut world = gate_world_in_phase(width, Some(Phase::Queued));
+    kani::assume(!world.nodes[0].paused);
+    let before_measure = world.measure();
+    let head = world.nodes[0].head.unwrap_or(HeadId(0));
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrMerged {
+                head,
+                checks_passed: true,
+            },
+        },
+        &mut out,
+    );
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
+    kani::cover!(true, "a merge lowers the gate world's measure");
+}
+
+fn check_gate_resume_progress(width: u8) {
+    let mut world = gate_world(width);
+    kani::assume(world.nodes[0].paused);
+    let before_measure = world.measure();
+    let id = world.nodes[0].last_cmd + 1;
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        Event::Command {
+            node: NodeId(0),
+            id,
+            command: Command::Resume,
+        },
+        &mut out,
+    );
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
+    kani::cover!(true, "resuming lowers the gate world's measure");
+}
+
+proof!(gate_grant_w2, check_gate_grant(2));
+proof!(gate_grant_w3, check_gate_grant(3));
+proof!(gate_planning_w2, check_gate_planning(2));
+proof!(gate_planning_w3, check_gate_planning(3));
+proof!(gate_progress_w2, check_gate_progress(2));
+proof!(gate_progress_w3, check_gate_progress(3));
+proof!(gate_waiting_progress_w2, check_gate_waiting_progress(2));
+proof!(gate_waiting_progress_w3, check_gate_waiting_progress(3));
+
+proof!(gate_maker_progress_w2, check_gate_maker_progress(2));
+proof!(gate_maker_progress_w3, check_gate_maker_progress(3));
+proof!(gate_merge_progress_w2, check_gate_merge_progress(2));
+proof!(gate_merge_progress_w3, check_gate_merge_progress(3));
+proof!(gate_resume_progress_w2, check_gate_resume_progress(2));
+proof!(gate_resume_progress_w3, check_gate_resume_progress(3));
 
 proof!(apply_rebase_progress_gate, {
     let mut node = Node::new(RepoId(0));
