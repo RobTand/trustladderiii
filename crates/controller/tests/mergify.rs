@@ -2748,9 +2748,9 @@ fn main() {
     for quota in [false, true] {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
-    for mode in ["unlabeled", "closed", "queue-label", "pending"] {
+    for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
         merge_closure::scenario(&database.create(&format!("merge_closure_{mode}")), mode);
     }
     database.stop();
-    println!("97 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("98 Mergify scenarios passed; no skips; no live upstream calls");
 }

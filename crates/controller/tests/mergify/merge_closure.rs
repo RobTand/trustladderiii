@@ -4,6 +4,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = queued(settings, &api, root.path(), true);
+    if mode == "normal" {
+        api.state.lock().unwrap().pull["body"] = json!("Closes #12");
+    }
     // This webhook was emitted before the merge, but processed after it.
     let mut stale = pull_event(
         &api,
@@ -32,7 +35,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         // merge_bot_account is a person login, so neither event is filtered as a bot.
         for (id, event) in [(500, "merged"), (501, "closed")] {
             state.events.push(
-                json!({"id":id,"event":event,"actor":{"id":42,"login":"rob"},
+                json!({"id":id,"event":event,"actor":{"id":42,"login":if mode == "normal" {"RobTand"} else {"rob"}},
                 "created_at":"2026-10-30T01:00:00Z","issue":{"number":100}}),
             );
         }
@@ -40,6 +43,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             state.events.push(json!({"id":502,"event":"unlabeled","actor":{"id":42,"login":"rob"},
                 "label":{"name":"tl3-queue"},"created_at":"2026-10-30T01:00:01Z","issue":{"number":100}}));
         }
+    }
+    if mode == "normal" {
+        // GitHub closes the request through the PR's closing keyword before the
+        // stale PR unlabel is processed. The merge bot uses a person account.
+        let issue_closed = json!({
+            "action":"closed", "repository":stale["repository"], "installation":stale["installation"],
+            "sender":{"id":42,"login":"RobTand"},
+            "issue":{"number":12,"title":"change","body":"request","state":"closed",
+                "state_reason":"completed","closed_by":{"id":42,"login":"RobTand"},
+                "closed_at":"2026-10-30T01:00:00Z"}
+        });
+        deliver(settings, &api, "issues", &issue_closed);
+        deliver(settings, &api, "pull_request", &stale);
+        drain(&mut controller);
     }
     let inputs = Translator::new(api.clients())
         .unwrap()
