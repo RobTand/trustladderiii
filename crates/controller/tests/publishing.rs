@@ -378,11 +378,7 @@ impl Respond for Api {
                             .unwrap();
                         let mergeable = mergeable_override.unwrap_or(output.status.success());
                         pull["mergeable"] = json!(mergeable);
-                        pull["mergeable_state"] = json!(if mergeable {
-                            "clean"
-                        } else {
-                            "dirty"
-                        });
+                        pull["mergeable_state"] = json!(if mergeable { "clean" } else { "dirty" });
                     }
                     s.pull.clone().unwrap()
                 }
