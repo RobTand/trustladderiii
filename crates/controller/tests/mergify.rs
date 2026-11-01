@@ -1,3 +1,5 @@
+#[path = "mergify/classic_protection.rs"]
+mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
@@ -110,6 +112,11 @@ struct State {
     rerun_message: String,
     rerun_lost_response: bool,
     required: bool,
+    classic: bool,
+    restricted: Option<(String, u16)>,
+    classic_context_only: bool,
+    annotations: Value,
+    statuses: Value,
     queued_before_rerun: bool,
 }
 impl State {
@@ -155,7 +162,12 @@ impl State {
             rerun_status: 201,
             rerun_message: "Resource not accessible by integration".into(),
             rerun_lost_response: false,
-            required: true,
+            required: false,
+            classic: false,
+            restricted: None,
+            classic_context_only: false,
+            annotations: json!([]),
+            statuses: json!([]),
             queued_before_rerun: false,
         }
     }
@@ -248,15 +260,28 @@ impl Respond for Api {
         {
             return response;
         }
+        if method == "GET"
+            && let Some((read, status)) = &state.restricted
+            && (read == "branch" && path.contains("/branches/main") && !path.contains("/rules/")
+                || read == "rules" && path.contains("/rules/branches/")
+                || read == "status" && path.ends_with("/statuses"))
+        {
+            return ResponseTemplate::new(*status);
+        }
         match (method, path) {
+            ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
+                if state.classic { json!({"protection":{"required_status_checks":{
+                    "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
+                else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
+            ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
                 assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
                 ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":state.workflow.iter().collect::<Vec<_>>()}))
             }
             ("GET", "/repos/owner/sandbox/actions/runs/700") => ResponseTemplate::new(200).set_body_json(state.workflow.clone().unwrap()),
-            ("GET", "/repos/owner/sandbox/check-runs/900/annotations") => ResponseTemplate::new(200).set_body_json(json!([])),
+            ("GET", "/repos/owner/sandbox/check-runs/900/annotations" | "/repos/owner/sandbox/check-runs/901/annotations") => ResponseTemplate::new(200).set_body_json(state.annotations.clone()),
             ("POST", "/repos/owner/sandbox/actions/runs/700/rerun") => {
                 state.reruns += 1;
                 if state.rerun_status == 201 {
@@ -2482,6 +2507,15 @@ fn main() {
     }
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--classic-head-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        classic_protection::scenario(&database.create("classic_head"), &mode);
+        database.stop();
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2709,6 +2743,26 @@ fn main() {
             dirty,
             lazy,
         );
+    }
+    for mode in [
+        "pass",
+        "failure",
+        "stale-failure",
+        "runner",
+        "runner-code",
+        "missing",
+        "app",
+        "status",
+        "action_required",
+        "stale",
+        "restricted-branch403",
+        "restricted-branch404",
+        "restricted-rules403",
+        "restricted-rules404",
+        "restricted-status403",
+        "restricted-status404",
+    ] {
+        classic_protection::scenario(&database.create(&format!("classic_{mode}")), mode);
     }
     for mode in [
         "cancelled",
