@@ -1518,7 +1518,7 @@ impl Controller {
                 });
             }
         }
-        self.retire_closed_looks(snapshot, &world, commit)?;
+        self.retire_ended_effect_looks(snapshot, &world, commit)?;
         Ok(())
     }
 

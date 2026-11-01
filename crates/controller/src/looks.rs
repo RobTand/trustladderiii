@@ -184,7 +184,7 @@ impl Controller {
             Ok(matches!(delivery.output, Out::Effect { .. }))
         })
     }
-    pub(crate) fn retire_closed_looks(
+    pub(crate) fn retire_ended_effect_looks(
         &mut self,
         snapshot: &Snapshot,
         world: &World,
@@ -205,7 +205,8 @@ impl Controller {
         }
         let mut retired = std::collections::BTreeSet::new();
         for state in states {
-            if !closed_effect(world, &state.delivery) || !retired.insert(state.delivery.key.clone())
+            if !ended_effect_look(snapshot, world, &state.delivery)
+                || !retired.insert(state.delivery.key.clone())
             {
                 continue;
             }
@@ -1040,7 +1041,7 @@ impl Controller {
 
     fn save_allowance(&mut self, state: &AllowanceState) -> Result<()> {
         let snapshot = self.store.load()?;
-        if closed_effect(&snapshot::decode(&snapshot)?, &state.delivery) {
+        if ended_effect_look(&snapshot, &snapshot::decode(&snapshot)?, &state.delivery) {
             return Ok(());
         }
         let value = json!(state);
@@ -1238,10 +1239,10 @@ impl Controller {
         );
         // Repair snapshots from before closed requests retired recovery incidents.
         self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
-        self.retire_closed_looks(snapshot, &world, &mut commit)?;
+        self.retire_ended_effect_looks(snapshot, &world, &mut commit)?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
             let state: AllowanceState = serde_json::from_value(row.value.clone())?;
-            if closed_effect(&world, &state.delivery) {
+            if ended_effect_look(snapshot, &world, &state.delivery) {
                 continue;
             }
             let incident_open = state.incident.as_ref().is_some_and(|id| {
@@ -1270,7 +1271,7 @@ impl Controller {
         // Backfill allowances once for a snapshot written before this feature.
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, snapshot)?;
-            if closed_effect(&world, &delivery) {
+            if ended_effect_look(snapshot, &world, &delivery) {
                 continue;
             }
             if !snapshot
@@ -1285,7 +1286,7 @@ impl Controller {
             let delivery: Delivery = serde_json::from_value(row.value.clone())?;
             let node = &world.nodes[delivery.node().0 as usize];
             if let Out::Effect { kind, .. } = delivery.output
-                && !closed_effect(&world, &delivery)
+                && !ended_effect_look(snapshot, &world, &delivery)
                 && node.operation_pending(kind, delivery.generation)
                 && !snapshot
                     .rows
@@ -1304,13 +1305,17 @@ impl Controller {
     }
 }
 
-fn closed_effect(world: &World, delivery: &Delivery) -> bool {
-    // Closing summaries and correction notices still have to finish delivery.
-    matches!(delivery.output, Out::Effect { .. })
-        && matches!(
-            world.nodes[delivery.node().0 as usize].phase,
-            Phase::Closed(_)
-        )
+fn ended_effect_look(snapshot: &Snapshot, world: &World, delivery: &Delivery) -> bool {
+    // Summaries and correction notices still have to finish delivery.
+    let Out::Effect { node, .. } = delivery.output else {
+        return false;
+    };
+    let node = &world.nodes[node.0 as usize];
+    matches!(node.phase, Phase::Closed(_))
+        || (matches!(node.phase, Phase::Stopping(_))
+            && delivery.generation < node.generation
+            // Pending cancellation still needs its quota and reconciliation evidence.
+            && !snapshot.pending_effects.iter().any(|effect| effect.key == delivery.key))
 }
 
 pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result<bool> {
