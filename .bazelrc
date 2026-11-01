@@ -28,6 +28,8 @@ build:remote --extra_execution_platforms=//tools/bazel:linux_amd64
 build:remote --platforms=//tools/bazel:linux_amd64
 build:remote --remote_timeout=600
 build:remote --remote_local_fallback=false
+# Calibrated per-test budget tolerance; see docs/hosted-budget-tolerance.md.
+test:remote --test_env=TL3_RUNNER_CLASS=buildbuddy-amd64
 
 # Every action on linux/arm64 remote executors: compiles, tools and tests.
 build:remote-arm64 --remote_cache=grpcs://remote.buildbuddy.io
@@ -43,6 +45,7 @@ build:remote-arm64 --platforms=//tools/bazel:linux_arm64
 build:remote-arm64 --host_platform=//tools/bazel:linux_arm64
 build:remote-arm64 --remote_timeout=600
 build:remote-arm64 --remote_local_fallback=false
+test:remote-arm64 --test_env=TL3_RUNNER_CLASS=buildbuddy-arm64
 
 # Commit and branch metadata are supplied by the CI entrypoint.
 build:ci --remote_grpc_log=bazel-remote-grpc.log

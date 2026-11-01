@@ -89,6 +89,7 @@ tl3_py_test(
 tl3_py_test(
     name = "test_bazel_workspace",
     srcs = ["test_bazel_workspace.py"],
+    deps = [":rust_gate"],
 )
 
 tl3_py_test(
@@ -144,4 +145,16 @@ py_binary(
     name = "bazel_generated",
     srcs = ["bazel_generated.py"],
     visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "bazel_budget_calibration",
+    srcs = ["bazel_budget_calibration.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_bazel_budget_calibration",
+    srcs = ["test_bazel_budget_calibration.py"],
+    deps = [":bazel_budget_calibration"],
 )
