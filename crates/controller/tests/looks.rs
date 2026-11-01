@@ -1937,6 +1937,7 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
+    subscription_error_is_isolated(&db.create("subscription_errors"));
     assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {

@@ -232,9 +232,9 @@ impl Controller {
                 continue;
             }
             if state.external_wait.is_some() {
-                self.adapters
-                    .get(Upstream::PrismaBuild)?
-                    .watch_wait(&state.delivery, None)?;
+                if !self.retire_wait(snapshot, &state.delivery, commit)? {
+                    continue;
+                }
             }
             commit.rows.push(RowChange::Delete {
                 table: "allowances".into(),
@@ -243,6 +243,37 @@ impl Controller {
             self.remove_hold(&state.delivery);
         }
         Ok(())
+    }
+
+    fn retire_wait(
+        &mut self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        commit: &mut Commit,
+    ) -> Result<bool> {
+        match self
+            .adapters
+            .get(Upstream::PrismaBuild)?
+            .watch_wait(delivery, None)
+        {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                let request = crate::request(snapshot, delivery.node())?;
+                self.input_failed(
+                    snapshot,
+                    &format!("retire-wait:{}", delivery.key),
+                    Some(crate::input_errors::IssueTarget {
+                        repository: request.repo,
+                        issue: request.issue,
+                    }),
+                    &request.title,
+                    Some(delivery.node()),
+                    error,
+                    commit,
+                )?;
+                Ok(false)
+            }
+        }
     }
 
     pub(crate) fn link_allowance_incident(
@@ -462,7 +493,7 @@ impl Controller {
         now: u64,
     ) -> Result<()> {
         state.due_ms = None;
-        if let Some(id) = state.incident
+        if let Some(id) = &state.incident
             && let Some(row) = snapshot
                 .rows
                 .iter()
@@ -476,9 +507,13 @@ impl Controller {
                 self.save_allowance(state)?;
                 return Ok(());
             }
-            if incident.effect.as_deref() == Some(state.delivery.key) {
+            if incident.effect.as_deref() == Some(&state.delivery.key) {
                 if !incident.needs_rob {
-                    match self.adapters.adapter(state.delivery)?.probe(state.delivery) {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
                         Ok(true) => {
                             self.probe_passed(state)?;
                             self.retry_held_effects(upstream(state.delivery.output));
@@ -500,7 +535,7 @@ impl Controller {
         if state.quota_ms.is_some() {
             let effect = self
                 .store
-                .effect(state.delivery.key)?
+                .effect(&state.delivery.key)?
                 .expect("quota effect");
             if effect.state == EffectState::Confirmed {
                 let mut delivery = state.delivery.clone();
@@ -531,7 +566,7 @@ impl Controller {
                 }
             }
             state.quota_ms = None;
-            self.remove_hold(state.delivery);
+            self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
         }
@@ -539,7 +574,10 @@ impl Controller {
             self.finish_stall(state)?;
             return Ok(());
         }
-        let result = self.adapters.adapter(state.delivery)?.look(state.delivery);
+        let result = self
+            .adapters
+            .adapter(&state.delivery)?
+            .look(&state.delivery);
         let result = match result {
             Err(error)
                 if error.is_github_not_found()
@@ -556,7 +594,7 @@ impl Controller {
         if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
             self.adapters
                 .get(Upstream::PrismaBuild)?
-                .watch_wait(state.delivery, None)?;
+                .watch_wait(&state.delivery, None)?;
             state.external_wait = None;
             state.wait_ended = false;
         }
@@ -564,7 +602,7 @@ impl Controller {
             Ok(Look::Found(mut completion)) => {
                 let effect = self
                     .store
-                    .effect(state.delivery.key)?
+                    .effect(&state.delivery.key)?
                     .expect("allowance effect");
                 let token_only =
                     completion.progress.is_some() && completion.observations.is_empty();
@@ -595,7 +633,7 @@ impl Controller {
                 if changed {
                     state.progress_ms = now;
                     state.due_ms = Some(now.saturating_add(
-                        u64::from(self.allowance(state.delivery).no_progress_secs) * 1000,
+                        u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
                     ));
                 }
                 // The typed watch row is the sole token store.
@@ -620,7 +658,7 @@ impl Controller {
                         if effect.state.is_pending() {
                             self.complete(&effect.key, completion)?;
                         } else {
-                            self.look_observations(state.delivery, completion)?;
+                            self.look_observations(&state.delivery, completion)?;
                         }
                     }
                 }
@@ -628,9 +666,9 @@ impl Controller {
             Ok(Look::Absent) => {
                 let effect = self
                     .store
-                    .effect(state.delivery.key)?
+                    .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                if (self.is_held(state.delivery) || state.failure.as_deref() == Some("not_found"))
+                if (self.is_held(&state.delivery) || state.failure.as_deref() == Some("not_found"))
                     && effect.state.is_pending()
                     && effect.state != EffectState::Cancelling
                     && matches!(state.delivery.output, Out::Effect { .. })
@@ -671,7 +709,7 @@ impl Controller {
                     Ok(crate::executor::WaitRecord::Alive) => {
                         self.adapters
                             .get(Upstream::PrismaBuild)?
-                            .watch_wait(state.delivery, Some(&wait))?;
+                            .watch_wait(&state.delivery, Some(&wait))?;
                         state.read_failures = 0;
                         state.wait_ended = false;
                         state.progress = None;
@@ -679,7 +717,8 @@ impl Controller {
                     Ok(crate::executor::WaitRecord::Ended) => {
                         self.adapters
                             .get(Upstream::PrismaBuild)?
-                            .watch_wait(state.delivery, None)?;
+                            .watch_wait(&state.delivery, None)?;
+                        state.read_failures = 0;
                         if !state.wait_ended {
                             state.wait_ended = true;
                             state.progress_ms = now;
@@ -715,7 +754,7 @@ impl Controller {
                 self.look_failed(state, error)?;
             }
         }
-        if let Some(id) = state.incident {
+        if let Some(id) = &state.incident {
             let incident = self
                 .store
                 .load()?
@@ -726,7 +765,11 @@ impl Controller {
                 .transpose()?;
             if let Some(incident) = incident.filter(|i| i.open) {
                 if !incident.needs_rob {
-                    match self.adapters.adapter(state.delivery)?.probe(state.delivery) {
+                    match self
+                        .adapters
+                        .adapter(&state.delivery)?
+                        .probe(&state.delivery)
+                    {
                         Ok(true) => {
                             state.healthy = true;
                             self.retry_held_effects(upstream(state.delivery.output));
@@ -1277,9 +1320,9 @@ impl Controller {
                 .any(|r| r.table == "watches" && r.id == row.id);
             if !pending && !watched && !incident_open {
                 if state.external_wait.is_some() {
-                    self.adapters
-                        .get(Upstream::PrismaBuild)?
-                        .watch_wait(&state.delivery, None)?;
+                    if !self.retire_wait(snapshot, &state.delivery, &mut commit)? {
+                        continue;
+                    }
                 }
                 commit.rows.push(RowChange::Delete {
                     table: "allowances".into(),

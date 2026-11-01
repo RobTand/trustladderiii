@@ -530,6 +530,9 @@ fn main() {
     }
     request_vocabulary::all();
     let mut database = support::Database::start();
+    if args.len() == 1 {
+        intake_errors::run_with_database(&mut database);
+    }
     if args.get(1).is_some_and(|arg| arg == "--catchup-heads") {
         catchup_heads::run(&mut database);
         database.stop();

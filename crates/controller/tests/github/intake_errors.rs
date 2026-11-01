@@ -201,6 +201,10 @@ fn case(settings: &tl3_config::Store, name: &str) {
 }
 pub(super) fn run() {
     let mut db = support::Database::start();
+    run_with_database(&mut db);
+    db.stop();
+}
+pub(super) fn run_with_database(db: &mut support::Database) {
     let mut failed = Vec::new();
     for name in ["intake", "restart", "observation", "translator", "fatal"] {
         let settings = db.create(&format!("intake_errors_{name}"));
