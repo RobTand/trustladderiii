@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 
 import pytest
@@ -63,7 +65,7 @@ def call(submission, response, tests=None, override=None):
     with Worktree(root) as tree:
         tree.test_settings = TestSettings(IMAGE, scripts)
         tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
-        assert set(tool.args) == {"tests"}
+        assert set(tool.args) == {"tests", "base"}
         return tool.invoke({} if tests is None else {"tests": tests})
 
 
@@ -275,3 +277,83 @@ def test_scratch_setting_reaches_the_trusted_action(submission, enabled):
     args = json.loads((scripts / 'submitted.json').read_text())
     action = args[args.index('--') + 1:]
     assert ('--exec-scratch' in action) is enabled
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o600, 0o4750])
+def test_staging_preserves_permissions_without_special_bits(submission, tmp_path, mode):
+    from tl3_workers.pb_tests import _stage
+
+    source = submission[0] / "script"
+    source.write_text("#!/bin/sh\nexit 0\n")
+    source.chmod(mode)
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    with Worktree(submission[0]) as tree:
+        _stage(tree, staged)
+    target = staged / "checkout/script"
+    assert stat.S_IMODE(target.stat().st_mode) == mode & 0o777
+    assert os.access(target, os.X_OK) == bool(mode & 0o111)
+    if mode & 0o100:
+        assert subprocess.run([str(target)], check=False).returncode == 0
+    else:
+        with pytest.raises(PermissionError):
+            subprocess.run([str(target)], check=False)
+    indexed = subprocess.check_output(["git", "ls-files", "--stage", "checkout/script"], cwd=staged)
+    assert indexed.startswith(b"100755" if mode & 0o100 else b"100644")
+
+
+def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
+    root, scripts = submission
+
+    def git(*args):
+        return subprocess.check_output([
+            "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args,
+        ], cwd=root, text=True).strip()
+
+    git("init", "--quiet", "--template=")
+    (root / "example_module.py").write_text("value = 'base'\n")
+    (root / "test_code.py").write_text("from example_module import value\ndef test_value(): assert value == 'head'\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Check base")
+    base = git("rev-parse", "HEAD")
+    (root / "example_module.py").write_text("value = 'earlier maker commit'\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Earlier maker round")
+    head = git("rev-parse", "HEAD")
+    (root / "example_module.py").write_text("value = 'head'\n")
+    before = git("status", "--porcelain")
+    script = scripts / "pbrun.py"
+    script.write_text(script.read_text().replace(
+        'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"\n', "",
+    ).replace(
+        'print(json.dumps({"schema":',
+        '''import subprocess
+sys.path.insert(0, str(root / "trusted"))
+from tl3_harness.test_tool import Summary
+selected = args[args.index("--") + 6]
+run = subprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py"),
+                      selected, str(root / "checkout"), "--summary"], capture_output=True, text=True)
+assert run.returncode in (0, 1), run.stdout + run.stderr
+summary = Summary()
+for line in run.stdout.splitlines():
+    record = json.loads(line)
+    if record["event"] == "result":
+        summary.add(record["test"], record["outcome"], record["message"])
+(here / "response.json").write_text(json.dumps(summary.result))
+print(json.dumps({"schema":''',
+    ))
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = base
+        tool = make_test_tool(tree, TestSettings(IMAGE, scripts))
+        current = tool(["test_code.py::test_value"])
+        baseline = tool(["test_code.py::test_value"], base=True)
+    assert current["totals"]["passed"] == 1, current
+    assert baseline["totals"]["failed"] == 1, baseline
+    assert baseline["tests"][0]["test"] == "test_code.py::test_value"
+    assert baseline["action_key"] == KEY
+    assert baseline["base_sha"] == base
+    assert git("rev-parse", "HEAD") == head
+    assert git("status", "--porcelain") == before
+    assert (root / "example_module.py").read_text() == "value = 'head'\n"

@@ -152,7 +152,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
 
-    def run_tests(tests: list[str] | None = None) -> dict:
+    def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
         """Run relative pytest paths/node IDs, or the whole suite when omitted."""
         selected = _selectors([] if tests is None else tests)
         key = None

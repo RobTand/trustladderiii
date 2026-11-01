@@ -554,6 +554,29 @@ def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):
     assert result.stderr.strip() == "tl3_workers: request failed"
 
 
+def test_check_base_schema_accepts_only_commit_ids(maker_request):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+
+    validator = Draft202012Validator(schema("maker-input"))
+    inputs = maker_request["inputs"]
+    for value in ("a" * 40, "b" * 64):
+        assert validator.is_valid({**inputs, "check_base_sha": value})
+    for value in ("HEAD", "-main", "A" * 40, "a" * 39, None):
+        assert not validator.is_valid({**inputs, "check_base_sha": value})
+
+
+def test_check_base_reaches_maker_test_tool(maker_request):
+    from tl3_workers.tools import Worktree
+
+    base = git(maker_request["worktree"], "rev-parse", "HEAD")
+    maker_request["inputs"]["check_base_sha"] = base
+    response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
+    with Worktree(maker_request["worktree"]) as tree:
+        maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
+        assert getattr(tree, "check_base_sha", None) == base
+
+
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
     observed = []
     settings = []
