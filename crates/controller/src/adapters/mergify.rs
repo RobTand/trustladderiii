@@ -1151,7 +1151,7 @@ impl GitHubTranslator for Translator {
             .rows
             .iter()
             .filter(|row| row.table == "repos")
-            .map(|row| serde_json::from_value(row.value.clone()))
+            .map(|row| crate::decode_stored(row.value.clone()))
             .collect::<std::result::Result<Vec<Repository>, _>>()?;
         match delivery {
             GitHubDelivery::Webhook(delivery) => match &delivery.event {

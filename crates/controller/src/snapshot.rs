@@ -58,7 +58,7 @@ pub(crate) fn decode(snapshot: &Snapshot) -> Result<World> {
         }
         value[table] = Value::Array(values);
     }
-    let world: World = serde_json::from_value(value)?;
+    let world: World = crate::decode_stored(value)?;
     if world
         .file_sets()
         .iter()

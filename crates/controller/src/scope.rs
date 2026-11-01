@@ -72,7 +72,7 @@ pub(crate) fn summary(snapshot: &Snapshot, node: NodeId) -> Result<Option<String
     else {
         return Ok(None);
     };
-    let paths: Vec<String> = serde_json::from_value(row.value["removed_paths"].clone())?;
+    let paths: Vec<String> = crate::decode_stored(row.value["removed_paths"].clone())?;
     Ok((!paths.is_empty()).then(|| {
         // Leave room for the writer's prose and scratch notice within GitHub's comment limit.
         const MAX_BYTES: usize = 8_192;
