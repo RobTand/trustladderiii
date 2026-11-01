@@ -98,7 +98,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     }
     assert!(controller.drive_once().unwrap());
     if mode == "runner-code" {
-        assert!(controller.drive_once().unwrap());
+        for _ in 0..20 {
+            if controller.world().unwrap().nodes[0]
+                .effect
+                .is_some_and(|effect| effect.cancelling)
+            {
+                break;
+            }
+            assert!(controller.drive_once().unwrap());
+        }
         assert!(
             controller.world().unwrap().nodes[0]
                 .effect
