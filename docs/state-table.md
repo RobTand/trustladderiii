@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44 and Q46. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q46 and Q29 amended. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -58,7 +58,7 @@ Kani proves the rules inductively. A harness builds an arbitrary world within th
 
 Because the starting world is arbitrary, a counter can start at any value. No harness has to replay a long history to reach a threshold. Thresholds are parameters, and harnesses check them at 1 and 2.
 
-For slice one, the bounds are 2 requests, or 3 after a new one arrives; 2 repos of 4 files each; W and the agent pool at most 2; and abstract commit ids. They rise to 3 or more requests when slice two lets a repo have more than one change in flight (Q10).
+For slice one, the bounds are 2 requests, or 3 after a new one arrives; 2 repos of 4 files each; W at most 3 and the agent pool at most 2; and abstract commit ids. Four-request gate harnesses cover W = 2 and W = 3, including full gates and waiters (Q29 amended, Rob 2026-10-31).
 
 **When the proofs run.** The proofs are a required Mergify check on any change that touches the kernel or its proofs, and a nightly run covers them all. Other changes skip them. Both run as Mergify CI on the fleet's runners, at most 8 proofs at a time (Q9, Q18).
 
@@ -336,7 +336,7 @@ A leaf waits here for a slot, holding nothing. Settle grants it a slot and its f
 - it isn't waiting on an incident;
 - the gate has room.
 
-In slice one, the gate grants first come, first served. A grant moves the leaf straight to its resume point.
+In slice one, the gate grants first come, first served among runnable leaves whose files are free. A file-blocked leaf keeps its ticket while disjoint leaves use free slots (Q29 amended, Rob 2026-10-31). A grant moves the leaf straight to its resume point.
 
 | Resume point | Next | Effects, in order |
 |---|---|---|
@@ -600,11 +600,13 @@ Every effect carries the controller's epoch, and executors refuse effects from a
 
 The gate is part of the world, so its changes are atomic with the step that makes them.
 
-**Slice one:** W is 1. Leaves are served first come, first served. A leaf gets its slot and all its files together.
+**Slice one (Q29 amended, Rob 2026-10-31):** W is configurable and must be at least 1. Rob approved 3 slots per repo once built and proven.
+
+A leaf is runnable when it is neither paused nor waiting on an incident, and all its files are free. Runnable leaves are served in ticket order. A leaf gets its slot and all its files together. A leaf waiting for a slot holds neither a slot nor files. A file-blocked leaf keeps its ticket while disjoint leaves use free slots. Planning is admitted when fewer than W leaves are waiting for a slot.
 
 **Slice two:**
 
-- W is 2 per repo to start, tuned later from measured capacity (Q29).
+- W remains configurable; the approved deployment target is 3 per repo (Q29 amended, Rob 2026-10-31).
 - A queued leaf is eligible when it isn't paused and isn't waiting on an incident. A leaf that isn't eligible reserves nothing.
 - A leaf is runnable when it is eligible and all its files are free.
 - Each free slot goes to the runnable leaf with the highest rank, with ties going to the older leaf. The rank is defined under "Status, bottlenecks and ranking". When two leaves want the same file, the one that unblocks more gets it (Q30, Q36, Q38).
@@ -719,7 +721,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 
 - every phase under "Node phases, slice one";
 - Rob's pause, resume, stop and request changes, by answer or by comment;
-- one gate with W of 1, first come, first served;
+- one gate with an approved W of 3, first come, first served among runnable leaves (Q29 amended, Rob 2026-10-31);
 - one model account, first come, first served;
 - the effect machine, progress credit, looks and stalls, and containment;
 - the plain status view, and code grades.

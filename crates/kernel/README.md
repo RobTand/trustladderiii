@@ -112,7 +112,8 @@ The bounds are:
 
 - two requests, or three after a new one arrives;
 - two repos of four files each;
-- W and the agent pool at most 2;
+- W at most 3 and the agent pool at most 2 in the general proofs;
+- four requests in six focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
 - counters below 2^40.
 
 These are simplifications against the state table, all deliberate:
@@ -153,7 +154,7 @@ Earlier runs:
 Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
 Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
 
-From the repo root, generate and submit all 81 proofs and the tests:
+From the repo root, generate and submit all 89 proofs and the tests:
 
 ```bash
 python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json
@@ -163,7 +164,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 32 GiB, and progress proofs reserve 24 GiB.
+Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 32 GiB, and progress proofs, including the focused gate progress proofs, reserve 24 GiB.
 `progress_from_queued` and `apply_new_request` reserve 32 GiB.
 These budgets use measurements from the production representation: reply proofs peaked at 21.8 GiB, progress proofs at 19.1 GiB and new requests at 27.9 GiB.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.

@@ -466,8 +466,8 @@ impl Config {
                 "sum must be less than limits.fit_tokens",
             ));
         }
-        if limits.w != 1 {
-            return Err(invalid("limits.w", "must be 1 in slice one (Q29)"));
+        if limits.w == 0 {
+            return Err(invalid("limits.w", "must be greater than zero"));
         }
         if limits.agent_pool == 0 {
             return Err(invalid("limits.agent_pool", "must be greater than zero"));

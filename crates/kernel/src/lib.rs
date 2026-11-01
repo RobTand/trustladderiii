@@ -2627,7 +2627,7 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// First come, first served: no one waiting in the same line holds an older ticket.
+/// Oldest runnable slot waiter, or oldest waiter for the agent pool.
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
@@ -2642,7 +2642,7 @@ fn first_in_line(w: &World, i: usize) -> bool {
         } else {
             !matches!(n.phase, Phase::Ready(_))
         };
-        if same_line && theirs < mine {
+        if same_line && theirs < mine && (!for_slot || slot_free(w, j)) {
             return false;
         }
     }
