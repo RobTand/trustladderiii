@@ -53,3 +53,30 @@ def test_report_record_count_stays_bounded(tmp_path, monkeypatch):
     outcomes = execution.run_tree(tmp_path, IMAGE, tests, report, Progress())
     assert outcomes == dict.fromkeys(tests, Outcome.NO_REPORT)
     assert len(report.read_bytes().splitlines()) <= 4 * len(tests) + 17
+
+
+def test_expansion_above_budget_is_a_plan_error(tmp_path, monkeypatch):
+    (tmp_path / 'test_many.py').write_text(
+        'import pytest\n@pytest.mark.parametrize("value", [1], '
+        'ids=["x" * (4 * 1024 * 1024)])\n'
+        'def test_many(value): assert value == 1\n')
+    monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
+    messages = {}
+    outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',),
+                                  tmp_path / 'report.jsonl', Progress(), messages=messages)
+    assert outcomes == {'test_many.py::test_many': Outcome.ERROR}
+    assert '4194304' in messages['test_many.py::test_many']
+    assert 'reduce' in messages['test_many.py::test_many']
+
+
+def test_report_line_above_four_mib_stays_bounded(tmp_path, monkeypatch):
+    script = tmp_path / 'flood.py'
+    script.write_text('print(\'{"event":"start","schema":1}\')\n'
+                      'print("x" * (4 * 1024 * 1024 + 1))\n')
+    monkeypatch.setattr(execution, 'container_command', lambda *args: [sys.executable, str(script)])
+    report = tmp_path / 'report.jsonl'
+    tests = ('test_many.py::test_many',)
+    outcomes = execution.run_tree(tmp_path, IMAGE, tests, report, Progress())
+    assert outcomes == dict.fromkeys(tests, Outcome.NO_REPORT)
+    assert report.stat().st_size < 4 * 1024 * 1024
