@@ -352,7 +352,10 @@ impl Respond for Api {
                         &self.fixture.remote,
                         &["rev-parse", body["head"].as_str().unwrap()],
                     );
-                    let base = git(&self.fixture.remote, &["rev-parse", body["base"].as_str().unwrap()]);
+                    let base = git(
+                        &self.fixture.remote,
+                        &["rev-parse", body["base"].as_str().unwrap()],
+                    );
                     s.pull = Some(
                         json!({"body":body["body"],"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
@@ -652,6 +655,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     ];
     config.models.key_file = root.path().join("fixture-key");
     fs::write(&config.models.key_file, "fixture").unwrap();
+    if mode == "repo-conventions" {
+        let mut adapter = f.adapter().with_repositories(&config.github.repos);
+        adapter
+            .execute(&f.delivery(EffectKind::PrepareWorktree, 999))
+            .expect("configured master base must prepare without a main branch");
+    }
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
@@ -664,10 +673,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             mode.into(),
         ),
     );
-    registry.register(Upstream::Worktrees, f.adapter().with_repositories(&config.github.repos));
+    registry.register(
+        Upstream::Worktrees,
+        f.adapter().with_repositories(&config.github.repos),
+    );
     registry.register(
         Upstream::GitHub,
-        server.adapter(&root.path().join("github"), 0).with_repositories(&config.github.repos),
+        server
+            .adapter(&root.path().join("github"), 0)
+            .with_repositories(&config.github.repos),
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
@@ -783,7 +797,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert_eq!(pull["base"]["ref"], "master");
         assert!(pull["body"].as_str().unwrap().contains("Closes #42"));
         let base = git(&f.remote, &["rev-parse", "master"]);
-        assert_eq!(git(&f.remote, &["merge-base", &base, "prismabuild-42-tl3-0"]), base);
+        assert_eq!(
+            git(&f.remote, &["merge-base", &base, "prismabuild-42-tl3-0"]),
+            base
+        );
     }
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
         .as_str()

@@ -111,7 +111,9 @@ fn adapter(error: impl Into<Error>) -> Error {
 }
 
 impl Real {
-    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self { self }
+    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self {
+        self
+    }
 
     pub fn new(root: impl AsRef<Path>, epoch: i64) -> Result<Self> {
         fs::create_dir_all(root.as_ref())?;
