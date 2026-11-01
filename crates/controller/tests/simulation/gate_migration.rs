@@ -99,11 +99,11 @@ fn seed_with_look(
             .all(|n| matches!(n.phase, Phase::Planning { .. }))
     );
     for node in 0..count {
-        let generation = c.world().unwrap().nodes[node].generation;
+        let generation = c.world().unwrap().nodes[node as usize].generation;
         c.observe(
             &format!("plan-{node}"),
             Observation::Plan {
-                node: NodeId(node as u64),
+                node: NodeId(node),
                 generation,
                 paths: vec![format!("leaf-{node}.rs")],
                 fits: true,
