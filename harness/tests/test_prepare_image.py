@@ -1,9 +1,9 @@
 """Trusted image profiles must install the dependency handoff, not the subject."""
 import importlib.util
 from pathlib import Path
+import shlex
 import subprocess
 import sys
-import shlex
 
 import pytest
 

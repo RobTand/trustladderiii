@@ -23,10 +23,13 @@ def main():
     if args.profile in ("prismaquant", "tessera"):
         system = "python3.14-dev gcc g++ make libgomp1 bubblewrap"
         requirements = (Path(__file__).with_name("images") / f"{args.profile}.txt").read_text()
+        torch, = (line for line in requirements.splitlines() if line.startswith("torch=="))
+        requirements = "\n".join(line for line in requirements.splitlines() if line != torch) + "\n"
         pip_install = f"""cat > /tmp/tl3-requirements.txt <<'TL3_REQUIREMENTS'
 {requirements}TL3_REQUIREMENTS
-/opt/tl3/bin/python -m pip install --no-cache-dir setuptools==80.10.2 wheel==0.48.0
-/opt/tl3/bin/python -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu --no-build-isolation --no-deps -r /tmp/tl3-requirements.txt
+/opt/tl3/bin/python -m pip install --no-cache-dir --index-url https://pypi.org/simple setuptools==80.10.2 wheel==0.48.0
+/opt/tl3/bin/python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --no-deps {torch}
+/opt/tl3/bin/python -m pip install --no-cache-dir --index-url https://pypi.org/simple --no-build-isolation --no-deps -r /tmp/tl3-requirements.txt
 rm /tmp/tl3-requirements.txt"""
     install = f"""
 set -eu
