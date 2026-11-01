@@ -21,7 +21,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             // A path filter skipped the required workflow; another workflow ran.
             state.head_checks = vec![check_run(&head, 902, "Lint", "completed", 15368)];
         }
-        state.suites = json!([suite(&head, 801, "completed"), suite(&head, 802, "in_progress")]);
+        state.suites = json!([
+            suite(&head, 801, "completed"),
+            suite(&head, 802, "in_progress")
+        ]);
     }
     deliver_suite(&mut controller, &api, &head, 801);
     assert!(
@@ -138,7 +141,10 @@ fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Contro
             break;
         }
     }
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Publishing
+    );
     assert_eq!(
         api.state.lock().unwrap().posts,
         0,
@@ -208,7 +214,11 @@ fn missing_incidents(controller: &mut Controller) -> Vec<tl3_store::WorldRow> {
 
 fn only_incident(controller: &mut Controller) -> tl3_store::WorldRow {
     let mut incidents = missing_incidents(controller);
-    assert_eq!(incidents.len(), 1, "one deduplicated missing-check incident");
+    assert_eq!(
+        incidents.len(),
+        1,
+        "one deduplicated missing-check incident"
+    );
     incidents.pop().unwrap()
 }
 
@@ -221,7 +231,11 @@ fn assert_waiting(controller: &mut Controller, api: &Server, before: &tl3_kernel
             .is_some_and(|effect| effect.kind == EffectKind::Enqueue && !effect.cancelling),
         "the enqueue stays pending"
     );
-    assert_eq!(api.state.lock().unwrap().posts, 0, "required checks still gate the enqueue");
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        0,
+        "required checks still gate the enqueue"
+    );
     assert_no_charge(node, before);
 }
 
@@ -236,7 +250,10 @@ fn assert_no_charge(node: &tl3_kernel::Node, before: &tl3_kernel::Node) {
     assert_eq!(node.credit, before.credit, "no credit is charged");
     assert_eq!(node.round, before.round);
     assert_eq!(node.attempt, before.attempt);
-    assert_eq!(node.fx_failures, before.fx_failures, "no failure is counted");
+    assert_eq!(
+        node.fx_failures, before.fx_failures,
+        "no failure is counted"
+    );
     assert_eq!(node.fx_incidents, before.fx_incidents);
     assert!(!node.waiting_incident);
 }

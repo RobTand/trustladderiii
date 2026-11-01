@@ -636,8 +636,7 @@ impl Controller {
         }
         // Setup gaps describe current health. A fresh read after a clear must
         // not be suppressed by the receipt for an earlier observation.
-        let key = if matches!(&observation, Observation::Queue(fact) if matches!(fact.evidence, adapters::mergify::Evidence::ChecksUnavailable { .. }))
-        {
+        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
             format!("{key}:{}", snapshot.revision.get())
         } else {
             key.to_owned()
@@ -662,10 +661,7 @@ impl Controller {
         observation: &Observation,
     ) -> Result<()> {
         if let Observation::Queue(fact) = observation
-            && matches!(
-                fact.evidence,
-                adapters::mergify::Evidence::ChecksUnavailable { .. }
-            )
+            && fact.setup()
         {
             let identity = fact.identity();
             if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
@@ -2009,6 +2005,30 @@ impl Controller {
                     Evidence::ChecksUnavailable { permissions } => {
                         self.check_setup_incident(snapshot, commit, node, &permissions)?;
                         commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                    // Q52 rows: neither one reaches the kernel, so no failure or credit is charged.
+                    Evidence::CheckMissing { head, required } => {
+                        let enqueue_pending = current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            });
+                        if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
+                        {
+                            self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::CheckReported { head, required } => {
+                        let id = looks::missing_check_incident_id(node, &head, &required);
+                        if let Some(row) = snapshot.rows.iter().find(|row| {
+                            row.table == "incidents" && row.id == id && row.value["open"] == true
+                        }) {
+                            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
+                            incident.open = false;
+                            commit.rows.push(put("incidents", id, json!(incident)));
+                        }
                         return Ok(None);
                     }
                     Evidence::Merged {

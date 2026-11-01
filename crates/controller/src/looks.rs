@@ -652,10 +652,7 @@ impl Controller {
                     let mut setup_gap = false;
                     for observation in &completion.observations {
                         if let Observation::Queue(fact) = observation
-                            && matches!(
-                                fact.evidence,
-                                crate::adapters::mergify::Evidence::ChecksUnavailable { .. }
-                            )
+                            && fact.setup()
                             && !fact.recorded(snapshot)?
                         {
                             setup_gap = true;
@@ -1640,6 +1637,21 @@ pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String 
     format!("required-checks:{}:{gap}", node.0)
 }
 
+/// One missing-check incident per head, context and expected app (Q52).
+pub(crate) fn missing_check_incident_id(
+    node: NodeId,
+    head: &str,
+    required: &crate::adapters::mergify::RequiredCheck,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = serde_json::to_string(&(head, required)).expect("serializable check");
+    format!(
+        "missing-check:{}:{:x}",
+        node.0,
+        Sha256::digest(gap.as_bytes())
+    )
+}
+
 impl Controller {
     pub(crate) fn check_setup_incident(
         &self,
@@ -1664,7 +1676,52 @@ impl Controller {
         node: NodeId,
         permission: &str,
     ) -> Result<()> {
-        let id = check_setup_incident_id(node, permission);
+        let summary = format!(
+            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
+            permission
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            check_setup_incident_id(node, permission),
+            summary,
+        )
+    }
+
+    /// Q52: a nonblocking repo setup incident; the enqueue stays pending and nothing is charged.
+    pub(crate) fn missing_check_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        head: &str,
+        required: &crate::adapters::mergify::RequiredCheck,
+    ) -> Result<()> {
+        let app = required
+            .app
+            .map_or_else(|| "any app".to_owned(), |app| format!("app {app}"));
+        let summary = format!(
+            "Required check `{}` from {app} has not reported on head {head}, and every check suite on that head has completed. A workflow path filter may skip it, or the requirement may name the wrong app. The enqueue waits without charging credit; this clears when the check reports.",
+            required.context
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            missing_check_incident_id(node, head, required),
+            summary,
+        )
+    }
+
+    fn setup_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        id: String,
+        summary: String,
+    ) -> Result<()> {
         if snapshot
             .rows
             .iter()
@@ -1675,10 +1732,6 @@ impl Controller {
         // Reopening keeps the incident ID but needs a new notice delivery.
         let key = format!("incident:{id}:{}", snapshot.revision.get());
         let request = crate::request(snapshot, node)?;
-        let summary = format!(
-            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
-            permission
-        );
         let signature = IncidentSignature {
             upstream: Upstream::Mergify,
             class: "setup".into(),
