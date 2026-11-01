@@ -831,13 +831,24 @@ fn planning_overhead_must_leave_room_under_the_fit_limit() {
 }
 
 #[test]
-fn gate_width_accepts_positive_multi_slot_limits() {
-    for w in [1, 2, 3, 8, 255] {
+fn gate_width_accepts_approved_limits() {
+    for w in [1, 2, 3] {
         let mut document: Value = EXAMPLE.parse().unwrap();
         document["limits"]["w"] = Value::Integer(w);
         let config = Config::parse(&toml::to_string(&document).unwrap())
-            .expect("Q29 amended permits positive gate widths");
+            .expect("Q29 amended permits gate widths one through three");
         assert_eq!(i64::from(config.limits.w), w);
+    }
+}
+
+#[test]
+fn gate_width_rejects_values_outside_approval() {
+    for w in [0, 4, 8, 255, 256, i64::from(u32::MAX)] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["limits"]["w"] = Value::Integer(w);
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();
+        assert!(error.to_string().contains("limits.w"), "{w}: {error}");
+        assert!(error.to_string().contains("1..=3"), "{w}: {error}");
     }
 }
 

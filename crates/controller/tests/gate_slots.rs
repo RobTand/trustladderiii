@@ -158,7 +158,7 @@ fn w2_gate_uses_both_slots_and_preserves_waiters() {
 }
 
 #[test]
-fn w3_disjoint_leaves_pass_a_file_blocked_waiter_without_taking_its_place() {
+fn w3_older_waiter_blocks_younger_disjoint_leaves() {
     let mut r = GateRun(World::new(&[3], 8));
     let holder = r.request();
     r.plan(holder, 0);
@@ -166,16 +166,16 @@ fn w3_disjoint_leaves_pass_a_file_blocked_waiter_without_taking_its_place() {
     r.plan(waiter, 0);
     let place = r.0.nodes[waiter.0 as usize].ticket;
     for file in [1, 2] {
-        let disjoint = r.request();
-        r.plan(disjoint, file);
+        let younger = r.request();
+        r.plan(younger, file);
         assert!(
-            r.0.nodes[disjoint.0 as usize].holds,
-            "a file wait must leave the other slots available"
+            !r.0.nodes[younger.0 as usize].holds,
+            "today's ticket order blocks younger leaves behind the older waiter"
         );
     }
-    assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 3);
+    assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 1);
     assert_eq!(r.0.nodes[waiter.0 as usize].ticket, place);
-    assert!(!r.0.nodes[waiter.0 as usize].holds);
     r.stop(holder);
+    assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 3);
     assert!(r.0.nodes[waiter.0 as usize].holds);
 }
