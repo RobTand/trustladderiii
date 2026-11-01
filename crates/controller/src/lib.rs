@@ -53,6 +53,8 @@ pub enum Error {
     Config(#[from] tl3_config::Error),
     #[error("invalid controller data: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("invalid stored controller data: {0}")]
+    StoredJson(#[source] serde_json::Error),
     #[error("controller I/O failed")]
     Io(#[from] std::io::Error),
     #[error("upstream adapter failed: {0}")]
@@ -79,6 +81,10 @@ pub enum Error {
     },
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
+}
+
+fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(Error::StoredJson)
 }
 
 impl Error {
@@ -705,7 +711,7 @@ impl Controller {
             .iter()
             .filter(|r| r.table == "adoption_questions")
         {
-            let question = serde_json::from_value(row.value["question"].clone())?;
+            let question = decode_stored(row.value["question"].clone())?;
             hook(Boundary::BeforeDispatch, &row.id);
             let result = self
                 .adapters
@@ -736,34 +742,12 @@ impl Controller {
         {
             match self.retire_effect(&snapshot, row) {
                 Ok(()) => return Ok(true),
+                Err(error) if !input_errors::recoverable(&error) => return Err(error),
                 Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
             }
         }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
-            let observation: Observation = match serde_json::from_value(row.value.clone()) {
-                Ok(observation) => observation,
-                Err(error) => {
-                    snapshot::decode(&snapshot)?;
-                    let mut commit =
-                        Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-                    self.input_failed(
-                        &snapshot,
-                        &format!("observation:{}", row.id),
-                        None,
-                        "An incoming update",
-                        None,
-                        executor::Upstream::GitHub,
-                        error.into(),
-                        &mut commit,
-                    )?;
-                    commit.rows.push(RowChange::Delete {
-                        table: "inbox".into(),
-                        id: row.id.clone(),
-                    });
-                    self.store.commit(&commit)?;
-                    return Ok(true);
-                }
-            };
+            let observation: Observation = decode_stored(row.value.clone())?;
             let mut waiting_for_queue = false;
             if let Observation::Queue(fact) = &observation
                 && fact.needs_queue_ack()
@@ -1006,7 +990,7 @@ impl Controller {
             else {
                 continue;
             };
-            let mut delivery: Delivery = serde_json::from_value(row.value.clone())?;
+            let mut delivery: Delivery = decode_stored(row.value.clone())?;
             let world = snapshot::decode(&snapshot)?;
             let node = &world.nodes[delivery
                 .node()
@@ -1116,7 +1100,7 @@ impl Controller {
     }
 
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
-        let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+        let delivery: Delivery = decode_stored(row.value.clone())?;
         if executor::upstream(delivery.output) == executor::Upstream::Mergify {
             self.adapters
                 .adapter(&delivery)?
@@ -1212,7 +1196,7 @@ impl Controller {
             .iter()
             .find(|e| e.key == key)
             .ok_or(Error::Invalid("completion has no pending effect"))?;
-        let delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+        let delivery: Delivery = decode_stored(effect.payload.clone())?;
         let mut commit = Commit::new(
             format!("completion:{key}:{}", effect.updated_revision.get()),
             json!(&completion),
@@ -1472,7 +1456,7 @@ impl Controller {
                 _ => None,
             });
             let request: Request = match binding {
-                Some(value) => serde_json::from_value(value)?,
+                Some(value) => decode_stored(value)?,
                 None => request(snapshot, node)?,
             };
             let pull_request = snapshot
@@ -1504,7 +1488,7 @@ impl Controller {
                 && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
                 && let Some(run) = materials.get("check_run")
             {
-                let run: adapters::prismabuild::CheckRun = serde_json::from_value(run.clone())?;
+                let run: adapters::prismabuild::CheckRun = decode_stored(run.clone())?;
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(&run)));
@@ -1626,7 +1610,7 @@ impl Controller {
                     app_login.as_deref(),
                 );
                 if class == "queue_unfinished"
-                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)
+                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
                 {
                     summary.push(' ');
                     summary.push_str(&detail);
@@ -1706,7 +1690,7 @@ impl Controller {
             .map(|(index, _)| NodeId(index as u64))
             .collect();
         let closed_fact = |value: &Value| -> Result<bool> {
-            let fact: adapters::mergify::QueueFact = serde_json::from_value(value.clone())?;
+            let fact: adapters::mergify::QueueFact = decode_stored(value.clone())?;
             Ok(fact
                 .node(snapshot)?
                 .is_some_and(|node| closed.contains(&node)))
@@ -1810,7 +1794,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "incidents" && r.id == id)
                 .map(|row| -> Result<bool> {
-                    let incident: looks::Incident = serde_json::from_value(row.value.clone())?;
+                    let incident: looks::Incident = decode_stored(row.value.clone())?;
                     let Some(node) = incident.node else {
                         return Ok(incident
                             .input_failure
@@ -1857,7 +1841,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
         {
-            let mut incident: looks::Incident = serde_json::from_value(row.value.clone())?;
+            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
             if incident.blocking {
                 commit.rows.push(put(
                     "inbox",
@@ -2094,7 +2078,7 @@ impl Controller {
                 let mut run = if let Some(materials) = self.store.worker_materials(&id)?
                     && let Some(run) = materials.get("check_run")
                 {
-                    serde_json::from_value::<adapters::prismabuild::CheckRun>(run.clone())?
+                    decode_stored::<adapters::prismabuild::CheckRun>(run.clone())?
                 } else {
                     let brief = self
                         .store
@@ -2110,7 +2094,7 @@ impl Controller {
                         base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
-                        plan: serde_json::from_value(inputs["plan"]["checks"].clone())?,
+                        plan: decode_stored(inputs["plan"]["checks"].clone())?,
                     }
                 };
                 run.repository = repository;
@@ -2766,7 +2750,7 @@ fn stored_repositories(snapshot: &Snapshot) -> Result<Vec<Repository>> {
             .id
             .parse::<usize>()
             .map_err(|_| Error::Invalid("invalid repository index"))?;
-        let repository: Repository = serde_json::from_value(row.value.clone())?;
+        let repository: Repository = decode_stored(row.value.clone())?;
         if repositories.insert(index, repository).is_some() {
             return Err(Error::Invalid("duplicate repository index"));
         }
@@ -2799,7 +2783,7 @@ fn latest_request<'a>(
 }
 
 fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {
-    serde_json::from_value(
+    decode_stored(
         snapshot
             .rows
             .iter()
@@ -2808,7 +2792,6 @@ fn request(snapshot: &Snapshot, node: NodeId) -> Result<Request> {
             .value
             .clone(),
     )
-    .map_err(Into::into)
 }
 fn put(table: &str, id: String, value: Value) -> RowChange {
     RowChange::Put {
@@ -2819,7 +2802,7 @@ fn put(table: &str, id: String, value: Value) -> RowChange {
 }
 
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {
-    let mut delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+    let mut delivery: Delivery = decode_stored(effect.payload.clone())?;
     delivery.epoch = effect.epoch.get();
     delivery.checks = check_run(snapshot, delivery.node(), delivery.head_sha.as_deref())?;
     delivery.pull_request = snapshot
@@ -2892,7 +2875,7 @@ fn observation_upstream(
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
-            .map(|r| serde_json::from_value::<looks::AllowanceState>(r.value.clone()))
+            .map(|r| decode_stored::<looks::AllowanceState>(r.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .find(|s| {
@@ -2941,9 +2924,8 @@ fn check_run(
         .rows
         .iter()
         .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
-        .map(|r| serde_json::from_value(r.value.clone()))
+        .map(|r| decode_stored(r.value.clone()))
         .transpose()
-        .map_err(Into::into)
 }
 
 fn commit_sha(snapshot: &Snapshot, head: Option<HeadId>) -> Option<&str> {

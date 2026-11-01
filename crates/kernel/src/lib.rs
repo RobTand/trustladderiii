@@ -2677,24 +2677,41 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// First come, first served: no one waiting in the same line holds an older ticket.
+/// Older slot waiters block runnable or overlapping younger leaves.
+/// The agent pool retains strict ticket order.
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
-    let for_slot = matches!(me.phase, Phase::Ready(_));
-    for (j, n) in w.nodes.iter().enumerate() {
-        if j == i {
+    if !matches!(me.phase, Phase::Ready(_)) {
+        return !w.nodes.iter().any(|n| {
+            !matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some_and(|theirs| theirs < mine)
+        });
+    }
+    let mut first_runnable = mine;
+    for (j, waiter) in w.nodes.iter().enumerate() {
+        let Some(theirs) = waiter.ticket else {
+            continue;
+        };
+        if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
             continue;
         }
-        let Some(theirs) = n.ticket else { continue };
-        let same_line = if for_slot {
-            matches!(n.phase, Phase::Ready(_)) && n.repo == me.repo
-        } else {
-            !matches!(n.phase, Phase::Ready(_))
-        };
-        if same_line && theirs < mine {
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) {
             return false;
         }
+        if theirs >= first_runnable || !slot_free(w, j) {
+            continue;
+        }
+        // The oldest candidate with free files and no earlier overlap is
+        // first in line. It blocks every younger ticket without recursion.
+        let older_overlap = w.nodes.iter().any(|older| {
+            matches!(older.phase, Phase::Ready(_))
+                && older.repo == me.repo
+                && older.ticket.is_some_and(|ticket| ticket < theirs)
+                && !w.footprints_disjoint(older.footprint, waiter.footprint)
+        });
+        if !older_overlap {
+            first_runnable = theirs;
+        }
     }
-    true
+    first_runnable == mine
 }

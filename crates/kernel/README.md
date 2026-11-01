@@ -114,7 +114,7 @@ The bounds are:
 - two requests, or three after a new one arrives;
 - two repos of four files each;
 - W at most 3 and the agent pool at most 2 in the general proofs;
-- four requests in fourteen focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
+- four requests in sixteen focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
 - counters below 2^40.
 
 These are simplifications against the state table, all deliberate:
@@ -155,7 +155,7 @@ Earlier runs:
 Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
 Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
 
-From the repo root, generate and submit all 104 proofs and the tests:
+From the repo root, generate and submit all 106 proofs and the tests:
 
 ```bash
 python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json
@@ -192,3 +192,13 @@ incident, and failures before the enqueue step leave the node unchanged. Their
 covers include a pending enqueue, a free fix, a paid attempt and exhausted credit.
 The existing apply, acknowledgement, advance and Publishing progress proofs cover
 cancellation and settlement around those transitions.
+
+Q48 (Rob, 2026-11-01) has two per-leaf progress proofs at W=2 and W=3.
+They cover four leaves: an unpaused oldest waiter, its last conflicting holder,
+and two younger leaves. The holder completes through the real stop and
+teardown paths. Visiting younger leaves first cannot take the older waiter's
+newly available slot, even when a disjoint overtaker remains active.
+This is a bounded progress proof with successful holder completion, not a
+proof of unbounded temporal liveness. Covers require a disjoint leaf to pass
+a waiter blocked by an older overlapping waiter, then the oldest waiter to
+progress when its blocking holder completes. Rob approved Q48 on 2026-11-01.

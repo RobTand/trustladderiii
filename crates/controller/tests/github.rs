@@ -122,6 +122,7 @@ struct ApiState {
     rejected_question_posts: usize,
     forbidden_filing: bool,
     intake_target_missing: bool,
+    intake_target_status: Option<u16>,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -169,6 +170,11 @@ impl Respond for Api {
             && original_path.starts_with("/repos/owner/sandbox/issues/12")
         {
             return ResponseTemplate::new(404);
+        }
+        if let Some(status) = state.intake_target_status
+            && original_path.starts_with("/repos/owner/sandbox/issues/12")
+        {
+            return ResponseTemplate::new(status);
         }
         let mapped_path = original_path
             .replace(

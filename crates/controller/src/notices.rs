@@ -51,7 +51,7 @@ impl Controller {
                 .iter()
                 .filter(|r| r.table == "incidents" && r.value["post_key"] == delivery.key)
             {
-                let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+                let mut incident: Incident = crate::decode_stored(row.value.clone())?;
                 incident.open = true;
                 incident.summary.push_str(&format!(
                     " The incident post failed, with class {}.",
@@ -158,7 +158,7 @@ impl Controller {
         else {
             return Ok(false);
         };
-        let failed: FailedNotice = serde_json::from_value(row.value.clone())?;
+        let failed: FailedNotice = crate::decode_stored(row.value.clone())?;
         commit.rows.push(RowChange::Delete {
             table: "notice_failures".into(),
             id: row.id.clone(),

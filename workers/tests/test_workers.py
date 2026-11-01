@@ -164,12 +164,12 @@ def test_model_settings_and_key_are_forwarded_without_network(tmp_path, request_
 
 
 @pytest.mark.parametrize("role", ["ingest", "audit"])
-def test_only_tl3_prompt_and_no_tools_reach_model(request_doc, role, monkeypatch):
+def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypatch):
     observed = []
 
     class InspectModel(FakeMessagesListChatModel):
         def bind_tools(self, tools, **kwargs):
-            assert tools == []
+            assert {tool.name for tool in tools} == {"list", "read", "glob", "grep"}
             return self
 
         def _generate(self, messages, **kwargs):
@@ -311,3 +311,52 @@ def test_announced_quota_ends_without_counting_a_failed_run(tmp_path, request_do
     assert result.events[0]["role"] == request_doc["role"]
     assert result.events[0]["reset_ms"] >= before + 600_000
     assert "secret provider text" not in result.stderr
+
+
+@pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])
+def test_large_repository_explored_with_tools(tmp_path, request_doc, role, reply, monkeypatch):
+    observed = []
+    source = "def greeting(): return 'source-only-never-inline'\n"
+    (tmp_path / "greeting.py").write_text(source)
+    for index in range(34):
+        (tmp_path / f"large-{index}.txt").write_bytes(b"x" * 1_048_576)
+
+    class InspectModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    calls = [{"name": name, "args": args, "id": name, "type": "tool_call"}
+             for name, args in [("list", {}), ("glob", {"pattern": "*.py"}),
+                                ("grep", {"pattern": "greeting"}),
+                                ("read", {"path": "greeting.py"})]]
+    monkeypatch.setattr(runtime, "create_model", lambda request: InspectModel(responses=[
+        AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(reply)),
+    ]))
+    request_doc["role"] = role
+    if role == "audit":
+        request_doc["inputs"]["ingest"] = BRIEF
+    events = []
+    runtime.run(request_doc, events.append)
+    initial_prompt = observed[0][1].text
+    assert "source-only-never-inline" not in initial_prompt
+    assert "materials" not in json.loads(initial_prompt)["repo"]
+    results = [m for m in observed[-1] if m.type == "tool"]
+    assert len(results) == 4
+    assert all(m.status == "success" for m in results), results
+    assert any("source-only-never-inline" in m.text for m in results)
+    assert events[-1]["reply"] == reply
+    assert (tmp_path / "greeting.py").read_text() == source
+
+
+def test_repository_inputs_reject_inlined_contents(request_doc):
+    request_doc["inputs"]["repo"]["materials"] = [{"path": "greeting.py", "content": "source"}]
+    for role in ("ingest", "audit"):
+        inputs = copy.deepcopy(request_doc["inputs"])
+        if role == "audit":
+            inputs["ingest"] = BRIEF
+        with pytest.raises(ValidationError):
+            validate(role + "-input", inputs)

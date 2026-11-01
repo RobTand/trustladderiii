@@ -170,6 +170,10 @@ fn main() {
         ("agent_capacity_crash_after_commit", |s| {
             gate_migration::pool_crash(s, "AfterCommit")
         }),
+        (
+            "q48_capacity_ticket_order",
+            gate_migration::q48_ticket_order,
+        ),
         ("gate_capacity_reopen", gate_migration::reopen),
         ("gate_capacity_downgrade", gate_migration::downgrade),
         (
@@ -213,6 +217,7 @@ fn main() {
         ("stale_epoch_effects", stale_epoch_effects),
         ("invalid_footprints", invalid_footprints),
         ("status_is_read_only", status_is_read_only),
+        ("status_nodeless_incidents", status_nodeless_incidents),
         ("status_cli_incident_commands", |settings| {
             status_incident_commands(settings, false, false)
         }),
@@ -2622,5 +2627,36 @@ fn fix_round_preserves_uncommitted_work(settings: &tl3_config::Store) {
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
         Phase::Closed(Outcome::Merged)
+    );
+}
+
+fn status_nodeless_incidents(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(settings, root.path());
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = Commit::new("global-incidents", json!({}), &snapshot);
+    for (id, open) in [("input-open", true), ("input-closed", false)] {
+        commit.rows.push(RowChange::Put { table: "incidents".into(), id: id.into(), value: json!({"id":id,"node":null,"open":open,"needs_rob":false,"blocking":false,"summary":"Input <failed>\n\u{202e}","signature":{"upstream":"GitHub","class":"setup"}}) });
+    }
+    store.commit(&commit).unwrap();
+    let before = c.snapshot().unwrap();
+    let config = config_file(settings, root.path());
+    let text = cli_status(&config);
+    let html = status::render_html(&status::load(&mut Reader::open(settings).unwrap()).unwrap());
+    for output in [&text, &html] {
+        assert!(
+            output.contains("clear incident input-open"),
+            "nodeless open incidents must be visible: {output}"
+        );
+        assert!(!output.contains("input-closed"));
+        assert!(!output.contains('\u{202e}'));
+    }
+    assert!(text.contains("Input <failed>"));
+    assert!(html.contains("Input &lt;failed&gt;"));
+    assert_eq!(
+        c.snapshot().unwrap(),
+        before,
+        "status must remain read only"
     );
 }
