@@ -897,6 +897,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    tl3_controller::memory::flush(&mut store, &config.hindsight)
+        .expect("publishing fixture must acknowledge memories instead of retrying a closed port");
     if mode == "repo-conventions" {
         let state = server.api.state.lock().unwrap();
         let pull = state.pull.as_ref().unwrap();

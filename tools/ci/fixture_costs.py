@@ -11,6 +11,8 @@ import rust_gate
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repeats', type=int, default=3)
+    parser.add_argument('--only', choices=('production', 'scope', 'looks', 'publishing',
+                                          'tl3_controller', 'rest'))
     parser.add_argument('--report', type=Path, default=Path('target/fixture-costs.json'))
     args = parser.parse_args()
     if args.repeats < 1:
@@ -24,6 +26,8 @@ def main():
          ['adapters::worktrees::tests::github_installation_and_synchronous_token_bridge', '--exact']),
         ('tl3-github', 'rest', False, []),
     ]
+    if args.only:
+        targets = [target for target in targets if target[1] == args.only]
     binaries = []
     for package, target, custom, arguments in targets:
         command = ['cargo', 'test', '--locked', '-p', package,
