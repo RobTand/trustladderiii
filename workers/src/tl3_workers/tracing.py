@@ -180,8 +180,10 @@ class Capture:
         self.spans = []
         # Reserve space for root content, tags and protobuf framing. Child
         # content stops consuming redaction work once this shared budget is full.
-        self.remaining = TRACE_BYTES - 32768
+        self.remaining = TRACE_BYTES - PAYLOAD_BYTES
+        self.content_remaining = TRACE_BYTES // 2
         self.truncated = False
+        self.omitted = 0
         self.dropped = False
         capture = self
         logger = logging.getLogger('mlflow')
@@ -196,13 +198,21 @@ class Capture:
                         break
                     reserve = 2 * PAYLOAD_BYTES if span.parent else 0
                     available = max(0, capture.remaining - reserve)
+                    limit = max(0, (available - 2048) // 4)
+                    if span.parent:
+                        limit = min(limit, capture.content_remaining // 4)
                     safe = safe_span(span, capture.redactor, capture.role, capture.model,
-                                     payload_limit=max(0, (available - 2048) // 4))
+                                     payload_limit=limit)
                     if safe.ByteSize() > available:
                         capture.truncated = True
+                        capture.omitted += 1
                         continue
                     capture.remaining -= safe.ByteSize()
-                    capture.truncated |= available < 4 * PAYLOAD_BYTES + 2048
+                    if span.parent:
+                        content = sum(attr.ByteSize() for attr in safe.attributes
+                                      if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'})
+                        capture.content_remaining = max(0, capture.content_remaining - content)
+                    capture.truncated |= limit < PAYLOAD_BYTES
                     capture.spans.append(safe)
                 return SpanExportResult.SUCCESS
 
@@ -247,11 +257,16 @@ class Capture:
         root.status.code = 1 if outcome == 'succeeded' else 2
         if self.truncated:
             root.attributes.add(key='tl3.trace.truncated').value.bool_value = True
+        if self.omitted:
+            root.attributes.add(key='tl3.trace.omitted_spans').value.int_value = self.omitted
         for key, value in self.tags.items():
             root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = self.redactor.text(value)[:512]
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
         packet = ExportTraceServiceRequest()
         packet.resource_spans.add().scope_spans.add().spans.extend(self.spans)
+        if packet.ByteSize() > TRACE_BYTES:
+            failure()
+            return
         # An unlinked file bounds handoff and avoids pipe backpressure. The export
         # child owns network waits; the worker never waits for it, even at shutdown.
         with tempfile.TemporaryFile() as payload:

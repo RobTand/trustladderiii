@@ -265,7 +265,7 @@ def test_tool_arguments_results_and_model_tool_calls_are_bounded(request_doc, tm
                                                                monkeypatch, exporters, receiver):
     uri, packets = receiver
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
-    body = '文' * 40000 + '\ntool-result-marker'
+    body = 'tool-result-marker ' + '文' * 40000
     (tmp_path / 'large.txt').write_text(body)
     model = FakeMessagesListChatModel(responses=[
         AIMessage(content='', tool_calls=[{'name': 'read', 'args': {'path': 'large.txt'}, 'id': 'read1'}]),
@@ -537,7 +537,8 @@ def test_trace_has_total_budget_and_keeps_root(request_doc, exporters, receiver)
     with observe(request_doc):
         for index in range(120):
             with mlflow.start_span(name=f'model-{index}', span_type='CHAT_MODEL') as span:
-                span.set_inputs({'messages': [{'content': 'history-line\n' * 10000 + f'latest-{index}'}]})
+                span.set_inputs({'messages': [{'content': 'history-line\n' * 10000 + f'latest-{index}'}
+                                              for _ in range(20)]})
                 span.set_outputs({'content': 'reply-line\n' * 10000 + f'reply-{index}'})
         record_reply({'brief': 'final-readable-reply'})
     for child in exporters:
@@ -545,6 +546,7 @@ def test_trace_has_total_budget_and_keeps_root(request_doc, exporters, receiver)
     assert len(packets[-1][2]) <= 1024 * 1024, 'total trace export must fit one MiB'
     spans = exported_spans(packets)
     assert len(spans) >= 121, 'budget keeps span metadata'
+    assert any('trace content budget exhausted' in json.dumps(span.inputs) for span in spans)
     root = next(span for span in spans if span.parent_id is None)
     assert root.inputs and root.outputs['brief'] == 'final-readable-reply'
     assert root.get_attribute('tl3.trace.truncated') is True
