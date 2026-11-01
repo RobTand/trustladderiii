@@ -519,6 +519,13 @@ will be recognized. It covers sensitive field names and credential patterns,
 and the runtime supplies the already-loaded model key without tracing opening
 credential files. Headers, provider metadata and raw exceptions are omitted.
 
+What redaction does not catch: a secret with no recognizable prefix or label,
+such as a bare hex or base64 string; an unquoted value with spaces after a label
+(`password=two words` keeps `words`); credentials in `user:pw@host` without a
+scheme; secrets that a tool or the model rewrote, split or encoded (base64,
+URL-encoding, string concatenation); and personal or business data in
+repository text. Treat every trace as readable by anyone on the LAN.
+
 Each message, tool argument and result is bounded separately. Oversized text
 keeps complete trailing lines with a truncation note; an oversized single line
 is omitted to avoid exposing part of a credential. Serialized JSON is bounded

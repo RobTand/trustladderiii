@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -32,8 +33,9 @@ def synthetic_trace(tracking_uri, request_id):
         'trace': {'repo': 'synthetic-296', 'issue': 296, 'request': request_id,
                   'attempt': 1, 'round': 0},
     }
-    planted = 'GITHUB_WEBHOOK_SECRET=synthetic-secret-296'
+    planted = 'GITHUB_WEBHOOK_SECRET=synthetic-secret-296\nAuthorization: Token synthetic-header-296'
     history = [{'role': 'system', 'content': 'repository-line\n' * 10000 + '\nsystem-tail'}]
+    started = time.perf_counter()
     with observe(request):
         for index in range(40):
             history.append({'role': 'user', 'content': 'history-line\n' * 10000 +
@@ -54,6 +56,7 @@ def synthetic_trace(tracking_uri, request_id):
                     tool.set_outputs({'result': 'source-line\n' * 10000 +
                                       f'\n{planted}\nresult-tail-{index}'})
         record_reply({'brief': 'Synthetic maker completed 40 steps.'})
+    return time.perf_counter() - started
 
 
 def main():
@@ -80,7 +83,7 @@ def main():
 
     if args.synthetic:
         with patch.object(subprocess, 'Popen', launch):
-            synthetic_trace(args.tracking_uri, request_id)
+            worker_seconds = synthetic_trace(args.tracking_uri, request_id)
         for child in children:
             assert child.wait(timeout=15) == 0, 'export child failed'
     elif not args.read_latest:
@@ -175,12 +178,13 @@ def main():
         assert len(spans) == 121
         assert root.get_attribute('tl3.trace.truncated') is True
         contents = json.dumps([{'inputs': span.inputs, 'outputs': span.outputs} for span in spans])
-        assert 'synthetic-secret-296' not in contents
+        assert 'synthetic-secret-296' not in contents and 'synthetic-header-296' not in contents
         assert 'newest-turn-0' in contents and 'argument-tail' in contents and 'result-tail-0' in contents
         assert len(contents.encode()) < 1024 * 1024
         print(json.dumps({
             'mode': 'synthetic_maker', 'trace_id': trace_id, 'experiment': experiment,
             'span_count': len(spans), 'content_bytes_read_back': len(contents.encode()),
+            'worker_seconds': round(worker_seconds, 2),
             'trace_truncated': True, 'request_preview': trace.info.request_preview,
             'response_preview': trace.info.response_preview,
             'model_input_tail': json.dumps(models[0].inputs)[-512:],
