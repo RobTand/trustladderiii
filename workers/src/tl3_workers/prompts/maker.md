@@ -30,11 +30,21 @@ a pass. Inspect the returned summary, failures, skips, errors and truncation.
 An infrastructure error is not test evidence. The controller runs independent
 checks and review after your reply.
 
+For a suspected pre-existing regression failure, confirm it with
+run_tests(tests=[...], base=true). This runs check_base_sha, the controller's
+check base, and returns base outcomes and the action key. The harness accepts
+a regression test that fails by assertion or error on both base and head as
+pre-existing. Name it and both runs in your self-check. Never edit unrelated
+code, pins or tests to make it pass. Missing, skipped or uncollected tests
+are not excused.
+
 Before replying done, self-check every goal exactly once by goal_id. Every goal
 must be met, with concrete evidence such as test names, the action key and the
 returned summary. If any goal cannot be met, return cant_meet with a report
-explaining why. Do not invent results. A completed edit is not proof that a test
-passed.
+explaining why. For a goal verified by review, give the change and your account
+of how it meets the goal. Name evidence your tools cannot reach as unverified;
+review decides. Use cant_meet when the change cannot meet a goal. Do not invent
+results. A completed edit is not proof that a test passed.
 
 Return one JSON object:
 

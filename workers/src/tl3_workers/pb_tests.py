@@ -1,4 +1,4 @@
-"""The run_tests factory. Only selectors are exposed to the model."""
+"""The run_tests factory. The role supplies the base and execution settings."""
 from dataclasses import dataclass
 import hashlib
 import json
@@ -12,6 +12,7 @@ import tempfile
 
 from tl3_harness import execution
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure
+from tl3_harness.trees import export
 
 
 @dataclass(frozen=True)
@@ -52,21 +53,25 @@ def _selectors(tests):
     return tuple(dict.fromkeys(tests))
 
 
-def _stage(worktree, root):
+def _stage(worktree, root, base_sha=None):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
         raise ValueError("Install the trusted harness outside the role worktree")
     checkout = root / "checkout"
-    checkout.mkdir()
-    with worktree._directory(()) as directory:
-        for name, is_dir in worktree._walk(directory):
-            target = checkout / name
-            if is_dir:
-                target.mkdir()
-            else:
-                with worktree._file(name) as source, target.open("wb") as destination:
-                    shutil.copyfileobj(source.buffer, destination)
+    if base_sha is not None:
+        export(worktree.test_checkout, base_sha, checkout)
+    else:
+        checkout.mkdir()
+        with worktree._directory(()) as directory:
+            for name, is_dir in worktree._walk(directory):
+                target = checkout / name
+                if is_dir:
+                    target.mkdir()
+                else:
+                    with worktree._file(name) as source, target.open("wb") as destination:
+                        shutil.copyfileobj(source.buffer, destination)
+                        os.fchmod(destination.fileno(), os.fstat(source.fileno()).st_mode & 0o777)
     trusted = root / "trusted"
     trusted.mkdir()
     shutil.copytree(harness, trusted / "tl3_harness",
@@ -153,15 +158,20 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
 
     def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
-        """Run relative pytest paths/node IDs, or the whole suite when omitted."""
+        """Run pytest paths/node IDs. Set base=true to run the role's check base."""
         selected = _selectors([] if tests is None else tests)
         key = None
         try:
             if not isinstance(settings, TestSettings):
                 return infrastructure("PrismaBuild test settings were not supplied by the role.")
+            base_sha = getattr(worktree, "check_base_sha", None) if base else None
+            if base and (not isinstance(base_sha, str)
+                         or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)
+                         or getattr(worktree, "test_checkout", None) is None):
+                return infrastructure("The role did not supply a check base and checkout.")
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
-                _stage(worktree, root)
+                _stage(worktree, root, base_sha)
                 command = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
                            "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
                            "--demand", f"mem_gb={settings.mem_gb}",
@@ -199,7 +209,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                     if waited["complete"]:
                         if code:
                             raise ValueError("PrismaBuild action infrastructure failed")
-                        return _summary(endings[0], key)
+                        result = _summary(endings[0], key)
+                        if base:
+                            result["base_sha"] = base_sha
+                        return result
                     if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                         raise ValueError("PrismaBuild could not verify completion")
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

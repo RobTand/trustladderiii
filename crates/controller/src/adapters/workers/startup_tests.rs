@@ -97,6 +97,10 @@ fn hostile_maker_head() {
                         "plans",
                         json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
                     ),
+                    (
+                        "maker_findings",
+                        json!([{"kind":"failed_check", "report":"Earlier round failed", "goal_ids":[]}]),
+                    ),
                 ],
             );
             let request = supervisor
@@ -111,13 +115,6 @@ fn hostile_maker_head() {
             // A fix round may start after commits and a rebase changed the check base.
             fs::write(checkout.join("README.md"), "earlier maker round\n").unwrap();
             git(&checkout, &["commit", "-qam", "Earlier maker round"]);
-            let snapshot = documents(
-                &mut store,
-                &[(
-                    "maker_findings",
-                    json!([{"kind":"failed_check", "report":"Earlier round failed", "goal_ids":[]}]),
-                )],
-            );
             delivery.round = 1;
             delivery.checks = f.delivery().checks;
             delivery.checks.as_mut().unwrap().base_sha = CommitId::new(&f.head).unwrap();
