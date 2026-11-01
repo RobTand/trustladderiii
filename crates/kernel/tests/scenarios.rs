@@ -1019,8 +1019,23 @@ fn publishing_conflict_cycles_exhaust_credit_or_recheck_allowance() {
 fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
     fn confirm(mut world: World) -> World {
         for _ in 0..64 {
-            let Some((i, effect)) = world.nodes.iter().enumerate().find_map(|(i, n)| n.effect.map(|e| (i, e))) else { return world; };
-            world = step(world, Event::Ack { node: NodeId(i as u64), seq: effect.seq, ack: Ack::Confirmed }).0;
+            let Some((i, effect)) = world
+                .nodes
+                .iter()
+                .enumerate()
+                .find_map(|(i, n)| n.effect.map(|e| (i, e)))
+            else {
+                return world;
+            };
+            world = step(
+                world,
+                Event::Ack {
+                    node: NodeId(i as u64),
+                    seq: effect.seq,
+                    ack: Ack::Confirmed,
+                },
+            )
+            .0;
         }
         panic!("effects did not settle");
     }
@@ -1029,20 +1044,57 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
         world = confirm(step(world, Event::NewRequest { repo: RepoId(0) }).0);
     }
     for i in 0..3 {
+        for reply in [Reply::IngestDone { size: 1 }, Reply::AuditAgrees] {
+            let generation = world.nodes[i].generation;
+            world = confirm(
+                step(
+                    world,
+                    Event::Reply {
+                        node: NodeId(i as u64),
+                        generation,
+                        reply,
+                    },
+                )
+                .0,
+            );
+        }
+    }
+    for i in 0..3 {
         let generation = world.nodes[i].generation;
         let footprint = world.intern_footprint([FileId(i as u64)]);
-        world = confirm(step(world, Event::Reply { node: NodeId(i as u64), generation, reply: Reply::PlanLeaf { footprint, fits: true } }).0);
+        world = confirm(
+            step(
+                world,
+                Event::Reply {
+                    node: NodeId(i as u64),
+                    generation,
+                    reply: Reply::PlanLeaf {
+                        footprint,
+                        fits: true,
+                    },
+                },
+            )
+            .0,
+        );
     }
     assert_eq!(world.nodes.iter().filter(|n| n.holds).count(), 1);
     let before = world.clone();
     world.gates[0].w = 3;
     let (world, out) = settle_world(world);
     assert!(world.valid() && world.is_settled());
-    assert!(world.nodes.iter().all(|n| n.holds && n.phase == Phase::Making));
+    assert!(
+        world
+            .nodes
+            .iter()
+            .all(|n| n.holds && n.phase == Phase::Making)
+    );
     assert_eq!(world.nodes[0], before.nodes[0]);
     assert_eq!(out.len(), 2);
     for node in [NodeId(1), NodeId(2)] {
-        assert!(out.iter().any(|o| matches!(o, Out::Effect { node: target, .. } if *target == node)));
+        assert!(
+            out.iter()
+                .any(|o| matches!(o, Out::Effect { node: target, .. } if *target == node))
+        );
     }
     let (again, out) = settle_world(world.clone());
     assert_eq!(again, world);

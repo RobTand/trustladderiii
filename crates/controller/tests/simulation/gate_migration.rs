@@ -60,7 +60,11 @@ fn open_at(settings: &tl3_config::Store, root: &Path, slots: u8) -> Controller {
 fn seed(settings: &tl3_config::Store, root: &Path, slots: u8) -> Snapshot {
     seed_with_look(settings, root, slots).0
 }
-fn seed_with_look(settings: &tl3_config::Store, root: &Path, slots: u8) -> (Snapshot, tl3_store::WorldRow) {
+fn seed_with_look(
+    settings: &tl3_config::Store,
+    root: &Path,
+    slots: u8,
+) -> (Snapshot, tl3_store::WorldRow) {
     let mut c = open_at(settings, root, slots);
     for number in 1..=3 {
         assert!(
@@ -78,7 +82,13 @@ fn seed_with_look(settings: &tl3_config::Store, root: &Path, slots: u8) -> (Snap
         );
         drain(&mut c);
     }
-    let ended = c.snapshot().unwrap().rows.into_iter().find(|r| r.table == "allowances").unwrap();
+    let ended = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "allowances")
+        .unwrap();
     // Finish all plans after admission, so W=1 has two already-planned waiters.
     assert!(
         c.world()
@@ -111,7 +121,13 @@ fn seed_with_look(settings: &tl3_config::Store, root: &Path, slots: u8) -> (Snap
     if slots == 1 {
         assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
     }
-    assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "allowances" && r.id == ended.id));
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.id == ended.id)
+    );
     (close(c, settings), ended)
 }
 fn verify_migrated(c: &mut Controller, before: &Snapshot) -> Snapshot {
@@ -205,7 +221,11 @@ pub(super) fn pool_crash(settings: &tl3_config::Store, point: &str) {
 }
 fn crash_with_pool(settings: &tl3_config::Store, point: &str, pool: bool) {
     let root = tempfile::tempdir().unwrap();
-    let before = if pool { seed_agents(settings, root.path(), 1, 1) } else { seed(settings, root.path(), 1) };
+    let before = if pool {
+        seed_agents(settings, root.path(), 1, 1)
+    } else {
+        seed(settings, root.path(), 1)
+    };
     let config = root.path().join("store.json");
     fs::write(
         &config,
@@ -252,38 +272,83 @@ fn crash_with_pool(settings: &tl3_config::Store, point: &str, pool: bool) {
     controller_lock_barrier(settings);
     let capacity = if pool { 3 } else { 4 };
     let mut c = open_with_pool(settings, root.path(), 3, capacity);
-    let after = if pool { verify_agents(&mut c, &before) } else { verify_migrated(&mut c, &before) };
+    let after = if pool {
+        verify_agents(&mut c, &before)
+    } else {
+        verify_migrated(&mut c, &before)
+    };
     close(c, settings);
     let mut c = open_with_pool(settings, root.path(), 3, capacity);
-    assert_eq!(c.snapshot().unwrap(), after, "crash recovery duplicated the migration");
+    assert_eq!(
+        c.snapshot().unwrap(),
+        after,
+        "crash recovery duplicated the migration"
+    );
 }
 
 fn seed_agents(settings: &tl3_config::Store, root: &Path, slots: u8, pool: u8) -> Snapshot {
     let mut c = open_with_pool(settings, root, slots, pool);
     for number in 1..=3 {
         c.intake(LabelledIssue {
-            delivery: format!("agent-{number}"), owner: "owner".into(), repo: "gate-migration".into(),
-            installation: 1, number, title: format!("Agent waiter {number}"), actor: 42, label: "tl3".into(),
-        }).unwrap();
+            delivery: format!("agent-{number}"),
+            owner: "owner".into(),
+            repo: "gate-migration".into(),
+            installation: 1,
+            number,
+            title: format!("Agent waiter {number}"),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
         drain(&mut c);
     }
     let world = c.world().unwrap();
-    assert_eq!(world.nodes.iter().filter(|n| n.pool).count(), usize::from(pool.min(3)));
-    assert!(world.nodes.iter().all(|n| matches!(n.phase, Phase::Planning { .. })));
+    assert_eq!(
+        world.nodes.iter().filter(|n| n.pool).count(),
+        usize::from(pool.min(3))
+    );
+    assert!(
+        world
+            .nodes
+            .iter()
+            .all(|n| matches!(n.phase, Phase::Planning { .. }))
+    );
     close(c, settings)
 }
 fn verify_agents(c: &mut Controller, before: &Snapshot) -> Snapshot {
     let w = c.world().unwrap();
-    assert!(w.nodes.iter().filter(|n| n.pool).count() > 1, "configured agent pool must start more than one agent run");
+    assert!(
+        w.nodes.iter().filter(|n| n.pool).count() > 1,
+        "configured agent pool must start more than one agent run"
+    );
     assert_eq!(w.pool_capacity, 3);
     assert_eq!(w.gates[0].w, 3);
     assert!(w.valid() && w.is_settled());
     assert!(w.nodes.iter().all(|n| n.pool && n.run.is_some()));
     let after = c.snapshot().unwrap();
-    assert_eq!(after.revision.get(), before.revision.get() + 1, "W and pool must migrate in one commit");
-    let added: Vec<_> = after.pending_effects.iter().filter(|e| !before.pending_effects.iter().any(|old| old.key == e.key)).collect();
+    assert_eq!(
+        after.revision.get(),
+        before.revision.get() + 1,
+        "W and pool must migrate in one commit"
+    );
+    let added: Vec<_> = after
+        .pending_effects
+        .iter()
+        .filter(|e| !before.pending_effects.iter().any(|old| old.key == e.key))
+        .collect();
     assert_eq!(added.len(), 2);
-    assert!(added.iter().all(|e| e.created_revision == after.revision && matches!(serde_json::from_value::<Delivery>(e.payload.clone()).unwrap().output, Out::Effect { kind: EffectKind::StartRun(Role::Plan), .. })));
+    assert!(added.iter().all(|e| {
+        e.created_revision == after.revision
+            && matches!(
+                serde_json::from_value::<Delivery>(e.payload.clone())
+                    .unwrap()
+                    .output,
+                Out::Effect {
+                    kind: EffectKind::StartRun(Role::Plan),
+                    ..
+                }
+            )
+    }));
     assert_eq!(after.credit, before.credit);
     after
 }
@@ -293,21 +358,46 @@ pub(super) fn pool_reopen(settings: &tl3_config::Store) {
     let mut c = open_with_pool(settings, root.path(), 3, 3);
     let after = verify_agents(&mut c, &before);
     drain(&mut c);
-    assert_eq!(c.world().unwrap().nodes.iter().filter(|n| n.run.is_some()).count(), 3);
+    assert_eq!(
+        c.world()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.run.is_some())
+            .count(),
+        3
+    );
     let dispatched = close(c, settings);
     assert!(dispatched.revision >= after.revision);
     let mut c = open_with_pool(settings, root.path(), 3, 3);
-    assert_eq!(c.snapshot().unwrap(), dispatched, "second open must write nothing");
+    assert_eq!(
+        c.snapshot().unwrap(),
+        dispatched,
+        "second open must write nothing"
+    );
 }
 pub(super) fn pool_downgrade(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let before = seed_agents(settings, root.path(), 1, 3);
     let mut bootstrap = boot(3);
     bootstrap.pool = 1;
-    let result = Controller::open(Store::open(settings).unwrap(), registry(root.path()), bootstrap);
-    let Err(error) = result else { panic!("active agent capacity must not be silently lowered"); };
-    assert!(error.to_string().contains("agent_pool") && error.to_string().contains("in flight"), "{error}");
-    assert_eq!(Store::open(settings).unwrap().load().unwrap(), before, "neither W nor pool may partially commit");
+    let result = Controller::open(
+        Store::open(settings).unwrap(),
+        registry(root.path()),
+        bootstrap,
+    );
+    let Err(error) = result else {
+        panic!("active agent capacity must not be silently lowered");
+    };
+    assert!(
+        error.to_string().contains("agent_pool") && error.to_string().contains("in flight"),
+        "{error}"
+    );
+    assert_eq!(
+        Store::open(settings).unwrap().load().unwrap(),
+        before,
+        "neither W nor pool may partially commit"
+    );
 }
 pub(super) fn pool_idle_downgrade(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
@@ -326,13 +416,23 @@ pub(super) fn ended_look_and_gate(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let mut commit = Commit::new("legacy-ended-plan-look", json!({"fixture": true}), &before);
     let key = ended.id.clone();
-    commit.rows.push(RowChange::Put {table: ended.table, id: ended.id, value: ended.value});
+    commit.rows.push(RowChange::Put {
+        table: ended.table,
+        id: ended.id,
+        value: ended.value,
+    });
     store.commit(&commit).unwrap();
     let before = store.load().unwrap();
     drop(store);
     let mut c = open_at(settings, root.path(), 3);
     let after = verify_migrated(&mut c, &before);
-    assert!(!after.rows.iter().any(|r| r.table == "allowances" && r.id == key), "startup must retire the ended look while admitting waiters");
+    assert!(
+        !after
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.id == key),
+        "startup must retire the ended look while admitting waiters"
+    );
     close(c, settings);
     let mut c = open_at(settings, root.path(), 3);
     assert_eq!(c.snapshot().unwrap(), after);
