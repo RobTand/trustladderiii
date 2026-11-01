@@ -42,26 +42,31 @@ def payload(messages):
                        for m in messages], ensure_ascii=False)
 
 
-def test_append_only_prefix_and_one_threshold_compaction(maker_request, monkeypatch):
+def evidence_explorer(maker_request, seen, usage):
     maker_request["inputs"]["context_size"] = 100_000
     Path(maker_request["worktree"], "evidence.txt").write_text(("source evidence " * 7 + "\n") * 200)
-    seen = []
 
     class Explorer(ToolModel):
         def _generate(self, messages, **kwargs):
             seen.append(deepcopy(messages))
             index = len(seen)
             final = index == 10
+            tokens = usage.get(index, 10_000)
             self.responses = [AIMessage(
                 content=json.dumps({"kind": "cant_meet", "report": "Need more checks."}) if final else "",
                 tool_calls=[] if final else [{"name": "read", "args": {"path": "evidence.txt"},
                                               "id": str(index), "type": "tool_call"}],
-                usage_metadata={"input_tokens": 71_000 if index == 7 else 10_000,
-                                "output_tokens": 1, "total_tokens": 71_001 if index == 7 else 10_001})]
+                usage_metadata={"input_tokens": tokens, "output_tokens": 1, "total_tokens": tokens + 1})]
             self.i = 0
             return super()._generate(messages, **kwargs)
 
-    monkeypatch.setattr(runtime, "create_model", lambda _: Explorer(responses=[]))
+    return Explorer(responses=[])
+
+
+def test_append_only_prefix_and_one_threshold_compaction(maker_request, monkeypatch):
+    seen = []
+    model = evidence_explorer(maker_request, seen, {7: 71_000})
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
     runtime.run(maker_request, lambda _: None)
     assert len(seen) == 10
     for messages in seen:
@@ -72,6 +77,54 @@ def test_append_only_prefix_and_one_threshold_compaction(maker_request, monkeypa
     compacted = seen[7]
     assert any("removed or clipped" in m.text for m in compacted if m.type == "human")
     assert any(m.type == "tool" and m.tool_call_id == "7" for m in compacted), "keep the newest group"
+
+
+def finish_requested(messages):
+    return any("budget is exhausted" in m.text for m in messages if m.type == "human")
+
+
+def test_context_regrowing_after_compaction_requests_finish(maker_request, monkeypatch):
+    seen = []
+    # Call 8 compacts below 70%. Call 9 reports 75%, so call 10 must finish.
+    model = evidence_explorer(maker_request, seen, {7: 71_000, 9: 75_000})
+    monkeypatch.setattr(runtime, "create_model", lambda _: model)
+    runtime.run(maker_request, lambda _: None)
+    assert [finish_requested(messages) for messages in seen] == [False] * 9 + [True]
+
+
+def scripted_maker(seen, usage):
+    calls = [*[("read", {"path": "greeting.py"})] * 3,
+             ("write", {"path": "greeting.py", "content": "def greet(): return 'hello'\n"})]
+
+    class Scripted(ToolModel):
+        def _generate(self, messages, **kwargs):
+            seen.append(deepcopy(messages))
+            index = len(seen)
+            if index > len(calls):
+                content, tool_calls = json.dumps(test_maker.DONE), []
+            else:
+                name, args = calls[index - 1]
+                content, tool_calls = "", [{"name": name, "args": args, "id": str(index), "type": "tool_call"}]
+            tokens = usage(index)
+            self.responses = [AIMessage(content=content, tool_calls=tool_calls, usage_metadata={
+                "input_tokens": tokens, "output_tokens": 1, "total_tokens": tokens + 1})]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    return Scripted(responses=[])
+
+
+def test_instructions_above_threshold_leave_room_to_work(maker_request, monkeypatch):
+    # A fix round's accumulated review feedback alone can exceed 70% of the context.
+    # Compaction cannot shrink instructions, so it must not end the run on the next turn.
+    maker_request["inputs"]["context_size"] = 100_000
+    seen = []
+    monkeypatch.setattr(runtime, "create_model", lambda _: scripted_maker(seen, lambda index: 80_000))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert len(seen) == 5
+    assert not any(finish_requested(messages) for messages in seen)
+    assert events[-1]["reply"]["kind"] == "done"
 
 
 @pytest.mark.parametrize("details,weights,expected", [
