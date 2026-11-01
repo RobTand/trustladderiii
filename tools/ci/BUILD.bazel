@@ -52,16 +52,6 @@ py_binary(
 )
 
 py_binary(
-    name = "hosted",
-    srcs = ["hosted.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":check",
-        ":shards",
-    ],
-)
-
-py_binary(
     name = "rust_gate",
     srcs = ["rust_gate.py"],
     visibility = ["//visibility:public"],
@@ -117,17 +107,6 @@ tl3_py_test(
 )
 
 tl3_py_test(
-    name = "test_hosted",
-    srcs = ["test_hosted.py"],
-    deps = [
-        ":check",
-        ":hosted",
-        ":rust_gate",
-        ":shards",
-    ],
-)
-
-tl3_py_test(
     name = "test_rust_gate",
     srcs = ["test_rust_gate.py"],
     deps = [":rust_gate"],
@@ -145,6 +124,47 @@ py_binary(
     name = "bazel_generated",
     srcs = ["bazel_generated.py"],
     visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "bazel_gate",
+    srcs = ["bazel_gate.py"],
+    visibility = ["//visibility:public"],
+    deps = [":rust_gate"],
+)
+
+py_binary(
+    name = "remote_gate",
+    srcs = ["remote_gate.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_bazel_gate",
+    srcs = ["test_bazel_gate.py"],
+    deps = [":bazel_gate"],
+)
+
+tl3_py_test(
+    name = "test_remote_gate",
+    srcs = ["test_remote_gate.py"],
+    deps = [":remote_gate"],
+)
+
+py_binary(
+    name = "seeded_breaks",
+    srcs = ["seeded_breaks.py"],
+    visibility = ["//visibility:public"],
+    deps = [":bazel_gate"],
+)
+
+tl3_py_test(
+    name = "test_seeded_breaks",
+    srcs = ["test_seeded_breaks.py"],
+    deps = [
+        ":bazel_gate",
+        ":seeded_breaks",
+    ],
 )
 
 py_binary(
