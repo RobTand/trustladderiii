@@ -1,0 +1,38 @@
+name: Issue link
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+jobs:
+  issue-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Read only the evaluator from this workflow's commit, without a PR checkout.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const {data} = await github.rest.repos.getContent({
+              ...context.repo, ref: context.sha, path: 'tools/ci/issue_link.py',
+            });
+            if (Array.isArray(data) || data.type !== 'file' || data.encoding !== 'base64'
+                || data.size > 1024 * 1024) {
+              core.setFailed('Issue-link evaluator unavailable or larger than 1 MiB.');
+              return;
+            }
+            const helper = path.join(process.env.RUNNER_TEMP, 'issue_link.py');
+            fs.writeFileSync(helper, Buffer.from(data.content, 'base64'));
+            const result = await exec.getExecOutput('python3', ['-I', helper], {ignoreReturnCode: true});
+            core.info(result.stdout);
+            if (result.stderr) core.info(result.stderr);
+            // The evaluator prints its verdict as its last line; a rejection
+            // annotates the check with that reason.
+            const reason = result.stdout.trim().split('\n').pop();
+            if (result.exitCode !== 0) core.setFailed(reason || 'Issue-link evaluator failed; see the log above.');

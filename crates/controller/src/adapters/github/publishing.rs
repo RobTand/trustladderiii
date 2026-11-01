@@ -89,21 +89,21 @@ impl Adapter {
         repo: &str,
         delivery: &Delivery,
     ) -> Result<Option<PullRequest>> {
-        let branch = super::super::worktrees::Real::branch(delivery)?;
+        let branch = self.branches.branch(delivery)?;
         let mut pulls = self.runtime.block_on(client.pull_requests_for_branch(
             repo,
             &delivery.repository.owner,
             branch.as_str(),
         ))?;
         pulls.retain(|pr| {
-            pr.head.branch == branch.as_str()
+            self.branches.matches(delivery, &pr.head.branch)
                 && pr.head.repo.as_ref().is_some_and(|repo| {
                     repo.full_name().eq_ignore_ascii_case(&format!(
                         "{}/{}",
                         delivery.repository.owner, delivery.repository.name
                     ))
                 })
-                && pr.base.branch == "main"
+                && pr.base.branch == self.branches.base(&delivery.repository)
         });
         pulls.sort_by_key(|pr| (pr.state == "open", pr.number));
         Ok(pulls.pop())
@@ -147,15 +147,15 @@ impl Adapter {
                     return Ok(binding(delivery, &pull));
                 }
                 let issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
-                let branch = super::super::worktrees::Real::branch(delivery)?;
+                let branch = self.branches.branch(delivery)?;
                 let pull = self.runtime.block_on(client.open_pull_request(
                     &repo,
                     &NewPullRequest {
                         title: issue.title,
                         head: branch.as_str().into(),
-                        base: "main".into(),
+                        base: self.branches.base(&delivery.repository).into(),
                         body: format!(
-                                "Implements the request in issue {}.{}\n\n{}",
+                                "Closes #{}.{}\n\n{}",
                                 delivery.issue,
                                 delivery
                                     .proposed

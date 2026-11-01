@@ -68,6 +68,7 @@ use tl3_kernel::{NoteKind, Notice, Outcome, QKind};
 /// The REST client owns markers, paging and deletion of duplicate app comments.
 pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
+    branches: crate::branches::Branches,
     writer: Box<dyn Writer>,
     epoch: i64,
     policy: Policy,
@@ -76,8 +77,9 @@ pub struct Adapter {
     operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
-    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self {
-        self
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
+        self.branches = crate::branches::Branches::new(repos)?;
+        Ok(self)
     }
 
     pub fn new(
@@ -96,6 +98,7 @@ impl Adapter {
         std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
+            branches: Default::default(),
             writer: Box::new(writer),
             epoch,
             policy,

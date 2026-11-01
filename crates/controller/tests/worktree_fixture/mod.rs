@@ -76,6 +76,7 @@ pub fn age_scratch(repo: &Path, reference: &str) {
 }
 
 pub struct Fixture {
+    pub repositories: Vec<tl3_config::Repository>,
     pub root: PathBuf,
     pub repo: PathBuf,
     pub remote: PathBuf,
@@ -111,6 +112,7 @@ impl Fixture {
     }
     pub fn open(root: &Path) -> Self {
         Self {
+            repositories: vec![],
             root: root.into(),
             repo: root.join("served.git"),
             remote: root.join("remote.git"),
@@ -121,7 +123,10 @@ impl Fixture {
         self.adapter_at(0)
     }
     pub fn adapter_at(&self, epoch: i64) -> Real {
-        let mut adapter = Real::new(self.root.join("worktrees"), epoch).unwrap();
+        let mut adapter = Real::new(self.root.join("worktrees"), epoch)
+            .unwrap()
+            .with_repositories(&self.repositories)
+            .unwrap();
         adapter
             .serve_local(identity(), &self.repo, &self.remote)
             .unwrap();
@@ -169,15 +174,31 @@ impl Fixture {
         );
         git(
             &self.source,
-            &["push", self.remote.to_str().unwrap(), "main"],
+            &[
+                "push",
+                self.remote.to_str().unwrap(),
+                self.repositories
+                    .first()
+                    .map_or("main", |repo| repo.base_branch.as_str()),
+            ],
         );
         git(&self.source, &["rev-parse", "HEAD"])
     }
+    pub fn branch(&self, delivery: &Delivery) -> tl3_worktrees::BranchName {
+        let template = self
+            .repositories
+            .first()
+            .map_or(tl3_worktrees::branch_template::DEFAULT_TEMPLATE, |repo| {
+                repo.branch_template.as_str()
+            });
+        tl3_worktrees::branch_template::BranchTemplate::new(template)
+            .unwrap()
+            .format(delivery.issue, delivery.node().0)
+            .unwrap()
+    }
+
     pub fn head(&self, delivery: &Delivery) -> String {
-        git(
-            &self.repo,
-            &["rev-parse", Real::branch(delivery).unwrap().as_str()],
-        )
+        git(&self.repo, &["rev-parse", self.branch(delivery).as_str()])
     }
 }
 pub fn commit(path: &Path, file: &str, text: &str) -> String {

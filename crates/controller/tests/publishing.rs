@@ -75,7 +75,7 @@ fn base(f: &Fixture, d: &Delivery) -> String {
         &f.repo,
         &[
             "rev-parse",
-            &format!("refs/tl3/bases/{}", Real::branch(d).unwrap().as_str()),
+            &format!("refs/tl3/bases/{}", f.branch(d).as_str()),
         ],
     )
 }
@@ -606,7 +606,14 @@ fn patch_lines(diff: &Value) -> Vec<&str> {
 }
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let root = tempfile::tempdir().unwrap();
-    let f = Arc::new(Fixture::create(root.path()));
+    let mut fixture = Fixture::create(root.path());
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    if mode == "repo-conventions" {
+        config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
+        config.github.repos[0].base_branch = "master".into();
+        fixture.repositories = config.github.repos.clone();
+    }
+    let f = Arc::new(fixture);
     commit(&f.source, "value.py", "def value(): return 1\n");
     commit(
         &f.source,
@@ -625,12 +632,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         }
     }
     let server = Server::new(f.clone());
-    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+
     config.store = settings.clone();
-    if mode == "repo-conventions" {
-        config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
-        config.github.repos[0].base_branch = "master".into();
-    }
     if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
         let mut primary = config.models.maker[2].clone();
         primary.name = "review-primary".into();
@@ -656,7 +659,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     config.models.key_file = root.path().join("fixture-key");
     fs::write(&config.models.key_file, "fixture").unwrap();
     if mode == "repo-conventions" {
-        let mut adapter = f.adapter().with_repositories(&config.github.repos);
+        let mut adapter = f.adapter().with_repositories(&config.github.repos).unwrap();
         adapter
             .execute(&f.delivery(EffectKind::PrepareWorktree, 999))
             .expect("configured master base must prepare without a main branch");
@@ -675,13 +678,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     );
     registry.register(
         Upstream::Worktrees,
-        f.adapter().with_repositories(&config.github.repos),
+        f.adapter().with_repositories(&config.github.repos).unwrap(),
     );
     registry.register(
         Upstream::GitHub,
         server
             .adapter(&root.path().join("github"), 0)
-            .with_repositories(&config.github.repos),
+            .with_repositories(&config.github.repos)
+            .unwrap(),
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
@@ -731,7 +735,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &[
                 "push",
                 f.remote.to_str().unwrap(),
-                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+                &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
         while c.drive_once().unwrap() {}
@@ -796,6 +800,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert_eq!(pull["head"]["ref"], "prismabuild-42-tl3-0");
         assert_eq!(pull["base"]["ref"], "master");
         assert!(pull["body"].as_str().unwrap().contains("Closes #42"));
+        if let Some(path) = env::var_os("TL3_REPO_CONVENTIONS_PULL") {
+            let mut pull = pull.clone();
+            pull["created_at"] = json!("2026-11-01T00:00:00Z");
+            fs::write(path, serde_json::to_vec_pretty(&pull).unwrap()).unwrap();
+        }
         let base = git(&f.remote, &["rev-parse", "master"]);
         assert_eq!(
             git(&f.remote, &["merge-base", &base, "prismabuild-42-tl3-0"]),
@@ -819,7 +828,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &[
                 "push",
                 f.remote.to_str().unwrap(),
-                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+                &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
 
@@ -883,10 +892,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable_state"] = json!("clean");
         }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-        let published = git(
-            &f.remote,
-            &["rev-parse", Real::branch(&d).unwrap().as_str()],
-        );
+        let published = git(&f.remote, &["rev-parse", f.branch(&d).as_str()]);
         assert_eq!(published, head);
         assert_eq!(
             git(&checkout, &["merge-base", &published, &target]),
@@ -989,10 +995,16 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 .iter()
                 .all(|row| !matches!(row.table.as_str(), "incidents" | "questions"))
         );
-    } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
+    } else if matches!(
+        mode,
+        "rebase" | "round-one-rebase" | "review-reset-rebase" | "repo-conventions"
+    ) {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
-        let new_target = git(&f.remote, &["rev-parse", "main"]);
+        let new_target = git(
+            &f.remote,
+            &["rev-parse", &config.github.repos[0].base_branch],
+        );
         loop {
             c.drive_once().unwrap();
             let n = c.world().unwrap().nodes[0];
@@ -1002,6 +1014,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 }
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
+                assert_eq!(
+                    git(&f.repo, &["merge-base", &head, &new_target]),
+                    new_target
+                );
                 let plan = c
                     .snapshot()
                     .unwrap()
@@ -1052,6 +1068,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         } else if matches!(
             mode,
             "push"
+                | "repo-conventions"
                 | "rebase"
                 | "changes"
                 | "before-enqueue"
@@ -1209,7 +1226,13 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
     if mode == "repo-conventions" {
-        assert!(git(&f.remote, &["for-each-ref", "refs/heads/prismabuild-"]).is_empty());
+        assert!(
+            git(
+                &f.remote,
+                &["for-each-ref", "refs/heads/prismabuild-42-tl3-0"]
+            )
+            .is_empty()
+        );
     }
     assert!(!root.path().join("pb-records/0").exists());
     assert!(store.worker_progress(None).unwrap().is_empty());
