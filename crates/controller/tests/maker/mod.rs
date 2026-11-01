@@ -868,7 +868,42 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
     );
 }
 
+pub(super) fn repository_images(database: &mut Database) {
+    for override_image in [None, Some(format!("sha256:{}", "2".repeat(64)))] {
+        let settings = database.create(if override_image.is_some() {
+            "maker_image_override"
+        } else {
+            "maker_image_fallback"
+        });
+        let root = tempfile::tempdir().unwrap();
+        let (mut config, _, _) = fixture(&settings, root.path(), "needs-files");
+        config.prismabuild.container_image = format!("sha256:{}", "1".repeat(64));
+        config.github.repos[0].owner = "ROBTAND".into();
+        config.github.repos[0].name = "TL3-SANDBOX".into();
+        config.github.repos[0].container_image = override_image.clone();
+        let mut delivery = super::delivery();
+        delivery.output = Out::Effect {
+            node: NodeId(0),
+            seq: 1,
+            kind: EffectKind::StartRun(Role::Make),
+            head: None,
+        };
+        delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+        let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+        supervisor.execute(&delivery).unwrap();
+        let _ = terminal(&mut supervisor, &delivery);
+        let request: Value = serde_json::from_slice(
+            &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+        ).unwrap();
+        assert_eq!(request["inputs"]["tests"]["image"],
+            override_image.unwrap_or(config.prismabuild.container_image),
+            "staged maker input must use its repository image or the global fallback");
+    }
+    println!("test maker_repository_image_override_and_global_fallback ... ok");
+}
+
 pub(super) fn run(database: &mut Database) {
+    repository_images(database);
     adopted_fix_without_session(&database.create("adopted_first_fix"));
     println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
     real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
