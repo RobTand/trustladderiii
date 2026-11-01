@@ -302,7 +302,7 @@ def test_staging_preserves_permissions_without_special_bits(submission, tmp_path
     assert indexed.startswith(b"100755" if mode & 0o100 else b"100644")
 
 
-def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
+def prepare_base_submission(submission, base_value="base", head_value="head"):
     root, scripts = submission
 
     def git(*args):
@@ -312,16 +312,22 @@ def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
         ], cwd=root, text=True).strip()
 
     git("init", "--quiet", "--template=")
-    (root / "example_module.py").write_text("value = 'base'\n")
-    (root / "test_code.py").write_text("from example_module import value\ndef test_value(): assert value == 'head'\n")
+    (root / "example_module.py").write_text(f"value = {base_value!r}\n")
+    test_source = ("from example_module import value\ndef test_value():\n"
+                   "    if value == 'error': raise RuntimeError('fixture error')\n"
+                   "    assert value == 'head'\n"
+                   "def test_other(): assert value == 'head'\ndef test_pass(): pass\n")
+    if base_value != "missing":
+        (root / "test_code.py").write_text(test_source)
     git("add", ".")
     git("commit", "--quiet", "-m", "Check base")
     base = git("rev-parse", "HEAD")
+    (root / "test_code.py").write_text(test_source)
     (root / "example_module.py").write_text("value = 'earlier maker commit'\n")
     git("add", ".")
     git("commit", "--quiet", "-m", "Earlier maker round")
     head = git("rev-parse", "HEAD")
-    (root / "example_module.py").write_text("value = 'head'\n")
+    (root / "example_module.py").write_text(f"value = {head_value!r}\n")
     before = git("status", "--porcelain")
     script = scripts / "pbrun.py"
     script.write_text(script.read_text().replace(
@@ -341,8 +347,20 @@ for line in run.stdout.splitlines():
     if record["event"] == "result":
         summary.add(record["test"], record["outcome"], record["message"])
 (here / "response.json").write_text(json.dumps(summary.result))
+record = here / "submissions.json"
+submissions = json.loads(record.read_text()) if record.exists() else []
+submissions.append(json.loads(selected))
+record.write_text(json.dumps(submissions))
 print(json.dumps({"schema":''',
-    ))
+    ).replace('"action_key": "a" * 64', '"action_key": ("a" if len(submissions) == 1 else "c") * 64'))
+    waiter = scripts / "pbwait.py"
+    waiter.write_text(waiter.read_text().replace('"action_key": "a" * 64', '"action_key": sys.argv[-1]'))
+    return base, head, before, git
+
+
+def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
+    root, scripts = submission
+    base, head, before, git = prepare_base_submission(submission)
     with Worktree(root) as tree:
         tree.test_checkout = root
         tree.check_base_sha = base
@@ -352,8 +370,39 @@ print(json.dumps({"schema":''',
     assert current["totals"]["passed"] == 1, current
     assert baseline["totals"]["failed"] == 1, baseline
     assert baseline["tests"][0]["test"] == "test_code.py::test_value"
-    assert baseline["action_key"] == KEY
+    assert baseline["action_key"] == "c" * 64
     assert baseline["base_sha"] == base
     assert git("rev-parse", "HEAD") == head
     assert git("status", "--porcelain") == before
     assert (root / "example_module.py").read_text() == "value = 'head'\n"
+
+
+@pytest.mark.parametrize("base_value,head_value,classification,actions", [
+    ("base", "broken", "pre-existing", 2),
+    ("head", "broken", "new", 2),
+    ("error", "error", "pre-existing", 2),
+    ("head", "error", "new", 2),
+    ("missing", "broken", "new", 2),
+    ("base", "head", None, 1),
+])
+def test_automatic_base_comparison(submission, base_value, head_value, classification, actions):
+    root, scripts = submission
+    base, head, before, git = prepare_base_submission(submission, base_value, head_value)
+    tests = ["test_code.py::test_value", "test_code.py::test_other", "test_code.py::test_pass"]
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = base
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))(tests)
+    submitted = json.loads((scripts / "submissions.json").read_text())
+    assert len(submitted) == actions, result
+    assert result["action_key"] == KEY
+    if classification:
+        assert submitted[1] == tests[:2], "batch only failing tests into one base action"
+        failed = [test for test in result["tests"] if test["test"] in tests[:2]]
+        assert all(test["classification"] == classification for test in failed)
+        assert result["base"]["action_key"] == "c" * 64
+        assert result["base"]["base_sha"] == base
+    else:
+        assert "base" not in result
+    assert git("rev-parse", "HEAD") == head
+    assert git("status", "--porcelain") == before
