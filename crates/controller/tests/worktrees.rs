@@ -11,7 +11,7 @@ use std::{
     process::{Command, Stdio},
 };
 use tl3_controller::{
-    adapters::worktrees::{Boundary, Real},
+    adapters::worktrees::Boundary,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
 use tl3_kernel::{Ack, EffectKind};
@@ -157,10 +157,7 @@ fn crashes() {
                     assert!(f.adapter().checkout(&delivery).join(".git").is_file())
                 }
                 EffectKind::Push => assert_eq!(
-                    git(
-                        &f.remote,
-                        &["rev-parse", Real::branch(&delivery).unwrap().as_str()]
-                    ),
+                    git(&f.remote, &["rev-parse", f.branch(&delivery).as_str()]),
                     delivery.head_sha.unwrap()
                 ),
                 EffectKind::StartRebase => {
@@ -169,10 +166,7 @@ fn crashes() {
                             &f.repo,
                             &[
                                 "rev-parse",
-                                &format!(
-                                    "refs/tl3/bases/{}",
-                                    Real::branch(&delivery).unwrap().as_str()
-                                )
+                                &format!("refs/tl3/bases/{}", f.branch(&delivery).as_str())
                             ]
                         ),
                         target
@@ -195,11 +189,11 @@ fn crashes() {
                                             "rev-parse",
                                             &format!(
                                                 "refs/tl3/bases/{}",
-                                                Real::branch(&delivery).unwrap().as_str()
+                                                f.branch(&delivery).as_str()
                                             )
                                         ]
                                     ),
-                                    Real::branch(&delivery).unwrap().as_str()
+                                    f.branch(&delivery).as_str()
                                 )
                             ]
                         ),
@@ -250,7 +244,7 @@ fn conflicts() {
         );
         assert_eq!(
             git(&checkout, &["symbolic-ref", "--short", "HEAD"]),
-            Real::branch(&rebase).unwrap().as_str()
+            f.branch(&rebase).as_str()
         );
         fs::write(checkout.join("staged.txt"), "staged resolution note\n").unwrap();
         git(&checkout, &["add", "staged.txt"]);
@@ -259,7 +253,7 @@ fn conflicts() {
         f.adapter().execute(&remove).unwrap();
         let scratch = format!(
             "refs/tl3/scratch/{}/{}",
-            Real::branch(&remove).unwrap().as_str(),
+            f.branch(&remove).as_str(),
             remove.generation
         );
         let saved = git(&f.repo, &["show", &format!("{scratch}:shared.txt")]);
@@ -323,10 +317,7 @@ fn leases_and_exact_heads() {
     commit(&checkout, "later.txt", "later\n");
     f.adapter().execute(&push).unwrap();
     assert_eq!(
-        git(
-            &f.remote,
-            &["rev-parse", Real::branch(&push).unwrap().as_str()]
-        ),
+        git(&f.remote, &["rev-parse", f.branch(&push).as_str()]),
         push.head_sha.clone().unwrap()
     );
     let external = f.advance_main(false);
@@ -334,7 +325,7 @@ fn leases_and_exact_heads() {
         &f.remote,
         &[
             "update-ref",
-            &format!("refs/heads/{}", Real::branch(&push).unwrap().as_str()),
+            &format!("refs/heads/{}", f.branch(&push).as_str()),
             &external,
         ],
     );
@@ -347,10 +338,7 @@ fn leases_and_exact_heads() {
             .is_err()
     );
     assert_eq!(
-        git(
-            &f.remote,
-            &["rev-parse", Real::branch(&push).unwrap().as_str()]
-        ),
+        git(&f.remote, &["rev-parse", f.branch(&push).as_str()]),
         external
     );
 }
@@ -380,7 +368,7 @@ fn old_epoch_partial_attempts() {
                 }
             };
             kill(&f, &delivery, boundary);
-            let branch = Real::branch(&delivery).unwrap();
+            let branch = f.branch(&delivery);
             let head = git(
                 &f.repo,
                 &[
@@ -452,7 +440,7 @@ fn fenced_rebase_before_checkout_restoration() {
             "tl3-rebase-branch",
         ],
     );
-    let branch = Real::branch(&rebase).unwrap();
+    let branch = f.branch(&rebase);
     fs::write(&marker, format!("refs/heads/{}", branch.as_str())).unwrap();
     git(
         &checkout,
@@ -535,7 +523,7 @@ fn repeated_prepare_preserves_maker_work() {
 }
 
 fn half_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
-    let branch = Real::branch(prepare).unwrap();
+    let branch = f.branch(prepare);
     let base = git(&f.remote, &["rev-parse", "main"]);
     let checkout = f.adapter().checkout(prepare);
     fs::create_dir_all(checkout.parent().unwrap()).unwrap();
@@ -606,7 +594,7 @@ fn prepare_repairs_at_durable_base_after_main_moves() {
             "add",
             "--no-checkout",
             checkout.to_str().unwrap(),
-            Real::branch(&next).unwrap().as_str(),
+            f.branch(&next).as_str(),
         ],
     );
     fs::write(initialization_lock(&checkout), "initializing\n").unwrap();
@@ -735,7 +723,7 @@ fn incomplete_prepare() {
         let f = Fixture::create(scratch.path());
         let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
         kill(&f, &prepare, "before");
-        let branch = Real::branch(&prepare).unwrap();
+        let branch = f.branch(&prepare);
         let base = git(&f.remote, &["rev-parse", "main"]);
         let checkout = f.adapter().checkout(&prepare);
         fs::create_dir_all(checkout.parent().unwrap()).unwrap();
@@ -936,7 +924,7 @@ fn kill_git_add(f: &Fixture, prepare: &Delivery) -> std::path::PathBuf {
     commit(&f.source, ".gitattributes", "shared.txt filter=park\n");
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
     kill(f, prepare, "before");
-    let branch = Real::branch(prepare).unwrap();
+    let branch = f.branch(prepare);
     let base = git(&f.remote, &["rev-parse", "main"]);
     let checkout = f.adapter().checkout(prepare);
     fs::create_dir_all(checkout.parent().unwrap()).unwrap();
@@ -1104,10 +1092,7 @@ fn half_registered_add_requires_operator_recovery() {
             &f.repo,
             &[
                 "rev-parse",
-                &format!(
-                    "refs/tl3/bases/{}",
-                    Real::branch(&prepare).unwrap().as_str()
-                )
+                &format!("refs/tl3/bases/{}", f.branch(&prepare).as_str())
             ]
         )
     );

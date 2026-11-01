@@ -204,7 +204,8 @@ pub fn daemon() -> Result<()> {
                 tl3_github::message::Policy::default(),
                 &simulation,
                 config.github.operations.clone(),
-            )?,
+            )?
+            .with_repositories(&config.github.repos)?,
         );
         let webhooks = crate::ingress::Webhooks::bind(
             listen,

@@ -2190,7 +2190,6 @@ fn publication_main_advance(settings: &tl3_config::Store, conflict: bool) {
 }
 
 fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
-    use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
     let root = tempfile::tempdir().unwrap();
     let fixture = Fixture::create(root.path());
@@ -2220,7 +2219,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     controller.intake(labelled()).unwrap();
     let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = fixture.adapter().checkout(&prepare);
-    let branch = Real::branch(&prepare).unwrap();
+    let branch = fixture.branch(&prepare);
     let mut created = false;
     let mut pushed = false;
     let mut rebased = false;

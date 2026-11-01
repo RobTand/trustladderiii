@@ -143,6 +143,8 @@ fn open(
             root,
             boot.operations.clone(),
         )
+        .unwrap()
+        .with_repositories(&repositories())
         .unwrap(),
     );
     let mut store = Store::open(settings).unwrap();

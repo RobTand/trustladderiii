@@ -90,23 +90,28 @@ impl Adapter {
         delivery: &Delivery,
     ) -> Result<Option<PullRequest>> {
         let branch = self.branches.branch(delivery)?;
-        let mut pulls = self.runtime.block_on(client.pull_requests_for_branch(
+        let base = self.branches.base(&delivery.repository)?;
+        let pulls = self.runtime.block_on(client.pull_requests_for_branch(
             repo,
             &delivery.repository.owner,
             branch.as_str(),
         ))?;
-        pulls.retain(|pr| {
-            self.branches.matches(delivery, &pr.head.branch)
+        let mut owned = Vec::new();
+        for pr in pulls {
+            if self.branches.matches(delivery, &pr.head.branch)?
                 && pr.head.repo.as_ref().is_some_and(|repo| {
                     repo.full_name().eq_ignore_ascii_case(&format!(
                         "{}/{}",
                         delivery.repository.owner, delivery.repository.name
                     ))
                 })
-                && pr.base.branch == self.branches.base(&delivery.repository)
-        });
-        pulls.sort_by_key(|pr| (pr.state == "open", pr.number));
-        Ok(pulls.pop())
+                && pr.base.branch == base
+            {
+                owned.push(pr);
+            }
+        }
+        owned.sort_by_key(|pr| (pr.state == "open", pr.number));
+        Ok(owned.pop())
     }
 
     pub(super) fn publish(&mut self, delivery: &Delivery) -> Result<Completion> {
@@ -153,7 +158,7 @@ impl Adapter {
                     &NewPullRequest {
                         title: issue.title,
                         head: branch.as_str().into(),
-                        base: self.branches.base(&delivery.repository).into(),
+                        base: self.branches.base(&delivery.repository)?.into(),
                         body: format!(
                                 "Refs #{}.{}\n\n{}",
                                 delivery.issue,

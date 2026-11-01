@@ -74,6 +74,8 @@ pub(super) fn run(mode: &str) {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     let mut effect = delivery(Notice::Note(tl3_kernel::NoteKind::Replanned));
     if mode == "incident" {

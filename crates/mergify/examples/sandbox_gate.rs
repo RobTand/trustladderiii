@@ -1,4 +1,5 @@
 //! Live sandbox operations. Credentials and installation tokens stay in process.
+//! `open BRANCH TITLE BODY BASE` requires the repository's configured base.
 use chrono::Utc;
 use serde_json::json;
 use std::{
@@ -129,11 +130,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let repo = "RobTand/tl3-sandbox";
     match operation.as_str() {
         "open" => {
-            let request = trial_pull_request(
-                subject,
-                head.ok_or("title required")?,
-                args.next().ok_or("trial body required")?,
-            );
+            let body = args.next().ok_or("trial body required")?;
+            let base = args.next().ok_or("base branch required")?;
+            let request = trial_pull_request(subject, head.ok_or("title required")?, body, &base);
             let pull = github.open_pull_request(repo, &request).await?;
             println!("sandbox PR {}", pull.number);
         }
@@ -208,10 +207,10 @@ async fn main() {
     }
 }
 
-fn trial_pull_request(branch: String, title: String, body: String) -> NewPullRequest {
+fn trial_pull_request(branch: String, title: String, body: String, base: &str) -> NewPullRequest {
     NewPullRequest {
         head: branch,
-        base: "main".into(),
+        base: base.into(),
         title,
         body,
     }
@@ -284,9 +283,10 @@ mod tests {
             "tl3/issue-17-node-201".into(),
             "Verify the approved head while main advances".into(),
             "Merge a separate approved PR, then confirm this head is unchanged.".into(),
+            "master",
         );
         assert_eq!(request.head, "tl3/issue-17-node-201");
-        assert_eq!(request.base, "main");
+        assert_eq!(request.base, "master");
         assert_eq!(
             request.title,
             "Verify the approved head while main advances"

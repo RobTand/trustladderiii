@@ -112,7 +112,10 @@ impl Fixture {
     }
     pub fn open(root: &Path) -> Self {
         Self {
-            repositories: vec![],
+            repositories: tl3_config::Config::parse(include_str!("../../../config/example.toml"))
+                .unwrap()
+                .github
+                .repos,
             root: root.into(),
             repo: root.join("served.git"),
             remote: root.join("remote.git"),
@@ -185,12 +188,11 @@ impl Fixture {
         git(&self.source, &["rev-parse", "HEAD"])
     }
     pub fn branch(&self, delivery: &Delivery) -> tl3_worktrees::BranchName {
-        let template = self
+        let template = &self
             .repositories
             .first()
-            .map_or(tl3_worktrees::branch_template::DEFAULT_TEMPLATE, |repo| {
-                repo.branch_template.as_str()
-            });
+            .expect("fixture repository conventions")
+            .branch_template;
         tl3_worktrees::branch_template::BranchTemplate::new(template)
             .unwrap()
             .format(delivery.issue, delivery.node().0)

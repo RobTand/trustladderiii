@@ -98,7 +98,7 @@ impl Adapter {
         std::fs::create_dir_all(simulation)?;
         Ok(Self {
             clients,
-            branches: Default::default(),
+            branches: crate::branches::Branches::new(&[])?,
             writer: Box::new(writer),
             epoch,
             policy,

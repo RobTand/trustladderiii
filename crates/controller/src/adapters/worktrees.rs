@@ -116,7 +116,7 @@ impl Real {
         self.branches = crate::branches::Branches::new(repos)?;
         for repo in &mut self.repositories {
             repo.git
-                .set_base_branch(self.branches.base(&repo.identity))?;
+                .set_base_branch(self.branches.base(&repo.identity)?)?;
         }
         Ok(self)
     }
@@ -127,7 +127,7 @@ impl Real {
             root: fs::canonicalize(root)?,
             epoch,
             repositories: vec![],
-            branches: Default::default(),
+            branches: crate::branches::Branches::new(&[])?,
         })
     }
 
@@ -177,6 +177,7 @@ impl Real {
         {
             return Err(Error::Invalid("duplicate worktree repository"));
         }
+        let base = self.branches.base(&identity)?;
         let github = github
             .map(|client| {
                 tokio::runtime::Builder::new_current_thread()
@@ -187,7 +188,7 @@ impl Real {
             })
             .transpose()?;
         let mut git = Worktrees::open(repository, &self.root).map_err(adapter)?;
-        git.set_base_branch(self.branches.base(&identity))?;
+        git.set_base_branch(base)?;
         let journal = git.common_directory().join("tl3-controller");
         fs::create_dir_all(&journal)?;
         File::open(git.common_directory())?.sync_all()?;
@@ -256,10 +257,6 @@ impl Real {
                 protected,
             )
             .map_err(adapter)
-    }
-
-    pub fn branch(delivery: &Delivery) -> Result<BranchName> {
-        crate::branches::Branches::default().branch(delivery)
     }
 
     pub fn branch_for(&self, delivery: &Delivery) -> Result<BranchName> {
