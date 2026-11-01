@@ -316,6 +316,13 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn input_incident(
+        &mut self,
+        _notice: &crate::input_errors::IncidentNotice,
+        _epoch: i64,
+    ) -> Result<()> {
+        Err(crate::Error::Invalid("adapter cannot post input incidents"))
+    }
     fn intake_question(
         &mut self,
         _question: &crate::adoption::Clarification,
