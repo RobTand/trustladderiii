@@ -5,6 +5,7 @@
 //! No OS file locks are used because of the deployment kernel's file-lock bug.
 #![forbid(unsafe_code)]
 
+pub mod branch_template;
 mod queries;
 mod snapshots;
 

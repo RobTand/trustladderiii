@@ -352,11 +352,11 @@ impl Respond for Api {
                         &self.fixture.remote,
                         &["rev-parse", body["head"].as_str().unwrap()],
                     );
-                    let base = git(&self.fixture.remote, &["rev-parse", "main"]);
+                    let base = git(&self.fixture.remote, &["rev-parse", body["base"].as_str().unwrap()]);
                     s.pull = Some(
                         json!({"body":body["body"],"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
-                    "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
+                    "base":{"ref":body["base"],"sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
                     );
                     s.pull.clone().unwrap()
                 }
@@ -616,9 +616,18 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         "from value import value\ndef test_value(): assert value() == 2\n",
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+    if mode == "repo-conventions" {
+        for path in [&f.source, &f.remote, &f.repo] {
+            git(path, &["branch", "-m", "main", "master"]);
+        }
+    }
     let server = Server::new(f.clone());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.store = settings.clone();
+    if mode == "repo-conventions" {
+        config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
+        config.github.repos[0].base_branch = "master".into();
+    }
     if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
         let mut primary = config.models.maker[2].clone();
         primary.name = "review-primary".into();
@@ -655,10 +664,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             mode.into(),
         ),
     );
-    registry.register(Upstream::Worktrees, f.adapter());
+    registry.register(Upstream::Worktrees, f.adapter().with_repositories(&config.github.repos));
     registry.register(
         Upstream::GitHub,
-        server.adapter(&root.path().join("github"), 0),
+        server.adapter(&root.path().join("github"), 0).with_repositories(&config.github.repos),
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
@@ -767,6 +776,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    if mode == "repo-conventions" {
+        let state = server.api.state.lock().unwrap();
+        let pull = state.pull.as_ref().unwrap();
+        assert_eq!(pull["head"]["ref"], "prismabuild-42-tl3-0");
+        assert_eq!(pull["base"]["ref"], "master");
+        assert!(pull["body"].as_str().unwrap().contains("Closes #42"));
+        let base = git(&f.remote, &["rev-parse", "master"]);
+        assert_eq!(git(&f.remote, &["merge-base", &base, "prismabuild-42-tl3-0"]), base);
+    }
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
         .as_str()
         .unwrap()
@@ -1173,6 +1191,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     );
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+    if mode == "repo-conventions" {
+        assert!(git(&f.remote, &["for-each-ref", "refs/heads/prismabuild-"]).is_empty());
+    }
     assert!(!root.path().join("pb-records/0").exists());
     assert!(store.worker_progress(None).unwrap().is_empty());
     let state = server.api.state.lock().unwrap();
@@ -1510,6 +1531,7 @@ fn main() {
         publication_404_look(&database.create(&format!("publication_404_{case}")), case);
     }
     for mode in [
+        "repo-conventions",
         "merged",
         "push",
         "rebase",

@@ -76,6 +76,8 @@ pub struct Adapter {
     operations: Option<tl3_config::OperationsIssue>,
 }
 impl Adapter {
+    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self { self }
+
     pub fn new(
         clients: BTreeMap<u64, GitHub>,
         writer: impl Writer + 'static,

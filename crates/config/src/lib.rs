@@ -220,6 +220,17 @@ pub struct Repository {
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
+    #[serde(default = "default_branch_template")]
+    pub branch_template: String,
+    #[serde(default = "default_base_branch")]
+    pub base_branch: String,
+}
+
+fn default_branch_template() -> String {
+    "tl3/issue-{issue}-node-{node}".into()
+}
+fn default_base_branch() -> String {
+    "main".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
