@@ -54,6 +54,14 @@ An Actions API permission refusal raises a setup incident with that instruction.
 It prevents re-enqueueing until access is restored and the failed effect is retried.
 The controller does not change App permissions.
 
+## Classic branch protection permission
+
+Reading classic required checks needs repository permission **Administration: Read**.
+The manifest requests it for new Apps. For an existing App, Rob must grant it in
+repository permissions and approve the installation's updated permissions before
+TL3 can read classic protection. A permission error keeps enqueueing pending.
+The controller does not change App permissions.
+
 ## Served repository command permissions
 
 Before serving a repo, allow `tl3-robtand[bot]` in its `.mergify.yml`

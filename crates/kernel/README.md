@@ -185,6 +185,7 @@ The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUT
 
 A submission is not a pass. Check the terminal exit code, actual logs and verified CAS receipt before reporting a result.
 CI runs separately on Mergify's fleet runners. It does not submit to PrismaBuild.
+
 Q47 adds three focused Publishing proofs: code failures preserve the Queued credit
 ladder, infrastructure failures advance the bounded retry counter or raise an
 incident, and failures before the enqueue step leave the node unchanged. Their

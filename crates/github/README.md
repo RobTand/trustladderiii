@@ -190,6 +190,7 @@ A submission acknowledgement is not a pass.
 GitHub references: [JWT claims](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app),
 [REST rate limits and retries](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api),
 [webhook payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
+
 `required_status_checks` combines rulesets with classic branch protection and
 preserves classic `checks[].app_id`. It treats `contexts` as unbound requirements
 when they are not already represented by `checks`. A classic-protection 404 adds

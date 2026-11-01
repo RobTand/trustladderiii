@@ -1397,6 +1397,7 @@ A later look reruns the completed workflow before enqueueing. Explicit Actions
 refusals retain only a safe reason: missing App access, an expired run, or other
 workflow restrictions. A refused POST can be retried with the same delivery key;
 a lost response still needs an increased `run_attempt` before enqueueing.
+
 Required head-check failures during the Publishing enqueue step use Q47. Code
 failures cancel the pending enqueue and enter the existing fix round. Cancellation
 removes `tl3-queue` if present. Infrastructure failures use the same retry bound

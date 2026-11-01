@@ -10,6 +10,7 @@
   },
   "default_permissions": {
     "actions": "write",
+    "administration": "read",
     "issues": "write",
     "pull_requests": "write",
     "checks": "write",
