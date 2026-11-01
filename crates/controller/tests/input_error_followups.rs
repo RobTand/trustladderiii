@@ -350,3 +350,53 @@ fn missing_destination_logs() {
         1
     );
 }
+
+#[test]
+fn corrupt_incident_during_probe_stops_ingress() {
+    struct CorruptProbe(tl3_config::Store);
+    impl Executor for CorruptProbe {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset).into())
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            Ok(Reconciliation::Pending)
+        }
+        fn probe(&mut self, _: &Delivery) -> tl3_controller::Result<bool> {
+            sql(
+                &self.0,
+                "UPDATE tl3_world SET value = value - 'signature' WHERE table_name = 'incidents' AND row_id = 'probe-incident'",
+            );
+            Ok(true)
+        }
+    }
+    let mut db = support::Database::start();
+    let settings = db.create("corrupt_probe_incident");
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::Workers, CorruptProbe(settings.clone()));
+    let mut c = Controller::open(Store::open(&settings).unwrap(), registry, boot()).unwrap();
+    c.intake(issue()).unwrap();
+    drain(&mut c);
+    let mut store = Store::open(&settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "allowances")
+        .unwrap();
+    let key = row.value["delivery"]["key"].as_str().unwrap();
+    let mut value = row.value.clone();
+    value["incident"] = json!("probe-incident");
+    let mut commit = tl3_store::Commit::new("probe-incident", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "allowances".into(),
+        id: row.id.clone(),
+        value,
+    });
+    commit.rows.push(tl3_store::RowChange::Put { table: "incidents".into(), id: "probe-incident".into(), value: json!({"id":"probe-incident", "node":0, "open":true, "needs_rob":false, "blocking":false, "summary":"read failed", "signature":{"upstream":"Workers", "class":"transport"}, "effect":key}) });
+    store.commit(&commit).unwrap();
+    assert!(
+        run(&mut c, Input::Wake).is_err(),
+        "incident corruption read inside a probe must stop ingress"
+    );
+}
