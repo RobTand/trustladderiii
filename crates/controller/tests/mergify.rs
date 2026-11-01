@@ -86,6 +86,7 @@ struct State {
     comments: Vec<Value>,
     command_lost_response: bool,
     command_status: u16,
+    command_reply: Option<String>,
     command_attempts: usize,
     requeue_order: Vec<&'static str>,
     fail_reads: bool,
@@ -131,6 +132,7 @@ impl State {
             comments: vec![],
             command_lost_response: false,
             command_status: 201,
+            command_reply: None,
             command_attempts: 0,
             requeue_order: vec![],
             fail_reads: false,
@@ -289,11 +291,17 @@ impl Respond for Api {
                         response.insert_header("retry-after", "0")
                     } else { response };
                 }
-                let comment = json!({"id":1000 + state.requeues,"body":body["body"],
+                let comment = json!({"id":1000 + 2 * state.requeues,"body":body["body"],
                     "user":{"id":123,"login":"factory[bot]"},
                     "created_at":"2026-10-31T22:20:05Z","updated_at":"2026-10-31T22:20:05Z",
                     "issue_url":"local"});
                 state.comments.push(comment.clone());
+                if let Some(reply) = state.command_reply.clone() {
+                    state.comments.push(json!({"id":1001 + 2 * state.requeues,"body":reply,
+                        "user":{"id":37929162,"login":"mergify[bot]"},
+                        "created_at":"2026-10-31T22:20:06Z","updated_at":"2026-10-31T22:20:06Z",
+                        "issue_url":"local"}));
+                }
                 state.posts += 1;
                 state.requeues += 1;
                 state.requeue_order.push("queue");
@@ -2703,6 +2711,10 @@ fn main() {
         "refusal-bound",
         "rate-limit",
         "permission",
+        "reply-restricted",
+        "reply-failed",
+        "reply-late",
+        "reply-ignored",
     ] {
         requeue::scenario(&database.create(&format!("requeue_{mode}")), mode);
     }
@@ -2757,5 +2769,5 @@ fn main() {
         held::scenario(&database.create(&format!("held_{mode}")), mode);
     }
     database.stop();
-    println!("99 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("103 Mergify scenarios passed; no skips; no live upstream calls");
 }

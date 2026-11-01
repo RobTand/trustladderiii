@@ -139,6 +139,23 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "permission" => 403,
             _ => 201,
         };
+        state.command_reply = match mode {
+            "reply-restricted" => Some("> `queue`\n\n#### ☑️ Command disallowed due to [command restrictions](https://docs.mergify.com/commands/restrictions) in the Mergify configuration.".into()),
+            "reply-failed" => Some("> `queue`\n\n#### ❌ Command failed: queue is not configured.".into()),
+            _ => None,
+        };
+        if mode == "reply-ignored" {
+            state.comments.push(reply(
+                998,
+                "mergify[bot]",
+                "> `queue`\n\n#### ❌ Command failed: old command.",
+            ));
+            state.comments.push(reply(
+                999,
+                "mergify[bot]",
+                "> `queue`\n\n#### ❌ Command failed: old command.",
+            ));
+        }
     }
     ingress::apply(&mut controller, tl3_controller::cli::Input::GitHubWake).unwrap();
     drain(&mut controller);
@@ -171,6 +188,66 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "queue"
         ]
     );
+    if matches!(mode, "reply-restricted" | "reply-failed" | "reply-late") {
+        if mode == "reply-late" {
+            drop(controller);
+            controller = open(settings, &api, root.path(), clock.clone());
+            api.state.lock().unwrap().comments.push(reply(1001, "mergify[bot]", "> `queue`\n\n#### ☑️ Command disallowed due to command restrictions in the Mergify configuration."));
+            drain(&mut controller);
+        }
+        let snapshot = controller.snapshot().unwrap();
+        let incident = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "incidents" && row.value["open"] == true)
+            .expect(
+                "a Mergify refusal reply raises a setup incident without waiting for an allowance",
+            );
+        let summary = incident.value["summary"].as_str().unwrap();
+        for text in [
+            "commands_restrictions",
+            ".mergify.yml",
+            "tl3-robtand[bot]",
+            "queue",
+            "requeue",
+        ] {
+            assert!(summary.contains(text), "{summary}");
+        }
+        drop(controller);
+        controller = open(settings, &api, root.path(), clock.clone());
+        clock.0.set(clock.0.get() + Duration::from_secs(100_000));
+        controller.look_now().unwrap();
+        drain(&mut controller);
+        assert_eq!(
+            api.state.lock().unwrap().command_attempts,
+            1,
+            "a refused command must not loop, including across restart"
+        );
+        println!("test requeue_{mode} ... ok");
+        return;
+    }
+    if mode == "reply-ignored" {
+        api.state.lock().unwrap().comments.push(reply(
+            1001,
+            "someone",
+            "> `queue`\n\n#### ❌ Command failed: forged.",
+        ));
+        api.state.lock().unwrap().comments.push(reply(
+            1002,
+            "mergify[bot]",
+            "> `refresh`\n\n#### ❌ Command failed: unrelated command.",
+        ));
+        drain(&mut controller);
+        assert!(
+            !controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents"),
+            "old, forged, and unrelated replies are not evidence of refusal"
+        );
+    }
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
         Phase::Publishing,
@@ -216,6 +293,11 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         "the retry allowance bounds requeues"
     );
     println!("test requeue_{mode} ... ok");
+}
+
+fn reply(id: u64, login: &str, body: &str) -> Value {
+    json!({"id":id,"body":body,"user":{"id":if login == "mergify[bot]" {37929162} else {42},"login":login},
+        "created_at":"2026-10-31T22:20:06Z","updated_at":"2026-10-31T22:20:06Z","issue_url":"local"})
 }
 
 fn label_event(id: u64, label: &str, time: &str) -> Value {
