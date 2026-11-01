@@ -25,7 +25,6 @@ use tl3_controller::{
             Supervisor, WorkerOutputSource,
             writer::{FakeWriter, TextDraft, WriteRequest, Writer, WriterReply},
         },
-        worktrees::Real,
     },
     cli::Input,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
