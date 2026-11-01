@@ -40,7 +40,7 @@ def retained(messages, limit):
             groups.append([message])
         elif groups:
             groups[-1].append(message)
-    kept, used = [], 0
+    kept, used, clipped = [], 0, False
     for group in reversed(groups):
         available = limit - used
         overhead = sum(len(json.dumps(m.model_copy(update={"content": ""}).model_dump(),
@@ -49,6 +49,7 @@ def retained(messages, limit):
             break
         size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
         if size > available:
+            clipped = True
             each = max(0, (available - overhead) // len(group) - 32)
             original = group
             while size > available:
@@ -58,9 +59,9 @@ def retained(messages, limit):
                 each //= 2
         kept = group + kept
         used += size
-    if len(kept) < len(messages) - len(prefix):
-        prefix = prefix + [HumanMessage(content="Earlier exploration turns were removed to bound context. "
-                                       "Use the retained evidence and finish within the budget.")]
+    if clipped or len(kept) < len(messages) - len(prefix):
+        prefix = prefix + [HumanMessage(content="Earlier exploration text was removed or clipped to bound context. "
+                                       "Use the retained evidence.")]
     return prefix + kept
 
 
