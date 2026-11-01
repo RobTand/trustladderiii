@@ -447,6 +447,11 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--maker-image") {
+        maker::repository_images(&mut database);
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--maker-only") {
         maker::run(&mut database);
         database.stop();

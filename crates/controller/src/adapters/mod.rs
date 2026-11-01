@@ -1,4 +1,5 @@
 pub mod github;
+mod images;
 pub mod mergify;
 pub mod prismabuild;
 mod record;
