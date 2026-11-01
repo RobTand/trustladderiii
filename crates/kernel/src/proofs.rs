@@ -1084,13 +1084,14 @@ fn check_gate_merge_progress(width: u8) {
     let mut world = gate_world_in_phase(width, Some(Phase::Queued));
     kani::assume(!world.nodes[0].paused);
     let before_measure = world.measure();
+    let head = world.nodes[0].head.unwrap_or(HeadId(0));
     let mut out = Outbox::new();
     apply(
         &mut world,
         Event::Fact {
             node: NodeId(0),
             fact: Fact::PrMerged {
-                head: world.nodes[0].head.unwrap_or(HeadId(0)),
+                head,
                 checks_passed: true,
             },
         },
@@ -1105,12 +1106,13 @@ fn check_gate_resume_progress(width: u8) {
     let mut world = gate_world(width);
     kani::assume(world.nodes[0].paused);
     let before_measure = world.measure();
+    let id = world.nodes[0].last_cmd + 1;
     let mut out = Outbox::new();
     apply(
         &mut world,
         Event::Command {
             node: NodeId(0),
-            id: world.nodes[0].last_cmd + 1,
+            id,
             command: Command::Resume,
         },
         &mut out,
