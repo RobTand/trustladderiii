@@ -271,7 +271,7 @@ impl Respond for Api {
         match (method, path) {
             ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.classic { json!({"protection":{"required_status_checks":{
-                    "contexts":["Sandbox tests"], "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
+                    "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
                 else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),

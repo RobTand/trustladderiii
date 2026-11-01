@@ -1598,6 +1598,10 @@ impl Controller {
                 post_key: Some(key.clone()),
             }),
         ));
+        let world = snapshot::decode(snapshot)?;
+        let current = &world.nodes[node
+            .index()
+            .ok_or(crate::Error::Invalid("node index overflow"))?];
         let mut delivery = Delivery {
             key,
             epoch: snapshot.epoch.get(),
@@ -1605,15 +1609,15 @@ impl Controller {
                 node,
                 notice: tl3_kernel::Notice::Incident { needs_rob: false },
             },
-            generation: 0,
-            head_sha: None,
+            generation: current.generation,
+            head_sha: crate::commit_sha(snapshot, current.head).map(str::to_owned),
             repository: request.repo.clone(),
             issue: request.issue,
             pull_request: None,
             proposed: None,
             paths: vec![],
-            attempt: 0,
-            round: 0,
+            attempt: current.attempt,
+            round: current.round,
             replanned: false,
             checks: None,
             job_generation: None,

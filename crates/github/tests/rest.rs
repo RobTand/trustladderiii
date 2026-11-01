@@ -1177,6 +1177,8 @@ async fn required_status_checks_protection_403_keeps_rulesets() {
         .unwrap();
     assert_eq!(required.checks.len(), 1);
     assert_eq!(required.checks[0].context, "ruleset");
+    assert_eq!(required.unavailable.len(), 1);
+    assert!(required.unavailable[0].contains("Contents: read"));
 }
 
 #[tokio::test]
@@ -1220,7 +1222,7 @@ async fn required_status_checks_unprotected_branch_has_none() {
     .await;
     Mock::given(method("GET"))
         .and(path("/repos/owner/sandbox/branches/main"))
-        .respond_with(ResponseTemplate::new(404))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"protected":false})))
         .expect(1)
         .mount(&server)
         .await;
