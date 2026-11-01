@@ -881,6 +881,13 @@ pub(super) fn repository_images(database: &mut Database) {
         config.github.repos[0].owner = "ROBTAND".into();
         config.github.repos[0].name = "TL3-SANDBOX".into();
         config.github.repos[0].container_image = override_image.clone();
+        let enabled = override_image.is_some();
+        if enabled {
+            config.github.repos[0] = serde_json::from_value(json!({
+                "owner":"ROBTAND", "name":"TL3-SANDBOX", "installation_id":1,
+                "container_image":override_image.clone(), "exec_scratch":true
+            })).expect("repository scratch opt-in must parse");
+        }
         let mut delivery = super::delivery();
         delivery.output = Out::Effect {
             node: NodeId(0),
@@ -902,6 +909,8 @@ pub(super) fn repository_images(database: &mut Database) {
             override_image.unwrap_or(config.prismabuild.container_image),
             "staged maker input must use its repository image or the global fallback"
         );
+        assert_eq!(request["inputs"]["tests"]["exec_scratch"], enabled,
+                   "maker scratch opt-in must use its repository, with a false fallback");
     }
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
