@@ -183,4 +183,4 @@ Inside an admitted action, `run.py tests` checks formatting and Clippy, builds t
 The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUTPUT=regular` shows CBMC's detailed progress.
 
 A submission is not a pass. Check the terminal exit code, actual logs and verified CAS receipt before reporting a result.
-CI runs separately on Mergify's fleet runners. It does not submit to PrismaBuild.
+CI runs separately on GitHub-hosted runners through Mergify. It does not submit to PrismaBuild.
