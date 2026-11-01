@@ -568,3 +568,14 @@ def test_experiment_tag_failure_does_not_discard_trace(request_doc, monkeypatch,
     run_fake(request_doc, monkeypatch, exporters, uri)
     assert all(child.wait(timeout=15) == 0 for child in exporters)
     assert packets[-1][0] == '/v1/traces'
+
+
+def test_json_model_reply_keeps_readable_tail_without_escaped_secrets():
+    from tl3_workers.tracing import Redactor
+    reply = json.dumps({'kind': 'brief', 'brief': 'earlier paragraph\n' * 20000 + 'latest-reply-paragraph',
+                        'webhook_secret': 'opaque-json-reply-secret-296'})
+    result = Redactor(None).payload({'content': reply})
+    assert 'latest-reply-paragraph' in result['content']
+    assert 'opaque-json-reply-secret-296' not in json.dumps(result)
+    assert isinstance(json.loads(result['content']), dict), 'keep the structured model reply readable'
+    assert len(json.dumps(result).encode()) <= 65536
