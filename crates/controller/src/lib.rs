@@ -600,8 +600,14 @@ impl Controller {
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
-            if fact.recorded(&snapshot)? || snapshot.rows.iter().any(|row| row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
-                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))) {
+            if fact.recorded(&snapshot)?
+                || snapshot.rows.iter().any(|row| {
+                    row.table == "inbox"
+                        && serde_json::from_value::<Observation>(row.value.clone())
+                            .ok()
+                            .is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
+                })
+            {
                 return Ok(());
             }
         }

@@ -649,12 +649,19 @@ impl Controller {
                     }
                 } else {
                     let found = serde_json::to_string(&completion)?;
-                    let setup_gap = completion.observations.iter().try_fold(false, |new, observation| {
-                        Ok::<_, crate::Error>(new || match observation {
-                            Observation::Queue(fact) if matches!(fact.evidence, crate::adapters::mergify::Evidence::ChecksUnavailable { .. }) => !fact.recorded(snapshot)?,
-                            _ => false,
-                        })
-                    })?;
+                    let mut setup_gap = false;
+                    for observation in &completion.observations {
+                        if let Observation::Queue(fact) = observation
+                            && matches!(
+                                fact.evidence,
+                                crate::adapters::mergify::Evidence::ChecksUnavailable { .. }
+                            )
+                            && !fact.recorded(snapshot)?
+                        {
+                            setup_gap = true;
+                            break;
+                        }
+                    }
                     let new = effect.state.is_pending()
                         || setup_gap
                         || (state.found.as_ref() != Some(&found)
@@ -1665,7 +1672,8 @@ impl Controller {
         {
             return Ok(());
         }
-        let key = format!("incident:{id}");
+        // Reopening keeps the incident ID but needs a new notice delivery.
+        let key = format!("incident:{id}:{}", snapshot.revision.get());
         let request = crate::request(snapshot, node)?;
         let summary = format!(
             "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
