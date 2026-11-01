@@ -3,7 +3,6 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
