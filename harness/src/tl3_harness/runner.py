@@ -104,15 +104,16 @@ class Reporter:
     def pytest_collection_modifyitems(self, items):
         if self.summary:
             return
-        self.emit_collection_errors()
         selected = [item for item in items if any(selects(test, item.nodeid) for test in self.tests)]
         try:
             limits.validate_plan_size(item.nodeid for item in selected)
         except ValueError as error:
+            self.collection_errors.clear()
             items.clear()
             self.emit(event="plan-error", message=str(error))
             self.emit(event="collection", tests=[])
             pytest.exit(str(error), returncode=4)
+        self.emit_collection_errors()
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected])
 
