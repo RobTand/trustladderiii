@@ -742,6 +742,7 @@ impl Controller {
         {
             match self.retire_effect(&snapshot, row) {
                 Ok(()) => return Ok(true),
+                Err(error) if !input_errors::recoverable(&error) => return Err(error),
                 Err(error) => eprintln!("adapter retirement failed for {}: {error}", row.id),
             }
         }
@@ -1562,7 +1563,7 @@ impl Controller {
                     app_login.as_deref(),
                 );
                 if class == "queue_unfinished"
-                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)
+                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
                 {
                     summary.push(' ');
                     summary.push_str(&detail);

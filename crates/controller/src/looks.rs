@@ -481,6 +481,7 @@ impl Controller {
                     // Kept in the same controller snapshot as other look evidence.
                 }
                 Ok(_) => {}
+                Err(error) if !crate::input_errors::recoverable(&error) => return Err(error),
                 Err(error) => eprintln!("GitHub delivery look failed: {error}"),
             }
         }
@@ -1252,7 +1253,9 @@ impl Controller {
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
-            .filter_map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()).ok())
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
             .filter(|s| {
                 s.delivery.node() == node && matches!(s.delivery.output, Out::Effect { .. })
             })
@@ -1481,21 +1484,25 @@ pub(crate) fn incident_summary(
     format!("For \"{title}\", {source} {reason}.{setup} {next}")
 }
 
-pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option<String> {
+pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Result<Option<String>> {
     use crate::executor::{ProgressToken, WatchProgress};
-    let progress = snapshot
-        .rows
-        .iter()
-        .filter(|r| r.table == "watches")
-        .find_map(|row| {
-            let delivery: Delivery = crate::decode_stored(row.value.clone()).ok()?;
-            (delivery.node() == node)
-                .then(|| row.value.get("progress"))
-                .flatten()
-                .and_then(|value| crate::decode_stored::<WatchProgress>(value.clone()).ok())
-        })?;
+    let mut progress = None;
+    for row in snapshot.rows.iter().filter(|r| r.table == "watches") {
+        let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+        if delivery.node() == node
+            && let Some(value) = row.value.get("progress")
+        {
+            progress = Some(crate::decode_stored::<WatchProgress>(value.clone())?);
+            break;
+        }
+    }
+    let Some(progress) = progress else {
+        return Ok(None);
+    };
     let ProgressToken::Mergify(progress) = progress.current;
-    let check = progress.queue_check?;
+    let Some(check) = progress.queue_check else {
+        return Ok(None);
+    };
     let title = check.title.as_deref().unwrap_or("Merge queue");
     let status = match check.status.as_str() {
         "in_progress" => "still in progress",
@@ -1503,12 +1510,12 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
         "completed" => "completed",
         _ => "unfinished",
     };
-    Some(match progress.merged_at {
+    Ok(Some(match progress.merged_at {
         Some(time) => format!(
             "GitHub merged the change at {time}, but Mergify's check \"{title}\" is {status}."
         ),
         None => format!("Mergify's check \"{title}\" is {status}."),
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -1579,7 +1586,7 @@ mod incident_tests {
     #[test]
     fn legacy_incident_signature_remains_readable() {
         let signature: IncidentSignature =
-            crate::decode_stored(json!("Workers:transport")).unwrap();
+            serde_json::from_value(json!("Workers:transport")).unwrap();
         assert_eq!(signature.upstream, Upstream::Workers);
         assert_eq!(signature.class, "transport");
         assert_eq!(
