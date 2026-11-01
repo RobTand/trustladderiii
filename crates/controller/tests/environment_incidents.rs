@@ -62,10 +62,9 @@ fn open(settings: &tl3_config::Store, root: &std::path::Path, upstream: Upstream
         Upstream::Workers => {
             registry.register(upstream, HeldMaker(adapters::workers::Fake::new(root)))
         }
-        Upstream::PrismaBuild => registry.register(
-            upstream,
-            LostChecks(adapters::prismabuild::Fake::new(root)),
-        ),
+        Upstream::PrismaBuild => {
+            registry.register(upstream, LostChecks(adapters::prismabuild::Fake::new(root)))
+        }
         _ => unreachable!(),
     }
     let mut c = Controller::open(
@@ -158,11 +157,17 @@ fn blocked_reply_spends_no_credit_and_cites_evidence_on_second_failure() {
 
     maker_replies(&mut c, &blocked(), 1);
     let node = c.world().unwrap().nodes[0];
-    assert_eq!(node.credit, before.credit, "a blocked reply spends no credit");
+    assert_eq!(
+        node.credit, before.credit,
+        "a blocked reply spends no credit"
+    );
     assert_eq!(node.attempt, before.attempt);
     assert_eq!(node.run_failures, 1);
     assert!(!node.waiting_incident);
-    assert!(node.run.unwrap() > generation, "it retries in a new generation");
+    assert!(
+        node.run.unwrap() > generation,
+        "it retries in a new generation"
+    );
 
     maker_replies(&mut c, &blocked(), 1);
     let node = c.world().unwrap().nodes[0];
@@ -188,7 +193,11 @@ fn blocked_reply_spends_no_credit_and_cites_evidence_on_second_failure() {
 fn blocked_reply_without_evidence_is_rejected_as_an_invalid_reply() {
     let mut db = support::Database::start();
     let root = tempfile::tempdir().unwrap();
-    let mut c = open(&db.create("blocked_rejected"), root.path(), Upstream::Workers);
+    let mut c = open(
+        &db.create("blocked_rejected"),
+        root.path(),
+        Upstream::Workers,
+    );
     let before = c.world().unwrap().nodes[0];
     for reply in [
         json!({"kind": "blocked", "report": "The sandbox refused to run the tests."}),
@@ -204,7 +213,12 @@ fn blocked_reply_without_evidence_is_rejected_as_an_invalid_reply() {
     // A reply that breaks the protocol is still TL3's own failure, but it cites nothing.
     assert_eq!(incidents[0]["cause"], "tl3");
     assert_ne!(incidents[0]["signature"]["class"], "environment_blocked");
-    assert!(!incidents[0]["summary"].as_str().unwrap().contains("Evidence"));
+    assert!(
+        !incidents[0]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("Evidence")
+    );
     db.stop();
 }
 
@@ -225,7 +239,10 @@ fn new_release_clears_tl3_incident_once_and_same_release_restart_clears_nothing(
 
     start(&mut c, "release-2");
     let node = c.world().unwrap().nodes[0];
-    assert!(!node.waiting_incident, "a new release clears TL3's incident");
+    assert!(
+        !node.waiting_incident,
+        "a new release clears TL3's incident"
+    );
     assert!(open_incidents(&mut c).is_empty());
     assert_eq!(node.phase, Phase::Making, "the operation retries");
     assert!(node.run.is_some());
@@ -252,7 +269,11 @@ fn new_release_clears_tl3_incident_once_and_same_release_restart_clears_nothing(
 fn new_release_leaves_upstream_incidents() {
     let mut db = support::Database::start();
     let root = tempfile::tempdir().unwrap();
-    let mut c = open(&db.create("release_upstream"), root.path(), Upstream::PrismaBuild);
+    let mut c = open(
+        &db.create("release_upstream"),
+        root.path(),
+        Upstream::PrismaBuild,
+    );
     let node = c.world().unwrap().nodes[0];
     assert!(node.waiting_incident, "{:?}", node.phase);
     let incidents = open_incidents(&mut c);

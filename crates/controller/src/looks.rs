@@ -74,6 +74,41 @@ pub(crate) struct Incident {
     pub effect: Option<String>,
     #[serde(default)]
     pub post_key: Option<String>,
+    /// Absent on incidents stored before Q51; see `Incident::cause`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Cause>,
+}
+
+/// Who caused an incident (Q51, Rob, 2026-11-01). A new TL3 release clears
+/// TL3-side incidents once; upstream incidents keep the probe and Rob rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cause {
+    /// GitHub, Mergify, PrismaBuild or the model proxy.
+    Upstream,
+    /// TL3's own code, prompts, tools or harness environment.
+    Tl3,
+}
+
+impl Cause {
+    /// Workers and worktrees are TL3's own harness: agent runs, reply
+    /// validation, Q50 blockers and Git checkouts.
+    pub(crate) fn of(upstream: Upstream) -> Self {
+        match upstream {
+            Upstream::Workers | Upstream::Worktrees => Cause::Tl3,
+            Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
+        }
+    }
+}
+
+impl Incident {
+    pub(crate) fn cause(&self) -> Cause {
+        self.cause.unwrap_or(if self.input_failure.is_some() {
+            Cause::Upstream
+        } else {
+            Cause::of(self.signature.upstream)
+        })
+    }
 }
 
 pub(crate) fn resolve_effect_incidents(
@@ -997,6 +1032,7 @@ impl Controller {
                 signature: signature.clone(),
                 effect: Some(state.delivery.key.clone()),
                 post_key: Some(format!("incident:{id}")),
+                cause: Some(Cause::of(signature.upstream)),
             }),
         ));
         let mut delivery = state.delivery.clone();
@@ -1480,6 +1516,7 @@ pub(crate) fn incident_summary(
         "quota" => "reached its usage allowance",
         "message_rejected" => "could not prepare a readable message",
         "setup" => "could not complete its setup",
+        "environment_blocked" => "reported that TL3's environment blocked the work",
         _ => "could not finish the operation",
     };
     let next = if needs_rob {
@@ -1697,6 +1734,7 @@ impl Controller {
                 signature: signature.clone(),
                 effect: None,
                 post_key: Some(key.clone()),
+                cause: Some(Cause::Upstream),
             }),
         ));
         let world = snapshot::decode(snapshot)?;

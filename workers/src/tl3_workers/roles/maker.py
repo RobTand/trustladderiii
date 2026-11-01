@@ -231,6 +231,10 @@ def run(model, request, worktree, emit):
         Draft202012Validator(proposal).validate(reply)
         if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
+        if reply["kind"] == "blocked" and not worktree.evidence.cites(reply["evidence"]):
+            # Free text alone cannot claim an environment failure (Q50).
+            reply = {"kind": "cant_meet", "report": "blocked cited no environment failure "
+                     "recorded in this run: " + reply["report"]}
         _check_reply(inputs, reply)
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if reply["kind"] != "done":

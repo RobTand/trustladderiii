@@ -57,7 +57,16 @@ Return one JSON object:
 - done with self_check, every goal marked met with evidence;
 - needs_files with a nonempty files list, each entry containing path and why;
 - cant_meet with a report when you cannot implement the goals;
+- blocked with evidence and a report when TL3's environment stopped you;
 - out_of_room when there is too little context to continue safely.
+
+Use blocked when the environment stopped you, not the change: run_tests
+returned status infrastructure_error, or a tool failed with a tool error id.
+Cite one in evidence: the run's action_key, or the tool_error id from this run.
+TL3 retries blocked work without spending credit. Worker code checks the
+evidence. A blocked reply whose evidence this run did not record becomes
+cant_meet. Use cant_meet when the change cannot meet a goal, including tests
+that run and fail.
 
 Do not include a head field or try to commit. After validating done, worker
 code commits the worktree with the fixed TL3 identity and adds the real head

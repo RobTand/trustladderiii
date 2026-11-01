@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48 from 2026-11-01. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -550,6 +550,47 @@ The PRD also proposes noting later pushes in the summary and relabelling to adop
 again. These defaults do not expand #143 beyond its ticket. This tracer retains
 the existing once-per-issue intake rule. Issue-trigger intake, fork support,
 catch-up, steering, scope trimming and splitting remain later tickets.
+
+## Q50 and Q51: failures TL3 causes itself
+
+Approved by Rob, 2026-11-01. A request spends credit on its own work, not on
+TL3's environment. On prismabuild#1968, TL3's test tool dropped executable bits
+(#283), and the maker's two `cant_meet` replies spent 2 credits. Every second
+incident also needed Rob's `clear incident`, even after the fix was deployed.
+
+- **Q50 Environment blockers:** the maker replies `blocked` when TL3's
+  environment stopped it. The reply cites an infrastructure-error `run_tests`
+  action key or a tool error recorded in the same run, and worker code checks
+  it. A `blocked` reply is an infrastructure failure under Q7: a retry in a new
+  generation, an incident on every second failure, no credit spent. The
+  incident cites the evidence. Unsupported evidence makes the reply
+  `cant_meet`. Only the maker has `run_tests`, so only the maker has
+  `blocked`.
+- **Q51 Releases clear TL3-side incidents:** each incident records whether an
+  upstream or TL3 caused it. tl3d records the release it last started with.
+  The first start under a new release clears each open TL3-side incident that
+  holds an operation once, as Rob's clear would, and the operation retries. A
+  failure on the new release raises an incident again, which stays open until
+  the next release or Rob. Upstream incidents and same-release restarts are
+  unchanged.
+
+The controller implements both with the kernel's existing events. A `blocked`
+reply enters the kernel as "run failed", and a release clear enters as
+"incident cleared" with Rob's authority. The release identity is the Git tree
+hash built into the binaries, or the binary's digest when Git is unavailable.
+
+Incidents map onto cause classes by their source:
+
+| Source | Cause |
+|---|---|
+| Agent runs: crashes, stalls, reply-validation failures and Q50 blockers | TL3 |
+| Git worktree operations | TL3 |
+| GitHub, Mergify and PrismaBuild operations, looks and stalls | Upstream |
+| Posting notices, reading incoming input, and required-check setup | Upstream |
+
+An agent run that crashes because the model proxy is down counts as TL3-side,
+because the controller can't yet tell it from a worker bug. A release retries
+it once; a proxy that is still down raises the incident again.
 
 ## Q47: required checks before enqueue
 

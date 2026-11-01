@@ -50,6 +50,27 @@
       "required": ["kind", "report"], "additionalProperties": false
     },
     {
+      "type": "object",
+      "properties": {
+        "kind": {"const": "blocked"},
+        "evidence": {
+          "description": "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run.",
+          "oneOf": [
+            {
+              "type": "object", "properties": {"action_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+              "required": ["action_key"], "additionalProperties": false
+            },
+            {
+              "type": "object", "properties": {"tool_error": {"type": "string", "pattern": "^tool-error-[1-9][0-9]*$"}},
+              "required": ["tool_error"], "additionalProperties": false
+            }
+          ]
+        },
+        "report": {"$ref": "#/$defs/text"}
+      },
+      "required": ["kind", "evidence", "report"], "additionalProperties": false
+    },
+    {
       "type": "object", "properties": {"kind": {"const": "out_of_room"}},
       "required": ["kind"], "additionalProperties": false
     }

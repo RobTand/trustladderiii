@@ -67,6 +67,9 @@ pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
                 }
             }
             "cant_meet" => MappedReply::Kernel(Reply::MakerCantMeet),
+            // Q50: an environment blocker is an infrastructure failure. The
+            // worker checked its evidence; the incident text cites it.
+            "blocked" => MappedReply::Kernel(Reply::RunFailed),
             "out_of_room" => MappedReply::Kernel(Reply::MakerOutOfRoom),
             _ => unreachable!(),
         });

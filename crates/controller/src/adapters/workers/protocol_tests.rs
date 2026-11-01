@@ -103,7 +103,8 @@ fn blocked_maker_reply_needs_cited_evidence() {
         json!({"action_key": "c".repeat(64)}),
         json!({"tool_error": "tool-error-1"}),
     ] {
-        let reply = json!({"kind": "blocked", "evidence": evidence, "report": "PrismaBuild failed."});
+        let reply =
+            json!({"kind": "blocked", "evidence": evidence, "report": "PrismaBuild failed."});
         assert!(
             matches!(
                 map_reply("maker", &reply),

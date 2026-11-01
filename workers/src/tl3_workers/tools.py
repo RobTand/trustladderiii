@@ -95,11 +95,42 @@ def _matching_lines(stream, pattern):
         yield number, text, length > len(text)
 
 
+class Evidence:
+    """Environment failures this run's tools recorded. A blocked reply must cite one (Q50)."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self.infrastructure_keys = set()
+        self.tool_errors = {}
+
+    def tool_error(self, name, message):
+        with self._lock:
+            error = f"tool-error-{len(self.tool_errors) + 1}"
+            self.tool_errors[error] = {"tool": name, "message": message}
+            return error
+
+    def test_result(self, result):
+        if not isinstance(result, dict) or result.get("status") != "infrastructure_error":
+            return
+        key = result.get("action_key")
+        if isinstance(key, str) and re.fullmatch("[0-9a-f]{64}", key):
+            with self._lock:
+                self.infrastructure_keys.add(key)
+        else:
+            result["tool_error"] = self.tool_error("run_tests", str(result.get("message", "")))
+
+    def cites(self, evidence):
+        with self._lock:
+            return (evidence.get("action_key") in self.infrastructure_keys
+                    or evidence.get("tool_error") in self.tool_errors)
+
+
 class Worktree:
     def __init__(self, root):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self._mutation_lock = Lock()
         self._memory = current.get()
+        self.evidence = Evidence()
 
     def __enter__(self):
         return self
@@ -332,6 +363,8 @@ def build_tools(worktree, descriptions):
             with _lock:
                 try:
                     result = _method(*args, **kwargs)
+                    if _name == "run_tests":
+                        worktree.evidence.test_result(result)
                     if _summary is not None:
                         try:
                             _summary.tool(_name, kwargs, result)
@@ -345,7 +378,9 @@ def build_tools(worktree, descriptions):
                 except FileNotFoundError as exc:
                     raise ToolException("File or directory not found.") from exc
                 except OSError as exc:
-                    raise ToolException("Worktree tool rejected the path or operation.") from exc
+                    message = "Worktree tool rejected the path or operation."
+                    error = worktree.evidence.tool_error(_name, f"{type(exc).__name__}: {message}")
+                    raise ToolException(f"{message} Tool error id: {error}.") from exc
 
         tools.append(StructuredTool.from_function(
             func=guarded, name=name, description=description,
