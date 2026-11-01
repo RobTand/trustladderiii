@@ -61,6 +61,22 @@ def irrelevant(path):
                for pattern in IRRELEVANT)
 
 
+def needs_no_diff(changed, deleted, used_sources):
+    """Only unread, allowlisted files changed; bazel-diff has nothing to find."""
+    return not deleted and all(irrelevant(path) and path not in used_sources for path in changed)
+
+
+def diff_commands(java, jar, root, bazel, base_hashes, head_hashes, impacted):
+    """bazel-diff v42 command lines: a hash generator, then the impacted query."""
+    def generate(output):
+        return [str(java), '-jar', str(jar), 'generate-hashes', '--workspacePath', str(root),
+                '--bazelPath', str(bazel), '--excludeExternalTargets', str(output)]
+    return generate, [str(java), '-jar', str(jar), 'get-impacted-targets',
+                      '--workspacePath', str(root), '--bazelPath', str(bazel),
+                      '--targetType', 'Rule', '--startingHashes', str(base_hashes),
+                      '--finalHashes', str(head_hashes), '--output', str(impacted)]
+
+
 def plan(changed, deleted, impacted, used_sources, tests):
     """Decide what to test. Pure; every input comes from git or Bazel."""
     if not changed and not deleted:
@@ -170,15 +186,15 @@ class Workspace:
                 raise GateError('bazel-diff jar checksum mismatch')
             jar.write_bytes(data)
         java = Path(self.run(self.bazel, 'info', 'java-home').strip(), 'bin/java')
-        hashes = {}
+        hashes = {name: Path(tempfile.gettempdir(), f'{name}-hashes.json') for name in ['base', 'head']}
+        impacted = Path(tempfile.gettempdir(), 'impacted.txt')
+        impacted.unlink(missing_ok=True)
+        generate, query = diff_commands(java, jar, self.root, self.bazel,
+                                        hashes['base'], hashes['head'], impacted)
         for name, sha in [('base', base), ('head', head)]:
             self.checkout(sha)
-            hashes[name] = Path(tempfile.gettempdir(), f'{name}-hashes.json')
-            self.run(java, '-jar', jar, 'generate-hashes', '--workspacePath', self.root,
-                     '--bazelPath', self.bazel, '--excludeExternalTargets', hashes[name])
-        impacted = Path(tempfile.gettempdir(), 'impacted.txt')
-        self.run(java, '-jar', jar, 'get-impacted-targets', '--startingHashes', hashes['base'],
-                 '--finalHashes', hashes['head'], '--output', impacted)
+            self.run(*generate(hashes[name]))
+        self.run(*query)
         return {canonical(line) for line in impacted.read_text().split() if line}
 
     def test(self, targets, config, metadata, log_name):
@@ -237,11 +253,14 @@ def gate_pr(workspace, base, head, metadata):
     for sha in [base, head]:
         workspace.ensure_commit(sha)
     changed, deleted = workspace.changes(base, head)
+    workspace.checkout(head)
+    used = workspace.used_sources()
     forced = fallback_files(changed | deleted)
-    impacted = set() if forced else workspace.bazel_diff(base, head)
+    skip = forced or needs_no_diff(changed, deleted, used)
+    impacted = set() if skip else workspace.bazel_diff(base, head)
     workspace.checkout(head)
     tests, rust = workspace.tests(), workspace.rust_tests()
-    decision = plan(changed, deleted, impacted, workspace.used_sources(), tests)
+    decision = plan(changed, deleted, impacted, used, tests)
     selected_seconds = time.monotonic() - started
     statuses = workspace.test(decision['selected'], CONFIGS['amd64'], metadata, 'pr')
     verdicts, failed = classify(decision['selected'], statuses, rust)
