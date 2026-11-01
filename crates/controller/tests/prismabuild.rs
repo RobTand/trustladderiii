@@ -1647,6 +1647,10 @@ fn main() {
         source_skips_bad_waits();
         return;
     }
+    if args.get(1).is_some_and(|arg| arg == "--report-limit") {
+        oversized_plan_is_refused_before_submission();
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--repository-image") {
         repository_image_is_sealed_and_staged_with_global_fallback();
         return;
@@ -1682,6 +1686,10 @@ fn main() {
         return;
     }
     for (name, test) in [
+        (
+            "oversized_plan_is_refused_before_submission",
+            oversized_plan_is_refused_before_submission as fn(),
+        ),
         (
             "repository_image_is_sealed_and_staged_with_global_fallback",
             repository_image_is_sealed_and_staged_with_global_fallback as fn(),
@@ -2083,4 +2091,22 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
             "PB placement must use the staged image"
         );
     }
+}
+
+fn oversized_plan_is_refused_before_submission() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.checks.as_mut().unwrap().plan[0].tests = vec![format!(
+        "test_value.py::test_{}",
+        "x".repeat(4 * 1024 * 1024)
+    )];
+    let mut adapter = fixture(root.path(), "pending");
+    let result = adapter.execute(&delivery);
+    assert!(
+        matches!(result, Err(ref error) if error.to_string().contains("4194304") && error.to_string().contains("reduce")),
+        "oversized plan must be refused with a planner-facing size error before submission"
+    );
+    assert!(adapter.action_key(&delivery).unwrap().is_none());
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap_or_default();
+    assert!(!calls.contains("--seal-only") && !calls.contains("--publish"));
 }

@@ -93,3 +93,7 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
     return Result(check.name, check.kind, verdict, tuple(tests))
+
+
+def validate_plan_size(tests):
+    pass
