@@ -113,6 +113,7 @@ struct State {
     rerun_lost_response: bool,
     required: bool,
     classic: bool,
+    classic_context_only: bool,
     annotations: Value,
     statuses: Value,
     queued_before_rerun: bool,
@@ -162,6 +163,7 @@ impl State {
             rerun_lost_response: false,
             required: false,
             classic: false,
+            classic_context_only: false,
             annotations: json!([]),
             statuses: json!([]),
             queued_before_rerun: false,
@@ -262,7 +264,7 @@ impl Respond for Api {
             ("GET", "/repos/owner/sandbox/branches/main/protection/required_status_checks") => {
                 if state.classic {
                     ResponseTemplate::new(200).set_body_json(json!({"contexts":["Sandbox tests"],
-                        "checks":[{"context":"Sandbox tests","app_id":15368}]}))
+                        "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}))
                 } else { ResponseTemplate::new(404) }
             }
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
@@ -2475,7 +2477,8 @@ fn main() {
         database.stop();
         return;
     }
-    if let Some(mode) = std::env::args().nth(1)
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--classic-head-").map(str::to_owned))
     {
         let mut database = support::Database::start();

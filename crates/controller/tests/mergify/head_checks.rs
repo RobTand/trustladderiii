@@ -173,12 +173,26 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     );
     assert_eq!(
         api.state.lock().unwrap().posts,
+        1,
+        "rerun acceptance must wait for successful head checks before re-enqueueing"
+    );
+    {
+        let mut state = api.state.lock().unwrap();
+        state.head_checks[0]["id"] = json!(901);
+        state.head_checks[0]["conclusion"] = json!("success");
+    }
+    controller.retry_held_effects(Upstream::Mergify);
+    drain(&mut controller);
+    assert_eq!(
+        api.state.lock().unwrap().posts,
         2,
-        "re-enqueue after rerun acceptance"
+        "re-enqueue after the rerun passes"
     );
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     {
         let mut state = api.state.lock().unwrap();
+        state.head_checks[0]["id"] = json!(902);
+        state.head_checks[0]["conclusion"] = json!(conclusion);
         state.checks = fixture("live-dequeued", "checks");
         state.queue_check_mut()["completed_at"] = json!("2026-10-31T19:51:00Z");
         let run = state.workflow.as_mut().unwrap();
@@ -342,6 +356,17 @@ fn refused_then_retry(mode: &str) {
         ),
         "an explicit refusal must permit the same key to retry after access is granted"
     );
+    assert!(adapter.execute(&delivery).is_err());
+    assert_eq!(
+        api.state.lock().unwrap().posts,
+        0,
+        "the accepted rerun still needs a successful head check"
+    );
+    {
+        let mut state = api.state.lock().unwrap();
+        state.head_checks[0]["id"] = json!(901);
+        state.head_checks[0]["conclusion"] = json!("success");
+    }
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
     assert_eq!(
         api.state.lock().unwrap().reruns,
