@@ -73,32 +73,62 @@ model names and effort values. Calls stream tokens. Provider retries are off,
 so failures return to the supervisor rather than replaying a model call here.
 
 Ingest and audit allow at most four exploration model turns, followed by one
-final answer. Their total input allowance is 300,000 tokens per run. Before
-another exploration call, the runtime reserves the original input and bounded
-evidence for a final answer. At that boundary it removes tools and asks for the
-final JSON. Schema validation and the role's reply checks still apply.
+final answer. Their input allowance is 300,000 cache-weighted tokens per run.
+Maker permits 64 tool turns and 6,000,000 cache-weighted tokens. Before another
+exploration call, the runtime reserves enough input for a final answer. At that
+boundary it removes tools and asks for the final JSON. Schema validation and the
+role's reply checks still apply. An exhausted no-change maker done becomes
+cant_meet without another model call. Planner and reviewer can select a budget
+through the same role field.
 
-Each call charges provider-reported input tokens when present. Otherwise it
-estimates tokens as serialized UTF-8 bytes divided by three, rounded up, including
-messages, tool schemas, and framing. Final-answer reserves use the same estimate.
-The latest reported call size also sets a floor for the next-call and final-answer
-reserves when provider usage exceeds the estimate.
-Only 32 KiB of recent exploration messages reaches the next model call. Complete
-call/result groups retain their IDs. Large result text is clipped within that
-limit. The newest group always survives; oversized call arguments become a marked
-excerpt, keeping each call paired with its result. Older groups leave the prompt, while the original request remains intact.
-An original input larger than the entire allowance fails with a fixed diagnostic.
+History stays append-only until the estimated raw context reaches 70% of
+context_size. The runtime then compacts once. It retains the original request,
+all human instructions in order, and recent complete call/result groups up to
+32 KiB for intake or 64 KiB for maker. The newest group always survives.
+Oversized content and call arguments become marked excerpts while call IDs
+stay paired with their results. Edits remain in the worktree and can be read
+again. Later turns append to that compacted prefix without further trimming.
+If compaction brought context below 70% and it approaches 70% again, the role
+must finish. When the instructions alone stay above 70%, such as a fix round
+with long accumulated feedback, compaction frees no room. The run then keeps
+working under the tool-turn cap, the input allowance and maker's existing 85%
+context check.
 
-Maker uses the same runtime retention policy with a 64 KiB exploration-history
-window. Recent call/result groups remain whole when they fit; older text is
-removed or clipped with a notice. Human requests and repair feedback stay in
-order, including across resumed visits. Edits remain in the worktree and can be
-read again. Maker permits 64 tool turns and 6,000,000 input
-tokens, with the same final-answer reservation as intake. This leaves room
-above the observed 50-turn session while bounding endless work. An exhausted
-no-change done becomes cant_meet without another model call. Its context check, self-check,
-reply validation, and code-owned commit still apply. Planner and reviewer can
-select a policy through the same role field.
+Input usage comes from provider-reported input_tokens. Without usage, the
+fallback is serialized UTF-8 bytes divided by three, rounded up, including
+messages, tool schemas and framing. Context estimates calibrate to the latest
+provider count, then add the estimated new text. Context size uses raw tokens;
+cache discounts never enlarge the context window.
+
+The input charge uses input_token_details: uncached tokens times 1,
+cache_creation times 1.25, and cache_read times 0.1, rounded up per call. Missing
+cache fields count as uncached. Configure the weights with
+TL3_CACHE_UNCACHED_WEIGHT, TL3_CACHE_CREATION_WEIGHT and TL3_CACHE_READ_WEIGHT.
+They must be finite and nonnegative. The next-call estimate allows cheap reads
+only after cache usage is observed on the unchanged prefix. Final-answer
+reserves allow a cold call because compaction or removal of tools may invalidate
+the cache. An original input larger than the entire allowance fails with a
+fixed diagnostic naming the role.
+
+The allowances retain headroom above the recorded PrismaBuild paths. Ingest
+#1968 used four exploration turns and 447,698 raw input tokens with a 101,064
+peak context. With a reusable prefix, most of the later input costs 0.1 times
+its raw size; 300k still permits a cold initial call and reserved final answer.
+The offline paired intake replay checks the allowance against actual orientation
+and confined repository reads. Maker's recorded 51-call session used 1,871,909
+raw input tokens. Even charging every token as a cache write and scaling to 65
+calls gives about 2.98M weighted tokens. The longer-input offline replay provides
+a second sizing check. Six million leaves room for a larger request and one
+cold compaction while the 64-turn cap stops endless work. Replay costs assume
+unchanged prefixes remain cached, without provider minimums, rounding or
+eviction. They are estimates, not provider billing or live cache-hit evidence.
+
+Every model request sends one stable attempt identity through both X-Session-ID
+and model_kwargs.prompt_cache_key. It contains node, generation and attempt,
+never the model key. An unaccepted maker or reviewer visit reuses its saved
+generation, so a worker retry keeps its affinity. A later attempt gets a new
+identity. Streamed usage uses the last usage chunk per call. Totals on finish and
+trailing chunks are never summed, including in recorded usage.
 
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
