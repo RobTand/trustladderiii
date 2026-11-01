@@ -357,7 +357,7 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
     ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]}, True),
     ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]}, True),
     ({**CANT_MEET, "report": ""}, False),
-    ({**CANT_MEET, "files": ["../escape"]}, False),
+    ({**CANT_MEET, "files": ["../escape"]}, True),
 ])
 def test_split_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_request, proposal, reported):
     result = run_reply(tmp_path, planner_request, proposal)

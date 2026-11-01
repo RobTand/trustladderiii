@@ -134,6 +134,7 @@ class Forecaster:
             raise ValueError("fit limit must be smaller than context size")
         self.config = config
         self.encoding = _encoding()
+        self.problems, self.large = [], {}
 
     def files(self, paths):
         """Measure declared files. Unusable files cost nothing and are kept in
