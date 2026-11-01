@@ -719,11 +719,21 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
-                    if looks::quota_waiting(&snapshot, &effect.key, self.now_ms())? {
+                    let local_cancellation = effect.state == EffectState::Cancelling
+                        && executor::upstream(delivery.output) == executor::Upstream::Mergify;
+                    if !local_cancellation
+                        && looks::quota_waiting(&snapshot, &effect.key, self.now_ms())?
+                    {
                         continue;
                     }
                     hook(Boundary::BeforeReconcile, &effect.key);
-                    let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
+                    let reconciled = if effect.state == EffectState::Cancelling {
+                        self.adapters
+                            .adapter(&delivery)?
+                            .reconcile_cancellation(&delivery)
+                    } else {
+                        self.adapters.adapter(&delivery)?.reconcile(&delivery)
+                    };
                     hook(Boundary::AfterReconcile, &effect.key);
                     let result = match reconciled {
                         Ok(result) => result,
@@ -1071,6 +1081,7 @@ impl Controller {
             });
         }
         if completion.ack == Ack::Confirmed {
+            looks::resolve_effect_incidents(&snapshot, &mut commit, |_, effect| Ok(effect == key))?;
             if let Some(marker) = &delivery.marker_key {
                 commit.rows.push(RowChange::Delete {
                     table: "notice_incidents".into(),
@@ -1156,6 +1167,7 @@ impl Controller {
             .rows
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
+        self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
         commit.result = json!({"kernel_event": event});
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
@@ -1356,7 +1368,16 @@ impl Controller {
                 };
                 let needs_rob =
                     looks::incident_needs_rob(looks::IncidentCause::Kernel { needs_rob });
-                let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
+                let app_login = self
+                    .adapters
+                    .get(source)?
+                    .app_login(delivery.repository.installation);
+                let mut summary = looks::incident_summary(
+                    &request.title,
+                    &signature,
+                    needs_rob,
+                    app_login.as_deref(),
+                );
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)
                 {

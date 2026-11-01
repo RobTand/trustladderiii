@@ -74,6 +74,26 @@ pub(crate) struct Incident {
     pub post_key: Option<String>,
 }
 
+pub(crate) fn resolve_effect_incidents(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    mut resolved: impl FnMut(&Incident, &str) -> Result<bool>,
+) -> Result<()> {
+    for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
+        let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+        if incident.open
+            && let Some(key) = incident.effect.as_deref()
+            && resolved(&incident, key)?
+        {
+            incident.open = false;
+            commit
+                .rows
+                .push(put("incidents", row.id.clone(), json!(incident)));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "StoredSignature")]
 pub(crate) struct IncidentSignature {
@@ -143,6 +163,27 @@ pub(crate) fn incident_note(repository: &crate::Repository, issue: u64, summary:
 }
 
 impl Controller {
+    pub(crate) fn resolve_closed_effect_incidents(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        resolve_effect_incidents(snapshot, commit, |incident, key| {
+            if !matches!(
+                world.nodes[incident.node.0 as usize].phase,
+                tl3_kernel::Phase::Closed(_)
+            ) {
+                return Ok(false);
+            }
+            let Some(effect) = self.store.effect(key)? else {
+                return Ok(false);
+            };
+            let delivery: Delivery = serde_json::from_value(effect.payload)?;
+            // Failed summaries and other notices still need delivery after closure.
+            Ok(matches!(delivery.output, Out::Effect { .. }))
+        })
+    }
     pub(crate) fn link_allowance_incident(
         &self,
         snapshot: &Snapshot,
@@ -294,31 +335,38 @@ impl Controller {
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
             state.due_ms = None;
             if let Some(id) = &state.incident
-                && let Some(row) = snapshot.rows.iter().find(|r| {
-                    r.table == "incidents"
-                        && r.id == *id
-                        && r.value["open"] == true
-                        && r.value["effect"].as_str() == Some(&state.delivery.key)
-                })
+                && let Some(row) = snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
             {
                 let incident: Incident = serde_json::from_value(row.value.clone())?;
-                if !incident.needs_rob {
-                    match self
-                        .adapters
-                        .adapter(&state.delivery)?
-                        .probe(&state.delivery)
-                    {
-                        Ok(true) => {
-                            self.probe_passed(&state)?;
-                            self.retry_held_effects(upstream(state.delivery.output));
-                            self.rearm(&mut state);
-                        }
-                        Ok(false) => self.rearm(&mut state),
-                        Err(error) => self.look_failed(&mut state, &error)?,
-                    }
+                // A healthy GET cannot prove that command restrictions were fixed.
+                // Keep this setup refusal for explicit incident clearance, even
+                // after the failed delivery's adapter records have retired.
+                if incident.signature.class == "queue_command_refused" {
+                    self.save_allowance(&state)?;
+                    continue;
                 }
-                self.save_allowance(&state)?;
-                continue;
+                if incident.effect.as_deref() == Some(&state.delivery.key) {
+                    if !incident.needs_rob {
+                        match self
+                            .adapters
+                            .adapter(&state.delivery)?
+                            .probe(&state.delivery)
+                        {
+                            Ok(true) => {
+                                self.probe_passed(&state)?;
+                                self.retry_held_effects(upstream(state.delivery.output));
+                                self.rearm(&mut state);
+                            }
+                            Ok(false) => self.rearm(&mut state),
+                            Err(error) => self.look_failed(&mut state, &error)?,
+                        }
+                    }
+                    self.save_allowance(&state)?;
+                    continue;
+                }
             }
             if state.quota_ms.is_some_and(|reset| reset > now) {
                 state.due_ms = state.quota_ms;
@@ -806,7 +854,11 @@ impl Controller {
             upstream: upstream(state.delivery.output),
             class: failure_class(error).into(),
         };
-        let summary = incident_summary(&request.title, &signature, needs_rob);
+        let app_login = self
+            .adapters
+            .adapter(&state.delivery)?
+            .app_login(request.repo.installation);
+        let summary = incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
         let mut commit = Commit::new(
             format!("incident:{id}"),
             json!({"read_outage":state.delivery.key}),
@@ -1140,6 +1192,8 @@ impl Controller {
             json!({"retire_allowances":true}),
             snapshot,
         );
+        // Repair snapshots from before closed requests retired recovery incidents.
+        self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
             let state: AllowanceState = serde_json::from_value(row.value.clone())?;
             let incident_open = state.incident.as_ref().is_some_and(|id| {
@@ -1235,6 +1289,7 @@ pub(crate) fn incident_summary(
     title: &str,
     signature: &IncidentSignature,
     needs_rob: bool,
+    app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
         Upstream::Workers => "the agent worker",
@@ -1250,6 +1305,7 @@ pub(crate) fn incident_summary(
         "queue_command_permission" => {
             "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
         }
+        "queue_command_refused" => "refused the queue command",
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
@@ -1285,7 +1341,15 @@ pub(crate) fn incident_summary(
     } else {
         "Work is waiting for recovery."
     };
-    format!("For \"{title}\", {source} {reason}. {next}")
+    let setup = if signature.class == "queue_command_refused" {
+        format!(
+            " In the served repo's .mergify.yml, allow {} in commands_restrictions for queue and requeue, then clear this incident.",
+            app_login.unwrap_or("TL3's App bot login")
+        )
+    } else {
+        String::new()
+    };
+    format!("For \"{title}\", {source} {reason}.{setup} {next}")
 }
 
 pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option<String> {
@@ -1353,7 +1417,8 @@ mod git_failure_tests {
                             upstream: Upstream::Worktrees,
                             class: failure_class(&error).into()
                         },
-                        false
+                        false,
+                        None
                     )
                     .contains("has uncommitted or untracked files")
                 );
@@ -1393,7 +1458,7 @@ mod incident_tests {
             json!({"upstream":"Workers", "class":"transport"})
         );
         assert!(
-            incident_summary("Greeting", &signature, false)
+            incident_summary("Greeting", &signature, false, None)
                 .contains("the agent worker could not be reached")
         );
     }

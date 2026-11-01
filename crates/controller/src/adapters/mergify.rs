@@ -218,6 +218,7 @@ impl From<&tl3_mergify::Observation> for Progress {
 enum Requeue {
     Ready,
     Sending,
+    Refused,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -338,13 +339,47 @@ impl Adapter {
         Ok(!fresh)
     }
     fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
+        let mut baseline = self.baseline(delivery)?;
+        if baseline
+            .as_ref()
+            .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
+        {
+            return Ok(Reconciliation::Found(Completion::permanent(
+                "queue_command_refused",
+            )));
+        }
         let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+        if !previously_confirmed
+            && state.state != QueueState::Merged
+            && let Some(attempt) = baseline.as_mut()
+            && matches!(attempt.requeue, Some(Requeue::Sending))
+        {
+            let github = self.clients[&delivery.repository.installation].clone();
+            if self
+                .runtime
+                .block_on(Mergify::new(github).command_refusal(
+                    &full_name(&delivery.repository),
+                    enqueue(delivery)?.0,
+                    &delivery.key,
+                ))
+                .map_err(adapter_error)?
+                .is_some()
+            {
+                attempt.requeue = Some(Requeue::Refused);
+                self.records.write(
+                    &self.records.path(&delivery.key).with_extension("intent"),
+                    &serde_json::to_vec(attempt)?,
+                )?;
+                return Ok(Reconciliation::Found(Completion::permanent(
+                    "queue_command_refused",
+                )));
+            }
+        }
         if !previously_confirmed && self.reruns_pending(delivery)? {
             return Ok(Reconciliation::Pending);
         }
-        let baseline = self.baseline(delivery)?;
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
             return Ok(Reconciliation::Found(Completion {
@@ -440,6 +475,27 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|github| format!("{}[bot]", github.app_slug()))
+    }
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let (number, _) = enqueue(delivery)?;
+        let github = self
+            .clients
+            .get(&delivery.repository.installation)
+            .ok_or(Error::Invalid("missing Mergify installation client"))?;
+        self.runtime
+            .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        Ok(true)
+    }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        enqueue(delivery)?;
+        // Dispatch is synchronous and has ended. Stop the admission watch;
+        // ClosePr removes the label and closes the PR even if a write succeeded.
+        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+    }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
         for extension in ["intent", "applied", "reruns", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
