@@ -335,31 +335,38 @@ impl Controller {
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
             state.due_ms = None;
             if let Some(id) = &state.incident
-                && let Some(row) = snapshot.rows.iter().find(|r| {
-                    r.table == "incidents"
-                        && r.id == *id
-                        && r.value["open"] == true
-                        && r.value["effect"].as_str() == Some(&state.delivery.key)
-                })
+                && let Some(row) = snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
             {
                 let incident: Incident = serde_json::from_value(row.value.clone())?;
-                if !incident.needs_rob {
-                    match self
-                        .adapters
-                        .adapter(&state.delivery)?
-                        .probe(&state.delivery)
-                    {
-                        Ok(true) => {
-                            self.probe_passed(&state)?;
-                            self.retry_held_effects(upstream(state.delivery.output));
-                            self.rearm(&mut state);
-                        }
-                        Ok(false) => self.rearm(&mut state),
-                        Err(error) => self.look_failed(&mut state, &error)?,
-                    }
+                // A healthy GET cannot prove that command restrictions were fixed.
+                // Keep this setup refusal for explicit incident clearance, even
+                // after the failed delivery's adapter records have retired.
+                if incident.signature.class == "queue_command_refused" {
+                    self.save_allowance(&state)?;
+                    continue;
                 }
-                self.save_allowance(&state)?;
-                continue;
+                if incident.effect.as_deref() == Some(&state.delivery.key) {
+                    if !incident.needs_rob {
+                        match self
+                            .adapters
+                            .adapter(&state.delivery)?
+                            .probe(&state.delivery)
+                        {
+                            Ok(true) => {
+                                self.probe_passed(&state)?;
+                                self.retry_held_effects(upstream(state.delivery.output));
+                                self.rearm(&mut state);
+                            }
+                            Ok(false) => self.rearm(&mut state),
+                            Err(error) => self.look_failed(&mut state, &error)?,
+                        }
+                    }
+                    self.save_allowance(&state)?;
+                    continue;
+                }
             }
             if state.quota_ms.is_some_and(|reset| reset > now) {
                 state.due_ms = state.quota_ms;
@@ -1292,6 +1299,9 @@ pub(crate) fn incident_summary(
         "permission" => "refused access",
         "queue_command_permission" => {
             "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
+        }
+        "queue_command_refused" => {
+            "refused the queue command. In the served repo's .mergify.yml, allow App login tl3-robtand[bot] in commands_restrictions for queue and requeue. Check Mergify's reply for other setup errors, then clear this incident"
         }
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"

@@ -6,6 +6,7 @@ use tl3_github::{CheckRun, GitHub, PullRequest};
 
 pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
 pub const MERGIFY_APP_ID: u64 = 10562;
+const MERGIFY_BOT_ID: u64 = 37929162;
 pub const QUEUE_LABEL: &str = "tl3-queue";
 pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 
@@ -91,6 +92,79 @@ impl Mergify {
 
     pub async fn dequeue(&self, repo: &str, number: u64) -> Result<(), Error> {
         Ok(self.github.remove_label(repo, number, QUEUE_LABEL).await?)
+    }
+
+    /// A command reply quotes its command, but has no parent comment ID.
+    pub async fn command_refusal(
+        &self,
+        repo: &str,
+        number: u64,
+        effect_key: &str,
+    ) -> Result<Option<String>, Error> {
+        let mut comments = self.github.comments(repo, number).await?;
+        comments.sort_by_key(|comment| comment.id);
+        let marker = GitHub::marker(effect_key);
+        let login = format!("{}[bot]", self.github.app_slug());
+        let Some(command) = comments.iter().find(|comment| {
+            comment.user.login == login && comment.body.lines().any(|line| line == marker)
+        }) else {
+            return Ok(None);
+        };
+        let Some(name @ ("queue" | "requeue")) = command
+            .body
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("@mergifyio "))
+        else {
+            return Ok(None);
+        };
+        let quoted = format!("> `{name}`");
+        // Another sender's command ends the unambiguous reply window.
+        for comment in comments.iter().filter(|comment| comment.id > command.id) {
+            if comment.body.trim_start().starts_with("@mergifyio ") {
+                break;
+            }
+            if comment.user.id != MERGIFY_BOT_ID
+                || comment.user.login != "mergify[bot]"
+                || comment.body.lines().next().map(str::trim) != Some(quoted.as_str())
+            {
+                continue;
+            }
+            for heading in comment
+                .body
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with('#'))
+            {
+                let lower = heading.to_ascii_lowercase();
+                if heading.contains('❌')
+                    || heading.contains('🚫')
+                    || [
+                        "disallowed",
+                        "refused",
+                        "rejected",
+                        "failed",
+                        "cannot",
+                        "could not",
+                        "not allowed",
+                        "not permitted",
+                        "not authorized",
+                        "denied",
+                        "unable",
+                        "unsupported",
+                        "not supported",
+                        "not configured",
+                        "error",
+                        "unavailable",
+                    ]
+                    .iter()
+                    .any(|word| lower.contains(*word))
+                {
+                    return Ok(Some(heading.trim_start_matches('#').trim().into()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub async fn read(

@@ -1068,6 +1068,15 @@ The synchronous dispatch has ended, and the existing ClosePr teardown removes
 the queue label and closes the PR to undo any accepted write. This cancellation
 uses the original effect key across restart and does not claim queue acceptance.
 
+Mergify command comments have a separate reply. The adapter matches that reply
+to the App's marked command, requires Mergify's bot identity, and ignores old
+replies or replies following someone else's command. A refusal immediately
+raises a setup incident and is journalled across restart. That incident stops
+automatic recovery probes because a healthy GET cannot prove that command
+restrictions were corrected. Fix the served repo's command restrictions and
+clear the incident before retrying; the command receipt alone never proves
+queue acceptance.
+
 Set `[github.operations]` to the existing pinned operations issue in TL3's own
 repo. The app needs an installation there as well as on served repos. That
 repository participates in authenticated comment intake and catch-up, but cannot
