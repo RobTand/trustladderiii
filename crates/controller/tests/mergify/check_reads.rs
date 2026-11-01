@@ -30,9 +30,11 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     } else {
         let snapshot = controller.snapshot().unwrap();
-        let delivery: Delivery = serde_json::from_value(snapshot.rows.iter().find(|row| {
+        let mut delivery: Delivery = serde_json::from_value(snapshot.rows.iter().find(|row| {
             row.table == "allowances" && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
         }).unwrap().value["delivery"].clone()).unwrap();
+        delivery.pull_request = Some(100);
+        delivery.head_sha = Some(api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into());
         {
             let mut state = api.state.lock().unwrap();
             state.checks = fixture("waiting", "checks");
