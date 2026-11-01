@@ -1391,6 +1391,8 @@ write**; see [App setup](../../deploy/github-app/README.md#workflow-rerun-permis
 
 Run `bash crates/controller/tools/verify-head-checks.sh` through PrismaBuild for the
 focused D4 scenarios. The Mergify and publishing suites cover the surrounding flow.
+Run `bash crates/controller/tools/verify-classic-protection.sh` through PrismaBuild
+for classic branch protection, App bindings, and unavailable protection or status reads.
 
 Workflow recovery waits while a cancelled check's workflow run is still finishing.
 A later look reruns the completed workflow before enqueueing. Explicit Actions
@@ -1406,6 +1408,13 @@ existing looks recover missed events. Legacy commit statuses satisfy requirement
 without an App binding when status reads are available. Classic protection uses
 the branch summary and existing Contents read access. No new App permission is
 needed. A 403 or 404 on protection or status reads raises one nonblocking setup
-incident naming the permission. Available requirements and queued CI failure
+incident for each distinct permission gap. Available requirements and queued CI failure
 observations are retained; unavailable status-only contexts are skipped. Status
 changes rely on existing looks, with no `status` webhook subscription.
+
+Queue observations reuse the check runs already read with the PR. An unchanged
+successful observation reuses the previous head-check evaluation. The cache holds
+only the last observation and is discarded on restart. Protection requirements
+are read on every look because they can change independently of the PR. Legacy
+statuses and failure annotations stay fresh. An unchanged queued look with one
+App-bound requirement uses five REST reads instead of six.

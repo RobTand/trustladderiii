@@ -124,13 +124,13 @@ pub struct CommitStatus {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RequiredChecks {
     pub checks: Vec<RequiredStatusCheck>,
     pub unavailable: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct RequiredStatusCheck {
     pub context: String,
     pub integration_id: Option<u64>,

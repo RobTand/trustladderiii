@@ -143,7 +143,15 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
-            Evidence::ChecksUnavailable { .. } => "required-checks-setup".into(),
+            Evidence::ChecksUnavailable { permissions } => {
+                let mut gaps = permissions.clone();
+                gaps.sort();
+                gaps.dedup();
+                format!(
+                    "required-checks-setup:{}",
+                    serde_json::to_string(&gaps).unwrap()
+                )
+            }
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed {
                 check, head_check, ..
@@ -259,6 +267,7 @@ pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
     records: Records,
+    head_checks: head_checks::Cache,
     runtime: &'static tokio::runtime::Runtime,
 }
 impl Adapter {
@@ -268,6 +277,7 @@ impl Adapter {
             clients,
             epoch,
             records: Records::new(records),
+            head_checks: head_checks::Cache::default(),
             runtime: crate::executor::runtime()?,
         })
     }
@@ -294,7 +304,13 @@ impl Adapter {
         }
         let facts = self
             .runtime
-            .block_on(queue_facts(github, &delivery.repository, &state, head))?
+            .block_on(queue_facts(
+                github,
+                &delivery.repository,
+                &state,
+                head,
+                &self.head_checks,
+            ))?
             .into_iter()
             .map(Observation::Queue)
             .collect();
@@ -733,6 +749,7 @@ async fn queue_facts(
     repo: &Repository,
     state: &tl3_mergify::Observation,
     expected_head: &str,
+    head_checks: &head_checks::Cache,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
     if is_merge_queue_pr(pull) {
@@ -755,7 +772,7 @@ async fn queue_facts(
             QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
         )
     {
-        let checks = head_checks::read(github, &full_name(repo), pull).await?;
+        let checks = head_checks.read(github, repo, state).await?;
         head_infrastructure = checks.infrastructure();
         if !checks.unavailable.is_empty() {
             facts.push(QueueFact {
@@ -929,12 +946,14 @@ fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Resu
 /// Sources read evidence; only the controller maps PRs to nodes and steps the kernel.
 pub struct Translator {
     clients: BTreeMap<u64, GitHub>,
+    head_checks: head_checks::Cache,
     runtime: &'static tokio::runtime::Runtime,
 }
 impl Translator {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
             clients,
+            head_checks: head_checks::Cache::default(),
             runtime: crate::executor::runtime()?,
         })
     }
@@ -990,10 +1009,13 @@ impl Translator {
                         .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
                     let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                     let state = tl3_mergify::observe(pull_request.clone(), &checks, &head);
-                    facts.extend(
-                        self.runtime
-                            .block_on(queue_facts(github, repo, &state, &head))?,
-                    );
+                    facts.extend(self.runtime.block_on(queue_facts(
+                        github,
+                        repo,
+                        &state,
+                        &head,
+                        &self.head_checks,
+                    ))?);
                 }
             }
             Event::PullRequestClosed {
@@ -1109,8 +1131,13 @@ impl Translator {
             item.number,
             &item.head,
         ))?;
-        self.runtime
-            .block_on(queue_facts(github, repo, &state, &item.approved))
+        self.runtime.block_on(queue_facts(
+            github,
+            repo,
+            &state,
+            &item.approved,
+            &self.head_checks,
+        ))
     }
     pub fn catch_up(
         &self,
@@ -1146,10 +1173,13 @@ impl Translator {
             {
                 let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                 let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
-                facts.extend(
-                    self.runtime
-                        .block_on(queue_facts(github, repo, &state, &head))?,
-                );
+                facts.extend(self.runtime.block_on(queue_facts(
+                    github,
+                    repo,
+                    &state,
+                    &head,
+                    &self.head_checks,
+                ))?);
             }
         }
         for item in tracked(snapshot, repo, false)? {

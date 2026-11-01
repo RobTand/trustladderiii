@@ -1628,12 +1628,37 @@ impl Controller {
         node: NodeId,
         permissions: &[String],
     ) -> Result<()> {
-        let id = format!("required-checks:{}", node.0);
+        for permission in permissions
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            self.check_setup_gap(snapshot, commit, node, permission)?;
+        }
+        Ok(())
+    }
+
+    fn check_setup_gap(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        permission: &str,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
+        let id = format!("required-checks:{}:{gap}", node.0);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents" && row.id == id)
+        {
+            return Ok(());
+        }
         let key = format!("incident:{id}");
         let request = crate::request(snapshot, node)?;
         let summary = format!(
             "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
-            permissions.join("; ")
+            permission
         );
         let signature = IncidentSignature {
             upstream: Upstream::Mergify,

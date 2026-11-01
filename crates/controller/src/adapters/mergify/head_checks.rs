@@ -1,6 +1,7 @@
 use super::*;
 use tl3_github::{CheckAnnotation, PullRequest, WorkflowRun};
 
+#[derive(Clone)]
 enum Failure {
     Tests {
         check: u64,
@@ -9,6 +10,7 @@ enum Failure {
     Infrastructure(Vec<CheckRun>),
 }
 
+#[derive(Clone)]
 pub(super) struct Checks {
     pub ready: bool,
     pub unavailable: Vec<String>,
@@ -51,6 +53,82 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
     let requirements = github
         .required_status_checks(repo, &pull.base.branch)
         .await?;
+    let checks = if requirements.checks.is_empty() {
+        vec![]
+    } else {
+        github.check_runs(repo, &pull.head.sha).await?
+    };
+    evaluate(github, repo, pull, requirements, &checks).await
+}
+
+#[derive(PartialEq, Eq)]
+struct Inputs {
+    installation: u64,
+    repo: String,
+    pull: PullRequest,
+    requirements: tl3_github::RequiredChecks,
+    checks: Vec<CheckRun>,
+}
+
+// Keep only the last successful observation. Restarts and alternating PRs
+// re-evaluate rather than retaining an unbounded history of served heads.
+#[derive(Default)]
+pub(super) struct Cache(std::cell::RefCell<Option<(Inputs, Checks)>>);
+
+impl Cache {
+    pub(super) async fn read(
+        &self,
+        github: &GitHub,
+        repository: &Repository,
+        state: &tl3_mergify::Observation,
+    ) -> Result<Checks> {
+        let repo = full_name(repository);
+        let requirements = github
+            .required_status_checks(&repo, &state.pull_request.base.branch)
+            .await?;
+        // Protection can change without a PR/check event. Status contexts also
+        // have no webhook subscription, so both stay authoritative on every look.
+        let cacheable = requirements.unavailable.is_empty()
+            && requirements
+                .checks
+                .iter()
+                .all(|rule| rule.integration_id.is_some());
+        let inputs = Inputs {
+            installation: repository.installation,
+            repo: repo.clone(),
+            pull: state.pull_request.clone(),
+            requirements: requirements.clone(),
+            checks: state.check_runs.clone(),
+        };
+        if cacheable
+            && let Some((previous, checks)) = self.0.borrow().as_ref()
+            && previous == &inputs
+        {
+            return Ok(checks.clone());
+        }
+        let checks = evaluate(
+            github,
+            &repo,
+            &state.pull_request,
+            requirements,
+            &state.check_runs,
+        )
+        .await?;
+        // Failure annotations can arrive after the check completes. Re-read them
+        // until the check passes instead of caching an incomplete diagnosis.
+        *self.0.borrow_mut() = (cacheable && checks.ready && checks.unavailable.is_empty())
+            .then(|| (inputs, checks.clone()));
+        Ok(checks)
+    }
+}
+
+async fn evaluate(
+    github: &GitHub,
+    repo: &str,
+    pull: &PullRequest,
+    requirements: tl3_github::RequiredChecks,
+    checks: &[CheckRun],
+) -> Result<Checks> {
     let required = requirements.checks;
     let mut unavailable = requirements.unavailable;
     if required.is_empty() {
@@ -61,7 +139,7 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
         });
     }
     let mut latest = BTreeMap::new();
-    for check in github.check_runs(repo, &pull.head.sha).await? {
+    for check in checks.iter().cloned() {
         if check.head_sha == pull.head.sha {
             let key = (check.app.as_ref().map(|app| app.id), check.name.clone());
             let entry = latest.entry(key).or_insert_with(|| check.clone());
