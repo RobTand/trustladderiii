@@ -1458,15 +1458,17 @@ impl GitHubTranslator for RecordingTranslator {
         }])
     }
 }
-struct FailsOnce(bool);
-impl GitHubTranslator for FailsOnce {
+struct TransientOnce(bool);
+impl GitHubTranslator for TransientOnce {
     fn translate(
         &mut self,
         _delivery: &GitHubDelivery,
         _snapshot: &tl3_store::Snapshot,
     ) -> tl3_controller::Result<Vec<Input>> {
         if std::mem::take(&mut self.0) {
-            return Err(tl3_controller::Error::Invalid("fixture translation error"));
+            return Err(tl3_controller::Error::Adapter(
+                "fixture translation error".into(),
+            ));
         }
         Ok(vec![])
     }
@@ -1525,8 +1527,8 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     let mut controller = controller(settings, root.path(), &api.uri());
     let calls = Arc::new(Mutex::new(vec![]));
     controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
-    controller.register_github_translator("retry-test", FailsOnce(true));
-    assert!(ingress::drain(&mut controller).is_err());
+    controller.register_github_translator("retry-test", TransientOnce(true));
+    ingress::drain(&mut controller).unwrap();
     assert_eq!(calls.lock().unwrap().len(), 7);
     assert_eq!(
         store
