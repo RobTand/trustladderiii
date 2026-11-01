@@ -221,7 +221,7 @@ fn failed_review_pin_reaches_the_next_review_reason() {
 }
 
 #[test]
-fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
+fn publication_conflict_reports_a_fact_without_pushing() {
     let root = tempfile::tempdir().unwrap();
     let f = Fixture::create(root.path());
     let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
@@ -232,16 +232,16 @@ fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
     let target = f.advance_main(true);
     let mut push = f.delivery(EffectKind::Push, 2);
     push.head_sha = Some(head.clone());
-    let result = adapter.execute(&push);
+    let result = adapter.execute(&push).unwrap();
     assert!(
-        matches!(
-            &result,
-            Err(tl3_controller::Error::Permanent {
-                class: "unrebased_head",
+        result.observations.iter().any(|o| matches!(
+            o,
+            Observation::Kernel(tl3_kernel::Event::Fact {
+                fact: tl3_kernel::Fact::Conflict,
                 ..
             })
-        ),
-        "publishing must refuse a head that does not contain main {target}: {result:?}"
+        )),
+        "publication conflict with {target} must report a Conflict fact: {result:?}"
     );
     assert!(
         git(

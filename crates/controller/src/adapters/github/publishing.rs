@@ -41,10 +41,20 @@ fn approved(check: &CheckRun, client: &GitHub, delivery: &Delivery) -> Result<bo
 }
 
 fn binding(delivery: &Delivery, pull: &PullRequest) -> Completion {
-    Completion::confirmed(vec![Observation::PullRequest {
+    let mut observations = vec![Observation::PullRequest {
         node: delivery.node(),
         number: pull.number,
-    }])
+    }];
+    if pull.merged_at.is_none()
+        && pull.mergeable == Some(false)
+        && delivery.head_sha.as_deref() == Some(pull.head.sha.as_str())
+    {
+        observations.push(Observation::Kernel(tl3_kernel::Event::Fact {
+            node: delivery.node(),
+            fact: tl3_kernel::Fact::Conflict,
+        }));
+    }
+    Completion::confirmed(observations)
 }
 
 impl Adapter {

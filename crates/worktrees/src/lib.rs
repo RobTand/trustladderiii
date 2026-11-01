@@ -61,8 +61,6 @@ pub enum Error {
     WorktreeOccupied,
     #[error("worktree has uncommitted or untracked files")]
     DirtyWorktree,
-    #[error("refusing to publish a checked head that conflicts with the current base branch")]
-    UnrebasedHead,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
 }
@@ -81,7 +79,6 @@ impl Error {
             Self::WorktreeOccupied => Some("worktree_occupied"),
             Self::DirtyWorktree => Some("dirty_worktree"),
             Self::Recovery => Some("worktree_recovery"),
-            Self::UnrebasedHead => Some("unrebased_head"),
             // A Git exit alone cannot distinguish a lock or network failure.
             Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
         }
