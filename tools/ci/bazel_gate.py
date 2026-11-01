@@ -70,7 +70,8 @@ def diff_commands(java, jar, root, bazel, base_hashes, head_hashes, impacted):
     """bazel-diff v42 command lines: a hash generator, then the impacted query."""
     def generate(output):
         return [str(java), '-jar', str(jar), 'generate-hashes', '--workspacePath', str(root),
-                '--bazelPath', str(bazel), '--excludeExternalTargets', str(output)]
+                '--bazelPath', str(bazel), '--excludeExternalTargets', '--includeTargetType',
+                str(output)]
     return generate, [str(java), '-jar', str(jar), 'get-impacted-targets',
                       '--workspacePath', str(root), '--bazelPath', str(bazel),
                       '--targetType', 'Rule', '--startingHashes', str(base_hashes),
