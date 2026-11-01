@@ -63,6 +63,13 @@ pub enum Error {
     DirtyWorktree,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
+    /// A Git operation that talks to the remote failed, and Git's own
+    /// message shows the remote or the network caused it.
+    #[error("git {operation} could not reach the remote (exit code {code:?})")]
+    Network {
+        operation: &'static str,
+        code: Option<i32>,
+    },
 }
 
 impl Error {
@@ -80,7 +87,9 @@ impl Error {
             Self::DirtyWorktree => Some("dirty_worktree"),
             Self::Recovery => Some("worktree_recovery"),
             // A Git exit alone cannot distinguish a lock or network failure.
-            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
+            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } | Self::Network { .. } => {
+                None
+            }
         }
     }
 }
@@ -1714,7 +1723,14 @@ impl Worktrees {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        success(operation, self.execute(&self.repo, args, token, None)?)
+        let output = self.execute(&self.repo, args, token, None)?;
+        if !output.status.success() && remote_unreachable(&output.stderr) {
+            return Err(Error::Network {
+                operation,
+                code: output.status.code(),
+            });
+        }
+        success(operation, output)
     }
 
     fn execute<I, S>(
@@ -1886,6 +1902,32 @@ fn success(operation: &'static str, output: Output) -> Result<Output, Error> {
     } else {
         Err(git_error(operation, &output))
     }
+}
+
+/// Whether Git's stderr clearly shows a network or remote cause. Ambiguous
+/// failures, such as a lock Git couldn't take, are not remote failures (#309).
+fn remote_unreachable(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    if [
+        "could not resolve host",
+        "connection refused",
+        "timed out",
+        "remote end hung up",
+    ]
+    .iter()
+    .any(|cause| text.contains(cause))
+    {
+        return true;
+    }
+    // An HTTP 5xx or 429 from the remote.
+    ["returned error: ", "http "].iter().any(|prefix| {
+        text.match_indices(prefix).any(|(index, _)| {
+            let code = text[index + prefix.len()..]
+                .get(..3)
+                .and_then(|code| code.parse::<u16>().ok());
+            matches!(code, Some(429 | 500..=599))
+        })
+    })
 }
 
 fn git_error(operation: &'static str, output: &Output) -> Error {
