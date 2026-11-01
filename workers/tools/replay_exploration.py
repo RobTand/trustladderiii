@@ -15,10 +15,11 @@ import worker_process
 
 INSPECT = '''
 from dataclasses import replace
-from tl3_workers.forecast import _encoding
+sys.path.insert(0, TOOLS_PATH)
+from replay_usage import ReplayUsage
 from tl3_workers.roles import ROLES
 from langchain_core.utils.function_calling import convert_to_openai_tool
-encoding = _encoding()
+accounting = ReplayUsage(cached=not BASELINE)
 metrics_path = Path(sys.argv[1]).with_suffix('.metrics.json')
 metrics = []
 offered_tools = []
@@ -31,16 +32,11 @@ class InspectModel(FakeMessagesListChatModel):
         final = (len(metrics) == len(script) - 1
                  or any('budget is exhausted' in m.text for m in messages if m.type == 'human'))
         tools = [] if final else offered_tools
-        payload = json.dumps({'messages': [m.model_dump(include={'type', 'content', 'tool_calls', 'tool_call_id', 'name'})
-                                          for m in messages], 'tools': tools}, ensure_ascii=False)
-        count = len(encoding.encode_ordinary(payload))
-        metrics.append({'input_tokens': count, 'input_bytes': len(payload.encode()),
-                        'tool_turn': not final,
-                        'tool_result_bytes': sum(len(m.text.encode()) for m in messages if m.type == 'tool')})
+        record, usage = accounting.measure(messages, tools)
+        metrics.append({**record, 'tool_turn': not final})
         metrics_path.write_text(json.dumps(metrics))
         turn = script[-1] if final else script[len(metrics) - 1]
-        self.responses = [AIMessage(**turn, usage_metadata={'input_tokens': count, 'output_tokens': 1,
-                                                          'total_tokens': count + 1})]
+        self.responses = [AIMessage(**turn, usage_metadata=usage)]
         self.i = 0
         return super()._generate(messages, **kwargs)
 if BASELINE:
@@ -68,7 +64,7 @@ def replay(inputs, checkout, issue, role, baseline, omit_files=False):
     turns.append({"content": json.dumps(reply)})
     original = worker_process.LAUNCH
     worker_process.LAUNCH = original.replace('model = FakeMessagesListChatModel(',
-        INSPECT.replace('BASELINE', repr(baseline)) + '\nmodel = InspectModel(')
+        INSPECT.replace('BASELINE', repr(baseline)).replace('TOOLS_PATH', repr(str(Path(__file__).resolve().parent))) + '\nmodel = InspectModel(')
     with tempfile.TemporaryDirectory(prefix="tl3-budget-replay-") as directory:
         root = Path(directory)
         request = {
@@ -99,6 +95,10 @@ def replay(inputs, checkout, issue, role, baseline, omit_files=False):
             assert result.events[-1]["event"] == "reply"
         report = {"issue": issue, "role": role, "baseline": baseline, "omit_files": omit_files,
                   "exit_code": result.exit_code, "input_tokens": sum(m["input_tokens"] for m in metrics),
+                  "weighted_tokens": sum(m["weighted_tokens"] for m in metrics),
+                  "cache_read": sum(m["cache_read"] for m in metrics),
+                  "cache_creation": sum(m["cache_creation"] for m in metrics),
+                  "prefix_breaks": sum(not m["prefix_preserved"] for m in metrics[1:]),
                   "largest_context": max(m["input_tokens"] for m in metrics),
                   "model_turns": len(metrics), "tool_turns": sum(m["tool_turn"] for m in metrics),
                   "max_tool_result_bytes": max(m["tool_result_bytes"] for m in metrics),
@@ -120,9 +120,9 @@ def main():
         before = replay(inputs, checkout, issue, role, True)
         after = replay(inputs, checkout, issue, role, False)
         assert after["tool_turns"] <= 4
-        assert after["input_tokens"] <= 300_000
-        assert after["input_tokens"] < before["input_tokens"]
-        assert after["max_tool_result_bytes"] <= 32_768
+        assert after["weighted_tokens"] <= 300_000
+        assert after["weighted_tokens"] < before["weighted_tokens"]
+        assert after["prefix_breaks"] == 0
     if issue == 1515:
         replay(inputs, checkout, issue, "ingest", False, omit_files=True)
 
