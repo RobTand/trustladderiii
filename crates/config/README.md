@@ -164,3 +164,10 @@ container_image = "sha256:<64 lowercase hex digits>"
 Build and qualify an image with the steps in [the harness guide](../../harness/README.md#prepare-and-roll-a-repository-image).
 The image must already exist on every eligible worker. PrismaBuild checks
 availability before claiming an action and never transfers or pulls images.
+
+Each `[[github.repos]]` entry also accepts `exec_scratch = true`. The default
+is false. It allows compiled libraries and executables on the harness's private
+512 MiB tmpfs for both check plans and maker test runs. Per-test cleanup and
+the other container restrictions still apply. Tmpfs is RAM charged to the
+PrismaBuild action's declared memory demand. See the
+[design note](../../docs/design/executable-scratch.md) for containment and risk.

@@ -21,8 +21,11 @@ class TestSettings:
     cpus: int = 1
     mem_gb: int = 2
     quiet_seconds: int = 120
+    exec_scratch: bool = False
 
     def __post_init__(self):
+        if type(self.exec_scratch) is not bool:
+            raise ValueError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("Use an immutable container image digest")
         if not Path(self.tools_path).is_absolute():
@@ -167,6 +170,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                            "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
                            "--env", "OPENBLAS_NUM_THREADS=1", "--detach", "--",
                            "python3", "-I", "-B", "action.py", settings.image, json.dumps(selected)]
+                if settings.exec_scratch:
+                    command.append("--exec-scratch")
                 code, submitted = _json_command(command)
                 if code or submitted.get("schema") not in (
                         "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):

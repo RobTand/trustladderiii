@@ -42,7 +42,7 @@ class ActionGitTests(unittest.TestCase):
             # committed evidence without launching a nested fleet action.
             (trusted / "__init__.py").write_text('''from .trees import git
 Check = lambda *a: a
-Container = lambda *a: a
+Container = lambda image, *, exec_scratch=False: (image, exec_scratch)
 Kind = lambda x: x
 def run_checks(repo, *a, **kw):
     assert git(repo, "show", "HEAD:value") == b"intended"

@@ -26,16 +26,23 @@ def node_ids(repo, files):
                     and statement.value.value is False for target in statement.targets
                     if isinstance(target, ast.Attribute) and target.attr == "__test__"
                     and isinstance(target.value, ast.Name)}
+        class_tests = {}
         for node in module.body:
             if getattr(node, "name", None) in disabled:
                 continue
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
                 nodes.append(f"{name}::{node.name}")
-            elif isinstance(node, ast.ClassDef) and (node.name.startswith("Test")
-                    or any(ast.unparse(base) in cases for base in node.bases)):
-                nodes.extend(f"{name}::{node.name}::{method.name}" for method in node.body
-                             if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-                             and method.name.startswith("test_"))
+            elif isinstance(node, ast.ClassDef):
+                if any(ast.unparse(base) in cases for base in node.bases):
+                    cases.add(node.name)
+                methods = dict.fromkeys(method for base in node.bases
+                                        for method in class_tests.get(ast.unparse(base), ()))
+                methods.update(dict.fromkeys(method.name for method in node.body
+                               if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                               and method.name.startswith("test_")))
+                class_tests[node.name] = methods
+                if node.name.startswith("Test") or node.name in cases:
+                    nodes.extend(f"{name}::{node.name}::{method}" for method in methods)
     return nodes
 
 

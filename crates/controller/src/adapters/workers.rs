@@ -301,6 +301,9 @@ impl Supervisor {
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
+            if self.images.exec_scratch(&delivery.repository) {
+                inputs["tests"]["exec_scratch"] = json!(true);
+            }
             inputs["hindsight"] =
                 json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
             super::worktrees::checkout_path(&self.worktrees, delivery)

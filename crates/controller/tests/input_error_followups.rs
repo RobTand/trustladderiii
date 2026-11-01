@@ -193,7 +193,7 @@ fn broken_look(corruption: bool) {
             "corrupt stored effect payload must stop ingress instead of opening a setup incident"
         );
         assert!(
-            !matches!(result, Err(Error::Json(_))),
+            matches!(result, Err(Error::StoredJson(_))),
             "stored effect decoding must have a distinct fatal error"
         );
         assert!(
@@ -235,9 +235,18 @@ fn corrupt_stored_inbox_stops_ingress() {
         value: json!({}),
     });
     store.commit(&commit).unwrap();
+    let result = run(&mut c, Input::Wake);
     assert!(
-        run(&mut c, Input::Wake).is_err(),
+        matches!(result, Err(Error::StoredJson(_))),
         "corrupt stored inbox must stop ingress"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents"),
+        "stored corruption must not become an incident"
     );
 }
 
@@ -410,7 +419,7 @@ fn corrupt_incident_during_probe_stops_ingress() {
         "incident corruption read inside a probe must stop ingress"
     );
     assert!(
-        !matches!(result, Err(Error::Json(_))),
+        matches!(result, Err(Error::StoredJson(_))),
         "stored incident decoding must have a distinct fatal error"
     );
     assert!(
@@ -452,7 +461,7 @@ fn stored_repository_in_translator_has_fatal_decode_error() {
     let result = translator.translate(&delivery, &snapshot);
     assert!(result.is_err());
     assert!(
-        !matches!(result, Err(Error::Json(_))),
+        matches!(result, Err(Error::StoredJson(_))),
         "stored repository decoding inside a translator must use a fatal error"
     );
 }

@@ -73,3 +73,22 @@ class Helper:
     assert inventory.node_ids(tmp_path, ['test_policy.py']) == [
         'test_policy.py::PerformantPolicy::test_admission',
         'test_policy.py::OtherPolicy::test_refusal']
+
+
+def test_node_ids_follow_indirect_unittest_bases(tmp_path):
+    (tmp_path / 'test_policy.py').write_text('''import unittest as unit
+class PolicyBase(unit.TestCase):
+    pass
+class Intermediate(PolicyBase):
+    def test_admission(self): pass
+class Policy(Intermediate):
+    def test_refusal(self): pass
+class Helper:
+    def test_hidden(self): pass
+class OtherHelper(Helper):
+    def test_also_hidden(self): pass
+''')
+    assert inventory.node_ids(tmp_path, ['test_policy.py']) == [
+        'test_policy.py::Intermediate::test_admission',
+        'test_policy.py::Policy::test_admission',
+        'test_policy.py::Policy::test_refusal']
