@@ -1653,7 +1653,8 @@ fn main() {
             failures += usize::from(std::panic::catch_unwind(test).is_err());
         }
         let mut database = support::Database::start();
-        failures += usize::from(std::panic::catch_unwind(|| oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"))).is_err());
+        let settings = database.create("pb_plan_budget");
+        failures += usize::from(std::panic::catch_unwind(|| oversized_planner_reply_reaches_plan_feedback(&settings)).is_err());
         database.stop();
         assert_eq!(failures, 0);
         return;
