@@ -15,7 +15,7 @@ IMAGE = execution.Container('sha256:' + '1' * 64)
 def test_temporary_files_are_removed_after_passes_and_failures(tmp_path, monkeypatch, summary):
     scratch = tmp_path / 'scratch'
     scratch.mkdir()
-    source = SOURCE.read_text().replace('80 * 1024', '4 * 1024').replace('40 * 1024', '1 * 1024')
+    source = SOURCE.read_text().replace('256 * 1024', '4 * 1024').replace('128 * 1024', '1 * 1024')
     source = source.replace('assert value >= 0', 'assert value != 1')
     (tmp_path / 'test_scratch.py').write_text(source)
     monkeypatch.setenv('TMPDIR', str(scratch))

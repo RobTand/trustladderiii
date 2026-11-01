@@ -18,9 +18,9 @@ def shared(tmp_path_factory):
 def test_scratch(tmp_path, shared, value):
     assert shared.read_text() == 'module fixture stays alive'
     try:
-        (tmp_path / 'payload').write_bytes(b'x' * (80 * 1024 * 1024))
+        (tmp_path / 'payload').write_bytes(b'x' * (256 * 1024 * 1024))
         with tempfile.NamedTemporaryFile(prefix='payload-', delete=False) as stream:
-            stream.write(b'x' * (40 * 1024 * 1024))
+            stream.write(b'x' * (128 * 1024 * 1024))
     except OSError as error:
         pytest.fail(f'scratch write failed: {error}', pytrace=False)
     subprocess.run([sys.executable, '-c',

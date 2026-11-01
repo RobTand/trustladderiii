@@ -1,4 +1,4 @@
-"""Prove per-test cleanup within the harness's unchanged 256 MiB tmpfs."""
+"""Prove per-test cleanup within the harness's bounded 512 MiB tmpfs."""
 import json
 from pathlib import Path
 import shutil
@@ -22,8 +22,8 @@ def verify(container):
         tests = tuple(f'test_scratch.py::test_scratch[{i}]' for i in range(4))
         results = run_checks(repo, sha, sha, (Check('scratch cleanup', Kind.BEHAVIOR_PRESERVING, tests),), container=container)
         print(result_json(results), flush=True)
-        assert results[0].verdict == Verdict.PASS, '480 MiB cumulative writes must fit by releasing each 120 MiB test'
-        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 120, 'tmpfs_mib': 256}), flush=True)
+        assert results[0].verdict == Verdict.PASS, '1536 MiB cumulative writes must fit by releasing each 384 MiB test'
+        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 384, 'tmpfs_mib': 512}), flush=True)
 
 
 if __name__ == '__main__':
