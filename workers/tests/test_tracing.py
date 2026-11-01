@@ -364,3 +364,52 @@ def test_export_marks_experiment_for_trace_ui(request_doc, monkeypatch, exporter
             if path == '/api/2.0/mlflow/experiments/set-experiment-tag']
     assert {'experiment_id': '12', 'key': 'mlflow.experimentKind',
             'value': 'genai_development'} in tags
+
+
+def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, tmp_path,
+                                                                 exporters, receiver):
+    uri, packets = receiver
+    usage = {'prompt_tokens': 11, 'completion_tokens': 7, 'total_tokens': 18,
+             'prompt_tokens_details': {'cached_tokens': 8}, 'cache_write_tokens': 2,
+             'unexpected_secret': 'never-export-this-usage-field'}
+    class Proxy(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            for choices, counts in [
+                ([{'index': 0, 'delta': {'role': 'assistant', 'content': json.dumps(BRIEF)},
+                   'finish_reason': 'stop'}], usage), ([], usage),
+            ]:
+                chunk = {'id': 'fixture-stream', 'object': 'chat.completion.chunk', 'created': 1,
+                         'model': 'fixture-model', 'choices': choices, 'usage': counts}
+                self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+                self.wfile.flush()
+            self.wfile.write(b'data: [DONE]\n\n')
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        key = tmp_path / 'planted-model-key'
+        key.write_text('opaque-proxy-fixture-key')
+        request_doc['key_file'] = str(key)
+        request_doc['model']['base_url'] = f'http://127.0.0.1:{server.server_port}/v1'
+        request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+        runtime.run(request_doc, lambda event: None)
+        for child in exporters:
+            assert child.wait(timeout=15) == 0
+        span = next(span for span in exported_spans(packets) if span.span_type == 'CHAT_MODEL')
+        raw = span.get_attribute('tl3.proxy.usage_chunks')
+        assert raw is not None, 'raw chunk counts must remain visible beside LangChain totals'
+        assert len(raw) == 2
+        expected = {key: value for key, value in usage.items() if key != 'unexpected_secret'}
+        assert raw == [expected, expected]
+        assert span.get_attribute('mlflow.chat.tokenUsage')['cache_read_input_tokens'] > 0
+        assert b'never-export-this-usage-field' not in packets[-1][2]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
