@@ -1630,12 +1630,11 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
-    if env::args().nth(1).as_deref() == Some("--q46-open") {
+    if env::args().nth(1).as_deref() == Some("q46-open") {
         publication_open_conflict();
         println!("test publication_open_conflict ... ok");
         return;
     }
-    publication_open_conflict();
     if let Some(case) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
@@ -1671,6 +1670,8 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    publication_open_conflict();
+    println!("test publication_open_conflict ... ok");
     publication_recovery();
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
