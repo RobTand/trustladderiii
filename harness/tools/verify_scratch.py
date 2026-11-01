@@ -1,4 +1,4 @@
-"""Prove per-test cleanup within the harness's bounded 512 MiB tmpfs."""
+"""Prove per-test cleanup within the harness's bounded tmpfs."""
 import json
 from pathlib import Path
 import shutil
@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 from tl3_harness import Check, Container, Kind, Verdict, run_checks
-from tl3_harness.execution import require_admission, result_json
+from tl3_harness.execution import TMPFS_MIB, require_admission, result_json
 from tl3_harness.trees import git
 from verify_reproducing import save
 
@@ -23,7 +23,7 @@ def verify(container):
         results = run_checks(repo, sha, sha, (Check('scratch cleanup', Kind.BEHAVIOR_PRESERVING, tests),), container=container)
         print(result_json(results), flush=True)
         assert results[0].verdict == Verdict.PASS, '1536 MiB cumulative writes must fit by releasing each 384 MiB test'
-        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 384, 'tmpfs_mib': 512}), flush=True)
+        print(json.dumps({'scratch_verification': 'passed', 'tests': 4, 'mib_per_test': 384, 'tmpfs_mib': TMPFS_MIB}), flush=True)
 
 
 if __name__ == '__main__':

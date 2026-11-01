@@ -275,6 +275,7 @@ and `tmpdir` use that directory. Python's default temporary directory and the
 `TMPDIR`, `TEMP` and `TMP` environment variables point there during the test,
 so cooperating subprocesses use the same scratch. Module and session fixtures
 retain their separately owned temporary directories for their scope.
-The container still has one disposable 256 MiB `/tmp` tmpfs. One test must fit
+The container has one disposable 512 MiB `/tmp` tmpfs. This fits PB tests
+that write 384 MiB individually, while cleanup bounds cumulative plan use. One test must fit
 within that boundary; paths hardcoded outside its temporary directory and
 wider-scope fixture data still consume the shared bound.
