@@ -335,3 +335,32 @@ def test_failed_root_has_readable_safe_output(request_doc, monkeypatch, exporter
     root = next(span for span in exported_spans(packets) if span.parent_id is None)
     assert root.inputs == request_doc['inputs']
     assert root.outputs['failure_message'] == 'done requires code changes'
+
+
+def test_export_bounds_each_tool_payload_after_redaction(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    with observe(request_doc):
+        with mlflow.start_span(name='oversized-tool', span_type='TOOL') as span:
+            span.set_inputs({'argument': '文' * 40000 + ' sk-test296abcdefghijklmnop'})
+            span.set_outputs({'result': 'result-marker ' + '文' * 40000})
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    tool = next(span for span in exported_spans(packets) if span.span_type == 'TOOL')
+    for payload in [tool.inputs, tool.outputs]:
+        assert payload is not None
+        text = json.dumps(payload, ensure_ascii=False)
+        assert len(text.encode()) <= 65536
+        assert 'truncated' in text.lower()
+    assert b'sk-test296abcdefghijklmnop' not in packets[-1][2]
+
+
+def test_export_marks_experiment_for_trace_ui(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    run_fake(request_doc, monkeypatch, exporters, uri)
+    tags = [json.loads(body) for path, headers, body in packets
+            if path == '/api/2.0/mlflow/experiments/set-experiment-tag']
+    assert {'experiment_id': '12', 'key': 'mlflow.experimentKind',
+            'value': 'genai_development'} in tags
