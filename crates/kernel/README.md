@@ -164,7 +164,8 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 64 GiB, and progress proofs, including the focused gate progress proofs, reserve 24 GiB.
+Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 64 GiB, and general progress proofs reserve 24 GiB.
+The four-node gate progress proofs reserve 64 GiB after both W = 2 and W = 3 exhausted their original 24 GiB scope limits.
 `progress_from_queued`, `apply_new_request`, `apply_new_adoption` and `apply_reviewer_out_of_room` reserve 64 GiB.
 The 64 GiB reservations retain the budgets adopted on main for Q45. Earlier measurements from the production representation had reply proofs peak at 21.8 GiB, progress proofs at 19.1 GiB and new requests at 27.9 GiB.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.

@@ -44,9 +44,9 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        if name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
+        if name.startswith("gate_progress_") or name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
             memory = 64
-        elif name.startswith(("progress_from_", "gate_progress_")):
+        elif name.startswith("progress_from_"):
             memory = 24
         elif name in replies:
             memory = 64
