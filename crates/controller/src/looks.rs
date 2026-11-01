@@ -611,7 +611,7 @@ impl Controller {
                     let mut commit = Commit::new(
                         format!(
                             "look-progress:{}:{}",
-                            state.delivery.key,
+                            &state.delivery.key,
                             snapshot.revision.get()
                         ),
                         json!({"progress_read":state.delivery.key}),
@@ -620,7 +620,7 @@ impl Controller {
                     let changed = self.record_progress(
                         &snapshot,
                         &mut commit,
-                        state.delivery.key,
+                        &state.delivery.key,
                         completion.progress.as_ref(),
                     )?;
                     if !commit.rows.is_empty() {

@@ -91,7 +91,8 @@ fn case(settings: &tl3_config::Store, name: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut c = open(settings, root.path(), &api.uri());
     match name {
-        "intake" | "restart" => {
+        "intake" | "restart" | "fallback" => {
+            api.state.lock().unwrap().intake_target_missing = name == "fallback";
             break_intake(settings);
             let (tx, rx) = mpsc::channel();
             tx.send(Input::LabelledIssue(labelled())).unwrap();
@@ -112,6 +113,22 @@ fn case(settings: &tl3_config::Store, name: &str) {
             let first = incidents(&mut c)[0].id.clone();
             let posts = api.state.lock().unwrap().comments.len();
             assert!(posts > 0, "intake incident must be posted to GitHub");
+            let requests = api
+                .runtime
+                .block_on(api.server.received_requests())
+                .unwrap();
+            let expected = if name == "fallback" {
+                "/repos/owner/tl3/issues/17/comments"
+            } else {
+                "/repos/owner/sandbox/issues/12/comments"
+            };
+            assert!(
+                requests
+                    .iter()
+                    .any(|request| request.method.as_str() == "POST"
+                        && request.url.path() == expected),
+                "incident must reach its resolved destination"
+            );
             if name == "restart" {
                 drop(c);
                 let mut c = open(settings, root.path(), &api.uri());
@@ -130,6 +147,31 @@ fn case(settings: &tl3_config::Store, name: &str) {
                     api.state.lock().unwrap().comments.len(),
                     posts,
                     "no duplicate notice"
+                );
+                let mut comment: tl3_github::Comment =
+                    serde_json::from_value(fixture(true)["comment"].clone()).unwrap();
+                comment.body = format!("clear incident {first}");
+                c.observe(
+                    "clear-intake-incident",
+                    Observation::GitHubComment {
+                        repository: bootstrap().repos.remove(0),
+                        issue: 12,
+                        comment,
+                    },
+                )
+                .unwrap();
+                drain(&mut c);
+                assert_eq!(incidents(&mut c)[0].value["open"], false);
+                let mut repeated = labelled();
+                repeated.delivery = "after-clear".into();
+                c.intake(repeated).unwrap();
+                drain(&mut c);
+                let all = incidents(&mut c);
+                assert_eq!(all.len(), 2);
+                assert!(
+                    all.iter()
+                        .any(|row| row.value["open"] == true && row.value["needs_rob"] == true),
+                    "a later incident requires Rob"
                 );
             }
         }
@@ -206,7 +248,14 @@ pub(super) fn run() {
 }
 pub(super) fn run_with_database(db: &mut support::Database) {
     let mut failed = Vec::new();
-    for name in ["intake", "restart", "observation", "translator", "fatal"] {
+    for name in [
+        "intake",
+        "restart",
+        "fallback",
+        "observation",
+        "translator",
+        "fatal",
+    ] {
         let settings = db.create(&format!("intake_errors_{name}"));
         if std::panic::catch_unwind(|| case(&settings, name)).is_err() {
             failed.push(name);

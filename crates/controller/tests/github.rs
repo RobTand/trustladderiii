@@ -121,6 +121,7 @@ struct ApiState {
     question_status: Option<u16>,
     rejected_question_posts: usize,
     forbidden_filing: bool,
+    intake_target_missing: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -164,6 +165,11 @@ impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
         let original_path = request.url.path();
+        if state.intake_target_missing
+            && original_path.starts_with("/repos/owner/sandbox/issues/12")
+        {
+            return ResponseTemplate::new(404);
+        }
         let mapped_path = original_path
             .replace(
                 "/repos/owner/tl3/issues/17",
