@@ -17,9 +17,12 @@ def shared(tmp_path_factory):
 @pytest.mark.parametrize('value', range(4))
 def test_scratch(tmp_path, shared, value):
     assert shared.read_text() == 'module fixture stays alive'
-    (tmp_path / 'payload').write_bytes(b'x' * (80 * 1024 * 1024))
-    with tempfile.NamedTemporaryFile(prefix='payload-', delete=False) as stream:
-        stream.write(b'x' * (40 * 1024 * 1024))
+    try:
+        (tmp_path / 'payload').write_bytes(b'x' * (80 * 1024 * 1024))
+        with tempfile.NamedTemporaryFile(prefix='payload-', delete=False) as stream:
+            stream.write(b'x' * (40 * 1024 * 1024))
+    except OSError as error:
+        pytest.fail(f'scratch write failed: {error}', pytrace=False)
     subprocess.run([sys.executable, '-c',
                     'import os; from pathlib import Path; Path(os.environ["TMPDIR"], "payload-child").write_text("child")'], check=True)
     assert Path(os.environ['TMPDIR']).is_dir()
