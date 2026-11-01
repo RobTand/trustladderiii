@@ -62,6 +62,7 @@ pub struct Real {
     epoch: i64,
     repositories: Vec<Served>,
     branches: crate::branches::Branches,
+    protected_paths: crate::scope::ProtectedPaths,
 }
 
 struct Served {
@@ -114,6 +115,7 @@ fn adapter(error: impl Into<Error>) -> Error {
 impl Real {
     pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
         self.branches = crate::branches::Branches::new(repos)?;
+        self.protected_paths = crate::scope::ProtectedPaths::new(repos);
         for repo in &mut self.repositories {
             repo.git
                 .set_base_branch(self.branches.base(&repo.identity)?)?;
@@ -128,6 +130,7 @@ impl Real {
             epoch,
             repositories: vec![],
             branches: crate::branches::Branches::new(&[])?,
+            protected_paths: crate::scope::ProtectedPaths::default(),
         })
     }
 
@@ -236,9 +239,12 @@ impl Real {
     pub fn trim_scope(
         &self,
         delivery: &Delivery,
-        protected: &[String],
+        global_protected: &[String],
     ) -> Result<tl3_worktrees::ScopeTrim> {
         let repo = self.repository(delivery)?;
+        let protected = self
+            .protected_paths
+            .for_repository(&delivery.repository, global_protected)?;
         let _guard = repo
             .mutex
             .lock()
@@ -254,7 +260,7 @@ impl Real {
                 &self.branch_for(delivery)?,
                 &self.checkout(delivery),
                 &delivery.paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
-                protected,
+                &protected,
             )
             .map_err(adapter)
     }
