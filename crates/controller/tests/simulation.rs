@@ -185,6 +185,7 @@ fn main() {
         return;
     }
     status_requires_initialized_database(&database.create("status_fresh"));
+    println!("test status_requires_initialized_database ... ok");
     status_page_and_command(&database.create("status"), &mut database);
     println!("test status_page_and_command ... ok");
     database.stop();

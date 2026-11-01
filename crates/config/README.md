@@ -129,3 +129,26 @@ rejected. Issue numbers are positive; node numbers can be zero. Both use
 canonical decimal digits. Formatting and recognition share the same parser.
 Publication writes `Refs #N` for the request's issue. TL3 closes the issue after
 all leaves finish.
+
+## Repository check images
+
+Each `[[github.repos]]` entry accepts an optional `container_image`. Omission
+uses `[prismabuild] container_image`. Both settings require an immutable image
+ID or manifest digest in the formats above. Repository overrides match the
+owner and name without regard to ASCII case, and the installation ID exactly.
+The controller stages the selected image into the harness request and seals
+that same image as the PrismaBuild placement requirement.
+
+For example, keep the sandbox on the global image and set the PB override:
+
+```toml
+[[github.repos]]
+owner = "RobTand"
+name = "prismabuild"
+installation_id = 123 # Replace with the installation's numeric ID.
+container_image = "sha256:<64 lowercase hex digits>"
+```
+
+Build and qualify an image with the steps in [the harness guide](../../harness/README.md#prepare-and-roll-a-repository-image).
+The image must already exist on every eligible worker. PrismaBuild checks
+availability before claiming an action and never transfers or pulls images.

@@ -30,7 +30,12 @@ Rust shards retain native skipped-test rejection and every per-test budget.
 They fetch full Git history and compare policy with the target branch, so
 changing the PR's budget file cannot approve a larger slow list or limit.
 Existing budget entries are unchanged. Each Rust shard uploads its measured
-per-test timings as an artifact. Every runner uses at most four Cargo or
+per-test timings as an artifact. Custom harnesses must print one unique
+`test <name> ... ok` line per scenario and exactly one numeric summary,
+`N <suite> scenarios passed; ...`. Declare the expected count from the scenario
+selection, independently of emitted markers. The gate rejects missing or
+duplicate markers and missing or duplicate summaries, naming the binary.
+Every runner uses at most four Cargo or
 test processes, with native library thread counts bounded to one.
 
 Before timed tests, the fixture helper installs the pinned Postgres archive

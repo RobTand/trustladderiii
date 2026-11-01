@@ -245,7 +245,9 @@ fn finish_fixture(database: Database, group: &str) {
 fn main() {
     if env::args().len() == 1 {
         maker::router_regression(false);
+        println!("test maker_router_retire ... ok");
         maker::router_regression(true);
+        println!("test maker_router_look_retire ... ok");
     }
 
     if let Some(mode) = env::args().nth(1).filter(|s| s.starts_with("--router-")) {
@@ -416,13 +418,16 @@ fn main() {
         return;
     }
     if args.get(1).is_some_and(|s| s == "--maker-failure") {
-        maker::scenario(
-            &database.create("maker_failure"),
-            &args[2],
-            args.get(3).is_some_and(|arg| arg == "--checks-fail"),
-        );
-        println!("test maker_failure_{} ... ok", args[2]);
+        let checks_fail = args.get(3).is_some_and(|arg| arg == "--checks-fail");
+        maker::scenario(&database.create("maker_failure"), &args[2], checks_fail);
         database.stop();
+        // The checks-fail variant owns the existing maker_failure_normal budget.
+        let suffix = if args[2] == "normal" && !checks_fail {
+            "_checks_pass"
+        } else {
+            ""
+        };
+        println!("test maker_failure_{}{suffix} ... ok", args[2]);
         return;
     }
     if args.get(1).is_some_and(|s| s == "--adopted-first-fix") {
@@ -444,6 +449,11 @@ fn main() {
     }
     if args.get(1).is_some_and(|s| s == "--maker-bounds") {
         maker::bounds_trial(&database.create("maker_outside_bounds"));
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|s| s == "--maker-image") {
+        maker::repository_images(&mut database);
         database.stop();
         return;
     }
@@ -512,11 +522,15 @@ fn main() {
     bounded_startup(&database.create("workers_bounded"));
     println!("test startup_reads_only_watched_runs_and_skips_bad_records ... ok");
     retirement_review::recall_key_request_wiring(&database.create("memory_wiring"));
+    println!("test recall_key_request_wiring ... ok");
     retirement_review::memory_store_error_retries_retirement(
         &database.create("memory_store_error"),
     );
+    println!("test memory_store_error_retries_retirement ... ok");
     retirement_review::bad_memory_never_blocks_retirement(&database.create("bad_memory"));
+    println!("test bad_memory_never_blocks_retirement ... ok");
     retirement_review::feed_retirement_end_to_end(&database.create("memory_feed"));
+    println!("test feed_retirement_end_to_end ... ok");
     retirement(&database.create("workers_retirement"));
     println!("test retirement_requires_terminal_unwatched_effect_and_recovers_from_sigkill ... ok");
     finish_fixture(database, "worker_memory");
@@ -560,7 +574,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("All required worker supervisor, planning and maker scenarios passed; no skips");
+    println!("76 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real

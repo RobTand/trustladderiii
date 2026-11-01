@@ -1782,6 +1782,9 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
             "closed_looks {case}: {}",
             if result.is_ok() { "PASS" } else { "FAIL" }
         );
+        if result.is_ok() {
+            println!("test closed_looks_{case} ... ok");
+        }
         failed += usize::from(result.is_err());
     }
     failed
@@ -1942,14 +1945,18 @@ fn main() {
         "github_due",
     ] {
         r3(&db.create(name), name);
+        println!("test r3_{name} ... ok");
     }
     for case in ["progress", "look", "prune"] {
         wait_subscription_retirement(&db.create(&format!("wait_retirement_{case}")), case);
         println!("test wait_subscription_removed_after_{case} ... ok");
     }
     moving_maker_wait_keeps_registration(&db.create("moving_wait"));
+    println!("test moving_maker_wait_keeps_registration ... ok");
     successful_look_breaks_failure_streak(&db.create("failure_streak"));
+    println!("test successful_look_breaks_failure_streak ... ok");
     successful_wait_read_breaks_failure_streak(&db.create("wait_failure_streak"));
+    println!("test successful_wait_read_breaks_failure_streak ... ok");
     worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
     println!("test worker_look_does_not_read_github_deliveries ... ok");
     declared_maker_wait(&db.create("maker_wait_ended"), "done");
@@ -1981,14 +1988,21 @@ fn main() {
     permanent_incident_clear(&db.create("permanent_incident"));
     println!("test permanent_incident_clear ... ok");
     progress_releases_nothing(&db.create("progress_holds"));
+    println!("test progress_releases_nothing ... ok");
     read_outages_keep_looking(&db.create("read_outage"), false);
+    println!("test read_outages_keep_looking ... ok");
     read_outages_keep_looking(&db.create("probe_outage"), true);
+    println!("test probe_outages_keep_looking ... ok");
     look_adapter_errors_survive(&db.create("stop_eperm"), false);
+    println!("test stop_adapter_errors_survive ... ok");
     look_adapter_errors_survive(&db.create("resume_eperm"), true);
+    println!("test resume_adapter_errors_survive ... ok");
     settled_looks_are_quiet(&db.create("quiet_timer"));
+    println!("test settled_looks_are_quiet ... ok");
     token_only_queue_progress(&db.create("token_only_queue"));
+    println!("test token_only_queue_progress ... ok");
     db.stop();
-    println!("17 allowance and incident scenarios passed; no skips");
+    println!("46 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {

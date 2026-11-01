@@ -1615,6 +1615,7 @@ fn main() {
     {
         let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
         support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
         }
@@ -1645,6 +1646,32 @@ fn main() {
     }
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
         source_skips_bad_waits();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--review-budgets") {
+        let mut failures = 0;
+        for test in [
+            oversized_plan_is_refused_before_submission as fn(),
+            result_budget_rejects_repeated_checks,
+        ] {
+            failures += usize::from(std::panic::catch_unwind(test).is_err());
+        }
+        let mut database = support::Database::start();
+        let settings = database.create("pb_plan_budget");
+        failures += usize::from(
+            std::panic::catch_unwind(|| oversized_planner_reply_reaches_plan_feedback(&settings))
+                .is_err(),
+        );
+        database.stop();
+        assert_eq!(failures, 0);
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--report-limit") {
+        oversized_plan_is_refused_before_submission();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--repository-image") {
+        repository_image_is_sealed_and_staged_with_global_fallback();
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--r4-bell") {
@@ -1678,6 +1705,14 @@ fn main() {
         return;
     }
     for (name, test) in [
+        (
+            "oversized_plan_is_refused_before_submission",
+            oversized_plan_is_refused_before_submission as fn(),
+        ),
+        (
+            "repository_image_is_sealed_and_staged_with_global_fallback",
+            repository_image_is_sealed_and_staged_with_global_fallback as fn(),
+        ),
         (
             "moving_wait_bell_is_quiet",
             moving_wait_bell_is_quiet as fn(),
@@ -1747,6 +1782,10 @@ fn main() {
         println!("test {name} ... ok");
     }
     let mut database = support::Database::start();
+    oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
+    println!("test oversized_planner_reply_reaches_plan_feedback ... ok");
+    result_budget_rejects_repeated_checks();
+    println!("test result_budget_rejects_repeated_checks ... ok");
     retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
     println!("test retirement_continues_after_corrupt_node ... ok");
     through_controller(&database.create("pb_pass"), false, false, false);
@@ -1760,7 +1799,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("26 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("36 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2025,5 +2064,186 @@ fn moving_job_reconcile_is_pending() {
     assert!(
         matches!(result, Ok(Reconciliation::Pending)),
         "moving reconcile must stay Pending"
+    );
+}
+
+fn repository_image_is_sealed_and_staged_with_global_fallback() {
+    for (owner, name, installation, expected) in [
+        ("robtand", "TL3-SANDBOX", 1, "b"),
+        ("RobTand", "other", 1, "a"),
+        ("Other", "tl3-sandbox", 1, "a"),
+        ("RobTand", "tl3-sandbox", 2, "a"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        delivery.repository = Repository {
+            owner: owner.into(),
+            name: name.into(),
+            installation,
+        };
+        let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
+            "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
+            "container_image":format!("sha256:{}", "b".repeat(64))
+        }))
+        .unwrap();
+        let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
+        adapter.execute(&delivery).unwrap();
+        let key = adapter.action_key(&delivery).unwrap().unwrap();
+        let request: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.path().join(format!("queue/{key}.request"))).unwrap(),
+        )
+        .unwrap();
+        let image = format!("sha256:{}", expected.repeat(64));
+        assert_eq!(request["image"], image, "staged harness image");
+        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let seal = calls
+            .iter()
+            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+            .unwrap();
+        let index = seal
+            .iter()
+            .position(|arg| arg == "--container-image")
+            .unwrap();
+        assert_eq!(
+            seal[index + 1],
+            image,
+            "PB placement must use the staged image"
+        );
+    }
+}
+
+fn oversized_plan_is_refused_before_submission() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.checks.as_mut().unwrap().plan[0].tests = vec![format!(
+        "test_value.py::test_{}",
+        "x".repeat(4 * 1024 * 1024)
+    )];
+    let mut adapter = fixture(root.path(), "pending");
+    let result = adapter.execute(&delivery);
+    assert!(
+        result.is_ok(),
+        "oversized plan must complete as a plan failure, not hold a setup error"
+    );
+    let completion = result.unwrap();
+    assert!(matches!(&completion.observations[0], Observation::Checks {
+        report: true, pass: false, failed_tests, ..
+    } if failed_tests[0].message.contains("4194304") && failed_tests[0].message.contains("reduce")));
+    assert!(adapter.action_key(&delivery).unwrap().is_none());
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap_or_default();
+    assert!(!calls.contains("--seal-only") && !calls.contains("--publish"));
+}
+
+fn result_budget_rejects_repeated_checks() {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.checks.as_mut().unwrap().plan = (0..40000)
+        .map(|i| Check {
+            name: format!("check-{i}"),
+            kind: Kind::Regression,
+            tests: vec!["test_value.py::test_value".into()],
+        })
+        .collect();
+    let mut adapter = fixture(root.path(), "pending");
+    let completion = adapter.execute(&delivery).unwrap();
+    assert!(
+        matches!(completion.observations.first(), Some(Observation::Checks {
+        report: true, pass: false, failed_tests, ..
+    }) if failed_tests[0].message.contains("8388608") && failed_tests[0].message.contains("reduce")),
+        "result budget must complete a plan failure before publication"
+    );
+    assert!(adapter.action_key(&delivery).unwrap().is_none());
+}
+
+fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let fakes = root.path().join("fakes");
+    let oversized_replies = std::rc::Rc::new(std::cell::Cell::new(0));
+    let replies = oversized_replies.clone();
+    let mut registry = adapters::simulation(&fakes).unwrap();
+    registry.register(Upstream::Workers, support::workers::Workers::new(
+        None, adapters::workers::Fake::new(&fakes), vec![], move |_, completion: &mut Completion| {
+            for observation in &mut completion.observations {
+                if let Observation::Plan {node, generation, ..} = observation {
+                    let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{"value.py":0}, "overhead_tokens":0,
+                        "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});
+                    let reply = if replies.get() == 0 {
+                        replies.set(replies.get() + 1);
+                        serde_json::json!({
+                            "kind":"leaf", "files":["value.py"], "checks":[{
+                                "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
+                            "no_design_questions":true, "lands_on_its_own":true, "violations":[],
+                            "forecast":forecast
+                        })
+                    } else {
+                        serde_json::json!({"kind":"cant_meet", "files":["value.py"],
+                            "report":"No smaller selection is available.", "violations":[], "forecast":forecast})
+                    };
+                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply};
+                }
+            }
+        }));
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        registry,
+        Bootstrap {
+            operations: None,
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "oversized-planner".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Plan budget".into(),
+            actor: 1,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    for _ in 0..100 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let world = controller.world().unwrap();
+    assert_eq!(
+        world.nodes[0].question.map(|q| q.kind),
+        Some(tl3_kernel::QKind::CantMeet),
+        "oversized plans must follow the normal planner retry and feedback path"
+    );
+    assert_eq!(world.nodes[0].run_incidents, 0);
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    let findings = store.worker_document("0", "findings").unwrap().unwrap();
+    assert!(
+        findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("4194304")
+                && v.as_str().unwrap().contains("reduce"))
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .any(|e| e.kind == "PrismaBuild")
+    );
+    assert_eq!(
+        oversized_replies.get(),
+        1,
+        "one oversized reply must prove refusal; the planner retry can decline with a small reply"
     );
 }

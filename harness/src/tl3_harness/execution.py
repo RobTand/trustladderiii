@@ -8,9 +8,13 @@ import subprocess
 import tempfile
 import time
 
+from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
 from .model import Check, Kind, Outcome, Result, Verdict, judge
 from .report import InvalidReport, decode, parse
 from .trees import added_names, changed_existing_tests, commit, configuration, export, is_test, test_edits, validate_configuration
+
+
+TMPFS_MIB = 512
 
 
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
@@ -28,16 +32,16 @@ class Container:
 def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
     harness = Path(__file__).resolve().parent
     return [
-        "docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
+        "docker", "run", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
         "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65534:65534",
         "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
-        "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
         "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
-        container.image, "-I", "-B", "/harness/runner.py", json.dumps(tests),
+        container.image, "-I", "-B", "/harness/runner.py", "-",
     ]
 
 
@@ -88,13 +92,18 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
     records = []
     invalid = False
     record_limit = 4 * len(tests) + 16
+    line_limit = MAX_REPORT_LINE_BYTES
+    retained_bytes = 0
     # The container gets no writable report mount or PB token. Its event stream
     # is journalled and parsed by this host process, outside the checkout.
-    with report.open("wb") as journal, tempfile.TemporaryFile() as errors:
-        with subprocess.Popen(container_command(tree, container, tests), stdout=subprocess.PIPE,
-                              stderr=errors) as child:
-            while line := child.stdout.readline(65537):
-                if len(line) > 65536 or len(records) > record_limit:
+    with report.open("wb") as journal, tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as selection:
+        selection.write(json.dumps(tests).encode())
+        selection.seek(0)
+        with subprocess.Popen(container_command(tree, container, tests), stdin=selection,
+                              stdout=subprocess.PIPE, stderr=errors) as child:
+            while line := child.stdout.readline(line_limit + 1):
+                retained_bytes += len(line)
+                if len(line) > line_limit or len(records) > record_limit or retained_bytes > MAX_REPORT_BYTES:
                     invalid = True
                     child.terminate()
                     break
@@ -110,6 +119,8 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                 records.append(record)
                 if record.get("event") == "collection" and isinstance(record.get("tests"), list):
                     record_limit = 4 * len(record["tests"]) + 16
+                    line_limit = min(MAX_REPORT_LINE_BYTES, max((len(json.dumps(test, ensure_ascii=False).encode(errors='backslashreplace'))
+                                                               for test in record['tests']), default=0) + 8192)
                 if record.get("event") == "phase" and record.get("when") == "teardown":
                     progress.commit(record.get("test", ""))
             exit_code = child.wait()
@@ -127,6 +138,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     require_admission()
     if not plan or len({check.name for check in plan}) != len(plan):
         raise ValueError("a plan needs uniquely named checks")
+    tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
+    validate_check_plan(plan)
     reproducing = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.REPRODUCING
                                       for test in check.tests))
     if reproducing and reviewed is None:
@@ -145,7 +158,6 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         export(repo, head, new)
         config = configuration(old)
         validate_configuration(old, new)
-        tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
         invalid = {test for test in tests if not is_test(test.split("::")[0], config["test-files"])}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
@@ -199,4 +211,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
 
 
 def result_json(results: tuple[Result, ...]) -> str:
-    return json.dumps([asdict(result) for result in results], sort_keys=True)
+    reports = [asdict(result) for result in results]
+    detailed = 0
+    for report in reports:
+        for test in report['tests']:
+            if not test['passed'] and detailed < MAX_DETAILED_FAILURES:
+                test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
+                detailed += 1
+            else:
+                test['message'] = ''
+    return json.dumps(reports, sort_keys=True, separators=(',', ':'))

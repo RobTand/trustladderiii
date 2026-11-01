@@ -297,6 +297,15 @@ impl support::github::Routes for State {
 }
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
+        if r.method == "POST" && r.url.path() == "/v1/default/banks/tl3/memories" {
+            let body: Value = serde_json::from_slice(&r.body).unwrap();
+            assert_eq!(body["async"], true);
+            assert_eq!(body["items"].as_array().unwrap().len(), 1);
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "success": true, "async": true, "operation_id": body["operation_id"],
+                "bank_id": "tl3", "items_count": 1,
+            }));
+        }
         let mut s = self.state.lock().unwrap();
         let method = r.method.as_str();
         let path = r.url.path();
@@ -657,16 +666,25 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         fixture.repositories = config.github.repos.clone();
     }
     let f = Arc::new(fixture);
-    commit(&f.source, "value.py", "def value(): return 1\n");
-    commit(
-        &f.source,
-        "pyproject.toml",
+    let original = git(&f.source, &["rev-parse", "HEAD"]);
+    fs::write(f.source.join("value.py"), "def value(): return 1\n").unwrap();
+    fs::write(
+        f.source.join("pyproject.toml"),
         "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
-    );
+    )
+    .unwrap();
     commit(
         &f.source,
         "test_value.py",
         "from value import value\ndef test_value(): assert value() == 2\n",
+    );
+    assert_eq!(
+        git(
+            &f.source,
+            &["rev-list", "--count", &format!("{original}..HEAD")]
+        ),
+        "1",
+        "publishing setup needs one base commit, not one per file"
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
     if mode == "repo-conventions" {
@@ -688,7 +706,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             vec![primary, backup]
         };
     }
-    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    config.hindsight.endpoint = server.server.uri().parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![
@@ -888,6 +906,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    tl3_controller::memory::flush(&mut store, &config.hindsight)
+        .expect("publishing fixture must acknowledge memories instead of retrying a closed port");
     if mode == "repo-conventions" {
         let state = server.api.state.lock().unwrap();
         let pull = state.pull.as_ref().unwrap();
@@ -1756,6 +1776,7 @@ fn main() {
             "merged".into(),
         );
         support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
         }
@@ -1827,7 +1848,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     database.stop();
-    println!(
-        "All publishing scenarios passed; recorded upstreams; no nested submissions; no skips"
-    );
+    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }
