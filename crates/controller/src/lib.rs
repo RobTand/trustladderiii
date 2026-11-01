@@ -10,6 +10,7 @@ pub mod adoption;
 pub mod findings;
 
 pub mod adapters;
+mod branches;
 pub mod cli;
 pub mod clock;
 pub mod executor;

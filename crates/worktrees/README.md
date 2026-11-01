@@ -9,7 +9,7 @@ use tl3_worktrees::{BranchName, Remote, Worktrees};
 let repo = Worktrees::open("/srv/tl3/repos/sandbox", "/srv/tl3/worktrees")?;
 let name = BranchName::new("tl3/issue-29")?;
 let remote = Remote::local("/srv/tl3/remotes/sandbox.git")?;
-let base = repo.fetch_main(&remote, None)?;
+let base = repo.fetch_base(&remote, None)?;
 repo.create_branch_at(&name, &base)?;
 let path = repo.create_worktree(&name, "/srv/tl3/worktrees/issue-29")?;
 let (head, base) = repo.branch_state(&name)?.expect("prepared branch");
@@ -21,7 +21,7 @@ let files = repo.changed_files(&base, &head)?;
 
 | Method | Result |
 |---|---|
-| `fetch_main`, `create_branch_at` | Fetch main and create the branch at an explicit base commit |
+| `fetch_base`, `create_branch_at` | Fetch the configured base and create the branch at an explicit base commit |
 | `create_worktree`, `remove_worktree` | Reconcile a checkout at an explicit path |
 | `remote_head` | Remote commit, with absent remote branches returning `None` |
 | `publish` | Publish an immutable head with a lease against the recorded remote head |
@@ -42,12 +42,13 @@ let files = repo.changed_files(&base, &head)?;
 All handles sharing a common Git directory serialize operations with an in-process
 mutex. One controller process must own each repository; other processes must not
 mutate it. No OS file locks are used because of the deployment kernel bug.
-`fetch_main` fetches into `refs/tl3/upstream-main`. `create_branch_at` and `rebase_onto` use the exact
-recorded commit without changing a checked-out main.
+`fetch_base` fetches into `refs/tl3/upstream-base`. `create_branch_at` and `rebase_onto` use the exact
+recorded commit without changing the checked-out base branch.
 The controller chooses effect identities. This client does not persist controller
 state, retry network failures, or mark a new head approved. Every new head still needs checks and review.
 
-`BranchName` rejects invalid ref names and option injection. Mutations reserve `main`.
+`BranchName` rejects invalid ref names and option injection. Mutations reserve the configured base branch (`main` by default).
+Use `set_base_branch` before operating on a repository with another base.
 `CommitId` accepts lowercase full SHA-1 or SHA-256 object ids. Paths use Unix bytes, including
 newlines and non-UTF-8 names. `changed_files` compares the two trees directly and
 disables rename detection so both the old and new path count toward the footprint.
@@ -56,10 +57,10 @@ disables rename detection so both the old and new path count toward the footprin
 ## Recovery
 
 New branch and `refs/tl3/bases/<branch>` refs are created in one Git ref transaction.
-The base stays fixed when main advances. A clean rebase updates the branch and
+The recorded base stays fixed when the base branch advances. A clean rebase updates the branch and
 base together in a ref transaction that checks both old values. The new base is
-the exact main commit used by the rebase. An existing branch without a base
-records its merge base with main. A surviving base without a branch recreates
+the exact base commit used by the rebase. An existing branch without a base
+records its merge base with the configured branch. A surviving base without a branch recreates
 the branch at that base. Local branch deletion removes both refs atomically.
 
 The configured worktrees root must exist when the handle opens. Creation and

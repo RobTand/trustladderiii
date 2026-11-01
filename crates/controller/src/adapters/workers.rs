@@ -110,6 +110,7 @@ impl ActiveRuns {
 
 #[derive(Clone)]
 pub struct Supervisor {
+    branches: crate::branches::Branches,
     settings: tl3_config::Workers,
     models: tl3_config::Models,
     planning: tl3_config::Planning,
@@ -145,6 +146,7 @@ impl Supervisor {
             }
         }
         Ok(Self {
+            branches: crate::branches::Branches::new(&config.github.repos)?,
             active,
             settings: config.workers.clone(),
             models: config.models.clone(),
@@ -224,7 +226,7 @@ impl Supervisor {
                 CommitId::new(base)?
             } else {
                 Worktrees::open(&checkout, &checkout)?
-                    .branch_state(&super::worktrees::Real::branch(delivery)?)?
+                    .branch_state(&self.branches.branch(delivery)?)?
                     .ok_or(Error::Invalid("maker checkout has no base"))?
                     .1
             };

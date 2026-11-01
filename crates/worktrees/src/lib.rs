@@ -5,6 +5,7 @@
 //! No OS file locks are used because of the deployment kernel's file-lock bug.
 #![forbid(unsafe_code)]
 
+pub mod branch_template;
 mod queries;
 mod snapshots;
 
@@ -54,7 +55,7 @@ pub enum Error {
     Response,
     #[error("branch or base is missing")]
     MissingBranch,
-    #[error("main is reserved")]
+    #[error("the base branch is reserved")]
     MainBranch,
     #[error("worktree path or branch belongs to another checkout")]
     WorktreeOccupied,
@@ -235,6 +236,7 @@ pub enum RebaseResult {
 }
 
 pub struct Worktrees {
+    base_branch: BranchName,
     repo: PathBuf,
     common: PathBuf,
     root: PathBuf,
@@ -262,6 +264,19 @@ pub enum TrimBoundary {
 }
 
 impl Worktrees {
+    pub fn set_base_branch(&mut self, base: &str) -> Result<(), Error> {
+        self.base_branch = BranchName::new(base)?;
+        Ok(())
+    }
+
+    fn leaf(&self, name: &BranchName) -> Result<(), Error> {
+        if *name == self.base_branch {
+            Err(Error::MainBranch)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn create_worktree(
         &self,
         name: &BranchName,
@@ -300,7 +315,7 @@ impl Worktrees {
         generation: u64,
     ) -> Result<Option<String>, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let path = self.destination(path)?;
         let reference = format!("refs/tl3/scratch/{}/{generation}", name.as_str());
         if self.resolve_optional(&reference)?.is_some() {
@@ -467,7 +482,7 @@ impl Worktrees {
         reference: &str,
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let path = self.destination(path)?;
         if !reference.starts_with(&format!("refs/tl3/scratch/{}/", name.as_str()))
             || self.resolve_optional(reference)?.is_none()
@@ -665,7 +680,7 @@ impl Worktrees {
     /// Creates both refs at the operation's durably recorded base.
     pub fn create_branch_at(&self, name: &BranchName, base: &CommitId) -> Result<Branch, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         if self.resolve_optional(&name.reference())?.is_none()
             && self.resolve_optional(&name.base_ref())?.is_none()
         {
@@ -713,7 +728,7 @@ impl Worktrees {
         expected: &CommitId,
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let token = remote.credentials(token);
         if self.remote_head_locked(name, remote, token)?.is_none() {
             return Ok(());
@@ -843,7 +858,7 @@ impl Worktrees {
         start: &CommitId,
     ) -> Result<Branch, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let start_ref = format!("refs/tl3/starts/{}", name.as_str());
         match (
             self.resolve_optional(&name.reference())?,
@@ -864,15 +879,15 @@ impl Worktrees {
         self.create_branch_locked(name)
     }
 
-    /// Fetches only main, with the same credential and transport policy as pushes.
-    pub fn fetch_main(
+    /// Fetches only the configured base, with the same transport policy as pushes.
+    pub fn fetch_base(
         &self,
         remote: &Remote,
         token: Option<&InstallationToken>,
     ) -> Result<CommitId, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         self.network(
-            "fetch main",
+            "fetch base",
             [
                 OsStr::new("fetch"),
                 OsStr::new("--no-tags"),
@@ -880,12 +895,14 @@ impl Worktrees {
                 OsStr::new("--no-write-fetch-head"),
                 OsStr::new("--"),
                 &remote.0,
-                OsStr::new("+refs/heads/main:refs/tl3/upstream-main"),
+                OsStr::new(&format!(
+                    "+{}:refs/tl3/upstream-base",
+                    self.base_branch.reference()
+                )),
             ],
             remote.credentials(token),
         )?;
-        let main = self.resolve("refs/tl3/upstream-main")?;
-        Ok(main)
+        self.resolve("refs/tl3/upstream-base")
     }
 
     /// Uses the effect's immutable head and the last head this controller published.
@@ -898,7 +915,7 @@ impl Worktrees {
         expected: Option<&CommitId>,
     ) -> Result<(), Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let token = remote.credentials(token);
         let actual = self.remote_head_locked(name, remote, token)?;
         if actual.as_ref() == Some(head) {
@@ -930,7 +947,7 @@ impl Worktrees {
         Ok(())
     }
 
-    /// Replace an unfinished merge when a newer rebase effect records another main.
+    /// Replace an unfinished merge when a newer rebase effect records another base.
     pub fn merge_resolution(
         &self,
         name: &BranchName,
@@ -1047,6 +1064,7 @@ impl Worktrees {
         let root = fs::canonicalize(root).map_err(|_| Error::Io)?;
         let repo = fs::canonicalize(repo).map_err(|_| Error::Io)?;
         let mut this = Self {
+            base_branch: BranchName::new(branch_template::DEFAULT_BASE)?,
             common: repo.clone(),
             root,
             mutex: Arc::new(Mutex::new(())),
@@ -1080,7 +1098,7 @@ impl Worktrees {
     }
 
     fn create_branch_locked(&self, name: &BranchName) -> Result<Branch, Error> {
-        leaf(name)?;
+        self.leaf(name)?;
         let reference = name.reference();
         let base_ref = name.base_ref();
         if let Some(base) = self.resolve_optional(&base_ref)? {
@@ -1092,12 +1110,12 @@ impl Worktrees {
                 base,
             });
         }
-        let main = self.resolve("refs/heads/main")?;
+        let main = self.resolve(&self.base_branch.reference())?;
         let (base, update) = if self.resolve_optional(&reference)?.is_some() {
             let output = self.run(
                 &self.repo,
                 "merge-base",
-                ["merge-base", "refs/heads/main", &reference],
+                ["merge-base", &self.base_branch.reference(), &reference],
             )?;
             let base = commit_line(&output.stdout)?;
             (
@@ -1260,7 +1278,7 @@ impl Worktrees {
         path: impl AsRef<Path>,
         allow_deletions: bool,
     ) -> Result<(), Error> {
-        leaf(name)?;
+        self.leaf(name)?;
         let path = self.destination(path.as_ref())?;
         if let Some(checkout) = self.checkouts()?.iter().find(|c| c.path == path) {
             if checkout.branch.as_deref() != Some(&name.reference()) {
@@ -1341,7 +1359,7 @@ impl Worktrees {
     }
 
     fn delete_local_branch_locked(&self, name: &BranchName) -> Result<(), Error> {
-        leaf(name)?;
+        self.leaf(name)?;
         if self
             .checkouts()?
             .iter()
@@ -1392,7 +1410,7 @@ impl Worktrees {
         path: impl AsRef<Path>,
         target: &CommitId,
     ) -> Result<RebaseResult, Error> {
-        leaf(name)?;
+        self.leaf(name)?;
         let path = fs::canonicalize(path).map_err(|_| Error::Io)?;
         self.verify_repository(&path)?;
         let marker = self.rebase_marker(&path)?;
@@ -1859,14 +1877,6 @@ impl Worktrees {
                 stderr: output.stderr.clone(),
             });
         Ok(output)
-    }
-}
-
-fn leaf(name: &BranchName) -> Result<(), Error> {
-    if name.as_str() == "main" {
-        Err(Error::MainBranch)
-    } else {
-        Ok(())
     }
 }
 

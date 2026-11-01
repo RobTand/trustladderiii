@@ -685,12 +685,22 @@ Register the adapter once with `registry.register(Upstream::Worktrees, real)`.
 The daemon still requires explicit simulation; production ingress and startup
 registration belong to their adapter tickets.
 
-The adapter owns branches named `tl3/issue-N-node-M`. Checkout paths beneath the
-configured root separate repositories and requests. `Real::branch` and
+The adapter uses each repository's `branch_template`, defaulting to `tl3/issue-N-node-M`.
+Configure both adapters with `with_repositories(&config.github.repos)`. An unconfigured
+repository returns an error before Git or publication. Checkout paths beneath the
+configured root separate repositories and requests. `Real::branch_for` and
 `Real::checkout` expose those names for worker registration. One controller
 process and its Git children own each repository. Stop the whole service process
 group before starting a replacement. Do not run another Git writer or maintenance
 process against an owned repository.
+
+Run `bash crates/controller/tools/verify-repo-conventions.sh` through PrismaBuild
+to exercise template round trips, config rejection, publishing and rebasing onto
+`master`, and cleanup. The script evaluates the published PR against the offline
+PrismaBuild issue-link fixture fetched from its repository; `provenance.json`
+records both policy and workflow blob SHAs. Catch-up, steering, adoption and
+status identify existing work through stored request and PR bindings; they do
+not infer ownership from a separate branch grammar.
 
 Keep `<common-git-dir>/tl3-controller` across restarts. It binds the repository
 and worktree root, advances the epoch fence as soon as the repository opens, and journals immutable
@@ -698,11 +708,11 @@ operation intents and terminal evidence. Changing that root requires an explicit
 migration of existing checkouts and records. Records use atomic replacement and
 sync both the file and its directory. No store migration is required.
 
-Prepare pins fetched main before creating missing resources. Git's administrative
+Prepare pins the fetched `base_branch` before creating missing resources. Git's administrative
 lock `<common-git-dir>/worktrees/<id>/locked`, with the exact reason `initializing\n`,
 is the evidence of interrupted checkout population. Any key may repair it only
 while the branch head equals the durable base ref. Repair runs
-`reset --hard <branch>` and unlocks after verifying the files, even if main has advanced.
+`reset --hard <branch>` and unlocks after verifying the files, even if the base branch has advanced.
 Without that lock, Prepare only verifies registration and the request branch.
 It preserves maker commits, edits and untracked files across fix rounds, new
 attempts and stale intent reconciliation. The next maker sees them in `git status`.
@@ -735,7 +745,7 @@ workspace verification script runs it, the mixed registry lifecycle, and the
 existing controller and store scenarios through PrismaBuild.
 
 Tickets #12 and #13 open `tl3_worktrees::Worktrees` for the served repository and
-call `branch_state(&Real::branch(delivery)?)` to read its recorded base and current
+call `branch_state(&real.branch_for(delivery)?)` to read its recorded base and current
 head. The tuple is `(head, base)`. `changed_files(&base, &head)` returns the changed
 paths for the check harness and publication footprint. After a clean rebase,
 read both values again: the base and head move together. `Delivery::head_sha`
