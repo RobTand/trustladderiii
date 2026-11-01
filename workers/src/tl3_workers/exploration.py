@@ -9,6 +9,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
+from tl3_workers.turns import RepairUnavailable
+
 
 @dataclass(frozen=True)
 class ExplorationBudget:
@@ -138,6 +140,8 @@ class ExplorationMiddleware(AgentMiddleware):
         self.cache_active = False
         self.turns = 0
         self.spent = 0
+        self.in_flight = 0
+        self.repairing = False
         self.final = False
         self.compacted = False
         # Only a compaction that freed room has a later threshold to approach again.
@@ -176,6 +180,12 @@ class ExplorationMiddleware(AgentMiddleware):
             predicted = math.ceil(cached * self.weights.read + (context - cached) * cold_weight)
         else:
             predicted = math.ceil(context * cold_weight)
+        self.in_flight = predicted
+        if self.repairing:
+            # A repair turn spends the same allowance, without the final-answer reserve.
+            if self.spent + predicted > self.budget.input_tokens:
+                raise RepairUnavailable()
+            return self._account(handler(request), bound)
         original = [m for m in messages if isinstance(m, HumanMessage)]
         reserve = input_estimate(request.override(messages=original, tools=[]))
         reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
@@ -199,6 +209,14 @@ class ExplorationMiddleware(AgentMiddleware):
             for message in response.result:
                 if isinstance(message, AIMessage):
                     message.response_metadata["tl3_budget_exhausted"] = True
+        return self._account(response, bound)
+
+    def charge_dropped(self):
+        """Charge a dropped call, then report whether its retry still fits."""
+        self.spent += self.in_flight
+        return self.spent + self.in_flight <= self.budget.input_tokens
+
+    def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]
         reported = bool(usage) and all(item and type(item.get("input_tokens")) is int
                                        and item["input_tokens"] >= 0 for item in usage)

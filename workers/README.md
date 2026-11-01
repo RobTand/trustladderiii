@@ -130,6 +130,22 @@ generation, so a worker retry keeps its affinity. A later attempt gets a new
 identity. Streamed usage uses the last usage chunk per call. Totals on finish and
 trailing chunks are never summed, including in recorded usage.
 
+A model call that fails with a connection error or a dropped stream is sent
+again once, at the failure, with the same history. Earlier tool calls are not
+repeated. A second failure of that turn fails the run. The dropped call is
+charged against the input allowance, and the retry is sent only if it still
+fits. When the controller reruns a maker after a worker failure, the run
+continues the same visit. The maker saves the visit's history, spent input and
+turns after every update. A rerun resumes from the last complete tool result
+and keeps the spent allowance.
+
+A reply that fails the reply schema or a role check gets one repair turn in the
+same run. The model receives the exact validation message and no tools; any tool
+call it makes in that turn is dropped. The repaired reply is validated again. A
+second invalid reply fails the run as InvalidReply, and the run summary keeps
+both safe diagnostics. The repair turn spends the input allowance. When it does
+not fit, the run fails with the first validation error.
+
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
 extensions and child processes can't write to the protocol stream. A reply

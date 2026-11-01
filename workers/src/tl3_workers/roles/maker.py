@@ -17,6 +17,7 @@ from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts
+from tl3_workers.turns import TurnControl, repaired
 
 
 def _check_inputs(inputs):
@@ -125,6 +126,25 @@ class UnresolvedMerge(ValueError):
     pass
 
 
+class _OutOfRoom(Exception):
+    pass
+
+
+def _resumable(history, start):
+    """Cut an unfinished turn: keep the visit's inputs and complete tool call/result groups."""
+    end = len(history)
+    while end > start + 1:
+        first = end
+        while first > start + 1 and isinstance(history[first - 1], ToolMessage):
+            first -= 1
+        call = history[first - 1]
+        if (first < end and isinstance(call, AIMessage)
+                and sorted(c["id"] for c in call.tool_calls) == sorted(m.tool_call_id for m in history[first:end])):
+            break
+        end = first - 1 if first < end else end - 1
+    return history[:end]
+
+
 def _commit(request, starting_head, merge_target=None, merge_files=None):
     _git(request, "merge-base", "--is-ancestor", starting_head, "HEAD")
     merge = _merge_head(request)
@@ -187,22 +207,36 @@ def run(model, request, worktree, emit):
     needs_files = next(variant for variant in proposal["oneOf"]
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
-    agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"])
+    control = TurnControl()
+    agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"],
+                        control=control)
+    allowance = control.allowance
     characters = ContextCharacters()
-    last_message = None
-    history = []
     starting_head, merge_target, merge_files = _starting_state(request, session)
-    if session and session.exists() and request.get("resume_session"):
-        history = messages_from_dict(read_json(session.read_text()))
-    history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
-    for completion in range(2):
+    progress = session.with_suffix(".visit") if session else None
+    visit = read_json(session.with_suffix(".head").read_text())["generation"] if session else None
+    saved = read_json(progress.read_text()) if progress and progress.exists() else None
+    if saved is not None and saved["generation"] == visit:
+        # A rerun after a worker failure continues this visit with its spent allowance.
+        start = saved["start"]
+        history = _resumable(messages_from_dict(saved["messages"]), start)
+        allowance.spent, allowance.turns = saved["spent"], saved["turns"]
+    else:
+        history = []
+        if session and session.exists() and request.get("resume_session"):
+            history = messages_from_dict(read_json(session.read_text()))
+        start = len(history)
+        history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
+    budget_exhausted = False
+
+    def ask():
+        nonlocal budget_exhausted
         last_message = None
         stream = agent.stream(
-            {"messages": history},
+            {"messages": list(history)},
             config={"callbacks": [characters]},
             stream_mode="updates",
         )
-        exhausted = False
         try:
             for update in stream:
                 for result in update.values():
@@ -213,27 +247,34 @@ def run(model, request, worktree, emit):
                         if isinstance(message, AIMessage):
                             emit({"event": "progress", "unit": "model_turn"})
                             if out_of_room(message, inputs["context_size"], characters.prompt):
-                                exhausted = True
-                                break
+                                raise _OutOfRoom()
                             last_message = message
+                            budget_exhausted |= bool(message.response_metadata.get("tl3_budget_exhausted"))
                         elif isinstance(message, ToolMessage):
                             emit({"event": "progress", "unit": "tool_result"})
-                    if exhausted:
-                        break
-                if exhausted:
-                    break
+                if progress:
+                    save(progress, {"generation": visit, "start": start, "messages": messages_to_dict(history),
+                                    "spent": allowance.spent, "turns": allowance.turns})
         finally:
             stream.close()
-        if exhausted:
-            return {"kind": "out_of_room"}
         if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
             raise ValueError("missing final maker reply")
-        reply = read_reply(last_message.text)
+        return last_message.text
+
+    def check(text):
+        reply = read_reply(text)
         Draft202012Validator(proposal).validate(reply)
         if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
         _check_reply(inputs, reply)
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        return reply
+
+    for completion in range(2):
+        try:
+            reply = repaired(control, history, ask, check)
+        except _OutOfRoom:
+            return {"kind": "out_of_room"}
         if reply["kind"] != "done":
             break
         try:
@@ -244,7 +285,7 @@ def run(model, request, worktree, emit):
         if head is not None:
             reply["head"] = head
             break
-        if completion == 1 or last_message.response_metadata.get("tl3_budget_exhausted"):
+        if completion == 1 or budget_exhausted:
             reply = {"kind": "cant_meet", "report": "no code change was made"}
             break
         history.append(HumanMessage(content=(

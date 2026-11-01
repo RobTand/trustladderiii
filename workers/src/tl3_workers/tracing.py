@@ -119,6 +119,12 @@ def safe_span(span):
 
 
 def failure_tags(error):
+    from tl3_workers.turns import InvalidReply
+
+    if isinstance(error, InvalidReply):
+        first, second = (failure_tags(item)["failure_message"] for item in error.errors)
+        return {"failure_class": "InvalidReply",
+                "failure_message": f"invalid reply: {first}; repaired reply: {second}"[:512]}
     # Only fixed diagnostics may accompany the exception class. Provider errors
     # and validation errors can embed credentials, repository text or replies.
     safe_messages = {
