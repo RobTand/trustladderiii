@@ -34,9 +34,11 @@ def main():
                                 text=True, stdout=subprocess.PIPE, check=True)
         for line in result.stdout.splitlines():
             row = json.loads(line)
-            if row.get('reason') == 'compiler-artifact' and row.get('executable'):
+            if (row.get('reason') == 'compiler-artifact' and row.get('executable')
+                    and row['target']['name'] == target):
                 binaries.append(({'name': f'{package}/{target}', 'command': [row['executable']]},
                                  custom, arguments))
+    assert len(binaries) == len(targets), 'Cargo must emit exactly the requested test targets'
     policy = json.loads((rust_gate.ROOT / rust_gate.POLICY).read_text())
     reports, failures = [], []
     for repeat in range(args.repeats):
@@ -49,7 +51,9 @@ def main():
                         'pending-cancel', 'closed-pending')}
                     assert expected <= times.keys(), f'unbudgeted closed look cases: {expected - times.keys()}'
                 rust_gate.check_budget(times, policy, policy)
-                reports.append({'repeat': repeat + 1, 'binary': binary['name'], 'tests': times})
+                row = {'repeat': repeat + 1, 'binary': binary['name'], 'tests': times}
+                reports.append(row)
+                print(json.dumps({'fixture_costs': row}), flush=True)
             except (AssertionError, RuntimeError) as error:
                 failures.append(f"{binary['name']} repeat {repeat + 1}: {error}")
     args.report.parent.mkdir(parents=True, exist_ok=True)
