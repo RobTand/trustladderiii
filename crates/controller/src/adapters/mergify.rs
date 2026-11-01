@@ -130,6 +130,24 @@ impl QueueFact {
         }
         Ok(None)
     }
+    pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
+        if let Evidence::ChecksUnavailable { permissions } = &self.evidence {
+            let Some(node) = self.node(snapshot)? else {
+                return Ok(false);
+            };
+            return Ok(permissions.iter().all(|permission| {
+                let id = crate::looks::check_setup_incident_id(node, permission);
+                snapshot.rows.iter().any(|row| {
+                    row.table == "incidents" && row.id == id && row.value["open"] == true
+                })
+            }));
+        }
+        let identity = self.identity();
+        Ok(snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "queue_facts" && row.id == identity))
+    }
     pub(crate) fn needs_queue_ack(&self) -> bool {
         matches!(
             self.evidence,

@@ -600,9 +600,8 @@ impl Controller {
         let news = observation_upstream(&snapshot, &observation)?;
         if let Observation::Queue(fact) = &observation {
             let identity = fact.identity();
-            if snapshot.rows.iter().any(|row| (row.table == "queue_facts" && row.id == identity)
-                || (row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
-                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity)))) {
+            if fact.recorded(&snapshot)? || snapshot.rows.iter().any(|row| row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
+                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))) {
                 return Ok(());
             }
         }
@@ -629,6 +628,14 @@ impl Controller {
                 return Ok(());
             }
         }
+        // Setup gaps describe current health. A fresh read after a clear must
+        // not be suppressed by the receipt for an earlier observation.
+        let key = if matches!(&observation, Observation::Queue(fact) if matches!(fact.evidence, adapters::mergify::Evidence::ChecksUnavailable { .. }))
+        {
+            format!("{key}:{}", snapshot.revision.get())
+        } else {
+            key.to_owned()
+        };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         commit
             .rows
@@ -648,6 +655,27 @@ impl Controller {
         index: usize,
         observation: &Observation,
     ) -> Result<()> {
+        if let Observation::Queue(fact) = observation
+            && matches!(
+                fact.evidence,
+                adapters::mergify::Evidence::ChecksUnavailable { .. }
+            )
+        {
+            let identity = fact.identity();
+            if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
+                row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
+                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
+            }) {
+                return Ok(());
+            }
+            let id = inbox_key(
+                &format!("{key}:{}", snapshot.revision.get()),
+                index,
+                observation,
+            )?;
+            commit.rows.push(put("inbox", id, json!(observation)));
+            return Ok(());
+        }
         let id = inbox_key(key, index, observation)?;
         let aliases = [
             id.clone(),
@@ -1929,11 +1957,7 @@ impl Controller {
             }
             Observation::Queue(fact) => {
                 let identity = fact.identity();
-                if snapshot
-                    .rows
-                    .iter()
-                    .any(|row| row.table == "queue_facts" && row.id == identity)
-                {
+                if fact.recorded(snapshot)? {
                     return Ok(None);
                 }
                 let Some(node) = fact.node(snapshot)? else {

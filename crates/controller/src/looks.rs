@@ -649,7 +649,14 @@ impl Controller {
                     }
                 } else {
                     let found = serde_json::to_string(&completion)?;
+                    let setup_gap = completion.observations.iter().try_fold(false, |new, observation| {
+                        Ok::<_, crate::Error>(new || match observation {
+                            Observation::Queue(fact) if matches!(fact.evidence, crate::adapters::mergify::Evidence::ChecksUnavailable { .. }) => !fact.recorded(snapshot)?,
+                            _ => false,
+                        })
+                    })?;
                     let new = effect.state.is_pending()
+                        || setup_gap
                         || (state.found.as_ref() != Some(&found)
                             && !completion.observations.is_empty());
                     state.found = Some(found);
@@ -1620,6 +1627,12 @@ mod incident_tests {
     }
 }
 
+pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
+    format!("required-checks:{}:{gap}", node.0)
+}
+
 impl Controller {
     pub(crate) fn check_setup_incident(
         &self,
@@ -1644,13 +1657,11 @@ impl Controller {
         node: NodeId,
         permission: &str,
     ) -> Result<()> {
-        use sha2::{Digest, Sha256};
-        let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
-        let id = format!("required-checks:{}:{gap}", node.0);
+        let id = check_setup_incident_id(node, permission);
         if snapshot
             .rows
             .iter()
-            .any(|row| row.table == "incidents" && row.id == id)
+            .any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
         {
             return Ok(());
         }
