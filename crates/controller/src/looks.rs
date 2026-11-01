@@ -854,7 +854,11 @@ impl Controller {
             upstream: upstream(state.delivery.output),
             class: failure_class(error).into(),
         };
-        let summary = incident_summary(&request.title, &signature, needs_rob);
+        let app_login = self
+            .adapters
+            .adapter(&state.delivery)?
+            .app_login(request.repo.installation);
+        let summary = incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
         let mut commit = Commit::new(
             format!("incident:{id}"),
             json!({"read_outage":state.delivery.key}),
@@ -1285,6 +1289,7 @@ pub(crate) fn incident_summary(
     title: &str,
     signature: &IncidentSignature,
     needs_rob: bool,
+    app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
         Upstream::Workers => "the agent worker",
@@ -1300,9 +1305,7 @@ pub(crate) fn incident_summary(
         "queue_command_permission" => {
             "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
         }
-        "queue_command_refused" => {
-            "refused the queue command. In the served repo's .mergify.yml, allow App login tl3-robtand[bot] in commands_restrictions for queue and requeue. Check Mergify's reply for other setup errors, then clear this incident"
-        }
+        "queue_command_refused" => "refused the queue command",
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
@@ -1338,7 +1341,15 @@ pub(crate) fn incident_summary(
     } else {
         "Work is waiting for recovery."
     };
-    format!("For \"{title}\", {source} {reason}. {next}")
+    let setup = if signature.class == "queue_command_refused" {
+        format!(
+            " In the served repo's .mergify.yml, allow {} in commands_restrictions for queue and requeue, then clear this incident.",
+            app_login.unwrap_or("TL3's App bot login")
+        )
+    } else {
+        String::new()
+    };
+    format!("For \"{title}\", {source} {reason}.{setup} {next}")
 }
 
 pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option<String> {
@@ -1406,7 +1417,8 @@ mod git_failure_tests {
                             upstream: Upstream::Worktrees,
                             class: failure_class(&error).into()
                         },
-                        false
+                        false,
+                        None
                     )
                     .contains("has uncommitted or untracked files")
                 );
@@ -1446,7 +1458,7 @@ mod incident_tests {
             json!({"upstream":"Workers", "class":"transport"})
         );
         assert!(
-            incident_summary("Greeting", &signature, false)
+            incident_summary("Greeting", &signature, false, None)
                 .contains("the agent worker could not be reached")
         );
     }

@@ -325,6 +325,9 @@ pub trait Executor {
             "adapter cannot clarify adoption intake",
         ))
     }
+    fn app_login(&self, _installation: u64) -> Option<String> {
+        None
+    }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

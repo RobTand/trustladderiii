@@ -357,7 +357,7 @@ impl Adapter {
             && matches!(attempt.requeue, Some(Requeue::Sending))
         {
             let github = self.clients[&delivery.repository.installation].clone();
-            if let Some(reason) = self
+            if self
                 .runtime
                 .block_on(Mergify::new(github).command_refusal(
                     &full_name(&delivery.repository),
@@ -365,8 +365,8 @@ impl Adapter {
                     &delivery.key,
                 ))
                 .map_err(adapter_error)?
+                .is_some()
             {
-                eprintln!("Mergify refused {}: {reason}", delivery.key);
                 attempt.requeue = Some(Requeue::Refused);
                 self.records.write(
                     &self.records.path(&delivery.key).with_extension("intent"),
@@ -475,6 +475,11 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|github| format!("{}[bot]", github.app_slug()))
+    }
     fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
         let (number, _) = enqueue(delivery)?;
         let github = self

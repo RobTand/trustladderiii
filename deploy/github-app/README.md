@@ -60,5 +60,6 @@ Before serving a repo, allow `tl3-robtand[bot]` in its `.mergify.yml`
 `commands_restrictions` for both `queue` and `requeue`. The App installation's
 write permissions do not satisfy Mergify's default sender restriction. Follow
 the [served repository configuration](../../crates/mergify/README.md#served-repository-configuration).
-Mergify refusing the command in a reply raises a setup incident; correct the
-configuration before clearing the incident and retrying.
+Mergify's "Command disallowed" or "command restrictions" reply raises a setup
+incident; correct the configuration before clearing the incident and retrying.
+Other replies remain under the normal queue acceptance allowance.

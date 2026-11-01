@@ -719,7 +719,9 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
-                    if effect.state != EffectState::Cancelling
+                    let local_cancellation = effect.state == EffectState::Cancelling
+                        && executor::upstream(delivery.output) == executor::Upstream::Mergify;
+                    if !local_cancellation
                         && looks::quota_waiting(&snapshot, &effect.key, self.now_ms())?
                     {
                         continue;
@@ -1366,7 +1368,16 @@ impl Controller {
                 };
                 let needs_rob =
                     looks::incident_needs_rob(looks::IncidentCause::Kernel { needs_rob });
-                let mut summary = looks::incident_summary(&request.title, &signature, needs_rob);
+                let app_login = self
+                    .adapters
+                    .get(source)?
+                    .app_login(delivery.repository.installation);
+                let mut summary = looks::incident_summary(
+                    &request.title,
+                    &signature,
+                    needs_rob,
+                    app_login.as_deref(),
+                );
                 if class == "queue_unfinished"
                     && let Some(detail) = looks::queue_incident_detail(snapshot, node)
                 {

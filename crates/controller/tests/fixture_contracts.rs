@@ -35,6 +35,10 @@ impl Executor for Spy {
     ) -> Result<()> {
         self.hit("intake_question", format!("{}:{epoch}", question.key()))
     }
+    fn app_login(&self, installation: u64) -> Option<String> {
+        let _: Result<()> = self.hit("app_login", installation.to_string());
+        Some(self.name.into())
+    }
     fn implementation(&self) -> &'static str {
         let _: Result<()> = self.hit("implementation", String::new());
         self.name
@@ -164,6 +168,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         };
         assert_delivery_methods(&mut router, &stop, primary, &calls);
         assert_eq!(router.implementation(), primary);
+        assert_eq!(router.app_login(42).as_deref(), Some(primary));
         let question = tl3_controller::adoption::Clarification {
             repository: delivery(Role::Make).repository,
             number: 17,
@@ -176,6 +181,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             *calls.lock().unwrap(),
             vec![
                 (primary, "implementation", String::new()),
+                (primary, "app_login", "42".into()),
                 (primary, "intake_question", format!("{}:3", question.key())),
                 (primary, "wait_record", "key:checkout".into()),
                 (primary, "recover_deliveries", "17:29".into()),

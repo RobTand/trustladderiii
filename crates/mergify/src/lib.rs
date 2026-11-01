@@ -137,29 +137,7 @@ impl Mergify {
                 .filter(|line| line.starts_with('#'))
             {
                 let lower = heading.to_ascii_lowercase();
-                if heading.contains('❌')
-                    || heading.contains('🚫')
-                    || [
-                        "disallowed",
-                        "refused",
-                        "rejected",
-                        "failed",
-                        "cannot",
-                        "could not",
-                        "not allowed",
-                        "not permitted",
-                        "not authorized",
-                        "denied",
-                        "unable",
-                        "unsupported",
-                        "not supported",
-                        "not configured",
-                        "error",
-                        "unavailable",
-                    ]
-                    .iter()
-                    .any(|word| lower.contains(*word))
-                {
+                if lower.contains("command disallowed") || lower.contains("command restrictions") {
                     return Ok(Some(heading.trim_start_matches('#').trim().into()));
                 }
             }

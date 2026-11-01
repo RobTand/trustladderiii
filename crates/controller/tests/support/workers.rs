@@ -76,6 +76,12 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     ) -> Result<()> {
         self.primary().intake_question(question, epoch)
     }
+    fn app_login(&self, installation: u64) -> Option<String> {
+        match &self.real {
+            Some(real) => real.app_login(installation),
+            None => self.fake.app_login(installation),
+        }
+    }
     fn implementation(&self) -> &'static str {
         match &self.real {
             Some(real) => real.implementation(),
