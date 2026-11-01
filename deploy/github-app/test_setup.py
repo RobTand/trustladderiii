@@ -41,6 +41,17 @@ class FormParser(HTMLParser):
             self.manifest = json.loads(attrs["value"])
 
 
+class ManifestRequirements(unittest.TestCase):
+    def test_no_new_permissions_for_classic_checks(self):
+        manifest = json.loads((ROOT / "manifest.json").read_text())
+        self.assertNotIn("administration", manifest["default_permissions"])
+        self.assertNotIn("statuses", manifest["default_permissions"])
+
+    def test_no_unused_status_subscription(self):
+        manifest = json.loads((ROOT / "manifest.json").read_text())
+        self.assertNotIn("status", manifest["default_events"])
+
+
 class WizardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
