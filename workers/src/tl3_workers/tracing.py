@@ -21,19 +21,33 @@ TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'total_tokens',
                 'cache_read_input_tokens', 'cache_creation_input_tokens')
 SENSITIVE_KEY = re.compile(
     r'(?i)(?:secret|token|password|passwd|api[_-]?key|authorization|credential|private[_-]?key|'
-    r'model[_-]?key|key[_-]?file)')
+    r'model[_-]?key|key[_-]?file|cookie)')
+# JSON inside JSON puts a literal backslash before each quote and whitespace escape.
+SPACE = r'(?:\s|\\[nrt])*'
+QUOTED = r"""(?:\\+"[^"\r\n]*"|"(?:[^"\\\r\n]|\\.)*"|\\*'[^'\r\n]*')"""
+ASSIGN = r"""(?:\\*["'])?""" + SPACE + r'[:=]' + SPACE
 SECRET_PATTERNS = [
-    re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?'
-               r'(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)', re.DOTALL),
+    re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----.*?'
+               r'(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|$)', re.DOTALL),
     re.compile(r'(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+'),
+    # These headers carry a scheme and parameters, so an unquoted value runs to the
+    # end of its line.
+    re.compile(r'(?i)\b(?:(?:proxy-)?authorization|(?:set-)?cookie)\b' + ASSIGN +
+               '(?:' + QUOTED + r'|(?:(?!\\[nr])[^\r\n])*)'),
     re.compile(r'\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'),
-    re.compile(r'\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|'
-               r'(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+|'
-               r'xapp-[A-Za-z0-9-]+|pypi-[A-Za-z0-9_-]+)\b'),
+    re.compile(r'\b(?:sk-[A-Za-z0-9_-]+|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|'
+               r'gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|'
+               r'(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+|xapp-[A-Za-z0-9-]+|'
+               r'pypi-[A-Za-z0-9_-]+|npm_[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{20,}|'
+               r'AIza[A-Za-z0-9_-]{20,}|SG\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b'),
+    re.compile(r'(?i)\b(?:hooks\.slack\.com/services|discord(?:app)?\.com/api/webhooks)/[^\s"\'\\]+'),
     re.compile(r'(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]*:[^@\s/]+@'),
-    re.compile(r'''(?ix)\b[\w-]*(?:secret|token|password|passwd|key|credential)[\w-]*
-                   (?:\\*["'])?\s*[:=]\s*
-                   (?:\\*"[^"\r\n]*"|\\*'[^'\r\n]*'|[^\s"'\\,;}&]+)'''),
+    re.compile(r'(?i)(?<![\w-])--[\w-]*(?:password|passwd|secret|token|key|credential)[\w-]*[= \t]+\S+'),
+    re.compile(r'(?<![\w-])-u[ \t]+[^\s:]+:\S+'),
+    # Both identifier affixes are bounded so that a long run of word characters
+    # cannot make the scan quadratic.
+    re.compile(r'(?i)[\w-]{0,128}(?:secret|token|password|passwd|key|credential|signature)[\w-]{0,128}'
+               + ASSIGN + '(?:' + QUOTED + r"""|[^\s"'\\,;}&]+)"""),
 ]
 
 
