@@ -911,17 +911,40 @@ fn check_gate_grant(width: u8) {
             if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
                 if theirs < mine {
                     older_blocked |= !slot_free(&before, j);
-                    assert!(
-                        !after.nodes[0].holds,
-                        "an older slot ticket prevents this grant"
-                    );
+                    let runnable = slot_free(&before, j) && first_in_line(&before, j);
+                    if runnable || !before.footprints_disjoint(other.footprint, n.footprint) {
+                        assert!(
+                            !after.nodes[0].holds,
+                            "a runnable or overlapping older ticket prevents this grant"
+                        );
+                    }
+                    if after.nodes[0].holds {
+                        assert!(!runnable);
+                        assert!(before.footprints_disjoint(other.footprint, n.footprint));
+                    }
                 }
             }
         }
     }
     kani::cover!(
-        !after.nodes[0].holds && older_blocked && slot_free(&before, 0) && !n.paused,
-        "a file-blocked older waiter keeps its place despite spare capacity"
+        after.nodes[0].holds && older_blocked,
+        "a truly disjoint younger leaf passes a file-blocked older waiter"
+    );
+    kani::cover!(
+        n.ticket.is_some()
+            && !n.paused
+            && slot_free(&before, 0)
+            && before.nodes.iter().enumerate().any(|(j, older)| {
+                j != 0
+                    && matches!(older.phase, Phase::Ready(_))
+                    && older
+                        .ticket
+                        .is_some_and(|theirs| theirs < n.ticket.unwrap())
+                    && !slot_free(&before, j)
+                    && !before.footprints_disjoint(older.footprint, n.footprint)
+            })
+            && !after.nodes[0].holds,
+        "a file-blocked older waiter prevents a younger leaf taking another needed file"
     );
     assert_eq!(&after.nodes[1..], &before.nodes[1..]);
     if after.nodes[0].holds {
@@ -1180,3 +1203,77 @@ proof!(apply_rebase_progress_gate, {
     kani::cover!(awaiting, "the rebase is awaiting its reply");
     assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
 });
+
+// Four leaves, an unpaused oldest waiter, and its last conflicting holder.
+// Younger disjoint holders may remain active when that blocker completes.
+fn check_gate_leaf_progress(width: u8) {
+    let mut w = gate_world_in_phase(width, Some(Phase::Ready(Resume::Making)));
+    kani::assume(w.nodes.iter().all(|n| !n.paused));
+    kani::assume(w.nodes[1].phase == Phase::Queued);
+    kani::assume(!w.footprints_disjoint(w.nodes[0].footprint, w.nodes[1].footprint));
+    kani::assume(w.nodes[0].ticket.is_some());
+    let ticket = w.nodes[0].ticket.unwrap();
+    for i in 2..4 {
+        kani::assume(matches!(w.nodes[i].phase, Phase::Queued | Phase::Ready(_)));
+        if w.nodes[i].holds {
+            kani::assume(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
+        } else {
+            kani::assume(w.nodes[i].ticket.is_some_and(|theirs| theirs > ticket));
+        }
+    }
+    let full = w.nodes.iter().filter(|n| n.holds).count() == usize::from(width);
+    let chained_waiter = matches!(w.nodes[2].phase, Phase::Ready(_))
+        && matches!(w.nodes[3].phase, Phase::Ready(_))
+        && slot_free(&w, 2)
+        && w.nodes[2].ticket < w.nodes[3].ticket
+        && !w.footprints_disjoint(w.nodes[0].footprint, w.nodes[2].footprint)
+        && w.footprints_disjoint(w.nodes[0].footprint, w.nodes[3].footprint)
+        && w.footprints_disjoint(w.nodes[2].footprint, w.nodes[3].footprint);
+    let mut passed = false;
+    let mut passed_chain = false;
+    for i in 2..4 {
+        let held = w.nodes[i].holds;
+        advance(&mut w, i, &mut Outbox::new());
+        if !held && w.nodes[i].holds {
+            passed = true;
+            passed_chain |= i == 3 && chained_waiter;
+            assert!(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
+        }
+    }
+    assert_eq!(w.nodes[0].ticket, Some(ticket));
+    // Successful teardown of the last conflicting holder, through real paths.
+    on_command(&mut w, 1, 1, Command::Stop, &mut Outbox::new());
+    for _ in 0..5 {
+        advance(&mut w, 1, &mut Outbox::new());
+        if let Some(effect) = w.nodes[1].effect {
+            on_ack(&mut w, 1, effect.seq, Ack::Confirmed, &mut Outbox::new());
+        }
+    }
+    advance(&mut w, 1, &mut Outbox::new());
+    assert!(w.nodes[1].phase.is_closed());
+    assert!(slot_free(&w, 0));
+    // Visit younger leaves first: none can take the newly free slot or files.
+    for i in 2..4 {
+        let held = w.nodes[i].holds;
+        advance(&mut w, i, &mut Outbox::new());
+        assert_eq!(w.nodes[i].holds, held);
+    }
+    advance(&mut w, 0, &mut Outbox::new());
+    assert!(w.nodes[0].holds && w.nodes[0].ticket.is_none());
+    require_consistent(&w);
+    kani::cover!(
+        full && w.nodes[0].holds,
+        "an oldest waiter progresses from a full gate when its last blocker completes"
+    );
+    kani::cover!(
+        passed && w.nodes[0].holds,
+        "an older leaf progresses while a disjoint overtaker remains active"
+    );
+    kani::cover!(
+        passed_chain && w.nodes[0].holds,
+        "passes a waiter blocked by an older overlapping waiter"
+    );
+}
+
+proof!(gate_leaf_progress_w2, check_gate_leaf_progress(2));
+proof!(gate_leaf_progress_w3, check_gate_leaf_progress(3));

@@ -6,6 +6,8 @@
 use std::collections::BTreeSet;
 
 const GATE_PROOFS: &[&str] = &[
+    "gate_leaf_progress_w2",
+    "gate_leaf_progress_w3",
     "gate_grant_w2",
     "gate_grant_w3",
     "gate_planning_w2",
