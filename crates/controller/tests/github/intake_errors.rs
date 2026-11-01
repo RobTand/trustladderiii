@@ -6,6 +6,13 @@ struct GitHubAdapter {
     fake: adapters::github::Fake,
 }
 impl Executor for GitHubAdapter {
+    fn input_incident(
+        &mut self,
+        notice: &tl3_controller::input_errors::IncidentNotice,
+        epoch: i64,
+    ) -> tl3_controller::Result<()> {
+        self.real.input_incident(notice, epoch)
+    }
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if d.repository.name == "healthy" {
             self.fake.execute(d)
@@ -27,22 +34,38 @@ fn open(settings: &tl3_config::Store, root: &Path, uri: &str) -> Controller {
     healthy.name = "healthy".into();
     boot.repos.push(healthy);
     boot.operations = Some(tl3_config::OperationsIssue {
-        owner: "owner".into(), name: "tl3".into(), installation_id: 3, number: 17,
+        owner: "owner".into(),
+        name: "tl3".into(),
+        installation_id: 3,
+        number: 17,
     });
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::GitHub, GitHubAdapter {
-        real: adapter(uri, root), fake: adapters::github::Fake::new(root),
-    });
+    registry.register(
+        Upstream::GitHub,
+        GitHubAdapter {
+            real: adapter(uri, root),
+            fake: adapters::github::Fake::new(root),
+        },
+    );
     Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap()
 }
 fn sql(settings: &tl3_config::Store, statement: &str) {
-    postgres::Config::new().host(&settings.host).port(settings.port)
-        .user(&settings.user).dbname(&settings.database)
-        .password("tl3-disposable-test-password").connect(postgres::NoTls).unwrap()
-        .batch_execute(statement).unwrap();
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+        .batch_execute(statement)
+        .unwrap();
 }
 fn break_intake(settings: &tl3_config::Store) {
-    sql(settings, "DELETE FROM tl3_world WHERE table_name = 'repos' AND row_id = '0'");
+    sql(
+        settings,
+        "DELETE FROM tl3_world WHERE table_name = 'repos' AND row_id = '0'",
+    );
 }
 fn healthy(c: &mut Controller) {
     let mut issue = labelled();
@@ -50,10 +73,18 @@ fn healthy(c: &mut Controller) {
     issue.repo = "healthy".into();
     c.intake(issue).unwrap();
     drain(c);
-    assert_eq!(c.world().unwrap().nodes.last().unwrap().phase, Phase::Closed(Outcome::Merged));
+    assert_eq!(
+        c.world().unwrap().nodes.last().unwrap().phase,
+        Phase::Closed(Outcome::Merged)
+    );
 }
 fn incidents(c: &mut Controller) -> Vec<tl3_store::WorldRow> {
-    c.snapshot().unwrap().rows.into_iter().filter(|r| r.table == "incidents").collect()
+    c.snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "incidents")
+        .collect()
 }
 fn case(settings: &tl3_config::Store, name: &str) {
     let api = Server::new();
@@ -69,8 +100,14 @@ fn case(settings: &tl3_config::Store, name: &str) {
             good.delivery = "healthy-label".into();
             tx.send(Input::LabelledIssue(good)).unwrap();
             drop(tx);
-            assert!(ingress::run(&mut c, rx).is_ok(), "one intake failure must not end ingress");
-            assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+            assert!(
+                ingress::run(&mut c, rx).is_ok(),
+                "one intake failure must not end ingress"
+            );
+            assert_eq!(
+                c.world().unwrap().nodes[0].phase,
+                Phase::Closed(Outcome::Merged)
+            );
             assert_eq!(incidents(&mut c).len(), 1);
             let first = incidents(&mut c)[0].id.clone();
             let posts = api.state.lock().unwrap().comments.len();
@@ -83,39 +120,81 @@ fn case(settings: &tl3_config::Store, name: &str) {
                 repeated.delivery = "next-startup-look".into();
                 ingress::apply(&mut c, Input::LabelledIssue(repeated)).unwrap();
                 drain(&mut c);
-                assert_eq!(incidents(&mut c).len(), 1, "startup look must reuse the incident");
+                assert_eq!(
+                    incidents(&mut c).len(),
+                    1,
+                    "startup look must reuse the incident"
+                );
                 assert_eq!(incidents(&mut c)[0].id, first);
-                assert_eq!(api.state.lock().unwrap().comments.len(), posts, "no duplicate notice");
+                assert_eq!(
+                    api.state.lock().unwrap().comments.len(),
+                    posts,
+                    "no duplicate notice"
+                );
             }
         }
         "observation" => {
-            c.observe("bad-observation", Observation::Kernel(tl3_kernel::Event::NewRequest {
-                repo: tl3_kernel::RepoId(0),
-            })).unwrap();
+            c.observe(
+                "bad-observation",
+                Observation::Kernel(tl3_kernel::Event::NewRequest {
+                    repo: tl3_kernel::RepoId(0),
+                }),
+            )
+            .unwrap();
             healthy(&mut c);
-            assert_eq!(incidents(&mut c).len(), 1, "failed observation must raise an incident");
-            assert!(!api.state.lock().unwrap().comments.is_empty(), "unresolved issue uses operations");
-            assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "inbox"));
+            assert_eq!(
+                incidents(&mut c).len(),
+                1,
+                "failed observation must raise an incident"
+            );
+            assert!(
+                !api.state.lock().unwrap().comments.is_empty(),
+                "unresolved issue uses operations"
+            );
+            assert!(
+                !c.snapshot()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "inbox")
+            );
         }
         "translator" => {
             struct InvalidTranslator;
             impl GitHubTranslator for InvalidTranslator {
-                fn translate(&mut self, _: &GitHubDelivery, _: &tl3_store::Snapshot)
-                    -> tl3_controller::Result<Vec<Input>> {
-                    Err(tl3_controller::Error::Invalid("one delivery cannot be translated"))
+                fn translate(
+                    &mut self,
+                    _: &GitHubDelivery,
+                    _: &tl3_store::Snapshot,
+                ) -> tl3_controller::Result<Vec<Input>> {
+                    Err(tl3_controller::Error::Invalid(
+                        "one delivery cannot be translated",
+                    ))
                 }
             }
             c.register_github_translator("invalid", InvalidTranslator);
             let mut store_payload = fixture(false);
             store_payload["sender"]["id"] = json!(7);
-            sql(settings, &format!("INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ('github-webhook', 'bad-translation', 'issues', decode('{}', 'hex'))", hex::encode(serde_json::to_vec(&store_payload).unwrap())));
+            sql(
+                settings,
+                &format!(
+                    "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ('github-webhook', 'bad-translation', 'issues', decode('{}', 'hex'))",
+                    hex::encode(serde_json::to_vec(&store_payload).unwrap())
+                ),
+            );
             healthy(&mut c);
             assert_eq!(incidents(&mut c).len(), 1);
             assert!(!api.state.lock().unwrap().comments.is_empty());
         }
         "fatal" => {
-            sql(settings, "DELETE FROM tl3_world WHERE table_name = 'kernel'");
-            assert!(c.intake(labelled()).is_err(), "broken kernel snapshot must remain fatal");
+            sql(
+                settings,
+                "DELETE FROM tl3_world WHERE table_name = 'kernel'",
+            );
+            assert!(
+                c.intake(labelled()).is_err(),
+                "broken kernel snapshot must remain fatal"
+            );
         }
         _ => unreachable!(),
     }
@@ -128,8 +207,18 @@ pub(super) fn run() {
         if std::panic::catch_unwind(|| case(&settings, name)).is_err() {
             failed.push(name);
         }
-        println!("intake error regression {name}: {}", if failed.last() == Some(&name) { "FAILED" } else { "ok" });
+        println!(
+            "intake error regression {name}: {}",
+            if failed.last() == Some(&name) {
+                "FAILED"
+            } else {
+                "ok"
+            }
+        );
     }
     db.stop();
-    assert!(failed.is_empty(), "intake error regressions failed: {failed:?}");
+    assert!(
+        failed.is_empty(),
+        "intake error regressions failed: {failed:?}"
+    );
 }

@@ -62,7 +62,9 @@ impl AllowanceState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Incident {
     pub id: String,
-    pub node: NodeId,
+    pub node: Option<NodeId>,
+    #[serde(default)]
+    pub input_failure: Option<crate::input_errors::InputFailure>,
     pub open: bool,
     pub needs_rob: bool,
     pub blocking: bool,
@@ -170,8 +172,11 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         resolve_effect_incidents(snapshot, commit, |incident, key| {
+            let Some(node) = incident.node else {
+                return Ok(false);
+            };
             if !matches!(
-                world.nodes[incident.node.0 as usize].phase,
+                world.nodes[node.0 as usize].phase,
                 tl3_kernel::Phase::Closed(_)
             ) {
                 return Ok(false);
@@ -369,6 +374,7 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        self.retry_input_incident_posts()?;
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows
@@ -389,304 +395,10 @@ impl Controller {
                 state.delivery = hydrate(&effect, &snapshot)?;
             }
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
-            state.due_ms = None;
-            if let Some(id) = &state.incident
-                && let Some(row) = snapshot
-                    .rows
-                    .iter()
-                    .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
-            {
-                let incident: Incident = serde_json::from_value(row.value.clone())?;
-                // A healthy GET cannot prove that command restrictions were fixed.
-                // Keep this setup refusal for explicit incident clearance, even
-                // after the failed delivery's adapter records have retired.
-                if incident.signature.class == "queue_command_refused" {
-                    self.save_allowance(&state)?;
-                    continue;
-                }
-                if incident.effect.as_deref() == Some(&state.delivery.key) {
-                    if !incident.needs_rob {
-                        match self
-                            .adapters
-                            .adapter(&state.delivery)?
-                            .probe(&state.delivery)
-                        {
-                            Ok(true) => {
-                                self.probe_passed(&state)?;
-                                self.retry_held_effects(upstream(state.delivery.output));
-                                self.rearm(&mut state);
-                            }
-                            Ok(false) => self.rearm(&mut state),
-                            Err(error) => self.look_failed(&mut state, &error)?,
-                        }
-                    }
-                    self.save_allowance(&state)?;
-                    continue;
-                }
-            }
-            if state.quota_ms.is_some_and(|reset| reset > now) {
-                state.due_ms = state.quota_ms;
+            if let Err(error) = self.look_state(&snapshot, &mut state, now) {
+                self.look_failed(&mut state, error)?;
                 self.save_allowance(&state)?;
-                continue;
             }
-            if state.quota_ms.is_some() {
-                let effect = self
-                    .store
-                    .effect(&state.delivery.key)?
-                    .expect("quota effect");
-                if effect.state == EffectState::Confirmed {
-                    let mut delivery = state.delivery.clone();
-                    delivery.epoch = self.store.load()?.epoch.get();
-                    match self
-                        .adapters
-                        .adapter(&delivery)?
-                        .resume_after_quota(&delivery)
-                    {
-                        Ok(Some(completion)) => {
-                            self.look_observations(&delivery, completion)?;
-                            state.progress = None;
-                            state.progress_ms = now;
-                            self.rearm(&mut state);
-                        }
-                        result => {
-                            let error = match result {
-                                Err(error) => error,
-                                Ok(None) => {
-                                    crate::Error::Invalid("adapter cannot resume a quota ending")
-                                }
-                                Ok(Some(_)) => unreachable!(),
-                            };
-                            self.look_failed(&mut state, &error)?;
-                            self.save_allowance(&state)?;
-                            continue;
-                        }
-                    }
-                }
-                state.quota_ms = None;
-                self.remove_hold(&state.delivery);
-                self.save_allowance(&state)?;
-                continue;
-            }
-            if state.stopping {
-                self.finish_stall(&mut state)?;
-                continue;
-            }
-            let result = self
-                .adapters
-                .adapter(&state.delivery)?
-                .look(&state.delivery);
-            let result = match result {
-                Err(error)
-                    if error.is_github_not_found()
-                        && state.failure.as_deref() == Some("not_found")
-                        && matches!(state.delivery.output, Out::Effect { .. }) =>
-                {
-                    Ok(Look::Absent)
-                }
-                result => result,
-            };
-            if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending))
-            {
-                state.read_failures = 0;
-            }
-            if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
-                self.adapters
-                    .get(Upstream::PrismaBuild)?
-                    .watch_wait(&state.delivery, None)?;
-                state.external_wait = None;
-                state.wait_ended = false;
-            }
-            match result {
-                Ok(Look::Found(mut completion)) => {
-                    let effect = self
-                        .store
-                        .effect(&state.delivery.key)?
-                        .expect("allowance effect");
-                    let token_only =
-                        completion.progress.is_some() && completion.observations.is_empty();
-                    let changed = if completion.progress.is_some() {
-                        let snapshot = self.store.load()?;
-                        let mut commit = Commit::new(
-                            format!(
-                                "look-progress:{}:{}",
-                                state.delivery.key,
-                                snapshot.revision.get()
-                            ),
-                            json!({"progress_read":state.delivery.key}),
-                            &snapshot,
-                        );
-                        let changed = self.record_progress(
-                            &snapshot,
-                            &mut commit,
-                            &state.delivery.key,
-                            completion.progress.as_ref(),
-                        )?;
-                        if !commit.rows.is_empty() {
-                            self.store.commit(&commit)?;
-                        }
-                        changed == Some(true)
-                    } else {
-                        false
-                    };
-                    if changed {
-                        state.progress_ms = now;
-                        state.due_ms = Some(now.saturating_add(
-                            u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
-                        ));
-                    }
-                    // The typed watch row is the sole token store.
-                    completion.progress = None;
-                    if token_only {
-                        if effect.state.is_pending() {
-                            self.complete(&effect.key, completion)?;
-                        }
-                        if self.look_alive(&mut state, changed)? {
-                            continue;
-                        }
-                    } else {
-                        let found = serde_json::to_string(&completion)?;
-                        let new = effect.state.is_pending()
-                            || (state.found.as_ref() != Some(&found)
-                                && !completion.observations.is_empty());
-                        state.found = Some(found);
-                        if new {
-                            if completion.releases_holds() {
-                                self.retry_held_effects(upstream(state.delivery.output));
-                            }
-                            if effect.state.is_pending() {
-                                self.complete(&effect.key, completion)?;
-                            } else {
-                                self.look_observations(&state.delivery, completion)?;
-                            }
-                        }
-                    }
-                }
-                Ok(Look::Absent) => {
-                    let effect = self
-                        .store
-                        .effect(&state.delivery.key)?
-                        .expect("allowance effect");
-                    if (self.is_held(&state.delivery)
-                        || state.failure.as_deref() == Some("not_found"))
-                        && effect.state.is_pending()
-                        && effect.state != EffectState::Cancelling
-                        && matches!(state.delivery.output, Out::Effect { .. })
-                    {
-                        // Absence or a repeated 404 spends the existing retry allowance.
-                        self.complete(
-                            &effect.key,
-                            Completion {
-                                failure_class: None,
-                                progress: None,
-                                ack: Ack::Retryable,
-                                observations: vec![],
-                            },
-                        )?;
-                        continue;
-                    }
-                }
-                Ok(Look::Alive { progress }) => {
-                    let changed = state.progress.as_ref() != Some(&progress);
-                    state.progress = Some(progress);
-                    if self.look_alive(&mut state, changed)? {
-                        continue;
-                    }
-                }
-                Ok(Look::Waiting { wait, checkout }) => {
-                    if state.external_wait.as_ref() != Some(&wait) {
-                        state.external_wait = Some(wait.clone());
-                        state.wait_ended = false;
-                    }
-                    let record = if wait.upstream == "prismabuild" {
-                        self.adapters
-                            .get(Upstream::PrismaBuild)?
-                            .wait_record(&wait.key, &checkout)
-                    } else {
-                        Ok(crate::executor::WaitRecord::Ended)
-                    };
-                    if record.is_ok() {
-                        state.read_failures = 0;
-                    }
-                    match record {
-                        Ok(crate::executor::WaitRecord::Alive) => {
-                            self.adapters
-                                .get(Upstream::PrismaBuild)?
-                                .watch_wait(&state.delivery, Some(&wait))?;
-                            state.wait_ended = false;
-                            state.progress = None;
-                        }
-                        Ok(crate::executor::WaitRecord::Ended) => {
-                            self.adapters
-                                .get(Upstream::PrismaBuild)?
-                                .watch_wait(&state.delivery, None)?;
-                            if !state.wait_ended {
-                                state.wait_ended = true;
-                                state.progress_ms = now;
-                            }
-                            if self.look_alive(&mut state, false)? {
-                                continue;
-                            }
-                        }
-                        Err(error) => self.look_failed(&mut state, &error)?,
-                    }
-                }
-                Ok(Look::Healthy) => {
-                    if !state.healthy {
-                        self.retry_held_effects(upstream(state.delivery.output));
-                    }
-                    state.healthy = true;
-                    self.probe_passed(&state)?;
-                }
-                Ok(Look::Quota { reset_ms }) => {
-                    state.quota_ms = Some(reset_ms);
-                    state.due_ms = Some(reset_ms.max(now));
-                }
-                Ok(Look::Pending) => {
-                    self.look_failed(
-                        &mut state,
-                        &crate::Error::Invalid("upstream record unavailable"),
-                    )?;
-                }
-                Err(crate::Error::Quota { retry_after }) => {
-                    let reset =
-                        now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
-                    state.quota_ms = Some(reset);
-                    state.due_ms = Some(reset.max(now));
-                }
-                Err(error) => {
-                    self.look_failed(&mut state, &error)?;
-                }
-            }
-            if let Some(id) = &state.incident {
-                let incident = self
-                    .store
-                    .load()?
-                    .rows
-                    .into_iter()
-                    .find(|r| r.table == "incidents" && r.id == *id)
-                    .map(|r| serde_json::from_value::<Incident>(r.value))
-                    .transpose()?;
-                if let Some(incident) = incident.filter(|i| i.open) {
-                    if !incident.needs_rob {
-                        match self
-                            .adapters
-                            .adapter(&state.delivery)?
-                            .probe(&state.delivery)
-                        {
-                            Ok(true) => {
-                                state.healthy = true;
-                                self.retry_held_effects(upstream(state.delivery.output));
-                                self.probe_passed(&state)?;
-                            }
-                            Ok(false) => self.rearm(&mut state),
-                            Err(error) => self.look_failed(&mut state, &error)?,
-                        }
-                    }
-                } else {
-                    state.incident = None;
-                }
-            }
-            self.save_allowance(&state)?;
         }
         if key.is_none() && (github_due || force) {
             let after = self
@@ -740,6 +452,295 @@ impl Controller {
                 Err(error) => eprintln!("GitHub delivery look failed: {error}"),
             }
         }
+        Ok(())
+    }
+
+    fn look_state(
+        &mut self,
+        snapshot: &Snapshot,
+        state: &mut AllowanceState,
+        now: u64,
+    ) -> Result<()> {
+        state.due_ms = None;
+        if let Some(id) = state.incident
+            && let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
+        {
+            let incident: Incident = serde_json::from_value(row.value.clone())?;
+            // A healthy GET cannot prove that command restrictions were fixed.
+            // Keep this setup refusal for explicit incident clearance, even
+            // after the failed delivery's adapter records have retired.
+            if incident.signature.class == "queue_command_refused" {
+                self.save_allowance(state)?;
+                return Ok(());
+            }
+            if incident.effect.as_deref() == Some(state.delivery.key) {
+                if !incident.needs_rob {
+                    match self.adapters.adapter(state.delivery)?.probe(state.delivery) {
+                        Ok(true) => {
+                            self.probe_passed(state)?;
+                            self.retry_held_effects(upstream(state.delivery.output));
+                            self.rearm(state);
+                        }
+                        Ok(false) => self.rearm(state),
+                        Err(error) => self.look_failed(state, error)?,
+                    }
+                }
+                self.save_allowance(state)?;
+                return Ok(());
+            }
+        }
+        if state.quota_ms.is_some_and(|reset| reset > now) {
+            state.due_ms = state.quota_ms;
+            self.save_allowance(state)?;
+            return Ok(());
+        }
+        if state.quota_ms.is_some() {
+            let effect = self
+                .store
+                .effect(state.delivery.key)?
+                .expect("quota effect");
+            if effect.state == EffectState::Confirmed {
+                let mut delivery = state.delivery.clone();
+                delivery.epoch = self.store.load()?.epoch.get();
+                match self
+                    .adapters
+                    .adapter(&delivery)?
+                    .resume_after_quota(&delivery)
+                {
+                    Ok(Some(completion)) => {
+                        self.look_observations(&delivery, completion)?;
+                        state.progress = None;
+                        state.progress_ms = now;
+                        self.rearm(state);
+                    }
+                    result => {
+                        let error = match result {
+                            Err(error) => error,
+                            Ok(None) => {
+                                crate::Error::Invalid("adapter cannot resume a quota ending")
+                            }
+                            Ok(Some(_)) => unreachable!(),
+                        };
+                        self.look_failed(state, error)?;
+                        self.save_allowance(state)?;
+                        return Ok(());
+                    }
+                }
+            }
+            state.quota_ms = None;
+            self.remove_hold(state.delivery);
+            self.save_allowance(state)?;
+            return Ok(());
+        }
+        if state.stopping {
+            self.finish_stall(state)?;
+            return Ok(());
+        }
+        let result = self.adapters.adapter(state.delivery)?.look(state.delivery);
+        let result = match result {
+            Err(error)
+                if error.is_github_not_found()
+                    && state.failure.as_deref() == Some("not_found")
+                    && matches!(state.delivery.output, Out::Effect { .. }) =>
+            {
+                Ok(Look::Absent)
+            }
+            result => result,
+        };
+        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending)) {
+            state.read_failures = 0;
+        }
+        if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
+            self.adapters
+                .get(Upstream::PrismaBuild)?
+                .watch_wait(state.delivery, None)?;
+            state.external_wait = None;
+            state.wait_ended = false;
+        }
+        match result {
+            Ok(Look::Found(mut completion)) => {
+                let effect = self
+                    .store
+                    .effect(state.delivery.key)?
+                    .expect("allowance effect");
+                let token_only =
+                    completion.progress.is_some() && completion.observations.is_empty();
+                let changed = if completion.progress.is_some() {
+                    let snapshot = self.store.load()?;
+                    let mut commit = Commit::new(
+                        format!(
+                            "look-progress:{}:{}",
+                            state.delivery.key,
+                            snapshot.revision.get()
+                        ),
+                        json!({"progress_read":state.delivery.key}),
+                        &snapshot,
+                    );
+                    let changed = self.record_progress(
+                        &snapshot,
+                        &mut commit,
+                        state.delivery.key,
+                        completion.progress.as_ref(),
+                    )?;
+                    if !commit.rows.is_empty() {
+                        self.store.commit(&commit)?;
+                    }
+                    changed == Some(true)
+                } else {
+                    false
+                };
+                if changed {
+                    state.progress_ms = now;
+                    state.due_ms = Some(now.saturating_add(
+                        u64::from(self.allowance(state.delivery).no_progress_secs) * 1000,
+                    ));
+                }
+                // The typed watch row is the sole token store.
+                completion.progress = None;
+                if token_only {
+                    if effect.state.is_pending() {
+                        self.complete(&effect.key, completion)?;
+                    }
+                    if self.look_alive(state, changed)? {
+                        return Ok(());
+                    }
+                } else {
+                    let found = serde_json::to_string(&completion)?;
+                    let new = effect.state.is_pending()
+                        || (state.found.as_ref() != Some(&found)
+                            && !completion.observations.is_empty());
+                    state.found = Some(found);
+                    if new {
+                        if completion.releases_holds() {
+                            self.retry_held_effects(upstream(state.delivery.output));
+                        }
+                        if effect.state.is_pending() {
+                            self.complete(&effect.key, completion)?;
+                        } else {
+                            self.look_observations(state.delivery, completion)?;
+                        }
+                    }
+                }
+            }
+            Ok(Look::Absent) => {
+                let effect = self
+                    .store
+                    .effect(state.delivery.key)?
+                    .expect("allowance effect");
+                if (self.is_held(state.delivery) || state.failure.as_deref() == Some("not_found"))
+                    && effect.state.is_pending()
+                    && effect.state != EffectState::Cancelling
+                    && matches!(state.delivery.output, Out::Effect { .. })
+                {
+                    // Absence or a repeated 404 spends the existing retry allowance.
+                    self.complete(
+                        &effect.key,
+                        Completion {
+                            failure_class: None,
+                            progress: None,
+                            ack: Ack::Retryable,
+                            observations: vec![],
+                        },
+                    )?;
+                    return Ok(());
+                }
+            }
+            Ok(Look::Alive { progress }) => {
+                let changed = state.progress.as_ref() != Some(&progress);
+                state.progress = Some(progress);
+                if self.look_alive(state, changed)? {
+                    return Ok(());
+                }
+            }
+            Ok(Look::Waiting { wait, checkout }) => {
+                if state.external_wait.as_ref() != Some(&wait) {
+                    state.external_wait = Some(wait.clone());
+                    state.wait_ended = false;
+                }
+                let record = if wait.upstream == "prismabuild" {
+                    self.adapters
+                        .get(Upstream::PrismaBuild)?
+                        .wait_record(&wait.key, &checkout)
+                } else {
+                    Ok(crate::executor::WaitRecord::Ended)
+                };
+                match record {
+                    Ok(crate::executor::WaitRecord::Alive) => {
+                        self.adapters
+                            .get(Upstream::PrismaBuild)?
+                            .watch_wait(state.delivery, Some(&wait))?;
+                        state.read_failures = 0;
+                        state.wait_ended = false;
+                        state.progress = None;
+                    }
+                    Ok(crate::executor::WaitRecord::Ended) => {
+                        self.adapters
+                            .get(Upstream::PrismaBuild)?
+                            .watch_wait(state.delivery, None)?;
+                        if !state.wait_ended {
+                            state.wait_ended = true;
+                            state.progress_ms = now;
+                        }
+                        if self.look_alive(state, false)? {
+                            return Ok(());
+                        }
+                    }
+                    Err(error) => self.look_failed(state, error)?,
+                }
+            }
+            Ok(Look::Healthy) => {
+                if !state.healthy {
+                    self.retry_held_effects(upstream(state.delivery.output));
+                }
+                state.healthy = true;
+                self.probe_passed(state)?;
+            }
+            Ok(Look::Quota { reset_ms }) => {
+                state.quota_ms = Some(reset_ms);
+                state.due_ms = Some(reset_ms.max(now));
+            }
+            Ok(Look::Pending) => {
+                self.look_failed(state, crate::Error::Invalid("upstream record unavailable"))?;
+            }
+            Err(crate::Error::Quota { retry_after }) => {
+                let reset =
+                    now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
+                state.quota_ms = Some(reset);
+                state.due_ms = Some(reset.max(now));
+            }
+            Err(error) => {
+                self.look_failed(state, error)?;
+            }
+        }
+        if let Some(id) = state.incident {
+            let incident = self
+                .store
+                .load()?
+                .rows
+                .into_iter()
+                .find(|r| r.table == "incidents" && r.id == *id)
+                .map(|r| serde_json::from_value::<Incident>(r.value))
+                .transpose()?;
+            if let Some(incident) = incident.filter(|i| i.open) {
+                if !incident.needs_rob {
+                    match self.adapters.adapter(state.delivery)?.probe(state.delivery) {
+                        Ok(true) => {
+                            state.healthy = true;
+                            self.retry_held_effects(upstream(state.delivery.output));
+                            self.probe_passed(state)?;
+                        }
+                        Ok(false) => self.rearm(state),
+                        Err(error) => self.look_failed(state, error)?,
+                    }
+                }
+            } else {
+                state.incident = None;
+            }
+        }
+        self.save_allowance(state)?;
         Ok(())
     }
 
@@ -843,7 +844,7 @@ impl Controller {
         let completion = match self.adapters.adapter(&delivery)?.stop_stalled(&delivery) {
             Ok(completion) => completion,
             Err(error) => {
-                self.look_failed(state, &error)?;
+                self.look_failed(state, error)?;
                 return self.save_allowance(state);
             }
         };
@@ -860,12 +861,15 @@ impl Controller {
         );
     }
 
-    fn look_failed(&mut self, state: &mut AllowanceState, error: &crate::Error) -> Result<()> {
+    fn look_failed(&mut self, state: &mut AllowanceState, error: crate::Error) -> Result<()> {
+        if !crate::input_errors::recoverable(&error) {
+            return Err(error);
+        }
         eprintln!(
             "allowance action failed for {}: {error}",
             state.delivery.key
         );
-        if let crate::Error::Quota { retry_after } = error {
+        if let crate::Error::Quota { retry_after } = &error {
             let reset = self
                 .now_ms()
                 .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
@@ -873,7 +877,7 @@ impl Controller {
             state.due_ms = Some(reset);
             return Ok(());
         }
-        state.failure = Some(failure_class(error).into());
+        state.failure = Some(failure_class(&error).into());
         state.healthy = false;
         self.rearm(state);
         let snapshot = self.store.load()?;
@@ -908,7 +912,7 @@ impl Controller {
         let request = crate::request(&snapshot, state.delivery.node())?;
         let signature = IncidentSignature {
             upstream: upstream(state.delivery.output),
-            class: failure_class(error).into(),
+            class: failure_class(&error).into(),
         };
         let app_login = self
             .adapters
@@ -925,7 +929,8 @@ impl Controller {
             id.clone(),
             json!(Incident {
                 id: id.clone(),
-                node: state.delivery.node(),
+                node: Some(state.delivery.node()),
+                input_failure: None,
                 open: true,
                 needs_rob,
                 blocking: false,

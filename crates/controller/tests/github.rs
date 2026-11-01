@@ -1,10 +1,10 @@
 use tl3_controller::executor::Output as Out;
 #[path = "github/catchup_heads.rs"]
 mod catchup_heads;
-#[path = "github/notice_incidents.rs"]
-mod notice_incidents;
 #[path = "github/intake_errors.rs"]
 mod intake_errors;
+#[path = "github/notice_incidents.rs"]
+mod notice_incidents;
 #[path = "github/real_writer.rs"]
 mod real_writer;
 #[path = "github/request_vocabulary.rs"]
