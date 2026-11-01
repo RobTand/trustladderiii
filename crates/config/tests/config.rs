@@ -885,3 +885,20 @@ fn repo_conventions_reject_ambiguous_templates_and_invalid_refs() {
         );
     }
 }
+
+#[test]
+fn repository_images_accept_immutable_overrides_and_reject_tags() {
+    for image in [format!("sha256:{}", "b".repeat(64)), format!("registry/repo@sha256:{}", "c".repeat(64))] {
+        let text = changed(&["github", "repos"], {
+            let mut document: Value = EXAMPLE.parse().unwrap();
+            document["github"]["repos"][0].as_table_mut().unwrap().insert("container_image".into(), Value::String(image));
+            document["github"]["repos"].clone()
+        });
+        assert!(Config::parse(&text).is_ok(), "immutable per-repo image must parse");
+    }
+    for image in ["", "tl3-harness:t5", "sha256:abc", "content:sha256:abcd"] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0].as_table_mut().unwrap().insert("container_image".into(), Value::String(image.into()));
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err(), "reject mutable or invalid image {image}");
+    }
+}

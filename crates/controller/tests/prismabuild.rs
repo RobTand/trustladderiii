@@ -1624,6 +1624,7 @@ fn main() {
     if args.get(1).is_some_and(|arg| arg == "--r5") {
         let mut failures = 0;
         for (name, test) in [
+        ("repository_image_is_sealed_and_staged_with_global_fallback", repository_image_is_sealed_and_staged_with_global_fallback as fn()),
             (
                 "moving_wait_bell_is_quiet",
                 moving_wait_bell_is_quiet as fn(),
@@ -1645,6 +1646,10 @@ fn main() {
     }
     if args.get(1).is_some_and(|arg| arg == "--r4-bad-waits") {
         source_skips_bad_waits();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--repository-image") {
+        repository_image_is_sealed_and_staged_with_global_fallback();
         return;
     }
     if args.get(1).is_some_and(|arg| arg == "--r4-bell") {
@@ -2026,4 +2031,31 @@ fn moving_job_reconcile_is_pending() {
         matches!(result, Ok(Reconciliation::Pending)),
         "moving reconcile must stay Pending"
     );
+}
+
+fn repository_image_is_sealed_and_staged_with_global_fallback() {
+    for (owner, name, installation, expected) in [
+        ("robtand", "TL3-SANDBOX", 1, "b"),
+        ("RobTand", "other", 1, "a"),
+        ("Other", "tl3-sandbox", 1, "a"),
+        ("RobTand", "tl3-sandbox", 2, "a"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut delivery = run(root.path(), false);
+        delivery.repository = Repository { owner: owner.into(), name: name.into(), installation };
+        let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
+            "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
+            "container_image":format!("sha256:{}", "b".repeat(64))
+        })).unwrap();
+        let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
+        adapter.execute(&delivery).unwrap();
+        let key = adapter.action_key(&delivery).unwrap().unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&fs::read(root.path().join(format!("queue/{key}.request"))).unwrap()).unwrap();
+        let image = format!("sha256:{}", expected.repeat(64));
+        assert_eq!(request["image"], image, "staged harness image");
+        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let seal = calls.iter().find(|args| args.iter().any(|arg| arg == "--seal-only")).unwrap();
+        let index = seal.iter().position(|arg| arg == "--container-image").unwrap();
+        assert_eq!(seal[index + 1], image, "PB placement must use the staged image");
+    }
 }

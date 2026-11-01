@@ -269,6 +269,10 @@ fn clean_inputs(root: &Path) -> Result<()> {
 }
 
 impl Adapter {
+    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self {
+        self
+    }
+
     pub fn new(client: PrismaBuild, settings: Settings) -> Result<Self> {
         if !settings.records.is_absolute()
             || !settings.harness.is_absolute()

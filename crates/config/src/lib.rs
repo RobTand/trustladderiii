@@ -217,6 +217,8 @@ pub struct Identity {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
+    #[serde(default)]
+    pub container_image: Option<String>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
