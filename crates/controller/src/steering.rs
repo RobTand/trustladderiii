@@ -86,7 +86,7 @@ impl Controller {
                 text,
                 correction: false,
                 ..
-            } = serde_json::from_value(row.value.clone())?
+            } = crate::decode_stored(row.value.clone())?
             else {
                 return Err(Error::Invalid("invalid pending replacement"));
             };
@@ -146,7 +146,7 @@ impl Controller {
             .iter()
             .filter(|r| r.table == "unclassified_comments")
         {
-            let repository: Repository = serde_json::from_value(row.value["repository"].clone())?;
+            let repository: Repository = crate::decode_stored(row.value["repository"].clone())?;
             if row.value["comment"]["user"]["id"] != self.bootstrap.rob
                 || !self.bootstrap.repos.contains(&repository)
             {
@@ -189,7 +189,7 @@ impl Controller {
         {
             inputs["conversation"] = json!({"comment_id": pending.id, "comment": pending.value["comment"], "question": pending.value["question"]});
         }
-        let binding: Request = serde_json::from_value(binding.value.clone())?;
+        let binding: Request = crate::decode_stored(binding.value.clone())?;
         let key = format!("classify:{}", row.id);
         let delivery = Delivery {
             key: key.clone(),
@@ -244,7 +244,7 @@ impl Controller {
                     let Some(effect) = self.store.effect(&format!("classify:{}", row.id))? else {
                         continue;
                     };
-                    serde_json::from_value::<Delivery>(effect.payload)?.node().0
+                    crate::decode_stored::<Delivery>(effect.payload)?.node().0
                 }
             };
             let closed = snapshot.rows.iter().any(|r| {
@@ -311,7 +311,7 @@ impl Controller {
         else {
             return Ok(None);
         };
-        let delivery: Delivery = serde_json::from_value(job.value.clone())?;
+        let delivery: Delivery = crate::decode_stored(job.value.clone())?;
         let Some(Task::Classify {
             comment_key,
             inputs,
@@ -640,7 +640,7 @@ pub(crate) fn replacement_issue(
         since,
         correction: false,
         ..
-    } = serde_json::from_value(value.clone())?
+    } = crate::decode_stored(value.clone())?
     else {
         return Err(Error::Invalid("invalid pending replacement"));
     };

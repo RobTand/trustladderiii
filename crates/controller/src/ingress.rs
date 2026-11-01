@@ -231,7 +231,7 @@ fn translation_retry_exhausted(
         .rows
         .iter()
         .find(|row| row.table == "translation_retries" && row.id == name)
-        .map(|row| serde_json::from_value::<TranslationRetry>(row.value.clone()))
+        .map(|row| crate::decode_stored::<TranslationRetry>(row.value.clone()))
         .transpose()?;
     let attempts = previous
         .filter(|retry| retry.sequence == sequence)
@@ -520,7 +520,7 @@ impl CatchUp {
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
         let since: DateTime<Utc> = store
             .ingress_cursor("github-catch-up")?
-            .map(serde_json::from_value)
+            .map(crate::decode_stored)
             .transpose()?
             .unwrap_or(DateTime::UNIX_EPOCH);
         let snapshot = store.load()?;

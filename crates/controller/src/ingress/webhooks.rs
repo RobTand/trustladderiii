@@ -75,7 +75,7 @@ pub(super) fn fetch_catch_up(
                 catch_up_state(&mut reader)
             })?;
             let since = cursor
-                .map(serde_json::from_value)
+                .map(crate::decode_stored)
                 .transpose()?
                 .unwrap_or(DateTime::UNIX_EPOCH);
             catch_up.fetch(since, snapshot, &bootstrap)
