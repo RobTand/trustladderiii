@@ -63,3 +63,40 @@ def test_factory(tmp_path_factory, value):
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout
     assert len(list(scratch.rglob('marker'))) == 2, 'session-factory files must outlive function scratch'
+
+
+def fixture_outcomes(tmp_path, monkeypatch, summary, names):
+    source = SOURCE.with_name('test_cleanup.py')
+    (tmp_path / source.name).write_text(source.read_text())
+    monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
+    tests = tuple(f'test_cleanup.py::{name}' for name in names)
+    if summary:
+        monkeypatch.setattr(test_tool, 'container_command', command)
+        monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
+        monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress'))
+        monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+        result = test_tool.run_current(tmp_path, IMAGE, tests)
+        assert result['status'] == 'completed', result
+        return {test['test']: Outcome.ASSERTION if test['outcome'] == 'failed' else Outcome(test['outcome'])
+                for test in result['tests']}
+    monkeypatch.setattr(execution, 'container_command', command)
+    class Progress:
+        def commit(self, test):
+            pass
+    return execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl', Progress())
+
+
+@pytest.mark.parametrize('summary', [False, True])
+def test_cleanup_failure_preserves_the_test_outcome(tmp_path, monkeypatch, summary):
+    result = fixture_outcomes(tmp_path, monkeypatch, summary,
+                              ['test_writer_recreates_a_file_during_cleanup[False]',
+                               'test_writer_recreates_a_file_during_cleanup[True]'])
+    assert list(result.values()) == [Outcome.PASSED, Outcome.ASSERTION], result
+
+
+@pytest.mark.parametrize('summary', [False, True])
+def test_tmp_path_retains_pytest_directory_shape(tmp_path, monkeypatch, summary):
+    result = fixture_outcomes(tmp_path, monkeypatch, summary,
+                              ['test_tmp_path_keeps_pytest_name_and_number'])
+    assert list(result.values()) == [Outcome.PASSED], result
