@@ -140,6 +140,12 @@ pub enum Observation {
         issue: u64,
         comment: tl3_github::Comment,
     },
+    WorkerFailed {
+        node: NodeId,
+        generation: u64,
+        failure_class: String,
+        failure_message: String,
+    },
     WorkerReply {
         node: NodeId,
         generation: u64,

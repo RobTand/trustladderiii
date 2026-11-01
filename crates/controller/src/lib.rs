@@ -1660,6 +1660,45 @@ impl Controller {
                     summary.push(' ');
                     summary.push_str(&evidence);
                 }
+                if source == executor::Upstream::Workers {
+                    let failure = commit
+                        .rows
+                        .iter()
+                        .rev()
+                        .find_map(|row| match row {
+                            RowChange::Put { table, id, value }
+                                if table == "worker_failures" && id == &node.0.to_string() =>
+                            {
+                                Some(value)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            snapshot
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "worker_failures" && row.id == node.0.to_string()
+                                })
+                                .map(|row| &row.value)
+                        });
+                    let incident_generation = snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "nodes" && row.id == node.0.to_string())
+                        .and_then(|row| row.value["generation"].as_u64());
+                    if let Some(failure) = failure
+                        && failure["generation"].as_u64() == incident_generation
+                    {
+                        summary.push_str(&format!(
+                            " Last worker failure: {}: {}.",
+                            failure["failure_class"].as_str().unwrap_or("unknown"),
+                            failure["failure_message"]
+                                .as_str()
+                                .unwrap_or("worker run failed")
+                        ));
+                    }
+                }
                 commit.rows.push(put(
                     "incidents",
                     id.clone(),
@@ -2261,6 +2300,33 @@ impl Controller {
                     },
                 }
             }
+            Observation::WorkerFailed {
+                node,
+                generation,
+                failure_class,
+                failure_message,
+            } => {
+                let n = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("worker node missing"))?;
+                if n.run != Some(generation) || n.generation != generation {
+                    return Ok(None);
+                }
+                commit.rows.push(put(
+                    "worker_failures",
+                    node.0.to_string(),
+                    json!({
+                        "node": node, "generation": generation,
+                        "failure_class": failure_class, "failure_message": failure_message,
+                    }),
+                ));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RunFailed,
+                }
+            }
             Observation::WorkerReply {
                 node,
                 generation,
@@ -2556,6 +2622,12 @@ impl Controller {
                         }
                     }
                 };
+                if mapped != Reply::RunFailed {
+                    commit.rows.push(RowChange::Delete {
+                        table: "worker_failures".into(),
+                        id: node.0.to_string(),
+                    });
+                }
                 if role == "reviewer" {
                     commit.rows.push(put(
                         "reviewer_session",
@@ -2918,6 +2990,7 @@ fn observation_upstream(
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
         | Observation::WorkerReply { .. }
+        | Observation::WorkerFailed { .. }
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),

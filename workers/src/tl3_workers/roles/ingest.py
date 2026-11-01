@@ -1,6 +1,7 @@
 """Turn supplied issue material into a brief or an early end."""
 
 from tl3_workers.roles.base import Role
+from tl3_workers.exploration import ExplorationBudget
 
 
 def check_memory_ids(inputs, reply):
@@ -24,6 +25,7 @@ ROLE = Role(
     input_schema="ingest-input",
     reply_schema="ingest-reply",
     code_only_fields=("forecast",),
+    exploration_budget=ExplorationBudget(),
     tools={
         "list": "List repository directories to locate evidence for the request.",
         "read": "Read repository text to check the request against its implementation.",

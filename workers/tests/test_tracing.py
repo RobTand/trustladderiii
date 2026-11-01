@@ -167,6 +167,8 @@ def test_tracing_initialization_failure_does_not_fail_run(request_doc, monkeypat
 
 @pytest.mark.parametrize('error,category,message', [
     (ValueError('done requires code changes'), 'ValueError', 'done requires code changes'),
+    (ValueError('reply cites a memory it was not given'), 'ValueError',
+     'reply cites a memory it was not given'),
     (RuntimeError('fixture-secret-value /private/key provider payload'), 'RuntimeError', 'worker run failed'),
 ])
 def test_failed_worker_trace_records_a_safe_reason(request_doc, monkeypatch, exporters, receiver,
@@ -190,3 +192,13 @@ def test_failed_worker_trace_records_a_safe_reason(request_doc, monkeypatch, exp
     assert b'fixture-secret-value' not in packets[-1][2]
     assert b'/private/key' not in packets[-1][2]
     assert all(not span.events and not span.status.message for span in spans)
+
+
+def test_schema_failure_diagnostic_does_not_assume_reply_validation():
+    from jsonschema import Draft202012Validator, ValidationError
+    from tl3_workers.tracing import failure_tags
+
+    with pytest.raises(ValidationError) as caught:
+        Draft202012Validator({"type": "integer"}).validate("fixture-secret-value")
+    assert failure_tags(caught.value) == {
+        "failure_class": "ValidationError", "failure_message": "schema validation failed: type at schema type"}

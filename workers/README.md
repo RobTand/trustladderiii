@@ -68,9 +68,37 @@ Models use `langchain_openai.ChatOpenAI` with Chat Completions explicitly
 selected, pointed at `base_url`. `name` passes through unchanged. `effort` maps
 to `reasoning_effort` and can be null to omit it. `budget_tokens` is the positive
 per-response `max_completion_tokens`, including model reasoning where the
-provider supports it. It is not a total run budget. The proxy decides supported
+provider supports it. Ingest and audit also have the exploration budget below. The proxy decides supported
 model names and effort values. Calls stream tokens. Provider retries are off,
 so failures return to the supervisor rather than replaying a model call here.
+
+Ingest and audit allow at most four exploration model turns, followed by one
+final answer. Their total input allowance is 300,000 tokens per run. Before
+another exploration call, the runtime reserves the original input and bounded
+evidence for a final answer. At that boundary it removes tools and asks for the
+final JSON. Schema validation and the role's reply checks still apply.
+
+Each call charges provider-reported input tokens when present. Otherwise it
+estimates tokens as serialized UTF-8 bytes divided by three, rounded up, including
+messages, tool schemas, and framing. Final-answer reserves use the same estimate.
+The latest reported call size also sets a floor for the next-call and final-answer
+reserves when provider usage exceeds the estimate.
+Only 32 KiB of recent exploration messages reaches the next model call. Complete
+call/result groups retain their IDs. Large result text is clipped within that
+limit. The newest group always survives; oversized call arguments become a marked
+excerpt, keeping each call paired with its result. Older groups leave the prompt, while the original request remains intact.
+An original input larger than the entire allowance fails with a fixed diagnostic.
+
+Maker uses the same runtime retention policy with a 64 KiB exploration-history
+window. Recent call/result groups remain whole when they fit; older text is
+removed or clipped with a notice. Human requests and repair feedback stay in
+order, including across resumed visits. Edits remain in the worktree and can be
+read again. Maker permits 64 tool turns and 6,000,000 input
+tokens, with the same final-answer reservation as intake. This leaves room
+above the observed 50-turn session while bounding endless work. An exhausted
+no-change done becomes cant_meet without another model call. Its context check, self-check,
+reply validation, and code-owned commit still apply. Planner and reviewer can
+select a policy through the same role field.
 
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
@@ -472,8 +500,13 @@ The request envelope can also supply `mlflow` settings and `trace` correlation
 metadata. Neither enters role inputs or prompts. The supervisor supplies repo,
 issue, request, attempt and round. The runtime adds node, generation, role,
 model, effort, outcome and input, output and total token counts. Failed runs
-also record `failure_class` and `failure_message`. The message is a fixed
-diagnostic or an allowlisted internal error, never arbitrary exception text.
+also record `failure_class` and `failure_message`. The same diagnostic is saved
+in the run summary before the exception propagates. The controller retains it
+before retiring the attempt and includes it in status and worker incidents.
+Messages are limited to 512 characters. Internal errors use allowlisted messages.
+JSON errors include their line and column. Schema errors include the validator
+and schema path, without the rejected values. Arbitrary provider exception text
+remains private because it can contain credentials and request content.
 
 MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
 A pinned SDK adapter replaces its network exporter with in-memory capture.

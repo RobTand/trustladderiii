@@ -284,6 +284,7 @@ pub(crate) fn observation_context(
     let node = match observation {
         Observation::ScratchSaved { node, .. }
         | Observation::WorkerReply { node, .. }
+        | Observation::WorkerFailed { node, .. }
         | Observation::CiFailed { node, .. }
         | Observation::WorktreePrepared { node, .. }
         | Observation::CheckPlan { node, .. }

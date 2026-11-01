@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
 
 from tl3_workers.contracts import read_json, schema
+from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
@@ -247,7 +248,7 @@ def run(model, request, worktree, emit):
         if head is not None:
             reply["head"] = head
             break
-        if completion == 1:
+        if completion == 1 or last_message.response_metadata.get("tl3_budget_exhausted"):
             reply = {"kind": "cant_meet", "report": "no code change was made"}
             break
         history.append(HumanMessage(content=(
@@ -279,6 +280,7 @@ ROLE = Role(
     prompt="maker.md",
     input_schema="maker-input",
     reply_schema="maker-reply",
+    exploration_budget=ExplorationBudget(tool_turns=64, input_tokens=6_000_000, history_bytes=65_536),
     tools={
         "list": "List worktree files needed to implement the declared plan.",
         "read": "Read worktree text to implement or self-check a goal.",
