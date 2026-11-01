@@ -339,6 +339,7 @@ impl Materials {
     pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
         Self {
             clients: Default::default(),
+            branches: Default::default(),
             worktrees,
         }
     }
