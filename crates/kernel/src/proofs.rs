@@ -983,7 +983,48 @@ fn check_gate_progress(width: u8) {
     assert_eq!(before.measure(), measure);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event, &mut out);
+    // Keep the payload variant concrete too. Passing the symbolic witness
+    // through apply expands every reply, fact and command transition.
+    match event {
+        Event::Reply {
+            generation,
+            reply: Reply::MakerDone { head },
+            ..
+        } => apply(
+            &mut after,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply: Reply::MakerDone { head },
+            },
+            &mut out,
+        ),
+        Event::Fact {
+            fact: Fact::PrMerged { head, checks_passed },
+            ..
+        } => apply(
+            &mut after,
+            Event::Fact {
+                node: NodeId(0),
+                fact: Fact::PrMerged { head, checks_passed },
+            },
+            &mut out,
+        ),
+        Event::Command {
+            id,
+            command: Command::Resume,
+            ..
+        } => apply(
+            &mut after,
+            Event::Command {
+                node: NodeId(0),
+                id,
+                command: Command::Resume,
+            },
+            &mut out,
+        ),
+        _ => unreachable!("gate worlds have only maker, merge or resume witnesses"),
+    }
     require_consistent(&after);
     assert!(after.measure() < before.measure());
 }
