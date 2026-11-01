@@ -37,8 +37,9 @@ tests named in regression checks. The harness accepts a regression test
 that fails by assertion or error on both base and head as pre-existing.
 Name it and both runs in your self-check; it is not a reason for cant_meet.
 Never edit unrelated code, pins or tests to make it pass. Missing, skipped or
-uncollected tests are not excused. fails-on-base means another test also failed
-or errored on base. fails-on-base does not excuse demonstrating, reproducing or
+uncollected tests are not excused. fails-on-base means this test also failed or
+errored on base, but no regression check names it.
+fails-on-base does not excuse demonstrating, reproducing or
 behavior-preserving checks. new means the test passes or is missing on base.
 An unverified comparison is not evidence.
 
