@@ -218,6 +218,8 @@ pub struct Identity {
 #[serde(deny_unknown_fields)]
 pub struct Repository {
     #[serde(default)]
+    pub protected_paths: Vec<String>,
+    #[serde(default)]
     pub container_image: Option<String>,
     #[serde(default)]
     pub exec_scratch: bool,

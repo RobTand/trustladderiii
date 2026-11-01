@@ -800,6 +800,67 @@ fn planning_cannot_remove_protection_or_overhead_evidence() {
 }
 
 #[test]
+fn repository_protected_paths_are_optional_additions() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert!(config.github.repos[0].protected_paths.is_empty());
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["github"]["repos"][0]["protected_paths"] =
+        Value::Array(vec![Value::String("CHANGELOG.md".into())]);
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.github.repos[0].protected_paths, ["CHANGELOG.md"]);
+    assert_eq!(
+        config.planning.protected_paths,
+        tl3_config::Planning::default().protected_paths
+    );
+}
+
+#[test]
+fn global_and_repository_protected_patterns_share_validation() {
+    for pattern in [
+        "",
+        "/absolute",
+        "../escape",
+        "nested/../escape",
+        "[unclosed",
+        "bad\\path",
+        "bad\npath",
+    ] {
+        for repository in [false, true] {
+            let mut config = Config::parse(EXAMPLE).unwrap();
+            let (paths, field) = if repository {
+                (
+                    &mut config.github.repos[0].protected_paths,
+                    "github.repos[0].protected_paths",
+                )
+            } else {
+                (
+                    &mut config.planning.protected_paths,
+                    "planning.protected_paths",
+                )
+            };
+            paths.push(pattern.into());
+            let error = config
+                .validate()
+                .expect_err(&format!("accepted {field}: {pattern:?}"));
+            assert!(
+                matches!(error, tl3_config::Error::Invalid { field: actual, .. } if actual == field)
+            );
+        }
+    }
+    let mut config = Config::parse(EXAMPLE).unwrap();
+    for pattern in [
+        "CHANGELOG.md",
+        "fleet/**",
+        "**/release-?.toml",
+        "docs/[ab]*.md",
+    ] {
+        config.planning.protected_paths.push(pattern.into());
+        config.github.repos[0].protected_paths.push(pattern.into());
+    }
+    config.validate().unwrap();
+}
+
+#[test]
 fn planning_overhead_must_leave_room_under_the_fit_limit() {
     for (overhead, valid) in [
         (99_999, true),
