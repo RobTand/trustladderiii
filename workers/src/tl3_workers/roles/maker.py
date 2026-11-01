@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
+from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, read_reply, schema
@@ -319,8 +320,11 @@ def run(model, request, worktree, emit):
     worktree.pb_submitted = submitted
     if getattr(worktree, "pb_reattach", None):
         calls = _pending_calls(history, start)
-        result = ToolNode(build_tools(worktree, ROLE.tools)).invoke(
-            {"messages": [AIMessage(content="", tool_calls=calls)]})
+        graph = StateGraph(MessagesState)
+        graph.add_node("tools", ToolNode(build_tools(worktree, ROLE.tools)))
+        graph.add_edge(START, "tools")
+        graph.add_edge("tools", END)
+        result = graph.compile().invoke({"messages": [AIMessage(content="", tool_calls=calls)]})
         for message in result["messages"]:
             if isinstance(message, ToolMessage):
                 history.append(message)
