@@ -186,6 +186,31 @@ impl Adapter {
         ))?;
         Ok(Self::linked(delivery, issue))
     }
+    /// Q49: read the issue's current text, and reopen it only if TL3 closed it.
+    fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        if issue.state == "closed" {
+            let app = format!("{}[bot]", client.app_slug());
+            let events = self
+                .runtime
+                .block_on(client.issue_events(&repo, delivery.issue))?;
+            if events
+                .iter()
+                .rev()
+                .find(|event| event.event == "closed")
+                .and_then(|event| event.actor.as_ref())
+                .is_some_and(|actor| actor.login == app)
+            {
+                self.fence(delivery)?;
+                issue = self
+                    .runtime
+                    .block_on(client.reopen_issue(&repo, delivery.issue))?;
+            }
+        }
+        Ok(Self::linked(delivery, issue))
+    }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
         match delivery.output {
             Out::Notice {
@@ -193,8 +218,7 @@ impl Adapter {
                 ..
             } => Some(CloseReason::Completed),
             Out::Notice {
-                notice:
-                    Notice::Summary(Outcome::Stopped | Outcome::Duplicate | Outcome::NotActionable),
+                notice: Notice::Summary(Outcome::Duplicate | Outcome::NotActionable),
                 ..
             } => Some(CloseReason::NotPlanned),
             _ => None,
@@ -386,6 +410,10 @@ impl Executor for Adapter {
                     Err(_) => Reconciliation::Pending,
                 },
             );
+        }
+        // A restart only reads the issue and reopens it, so running it again is safe.
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return Ok(Reconciliation::Absent);
         }
         if Self::request_notice(delivery).is_none()
             && !matches!(
@@ -618,6 +646,9 @@ impl Adapter {
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             return self.file_request(delivery);
         }
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return self.restart(delivery);
+        }
         let notice = Self::request_notice(delivery);
         if notice.is_none()
             && !matches!(
@@ -777,9 +808,16 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
             )))
         }
         Out::Notice {
-            notice: Notice::Summary(_),
+            notice: Notice::Summary(outcome),
             ..
-        } => Ok(delivery.note.clone()),
+        } => {
+            let restart = (outcome == Outcome::Stopped)
+                .then_some("Comment `restart` on this issue to start again.");
+            Ok(match (restart, delivery.note.as_deref()) {
+                (Some(restart), Some(note)) => Some(format!("{restart}\n\n{note}")),
+                (restart, note) => restart.or(note).map(str::to_owned),
+            })
+        }
         _ => Ok(None),
     }
 }

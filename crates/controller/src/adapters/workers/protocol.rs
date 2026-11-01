@@ -223,7 +223,8 @@ pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<(
     classifier_schema(reply, true)?;
     let closed = inputs["state"]["closed"] == true;
     let kind = reply["kind"].as_str().unwrap();
-    if (closed && !matches!(kind, "complaint" | "remark" | "unsure"))
+    if (kind == "restart" && inputs["state"]["restartable"] != true)
+        || (closed && !matches!(kind, "complaint" | "remark" | "unsure" | "restart"))
         || (!closed && kind == "complaint")
     {
         return Err(Error::Invalid(

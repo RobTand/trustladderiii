@@ -742,6 +742,16 @@ impl GitHub {
         .await
     }
 
+    pub async fn reopen_issue(&self, repo: &str, number: u64) -> Result<Issue, Error> {
+        self.request(
+            Method::PATCH,
+            format!("{}/issues/{number}", repo_path(repo)?),
+            vec![],
+            Some(json!({"state":"open"})),
+        )
+        .await
+    }
+
     pub async fn create_check_run(
         &self,
         repo: &str,

@@ -140,7 +140,7 @@ Every rule above is a safety property, except the progress witness. Liveness und
 | **Command** | Stop, pause, resume, change the request, an owner's decision, Rob's answer | Carries a command id. A repeated id is ignored. Rob's answer also names the question it answers. |
 | **Look** | Liveness or progress went quiet past its allowance | Reads the upstream's own record. See "Looks and stalls". |
 
-**Rob's comments.** An agent reads each comment Rob leaves on an active request's issue. It classifies the comment as one of these: change the request, stop, pause, resume, an answer to the open question, or a remark that needs no action. A remark changes nothing, and anything else enters the kernel as that command or answer. When the agent is unsure, TL3 asks Rob one short question and classifies his reply the same way (Q15). For comments on a closed request, see "Corrections after close".
+**Rob's comments.** An agent reads each comment Rob leaves on an active request's issue. It classifies the comment as one of these: change the request, restart, stop, pause, resume, an answer to the open question, or a remark that needs no action. "Cancel" counts as stop. A remark changes nothing, and anything else enters the kernel as that command or answer. Restart enters as change the request, with the issue's current text as the new text (Q49). When the agent is unsure, TL3 asks Rob one short question and classifies his reply the same way (Q15). For comments on a closed request, see "Corrections after close".
 
 Workers report liveness, as a heartbeat, and progress, such as new tool results, to a side table. That table is a cache, not state. Losing it loses nothing, because a look reads the upstream itself.
 
@@ -542,6 +542,7 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | Pause, with an owner | Add the pause | See "Pausing" below |
 | Resume, or the owner releases its pause | Remove the pause | Once no pause remains, settle requests a slot for a leaf in Ready, or runs the pending start |
 | Change the request (Rob, any time) | | Stopping(Replaced), and a new request linked to the same issue, which starts on its own (Q14) |
+| Restart (Rob, any time before Stopping(Merged) or Stopping(Replaced)) | | Change the request, with the issue's current title and body as the new text. The controller reads them from GitHub when the restart applies, so Rob can edit the issue first. In Stopping(Stopped), the restart applies once the node closes (Q49). |
 | Stop or abandon | | Stopping(Stopped) or Stopping(Abandoned), from any phase except Stopping and Closed |
 
 **Pausing.** While a pause is in place, no new operation starts. What happens to work already under way depends on where the node is:
@@ -559,7 +560,7 @@ Every move into Closed runs `close(outcome)`. It:
 - adds the merged-leaf credit to the ledger, for a Merged leaf;
 - releases every pause this node owns;
 - tells the parent the outcome;
-- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request;
+- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request. After Stopped or Abandoned, the issue stays open too, and the summary tells Rob to comment `restart` to start again (Q49);
 - tells waiting nodes whether the work was delivered (Merged or Done) or abandoned;
 - records the code grades: rounds, attempts, credit spent, outcome, and time from start to merge;
 - from slice three on, marks a judge postmortem as owed.
@@ -578,6 +579,10 @@ Every move into Closed runs `close(outcome)`. It:
 
 - Rob comments on the closed request that something is wrong. The correction is filed automatically and carries his authorization, so it starts like a request he labelled (Q21).
 - Rob approves a finding that files it.
+
+**A restart after close** applies to a request that closed without merging: Stopped, Abandoned, NotActionable, AlreadyDone or Duplicate. Rob's restart comment files a new request linked to the closed one, on the same issue, from the issue's current title and body. It carries his authorization, so it starts like a request he labelled. If TL3 closed the issue, the restart reopens it. The closed node itself doesn't change. Merged and Done requests aren't offered a restart; a complaint files a correction instead.
+
+**Q49, approved by Rob, 2026-11-01:** restart starts a request over from the issue as it is now, on an open request or one that closed without merging. A root that closes as Stopped or Abandoned leaves its issue open and says how to restart. The controller implements restart with the existing change-the-request command and linked-request filing; the kernel is unchanged.
 
 ## The effect machine
 

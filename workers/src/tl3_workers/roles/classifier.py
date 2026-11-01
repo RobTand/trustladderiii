@@ -5,8 +5,11 @@ from tl3_workers.roles.base import Role
 
 def check_reply(inputs, reply):
     state = inputs["state"]
-    if state["closed"] and reply["kind"] not in {"complaint", "remark", "unsure"}:
-        raise ValueError("closed requests allow only complaint, remark or unsure")
+    if reply["kind"] == "restart":
+        if state.get("restartable") is not True:
+            raise ValueError("restart is not offered for this request")
+    elif state["closed"] and reply["kind"] not in {"complaint", "remark", "unsure"}:
+        raise ValueError("closed requests allow only complaint, remark, unsure or restart")
     if reply["kind"] == "answer":
         question = state.get("open_question")
         if question is None or reply["question_id"] != question["id"]:
