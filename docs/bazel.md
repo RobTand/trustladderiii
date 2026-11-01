@@ -59,3 +59,23 @@ the fix: `tools/bazel/generate.sh`.
 
 Pass the API key header from the environment or a private rc file. Never commit
 it.
+
+## CI
+
+The Gate workflow (`.github/workflows/gate.yml`) starts
+`tools/ci/bazel_gate.py` on a Remote Bazel runner through
+`tools/ci/remote_gate.py`, and reads back `gate-result.json`, which the runner
+leaves as a BuildBuddy artifact. The gRPC and execution logs come back as a
+7-day workflow artifact.
+
+Selection fails closed. The gate fails when the queue-aware base is missing,
+bazel-diff fails, a changed file is read by no target and is not in
+`IRRELEVANT`, build-relevant changes impact no target, or Mergify does not
+receive the scope list. Changes matching `FALLBACK` (Bazel, Cargo and uv
+locks and manifests, toolchains, workflows, `tools/bazel/`) test everything
+and mark the PR as touching every scope.
+
+Each push to `main` runs every test on amd64 and arm64. A failure names the
+merged PRs and says whether their selection included the failing test. The
+job summary and the `post-merge-<sha>` artifact hold one `POST_MERGE_RECORD`
+JSON line per run.
