@@ -1241,7 +1241,238 @@ fn cancelling_github_respects_quota(settings: &tl3_config::Store) {
     println!("test cancelling_github_respects_quota ... ok");
 }
 
+#[derive(Default)]
+struct FailedPublishState {
+    key: Option<String>,
+    reads: usize,
+    writes: usize,
+}
+struct FailedPublish {
+    fake: adapters::worktrees::Fake,
+    state: Rc<RefCell<FailedPublishState>>,
+    permanent: bool,
+}
+impl Executor for FailedPublish {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::Push,
+                ..
+            }
+        ) {
+            let mut state = self.state.borrow_mut();
+            state.key = Some(delivery.key.clone());
+            state.writes += 1;
+            return Err(if self.permanent {
+                tl3_controller::Error::Permanent {
+                    class: "unrebased_head",
+                    source: Box::new(std::io::Error::other("fixture publish guard")),
+                }
+            } else {
+                tl3_controller::Error::Invalid("fixture lost publish response")
+            });
+        }
+        self.fake.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(delivery)
+    }
+    fn look(&mut self, delivery: &Delivery) -> tl3_controller::Result<Look> {
+        if self.state.borrow().key.as_deref() == Some(&delivery.key) {
+            self.state.borrow_mut().reads += 1;
+            return Err(tl3_controller::Error::Permanent {
+                class: "unrebased_head",
+                source: Box::new(std::io::Error::other("fixture publish guard")),
+            });
+        }
+        self.fake.look(delivery)
+    }
+}
+fn stop_request(c: &mut Controller) {
+    c.observe(
+        "stop-closed-looks",
+        Observation::Kernel(Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
+    drain(c);
+    assert_eq!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::Closed(tl3_kernel::Outcome::Stopped)
+    );
+    assert!(c.world().unwrap().valid());
+}
+fn closed_publish_looks(settings: &tl3_config::Store, case: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let state = Rc::new(RefCell::new(FailedPublishState::default()));
+    let permanent = case != "held";
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Worktrees,
+        FailedPublish {
+            fake: adapters::worktrees::Fake::new(root.path()),
+            state: state.clone(),
+            permanent,
+        },
+    );
+    let key = state.borrow().key.clone().unwrap();
+    assert_eq!(state.borrow().writes, 1);
+    c.look_key(&key).unwrap();
+    let saved = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.table == "allowances" && row.id == key)
+        .unwrap();
+    stop_request(&mut c);
+    if case == "startup" {
+        drop(c);
+        let mut store = Store::open(settings).unwrap();
+        let snapshot = store.load().unwrap();
+        let mut commit = tl3_store::Commit::new(
+            "legacy-closed-allowance",
+            serde_json::json!({"fixture": "pre-fix closed request"}),
+            &snapshot,
+        );
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: saved.table,
+            id: saved.id,
+            value: saved.value,
+        });
+        store.commit(&commit).unwrap();
+        drop(store);
+        let mut registry = adapters::simulation(root.path()).unwrap();
+        registry.register(
+            Upstream::Worktrees,
+            FailedPublish {
+                fake: adapters::worktrees::Fake::new(root.path()),
+                state: state.clone(),
+                permanent,
+            },
+        );
+        c = Controller::open_with_clock(
+            Store::open(settings).unwrap(),
+            registry,
+            bootstrap(),
+            clock.clone(),
+        )
+        .unwrap();
+    }
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "allowances" && row.id == key),
+        "closed request must drop its publish allowance, including on startup"
+    );
+    if !permanent {
+        assert_eq!(
+            c.effect(&key).unwrap().unwrap().state,
+            EffectState::Cancelled
+        );
+    }
+    let reads = state.borrow().reads;
+    let writes = state.borrow().writes;
+    for _ in 0..3 {
+        c.retry_held_effects(Upstream::Worktrees);
+        clock.advance(120);
+        c.look_due().unwrap();
+        c.look_key(&key).unwrap();
+        drain(&mut c);
+    }
+    drop(c);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Worktrees,
+        FailedPublish {
+            fake: adapters::worktrees::Fake::new(root.path()),
+            state: state.clone(),
+            permanent,
+        },
+    );
+    let mut c =
+        Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
+            .unwrap();
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert_eq!(
+        state.borrow().reads,
+        reads,
+        "closed publish must never be looked at again"
+    );
+    assert_eq!(
+        state.borrow().writes,
+        writes,
+        "upstream health must not retry a closed publish"
+    );
+    assert!(c.next_look_in().unwrap().is_none());
+}
+fn healthy_stop_looks(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Workers,
+        Live(Rc::new(RefCell::new(LiveState::default()))),
+    );
+    stop_request(&mut c);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert!(c.next_look_in().unwrap().is_none());
+    assert!(c.snapshot().unwrap().pending_effects.is_empty());
+    let mut store = Store::open(settings).unwrap();
+    assert!(
+        store.effects().unwrap().iter().any(|effect| matches!(
+            serde_json::from_value::<Delivery>(effect.payload.clone())
+                .unwrap()
+                .output,
+            Out::Notice {
+                notice: tl3_kernel::Notice::Summary(_),
+                ..
+            }
+        ) && effect.state == EffectState::Confirmed),
+        "closing summary must still be delivered"
+    );
+}
+fn closed_looks_regressions(db: &mut support::Database) -> usize {
+    let mut failed = 0;
+    for case in ["permanent", "startup", "held", "healthy"] {
+        let settings = db.create(&format!("closed_looks_{case}"));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if case == "healthy" {
+                healthy_stop_looks(&settings);
+            } else {
+                closed_publish_looks(&settings, case);
+            }
+        }));
+        println!(
+            "closed_looks {case}: {}",
+            if result.is_ok() { "PASS" } else { "FAIL" }
+        );
+        failed += usize::from(result.is_err());
+    }
+    failed
+}
+
 fn main() {
+    if std::env::args().any(|arg| arg == "--closed-looks") {
+        let mut db = support::Database::start();
+        let failed = closed_looks_regressions(&mut db);
+        db.stop();
+        assert_eq!(failed, 0, "closed request look regressions");
+        return;
+    }
     if std::env::args().any(|arg| arg == "--cancel-github-quota") {
         let mut db = support::Database::start();
         cancelling_github_respects_quota(&db.create("cancel_github_quota"));
@@ -1358,6 +1589,7 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
+    assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {
         effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
