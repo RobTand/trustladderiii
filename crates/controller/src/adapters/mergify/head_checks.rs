@@ -12,6 +12,10 @@ enum Failure {
 pub(super) struct Checks {
     pub ready: bool,
     pub unavailable: Vec<String>,
+    /// Required contexts with no check run from the expected app and no status.
+    pub missing: Vec<RequiredCheck>,
+    /// Required contexts that have reported on the head, in any state.
+    pub reported: Vec<RequiredCheck>,
     failure: Option<Failure>,
 }
 
@@ -72,6 +76,8 @@ pub(super) async fn evaluate(
         return Ok(Checks {
             ready: true,
             unavailable,
+            missing: vec![],
+            reported: vec![],
             failure: None,
         });
     }
@@ -109,6 +115,8 @@ pub(super) async fn evaluate(
         }
     }
     let mut ready = true;
+    let mut missing = Vec::new();
+    let mut reported = Vec::new();
     let mut tests = None;
     let mut infrastructure = Vec::new();
     for rule in required {
@@ -126,11 +134,17 @@ pub(super) async fn evaluate(
             .is_none()
             .then(|| statuses.get(&rule.context))
             .flatten();
-        if checks.is_empty()
-            && status.is_none()
-            && (rule.integration_id.is_some() || statuses_available)
-        {
-            ready = false;
+        let expected = RequiredCheck {
+            context: rule.context.clone(),
+            app: rule.integration_id,
+        };
+        if checks.is_empty() && status.is_none() {
+            if rule.integration_id.is_some() || statuses_available {
+                ready = false;
+                missing.push(expected);
+            }
+        } else {
+            reported.push(expected);
         }
         for check in checks {
             if check.status != "completed"
@@ -183,6 +197,8 @@ pub(super) async fn evaluate(
     Ok(Checks {
         ready,
         unavailable,
+        missing,
+        reported,
         failure: tests.or_else(|| {
             (!infrastructure.is_empty()).then_some(Failure::Infrastructure(infrastructure))
         }),

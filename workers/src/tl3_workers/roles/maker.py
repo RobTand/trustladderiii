@@ -194,7 +194,7 @@ def run(model, request, worktree, emit):
             cited["properties"].pop(name, None)
             if name in cited["required"]:
                 cited["required"].remove(name)
-    agent = build_agent(model, ROLE, worktree, reply_schema=proposal)
+    agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"])
     characters = ContextCharacters()
     last_message = None
     history = []

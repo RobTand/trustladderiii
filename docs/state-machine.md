@@ -184,7 +184,9 @@ It leaves out internal names and IDs, file paths, logs and TL3's own vocabulary 
 
 Rob's answer arrives as an event. The request waits for it with no timer, and only the affected chain of work pauses while it waits. The channel is an adapter. Discord is planned for this and will be set up later. Until then, Rob answers in comments on the request's issue.
 
-Rob will often just comment rather than answer a question. An agent reads each of his comments on an active request and classifies it: change the request, stop, pause, resume, an answer, or a remark that needs no action. When it is unsure, TL3 asks him one short question (Q15). A comment on a closed request that says something is wrong files a linked correction request, which carries his authorization and can include a revert (Q21).
+Rob will often just comment rather than answer a question. An agent reads each of his comments on an active request and classifies it: change the request, restart, stop, pause, resume, an answer, or a remark that needs no action. "Cancel" means stop. When it is unsure, TL3 asks him one short question (Q15). A comment on a closed request that says something is wrong files a linked correction request, which carries his authorization and can include a revert (Q21).
+
+Restart is how Rob starts a request over after something went wrong (Q49). It reads the issue's current title and body from GitHub when it applies, so he can edit the issue first. On an open request, it works like changing the request: the request stops as replaced, and a new one linked to the same issue starts on its own. On a request that closed without merging, it files a new linked request and reopens the issue if TL3 closed it. Merged and Done work isn't restarted; a complaint files a correction. A restart that arrives while a stop is finishing waits for the close. If the issue is gone (404 or 410), nothing is filed and Rob gets a note on the operations issue; any other failed read raises an incident, and clearing it retries. A stop no longer closes the issue: the summary says to comment `restart` to start again.
 
 Incidents often span several requests, so until Discord exists they go to one pinned "TL3 operations" issue in TL3's own repo. Questions about a request stay on that request's issue (Q17).
 
@@ -456,6 +458,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q14 Requests TL3 files:** a replacement from "change the request" starts on its own under Rob's label. Findings become requests only once he approves them.
 - **Q15 Rob's comments:** an agent classifies each comment of his on an active request as a change, stop, pause, resume, answer or remark, and asks one short question when unsure.
 - **Q21 Complaints after close:** a comment from Rob saying something is wrong with closed work files a linked correction request. It carries his authorization and can include a revert.
+- **Q49 Restart, and stop leaves the issue open:** approved by Rob, 2026-11-01. A `restart` comment starts the request over from the issue's current title and body. On an open request it stops the request as replaced and files a new one on the same issue (Q14). On a request closed as Stopped, Abandoned, NotActionable, AlreadyDone or Duplicate, it files a new linked request and reopens the issue if TL3 closed it. It isn't offered on Merged or Done work. A root that closes as Stopped or Abandoned posts its summary, says to comment `restart` to start again, and leaves the issue open. "Cancel" is classified as stop. The controller builds this from existing kernel commands; the kernel didn't change.
 - **Q35 Other kinds of request:** research questions, reviews of existing PRs and multi-repo work each get their own grilling and definition of done after slice two.
 
 **Guarding the checks**
@@ -623,3 +626,15 @@ An older waiter blocks a younger leaf if it could actually run, or if their foot
 A younger grant cannot add a file holder that blocks an older waiter. When the older waiter's last conflicting holder releases, that release also frees a slot. Its older ticket protects the slot while disjoint younger holders continue running. This relies on holders eventually completing or being stopped, and on older eligible waiters eventually progressing.
 
 The per-leaf Kani proof bounds the world to four leaves at W=2 and W=3. It starts with an unpaused oldest waiter and its last conflicting holder. Younger leaves are visited before that waiter, both before and after the holder's successful teardown. The waiter must acquire a slot while disjoint overtakers remain active. It proves this bounded case, not unbounded temporal liveness with arbitrary arrivals or stalled upstreams. The covers require a disjoint bypass, including passing a waiter blocked by an older overlapping waiter. A scenario additionally repeats eight disjoint arrivals before the blocking holder releases. A store-backed scenario raises W from 1 to 3 with the oldest waiter at the highest node index; only disjoint work passes it, and it takes the next slot once its blocker releases.
+
+### Q52, Rob, 2026-11-01
+
+Rob approved three Publishing rows for a required check that never reports on the approved head. A workflow's path filter can skip the check, or the requirement can name the wrong app. Before Q52 the request waited silently in Publishing.
+
+- When every check suite on the approved head has completed and a required context from the expected app is absent, TL3 opens a deduplicated repo setup incident. It names the head, the context and the expected app. The enqueue stays pending. No failure is counted and no credit is charged.
+- When that context reports on that head from the expected app, TL3 clears the incident and evaluates the check normally.
+- `clear incident <id>` clears the incident. Required-check enforcement still applies, so the enqueue waits for the check.
+
+TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
+
+A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.

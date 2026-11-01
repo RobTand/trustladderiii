@@ -317,7 +317,9 @@ The reply uses the original effect marker, so recovery does not restart the
 writer loop once the reply exists.
 `FakeWriter` returns fixed prose in simulation. The seam uses the existing writer
 role's protocol v1 input and reply shapes. Questions retain the kernel's allowed
-options. Closing summaries close the issue, except when the request is replaced.
+options. Closing summaries close the issue, except when the request is replaced or
+stopped. A stopped request's summary says to comment `restart` to start again
+(Q49).
 PR effects use the same adapter's publishing implementation. Incident notices use
 the operations issue. Replacements start a new request on the same issue from
 Rob's text. Corrections create linked issues with the `tl3` label.
@@ -1167,6 +1169,14 @@ retries. A correction filing can start a new linked request. The dropped-change
 payload retains Rob's text after its replacement row has been deleted, and the
 retried note includes that text as an indented quote.
 
+A restart (Q49) reads the issue's current title and body through a `restart:`
+GitHub effect, then starts the new request through `replacement_pending`. The
+effect reopens the issue only when TL3's app made its latest close. A 404 or 410
+means the issue is gone: the restart is dropped, nothing is filed, and a plain
+note goes to the operations issue. Any other permanent failure raises the usual
+notice incident and keeps the restart pending; clearing the incident retries
+the read.
+
 Generate ticket 87's host actions with
 `python3 crates/controller/tools/notice_review_manifest.py hosts`.
 The GitHub target includes notices, steering and retry crashes at every store
@@ -1260,7 +1270,8 @@ queue label only after those steps. A new commit or clean catch-up receives fres
 checks and review. Outside pushes retain the request's check plan. Clean rebases
 carry that plan onto the reported new base. The worktree adapter performs rebases and removes
 the worktree and branch during teardown. The GitHub message pipeline posts the
-closing summary and closes the issue.
+closing summary and closes the issue. It leaves the issue open after Replaced or
+Stopped (Q49).
 
 After closure, PrismaBuild retirement requires every check effect and watch to
 be terminal. `retire_node` also reads each unfinished binding and refuses a
@@ -1420,3 +1431,19 @@ one duplicate REST read per look. Protection requirements, legacy statuses and
 failure annotations stay fresh. A queued look with one App-bound requirement
 uses five REST reads instead of six. Cleared setup incidents reopen when fresh
 evidence reports that the same permission gap persists.
+
+A required check that never reports raises a missing-check setup incident (Q52).
+When a required context from the expected app is absent, the look reads the
+head's check suites. If every suite has completed, it opens one nonblocking
+incident per head, context and app. A `check_suite` completion on the approved
+head now wakes a pending enqueue, like a check run. An enqueue whose required
+checks are pending or missing is held with its own `checks_pending` class. That
+hold arms no silence timer. A look that finds it releases it to run the guard
+again, instead of spending a retry, so a slow or missing check never counts a
+failure. Transport-error holds keep the usual allowance. A later report of that
+context from that app clears the incident. `clear incident <id>` also clears it,
+and it stays cleared for that head. It also clears when its head stops being the
+node's head or approved head, or the node closes. Neither path reaches the kernel, so no
+failure or credit is charged, and the enqueue still waits for the check. Run
+`bash crates/controller/tools/verify-missing-checks.sh` through PrismaBuild for
+the focused scenarios.

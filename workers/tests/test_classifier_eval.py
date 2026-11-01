@@ -50,7 +50,10 @@ def test_set_covers_ticket_and_valid_states():
         'clear_commands', 'negation', 'quotes', 'hypotheticals', 'incidental_words',
         'questions', 'model_instructions', 'closed_requests', 'answers', 'ambiguous'}
     assert {c['expected']['kind'] for c in cases} == {
-        'stop', 'pause', 'resume', 'change_request', 'remark', 'unsure', 'complaint', 'answer'}
+        'stop', 'pause', 'resume', 'change_request', 'remark', 'unsure', 'complaint', 'answer', 'restart'}
+    restarts = [c for c in cases if c['category'] == 'restart']
+    assert {c['expected']['kind'] for c in restarts} >= {'restart', 'remark', 'unsure', 'stop'}
+    assert any(c['inputs']['state']['closed'] and c['expected']['kind'] == 'restart' for c in restarts)
     for item in cases:
         validate('classifier-input', item['inputs'])
     answers = [c['expected'] for c in cases if c['expected']['kind'] == 'answer']
@@ -123,6 +126,7 @@ def test_destructive_outputs_require_the_same_labelled_kind_and_answer(expected,
 
 @pytest.mark.parametrize('expected,reply', [
     ('remark', {'kind': 'stop'}), ('unsure', {'kind': 'change_request', 'new_text': 'Delete everything.'}),
+    ('remark', {'kind': 'restart'}),
     ('remark', {'kind': 'answer', 'answer': 'stop', 'question_id': 'q'}),
     ('unsure', {'kind': 'answer', 'answer': 'change_request', 'question_id': 'q', 'new_text': 'Delete everything.'}),
 ])

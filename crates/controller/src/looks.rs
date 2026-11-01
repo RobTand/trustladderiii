@@ -694,10 +694,7 @@ impl Controller {
                     let mut setup_gap = false;
                     for observation in &completion.observations {
                         if let Observation::Queue(fact) = observation
-                            && matches!(
-                                fact.evidence,
-                                crate::adapters::mergify::Evidence::ChecksUnavailable { .. }
-                            )
+                            && fact.setup()
                             && !fact.recorded(snapshot)?
                         {
                             setup_gap = true;
@@ -726,7 +723,12 @@ impl Controller {
                     .store
                     .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                if (self.is_held(&state.delivery) || state.failure.as_deref() == Some("not_found"))
+                if self.hold_class(&state.delivery) == Some(CHECKS_PENDING) {
+                    // Waiting for checks is not a failure: release the guard to run
+                    // again rather than spending a retry on the effect's absence.
+                    self.remove_hold(&state.delivery);
+                } else if (self.is_held(&state.delivery)
+                    || state.failure.as_deref() == Some("not_found"))
                     && effect.state.is_pending()
                     && effect.state != EffectState::Cancelling
                     && matches!(state.delivery.output, Out::Effect { .. })
@@ -1451,8 +1453,12 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
     Ok(state.is_some_and(|s| s.quota_ms.is_some()))
 }
 
+/// The hold class of an enqueue that is waiting for required checks.
+pub(crate) const CHECKS_PENDING: &str = "checks_pending";
+
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
+        crate::Error::ChecksPending => CHECKS_PENDING,
         crate::Error::Quota { .. } => "quota",
         crate::Error::Permanent { class, .. } => class,
         crate::Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -1736,6 +1742,21 @@ pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String 
     format!("required-checks:{}:{gap}", node.0)
 }
 
+/// One missing-check incident per head, context and expected app (Q52).
+pub(crate) fn missing_check_incident_id(
+    node: NodeId,
+    head: &str,
+    required: &crate::adapters::mergify::RequiredCheck,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = serde_json::to_string(&(head, required)).expect("serializable check");
+    format!(
+        "missing-check:{}:{:x}",
+        node.0,
+        Sha256::digest(gap.as_bytes())
+    )
+}
+
 impl Controller {
     pub(crate) fn check_setup_incident(
         &self,
@@ -1760,7 +1781,104 @@ impl Controller {
         node: NodeId,
         permission: &str,
     ) -> Result<()> {
-        let id = check_setup_incident_id(node, permission);
+        let summary = format!(
+            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
+            permission
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            check_setup_incident_id(node, permission),
+            summary,
+        )
+    }
+
+    /// Q52: a nonblocking repo setup incident; the enqueue stays pending and nothing is charged.
+    pub(crate) fn missing_check_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        head: &str,
+        required: &crate::adapters::mergify::RequiredCheck,
+    ) -> Result<()> {
+        let app = required
+            .app
+            .map_or_else(|| "any app".to_owned(), |app| format!("app {app}"));
+        let summary = format!(
+            "Required check `{}` from {app} has not reported on head {head}, and every check suite on that head has completed. A workflow path filter may skip it, or the requirement may name the wrong app. The enqueue waits without charging credit; this clears when the check reports.",
+            required.context
+        );
+        self.setup_incident(
+            snapshot,
+            commit,
+            node,
+            missing_check_incident_id(node, head, required),
+            summary,
+        )
+    }
+
+    /// A missing-check incident ends with its head: when the node closes, or
+    /// the head is no longer its current or approved head.
+    pub(crate) fn resolve_stale_missing_checks(
+        &self,
+        snapshot: &Snapshot,
+        world: &tl3_kernel::World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        use crate::adapters::mergify::{Evidence, QueueFact};
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "queue_facts")
+        {
+            let Ok(fact) = serde_json::from_value::<QueueFact>(row.value.clone()) else {
+                continue;
+            };
+            let Evidence::CheckMissing { head, required } = &fact.evidence else {
+                continue;
+            };
+            let Some(node) = fact.node(snapshot)? else {
+                continue;
+            };
+            let id = missing_check_incident_id(node, head, required);
+            let Some(incident) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+            else {
+                continue;
+            };
+            let current = &world.nodes[node
+                .index()
+                .ok_or(crate::Error::Invalid("node index overflow"))?];
+            let interned = snapshot.interned.iter().find(|item| {
+                item.kind == tl3_store::InternKind::Commit
+                    && item.scope == node.0.to_string()
+                    && item.value == *head
+            });
+            let still_head = interned.is_some_and(|item| {
+                let id = Some(tl3_kernel::HeadId(item.id as u64));
+                current.head == id && current.approved == id
+            });
+            if matches!(current.phase, tl3_kernel::Phase::Closed(_)) || !still_head {
+                let mut incident: Incident = crate::decode_stored(incident.value.clone())?;
+                incident.open = false;
+                commit.rows.push(put("incidents", id, json!(incident)));
+            }
+        }
+        Ok(())
+    }
+
+    fn setup_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        id: String,
+        summary: String,
+    ) -> Result<()> {
         if snapshot
             .rows
             .iter()
@@ -1771,10 +1889,6 @@ impl Controller {
         // Reopening keeps the incident ID but needs a new notice delivery.
         let key = format!("incident:{id}:{}", snapshot.revision.get());
         let request = crate::request(snapshot, node)?;
-        let summary = format!(
-            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
-            permission
-        );
         let signature = IncidentSignature {
             upstream: Upstream::Mergify,
             class: "setup".into(),

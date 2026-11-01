@@ -16,13 +16,14 @@ import worker_process
 
 INSPECT = '''
 from dataclasses import replace
-from tl3_workers.forecast import _encoding
+sys.path.insert(0, TOOLS_PATH)
+from replay_usage import ReplayUsage
 from tl3_workers.roles import maker, ROLES
 from langchain_core.utils.function_calling import convert_to_openai_tool
 if BASELINE:
     maker.ROLE = replace(maker.ROLE, exploration_budget=None)
     ROLES['maker'] = maker.ROLE
-encoding = _encoding()
+accounting = ReplayUsage(cached=not BASELINE)
 metrics_path = Path(sys.argv[1]).with_suffix('.metrics.json')
 metrics, offered = [], []
 class InspectModel(FakeMessagesListChatModel):
@@ -31,16 +32,11 @@ class InspectModel(FakeMessagesListChatModel):
         return self
 
     def _generate(self, messages, **kwargs):
-        payload = json.dumps({'messages': [m.model_dump(include={'type', 'content', 'tool_calls', 'tool_call_id', 'name'})
-                                          for m in messages], 'tools': offered}, ensure_ascii=False)
-        count = len(encoding.encode_ordinary(payload))
-        metrics.append({'input_tokens': count, 'history_bytes': sum(
-            len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
-            for m in messages if m.type in {'ai', 'tool'})})
+        record, usage = accounting.measure(messages, offered)
+        metrics.append(record)
         metrics_path.write_text(json.dumps(metrics))
         response = super()._generate(messages, **kwargs)
-        response.generations[0].message.usage_metadata = {
-            'input_tokens': count, 'output_tokens': 1, 'total_tokens': count + 1}
+        response.generations[0].message.usage_metadata = usage
         return response
 '''
 
@@ -80,7 +76,7 @@ def replay(source, baseline):
         }
         original = worker_process.LAUNCH
         worker_process.LAUNCH = original.replace('model = FakeMessagesListChatModel(',
-            INSPECT.replace('BASELINE', repr(baseline)) + '\nmodel = InspectModel(')
+            INSPECT.replace('BASELINE', repr(baseline)).replace('TOOLS_PATH', repr(str(Path(__file__).resolve().parent))) + '\nmodel = InspectModel(')
         try:
             result = worker_process.start_worker(root, request, script)
         finally:
@@ -96,6 +92,10 @@ def replay(source, baseline):
         report = {'role': 'maker', 'issue_fixture': 1968, 'baseline': baseline, 'base': before,
                   'model_turns': len(metrics), 'tool_turns': len(calls),
                   'input_tokens': sum(m['input_tokens'] for m in metrics),
+                  'weighted_tokens': sum(m['weighted_tokens'] for m in metrics),
+                  'cache_read': sum(m['cache_read'] for m in metrics),
+                  'cache_creation': sum(m['cache_creation'] for m in metrics),
+                  'prefix_breaks': sum(not m['prefix_preserved'] for m in metrics[1:]),
                   'largest_context': max(m['input_tokens'] for m in metrics),
                   'max_history_bytes': max(m['history_bytes'] for m in metrics), 'exit_code': result.exit_code}
         print(json.dumps(report), flush=True)
@@ -106,6 +106,6 @@ if __name__ == '__main__':
     source = Path(sys.argv[1]).resolve()
     before = replay(source, True)
     after = replay(source, False)
-    assert after['max_history_bytes'] <= 65_536
-    assert after['input_tokens'] < before['input_tokens']
-    assert after['largest_context'] < before['largest_context']
+    assert after['prefix_breaks'] == 0
+    assert after['weighted_tokens'] < before['weighted_tokens']
+    assert after['weighted_tokens'] <= 6_000_000

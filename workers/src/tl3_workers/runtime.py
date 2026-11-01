@@ -15,7 +15,8 @@ from deepagents.profiles import (
     register_harness_profile,
 )
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, schema, validate
@@ -23,6 +24,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.exploration import ExplorationMiddleware
+from tl3_workers.session import is_unaccepted_session
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -45,12 +47,40 @@ class ProxyChatOpenAI(ChatOpenAI):
         params["ls_provider"] = "tl3_proxy"
         return params
 
+    def _stream(self, *args, **kwargs):
+        last_usage = None
+        for chunk in super()._stream(*args, **kwargs):
+            if chunk.message.usage_metadata is not None:
+                # CLIProxyAPI sends totals on finish and again on a trailing chunk.
+                last_usage = chunk.message.usage_metadata
+                chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
+                    update={"usage_metadata": None})})
+            yield chunk
+        if last_usage is not None:
+            yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
+
+
+def session_identity(request):
+    operation = request["operation"]
+    generation = operation["generation"]
+    if "session_file" in request and request["role"] in {"maker", "reviewer"}:
+        path = Path(request["session_file"])
+        if request["role"] == "maker":
+            path = path.with_suffix(".head")
+        if path.exists():
+            saved = read_json(path.read_text())
+            if is_unaccepted_session(request, saved):
+                generation = saved["generation"]
+    attempt = request["inputs"].get("attempt", request.get("trace", {}).get("attempt", 0))
+    return f"tl3-{operation['node']}-{generation}-{attempt}"
+
 
 def create_model(request) -> BaseChatModel:
     key = Path(request["key_file"]).read_text().strip()
     if not key:
         raise ValueError("empty model key")
     spec = request["model"]
+    identity = session_identity(request)
     return ProxyChatOpenAI(
         base_url=spec["base_url"],
         model=spec["name"],
@@ -59,11 +89,14 @@ def create_model(request) -> BaseChatModel:
         api_key=key,
         use_responses_api=False,
         streaming=True,
+        stream_usage=True,
+        default_headers={"X-Session-ID": identity},
+        model_kwargs={"prompt_cache_key": identity},
         max_retries=0,
     )
 
 
-def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None):
+def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None, context_size=150_000):
     descriptions = {**BUILTIN_TOOL_DESCRIPTIONS, **role.tools}
     profile = HarnessProfile(
         base_system_prompt="",
@@ -103,7 +136,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
     )
     middleware = [filesystem]
     if role.exploration_budget is not None:
-        middleware.append(ExplorationMiddleware(role.exploration_budget, role.name))
+        middleware.append(ExplorationMiddleware(role.exploration_budget, role.name, context_size))
     return create_deep_agent(
         model=model, tools=build_tools(worktree, role.tools), subagents=[], system_prompt=prompt,
         middleware=middleware, name="tl3_" + role.name,
@@ -136,7 +169,8 @@ def _run(request, emit):
             worktree.hindsight_key_file = request.get("hindsight_key_file")
             worktree.progress_emit = emit
         if role.run is None:
-            agent = build_agent(model, role, worktree)
+            agent = build_agent(model, role, worktree, context_size=request["inputs"].get(
+                "context_size", request["inputs"].get("forecast", {}).get("context_tokens", 150_000)))
             reply = _run_agent(agent, request, emit)
         else:
             reply = role.run(model, request, worktree, emit)

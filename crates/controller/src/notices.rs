@@ -24,6 +24,7 @@ fn kind(delivery: &Delivery) -> &'static str {
             CommentKind::Clarify => "clarification question",
             CommentKind::FileCorrection => "replacement filing",
             CommentKind::ReplacementDropped => "dropped-change note",
+            CommentKind::Restart => "restart",
             CommentKind::Classify => "classification",
         },
         Output::Effect { .. } => unreachable!(),
@@ -62,6 +63,14 @@ impl Controller {
                     .push(put("incidents", row.id.clone(), json!(incident)));
             }
             return Ok(());
+        }
+        if class == "not_found"
+            && matches!(
+                delivery.steering,
+                Some(crate::steering::Task::Restart { .. })
+            )
+        {
+            return self.drop_restart(snapshot, delivery, commit);
         }
         let node = delivery.node();
         let request = request(snapshot, node)?;
