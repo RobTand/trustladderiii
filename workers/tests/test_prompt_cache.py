@@ -121,7 +121,7 @@ def test_cached_intake_keeps_four_exploration_rounds(tmp_path, monkeypatch):
     assert budgets[0].spent == 95_000
 
 
-def response_frames(content, *, duplicate_usage=False):
+def response_frames(content, *, duplicate_usage=False, trailing_usage=None):
     chunk = {"id": "fixture-completion", "object": "chat.completion.chunk", "created": 0,
              "model": "fixture-model"}
     usage = {"prompt_tokens": 1000, "completion_tokens": 5, "total_tokens": 1005,
@@ -129,19 +129,23 @@ def response_frames(content, *, duplicate_usage=False):
     frames = [{**chunk, "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
                                     "finish_reason": None}]},
               {**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": usage}]
-    if duplicate_usage:
-        frames.append({**chunk, "choices": [], "usage": usage})
+    if duplicate_usage or trailing_usage is not None:
+        frames.append({**chunk, "choices": [], "usage": trailing_usage or usage})
     stream = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
     return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=stream)
 
 
-def test_duplicate_stream_usage_is_charged_and_recorded_once(request_doc, monkeypatch):
+@pytest.mark.parametrize("corrected_total", [False, True])
+def test_duplicate_stream_usage_is_charged_and_recorded_once(request_doc, monkeypatch, corrected_total):
     Path(request_doc["key_file"]).write_text("fixture-only-key")
     recorded = UsageMetadataCallbackHandler()
     budgets = capture_budget(monkeypatch)
 
     def respond(request):
-        return response_frames(json.dumps(test_workers.BRIEF), duplicate_usage=True)
+        trailing = ({"prompt_tokens": 1200, "completion_tokens": 6, "total_tokens": 1206,
+                     "prompt_tokens_details": {"cached_tokens": 900, "cache_write_tokens": 200}}
+                    if corrected_total else None)
+        return response_frames(json.dumps(test_workers.BRIEF), duplicate_usage=True, trailing_usage=trailing)
 
     proxy = runtime.ProxyChatOpenAI
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
@@ -149,10 +153,12 @@ def test_duplicate_stream_usage_is_charged_and_recorded_once(request_doc, monkey
             http_client=client, callbacks=[recorded], **kwargs))
         runtime.run(request_doc, lambda _: None)
     usage = recorded.usage_metadata["fixture-model"]
-    assert usage["input_tokens"] == 1000, "finish and trailing usage describe one model call"
-    assert usage["output_tokens"] == 5 and usage["total_tokens"] == 1005
-    assert usage["input_token_details"] == {"cache_read": 800, "cache_creation": 100}
-    assert budgets[0].spent == 305
+    expected_input, output, read, creation, charge = ((1200, 6, 900, 200, 440) if corrected_total
+                                                      else (1000, 5, 800, 100, 305))
+    assert usage["input_tokens"] == expected_input, "only the last usage chunk describes the call total"
+    assert usage["output_tokens"] == output and usage["total_tokens"] == expected_input + output
+    assert usage["input_token_details"] == {"cache_read": read, "cache_creation": creation}
+    assert budgets[0].spent == charge
 
 
 def test_session_identity_reaches_header_and_body_across_turns_and_resume(request_doc, monkeypatch, tmp_path):
