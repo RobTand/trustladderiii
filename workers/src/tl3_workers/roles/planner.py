@@ -84,6 +84,9 @@ def check_reply(inputs, reply):
 
     forecaster = Forecaster(inputs["forecast"])
     forecast = forecaster.measure(inputs["ingest"]["brief"], paths)
+    # A file the tools can't use is a plan problem, not a crash (#321).
+    for error in forecaster.problems:
+        violations.append(f"Declared file can't be used: {error}. Leave it out.")
     if reply["kind"] == "leaf" and not forecast["fits"]:
         violations.append("The leaf forecast does not fit. Propose smaller pieces.")
     if reply["kind"] == "split":
@@ -96,6 +99,8 @@ def check_reply(inputs, reply):
             violations.append("The forecast fits. Splitting needs a permitted reason.")
         for piece in reply["pieces"]:
             child = forecaster.measure(piece["brief"], piece["files"])
+            for error in forecaster.problems:
+                violations.append(f"Declared file can't be used: {error}. Leave it out.")
             if child["tokens"] >= forecast["tokens"]:
                 violations.append("Every proposed piece must have a smaller forecast than its parent.")
     reply["forecast"] = forecast

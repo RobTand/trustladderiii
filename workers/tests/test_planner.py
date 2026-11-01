@@ -133,13 +133,13 @@ def test_tokenizer_must_be_preloaded_without_network(tmp_path, planner_request, 
 
 
 @pytest.mark.parametrize("content,message", [
-    (b"x" * (1_048_576 + 1), "declared file exceeds the 1048576-byte limit"),
-    (b"hello\x00world", "declared file must be UTF-8 text without binary control bytes"),
-    (b"\xff\xfe", "declared file must be UTF-8 text without binary control bytes"),
-], ids=["oversized", "binary", "non_utf8"])
+    (b"hello\x00world", "greeting.py: binary (11 bytes)"),
+    (b"\xff\xfe", "greeting.py: not UTF-8 text (2 bytes)"),
+], ids=["binary", "non_utf8"])
 def test_invalid_file_has_clear_error(tmp_path, planner_request, content, message):
+    # #321: a deterministic file problem is a named violation, not a crash a retry repeats.
     (tmp_path / "worktree/greeting.py").write_bytes(content)
-    assert_rejected(run_reply(tmp_path, planner_request, LEAF), message=message)
+    assert_rule_report(run_reply(tmp_path, planner_request, LEAF), message)
 
 
 def test_out_of_room_rejects_leaf(tmp_path, planner_request, monkeypatch):
@@ -173,13 +173,18 @@ def test_protected_path_is_rejected_through_protocol(tmp_path, planner_request):
     assert_rule_report(run_reply(tmp_path, planner_request, {**LEAF, "files": ["conftest.py"]}), "protected path")
 
 
-def test_file_at_byte_limit_is_counted_in_full(tmp_path, planner_request):
-    content = (b"hello world\n" * 90_000)[:1_048_576]
+@pytest.mark.parametrize("extra", [0, 1])
+def test_file_at_large_file_limit_is_counted_in_full(tmp_path, planner_request, extra):
+    from tl3_workers.forecast import LARGE_FILE_BYTES, RANGED_FILE_TOKENS
+
+    content = (b"hello world\n" * 6_000)[:LARGE_FILE_BYTES + extra]
     (tmp_path / "worktree/greeting.py").write_bytes(content)
     result = run_reply(tmp_path, planner_request, LEAF)
     assert result.exit_code == 0, result.stderr
     expected = len(tiktoken.get_encoding("o200k_base").encode_ordinary(content.decode()))
-    assert result.events[-1]["reply"]["forecast"]["file_tokens"]["greeting.py"] == expected
+    # One byte over the limit, the file is read by range and costs a fixed allowance (#321).
+    assert result.events[-1]["reply"]["forecast"]["file_tokens"]["greeting.py"] == (
+        RANGED_FILE_TOKENS if extra else expected)
 
 
 def test_local_tokenizer_matches_pinned_encoding_without_loader(monkeypatch):
@@ -313,7 +318,10 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     "new//file.py", "greeting.py/", ".", "bad\x00path",
 ])
 def test_declared_paths_are_confined(tmp_path, planner_request, path):
-    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
+    result = run_reply(tmp_path, planner_request, {**LEAF, "files": [path]})
+    # #321: a named violation, not a crash. Nothing outside the worktree is measured.
+    assert_rule_report(result, f"Declared file can't be used: {path}: ")
+    assert result.events[-1]["reply"]["forecast"]["file_tokens"][path] == 0
 
 
 @pytest.mark.parametrize("link_kind", ["file", "directory", "dangling", "hard", "fifo", "directory_file"])
@@ -336,7 +344,10 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
         os.mkfifo(target)
     else:
         target.mkdir()
-    assert_rejected(run_reply(tmp_path, planner_request, {**LEAF, "files": [path]}))
+    result = run_reply(tmp_path, planner_request, {**LEAF, "files": [path]})
+    # #321: a named violation, not a crash. The outside file is never read.
+    assert_rule_report(result, f"{path}: not a regular file inside the worktree")
+    assert result.events[-1]["reply"]["forecast"]["file_tokens"][path] == 0
 
 
 @pytest.mark.parametrize("proposal,reported", [
@@ -344,7 +355,7 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
     ({**SPLIT, "reason": "convenience"}, False),
     ({**SPLIT, "pieces": [SPLIT["pieces"][0], SPLIT["pieces"][0]]}, True),
     ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "goal_ids": [99]}]}, True),
-    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]}, False),
+    ({**SPLIT, "pieces": [SPLIT["pieces"][0], {**SPLIT["pieces"][1], "files": ["../escape"]}]}, True),
     ({**CANT_MEET, "report": ""}, False),
     ({**CANT_MEET, "files": ["../escape"]}, False),
 ])

@@ -16,7 +16,13 @@ def check_memory_ids(inputs, reply):
             from tl3_workers.forecast import Forecaster
             if "files" not in reply:
                 raise ValueError("sized briefs must declare their root files")
-            reply["forecast"] = Forecaster(inputs["forecast"]).measure(reply["brief"], reply["files"])
+            forecaster = Forecaster(inputs["forecast"])
+            file_tokens = forecaster.files(reply["files"])
+            # Unusable files are named in the brief rather than failing the run
+            # (#321): planning reports them as violations if they're still declared.
+            for note in forecaster.notes():
+                reply["brief"] += "\n\n" + note
+            reply["forecast"] = forecaster.forecast(reply["brief"], file_tokens)
 
 
 ROLE = Role(

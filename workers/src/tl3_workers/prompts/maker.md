@@ -30,6 +30,12 @@ a pass. Inspect the returned summary, failures, skips, errors and truncation.
 An infrastructure error is not test evidence. The controller runs independent
 checks and review after your reply.
 
+Some declared files are too large to read whole, such as a long document or a
+large source module. Never page through one from the start. Find what you need
+with grep, read only those lines with read's offset and limit, and change the
+file with edit's unique exact-text replacement. Checks and review still see your
+full diff.
+
 run_tests automatically compares failures and errors with check_base_sha,
 the controller's check base, in one extra action. It returns base outcomes,
 classifications and both action keys. It labels failures pre-existing only for
