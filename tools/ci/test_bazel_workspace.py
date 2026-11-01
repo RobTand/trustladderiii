@@ -25,3 +25,16 @@ class WorkspaceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class RuntimeInputsTests(unittest.TestCase):
+    def test_postgres_is_a_checksummed_input_and_not_a_runtime_download(self):
+        repository = (ROOT / 'tools/bazel/postgres.bzl').read_text()
+        self.assertIn('sha256', repository)
+        self.assertIn('17.4.0', (ROOT / 'MODULE.bazel').read_text())
+        cache = (ROOT / 'crates/store/tests/support/cache.rs').read_text()
+        self.assertIn('TL3_TEST_POSTGRES_DIR', cache)
+
+    def test_worker_runtime_points_at_locked_bazel_dependencies(self):
+        runner = (ROOT / 'tools/bazel/rust_runner.py').read_text()
+        self.assertIn('TL3_TEST_UV', runner)
+        self.assertIn('worker_python', runner)
