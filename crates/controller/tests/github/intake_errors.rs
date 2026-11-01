@@ -201,6 +201,30 @@ fn case(settings: &tl3_config::Store, name: &str) {
                     .any(|r| r.table == "inbox")
             );
         }
+        "rebased_unknown" | "conflict_unknown" => {
+            let observation = if name == "rebased_unknown" {
+                Observation::Rebased {
+                    node: NodeId(999),
+                    generation: 1,
+                    sha: "a".repeat(40),
+                }
+            } else {
+                Observation::RebaseConflict {
+                    node: NodeId(999),
+                    generation: 1,
+                    head: "a".repeat(40),
+                    target: "b".repeat(40),
+                    files: vec!["greeting.py".into()],
+                }
+            };
+            c.observe("unknown-rebase-node", observation).unwrap();
+            healthy(&mut c);
+            assert_eq!(
+                incidents(&mut c).len(),
+                1,
+                "unresolved observations must raise an incident"
+            );
+        }
         "translator" => {
             struct InvalidTranslator;
             impl GitHubTranslator for InvalidTranslator {
@@ -253,6 +277,8 @@ pub(super) fn run_with_database(db: &mut support::Database) {
         "restart",
         "fallback",
         "observation",
+        "rebased_unknown",
+        "conflict_unknown",
         "translator",
         "fatal",
     ] {
