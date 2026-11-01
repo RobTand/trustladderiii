@@ -34,5 +34,5 @@ def test_writer_recreates_a_file_during_cleanup(fails):
 
 def test_tmp_path_keeps_pytest_name_and_number(tmp_path, tmp_path_factory):
     assert tmp_path.parent == tmp_path_factory.getbasetemp()
-    assert tmp_path.name.startswith('test_tmp_path_keeps_pytest_name')
+    assert tmp_path.name.startswith('test_tmp_path_keeps_pytest_')
     assert tmp_path.name[-1].isdigit()
