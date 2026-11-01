@@ -804,8 +804,13 @@ fn repository_protected_paths_are_optional_additions() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert!(config.github.repos[0].protected_paths.is_empty());
     let mut document: Value = EXAMPLE.parse().unwrap();
-    document["github"]["repos"][0]["protected_paths"] =
-        Value::Array(vec![Value::String("CHANGELOG.md".into())]);
+    document["github"]["repos"][0]
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "protected_paths".into(),
+            Value::Array(vec![Value::String("CHANGELOG.md".into())]),
+        );
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     assert_eq!(config.github.repos[0].protected_paths, ["CHANGELOG.md"]);
     assert_eq!(
