@@ -1776,6 +1776,7 @@ fn main() {
             "merged".into(),
         );
         support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
         }
@@ -1847,7 +1848,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     database.stop();
-    println!(
-        "All publishing scenarios passed; recorded upstreams; no nested submissions; no skips"
-    );
+    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

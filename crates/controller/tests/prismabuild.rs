@@ -1615,6 +1615,7 @@ fn main() {
     {
         let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
         support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
         }
@@ -1798,7 +1799,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("35 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("36 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

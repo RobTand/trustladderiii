@@ -960,7 +960,6 @@ pub(super) fn run(database: &mut Database) {
             child.arg("--checks-fail");
         }
         assert!(child.status().unwrap().success(), "maker scenario {name}");
-        println!("test maker_{name} ... ok");
     }
 }
 

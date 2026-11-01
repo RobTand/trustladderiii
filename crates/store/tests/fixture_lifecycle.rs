@@ -45,6 +45,8 @@ fn main() {
         println!("fixture {case}: {status}");
         if !status.success() {
             failed.push(case);
+        } else {
+            println!("test fixture_{case} ... ok");
         }
     }
     assert!(failed.is_empty(), "fixture regressions failed: {failed:?}");

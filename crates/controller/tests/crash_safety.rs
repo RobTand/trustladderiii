@@ -743,6 +743,7 @@ fn main() {
     }));
     let started = Instant::now();
     upstreams::verify_contracts();
+    println!("test upstream_contracts ... ok");
     let mut database = support::Database::start();
     let mut total = 0;
     let mut restart_check = None;
@@ -755,11 +756,18 @@ fn main() {
         &SCENARIOS[..1]
     };
     let point_filter = env::var("TL3_SIM_POINT").ok();
-    for scenario in scenarios
+    let selected_scenarios: Vec<_> = scenarios
         .iter()
         .copied()
         .filter(|s| filter.as_deref().is_none_or(|f| f == *s))
-    {
+        .collect();
+    let selected_points: Vec<_> = POINTS
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| point_filter.as_deref().is_none_or(|f| f == **p))
+        .collect();
+    let scenario_count = 2 + selected_scenarios.len() * (1 + selected_points.len());
+    for scenario in selected_scenarios {
         let baseline_settings =
             database.create(&format!("baseline_{}", scenario.replace('-', "_")));
         let baseline_root = tempfile::tempdir().unwrap();
@@ -777,11 +785,8 @@ fn main() {
                 output[1].as_str().unwrap().to_owned(),
             ));
         }
-        for (index, point) in POINTS
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| point_filter.as_deref().is_none_or(|f| f == **p))
-        {
+        println!("test {scenario}_baseline ... ok");
+        for &(index, point) in &selected_points {
             let settings =
                 database.create(&format!("crash_{}_{index}", scenario.replace('-', "_")));
             let root = tempfile::tempdir().unwrap();
@@ -799,6 +804,7 @@ fn main() {
                 "seed={seed} scenario={scenario} point={point}: {} SIGKILL cuts, recovered equal to baseline",
                 kills.len()
             );
+            println!("test {scenario}_{point} ... ok");
         }
     }
     assert!(total > 0, "filter selected no crash points");
@@ -836,6 +842,8 @@ fn main() {
         "Postgres restart changed the recovered records"
     );
     database.stop();
+    println!("test recovered_records_survive_postgres_restart ... ok");
+    println!("{scenario_count} crash safety scenarios passed; no skips");
     println!(
         "{total} real SIGKILL cuts passed in {:.2}s; seed={seed}; no skips",
         started.elapsed().as_secs_f64()
