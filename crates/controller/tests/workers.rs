@@ -173,7 +173,7 @@ fn failed(completion: &tl3_controller::executor::Completion) -> bool {
         [Observation::Kernel(Event::Reply {
             reply: Reply::RunFailed,
             ..
-        })]
+        })] | [Observation::WorkerFailed { .. }]
     )
 }
 
