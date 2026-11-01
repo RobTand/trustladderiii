@@ -1445,13 +1445,74 @@ fn healthy_stop_looks(settings: &tl3_config::Store) {
         "closing summary must still be delivered"
     );
 }
+fn look_that_closes_request(settings: &tl3_config::Store) {
+    struct ClosingLook {
+        fake: adapters::worktrees::Fake,
+    }
+    impl Executor for ClosingLook {
+        fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+            if matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::RemoveWorktree,
+                    ..
+                }
+            ) {
+                return Err(tl3_controller::Error::Invalid(
+                    "fixture lost teardown response",
+                ));
+            }
+            self.fake.execute(delivery)
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            Ok(Reconciliation::Pending)
+        }
+        fn look(&mut self, _: &Delivery) -> tl3_controller::Result<Look> {
+            Ok(Look::Found(Completion::confirmed(vec![])))
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Worktrees,
+        ClosingLook {
+            fake: adapters::worktrees::Fake::new(root.path()),
+        },
+    );
+    assert!(matches!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::Stopping(_)
+    ));
+    let key = c.snapshot().unwrap().pending_effects[0].key.clone();
+    c.look_key(&key).unwrap();
+    assert!(matches!(
+        c.world().unwrap().nodes[0].phase,
+        Phase::Closed(_)
+    ));
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "allowances" && row.id == key),
+        "a look that closes its request must not save its allowance again"
+    );
+    drain(&mut c);
+    assert!(c.next_look_in().unwrap().is_none());
+}
+
 fn closed_looks_regressions(db: &mut support::Database) -> usize {
     let mut failed = 0;
-    for case in ["permanent", "startup", "held", "healthy"] {
+    for case in ["permanent", "startup", "held", "healthy", "closing"] {
         let settings = db.create(&format!("closed_looks_{case}"));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if case == "healthy" {
                 healthy_stop_looks(&settings);
+            } else if case == "closing" {
+                look_that_closes_request(&settings);
             } else {
                 closed_publish_looks(&settings, case);
             }
