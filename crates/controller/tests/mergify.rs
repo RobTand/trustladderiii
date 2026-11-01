@@ -2399,6 +2399,7 @@ fn command_dequeue_pauses(settings: &tl3_config::Store, title: bool) {
             "an unverified manual-looking title follows the generic retry rule"
         );
         assert!(!c.world().unwrap().nodes[0].paused);
+        println!("test command_dequeue_pauses_title_{title} ... ok");
         return;
     }
     assert_eq!(
