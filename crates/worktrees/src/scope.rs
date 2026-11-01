@@ -47,7 +47,7 @@ impl Worktrees {
         mut hook: impl FnMut(TrimBoundary) -> Result<(), Error>,
     ) -> Result<ScopeTrim, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
-        leaf(name)?;
+        self.leaf(name)?;
         let path = self.destination(path)?;
         let mut declared: Vec<_> = footprint
             .iter()

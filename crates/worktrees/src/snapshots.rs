@@ -190,6 +190,7 @@ impl Worktrees {
     fn unopened(path: &Path) -> Result<Self, Error> {
         let repo = fs::canonicalize(path).map_err(|_| Error::Io)?;
         Ok(Self {
+            base_branch: BranchName::new(branch_template::DEFAULT_BASE)?,
             repo: repo.clone(),
             common: repo.clone(),
             root: repo,

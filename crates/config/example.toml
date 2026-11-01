@@ -47,6 +47,10 @@ name = "tl3-sandbox"
 # crates/github: GitHub::new takes the installation id separately from AppConfig.
 # Placeholder: replace with the sandbox installation's id after app setup.
 installation_id = 1
+# Optional per-repository conventions. These defaults preserve existing branches.
+# branch_template = "tl3/issue-{issue}-node-{node}"
+# base_branch = "main"
+# PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]
 # docs/stack.md: CLIProxyAPI on beelink. workers/ uses Chat Completions at /v1.

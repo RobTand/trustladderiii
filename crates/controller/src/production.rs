@@ -48,7 +48,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     let records = config.workers.runs.join(".controller");
     fs::create_dir_all(&records)?;
     let mut adapters = Registry::default();
-    let mut worktrees = adapters::worktrees::Real::new(&config.worktrees_root, epoch)?;
+    let mut worktrees = adapters::worktrees::Real::new(&config.worktrees_root, epoch)?
+        .with_repositories(&config.github.repos)?;
     for repo in &bootstrap.repos {
         let path = repository_path(&config.worktrees_root, repo);
         fs::create_dir_all(&path)?;
@@ -61,6 +62,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
         .with_materials(Materials {
             clients: clients.clone(),
             worktrees: config.worktrees_root.clone(),
+            branches: crate::branches::Branches::new(&config.github.repos)?,
         });
     let workers = supervisor.source();
     let tools = &config.prismabuild.tools_dir;
@@ -120,7 +122,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             Policy::default(),
             &records.join("github"),
             config.github.operations.clone(),
-        )?,
+        )?
+        .with_repositories(&config.github.repos)?,
     );
     adapters.register(Upstream::Worktrees, worktrees);
     adapters.register(Upstream::Workers, supervisor);
@@ -158,6 +161,7 @@ fn repository_path(root: &std::path::Path, repo: &crate::Repository) -> std::pat
 pub(crate) struct Materials {
     clients: std::collections::BTreeMap<u64, tl3_github::GitHub>,
     worktrees: std::path::PathBuf,
+    branches: crate::branches::Branches,
 }
 
 impl Materials {
@@ -169,11 +173,12 @@ impl Materials {
         let issue = runtime.block_on(client.issue(&name, delivery.issue))?;
         let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
         let path = repository_path(&self.worktrees, &delivery.repository);
-        let git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
+        let mut git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
+        git.set_base_branch(self.branches.base(&delivery.repository))?;
         let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
         let token =
             tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
-        let base = git.fetch_main(&remote, Some(&token))?;
+        let base = git.fetch_base(&remote, Some(&token))?;
         let repo = repository_materials(&path, base.as_str())?;
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});
@@ -334,6 +339,7 @@ impl Materials {
     pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
         Self {
             clients: Default::default(),
+            branches: Default::default(),
             worktrees,
         }
     }

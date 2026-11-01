@@ -2873,6 +2873,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tl3-worktrees",
  "toml",
  "url",
 ]

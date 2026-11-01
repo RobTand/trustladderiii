@@ -105,3 +105,17 @@ of 5,000 prompt tokens, 20,000 making tokens and 5,000 review tokens.
 `planning.overhead_tokens` is the calibration seam for later MLflow measurements.
 It must contain at least one named nonnegative estimate.
 `planning.protected_paths` can add patterns, but it must retain the defaults.
+
+## Repository branches
+
+Each `[[github.repos]]` entry accepts `branch_template` and `base_branch`.
+Their defaults are `tl3/issue-{issue}-node-{node}` and `main`.
+For PrismaBuild, use `branch_template = "prismabuild-{issue}-tl3-{node}"`.
+For a repository based on `master`, set `base_branch = "master"`.
+
+A template must contain `{issue}` and `{node}` exactly once, separated by a
+literal containing a nondigit. Other placeholders and invalid Git refs are
+rejected. Issue numbers are positive; node numbers can be zero. Both use
+canonical decimal digits. Formatting and recognition share the same parser.
+Publication writes `Refs #N` for the request's issue. TL3 closes the issue after
+all leaves finish.

@@ -220,6 +220,17 @@ pub struct Repository {
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
+    #[serde(default = "default_branch_template")]
+    pub branch_template: String,
+    #[serde(default = "default_base_branch")]
+    pub base_branch: String,
+}
+
+fn default_branch_template() -> String {
+    tl3_worktrees::branch_template::DEFAULT_TEMPLATE.into()
+}
+fn default_base_branch() -> String {
+    tl3_worktrees::branch_template::DEFAULT_BASE.into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -505,6 +516,10 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
+            tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
+                .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
+            tl3_worktrees::BranchName::new(&repo.base_branch)
+                .map_err(|error| invalid(format!("{field}.base_branch"), error.to_string()))?;
             if repo.installation_id == 0 {
                 return Err(invalid(
                     format!("{field}.installation_id"),
