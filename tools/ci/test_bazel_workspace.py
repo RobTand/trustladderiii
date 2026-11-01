@@ -25,6 +25,19 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotIn('x-buildbuddy-api-key=', config)
 
 
+class BudgetClassTests(unittest.TestCase):
+    def test_remote_configs_name_a_calibrated_budget_class(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'tools/ci'))
+        import rust_gate
+        config = (ROOT / '.bazelrc').read_text().splitlines()
+        for mode, runner in [('remote', 'buildbuddy-amd64'), ('remote-arm64', 'buildbuddy-arm64')]:
+            self.assertIn(f'test:{mode} --test_env=TL3_RUNNER_CLASS={runner}', config)
+            self.assertGreaterEqual(rust_gate.BUDGET_MULTIPLIERS[runner], 1.0)
+        runner = (ROOT / 'tools/bazel/rust_runner.py').read_text()
+        self.assertIn("os.environ.get('TL3_RUNNER_CLASS', 'baseline')", runner)
+
+
 class Arm64ToolchainTests(unittest.TestCase):
     def test_both_executor_platforms_have_a_cc_toolchain(self):
         module = (ROOT / 'MODULE.bazel').read_text()
