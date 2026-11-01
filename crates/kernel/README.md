@@ -186,10 +186,12 @@ The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUT
 A submission is not a pass. Check the terminal exit code, actual logs and verified CAS receipt before reporting a result.
 CI runs separately on Mergify's fleet runners. It does not submit to PrismaBuild.
 
-The proposed Q48 layer adds two per-leaf progress proofs at W=2 and W=3.
+Q48 (Rob, 2026-11-01) has two per-leaf progress proofs at W=2 and W=3.
 They cover four leaves: an unpaused oldest waiter, its last conflicting holder,
 and two younger leaves. The holder completes through the real stop and
 teardown paths. Visiting younger leaves first cannot take the older waiter's
 newly available slot, even when a disjoint overtaker remains active.
 This is a bounded progress proof with successful holder completion, not a
-proof of unbounded temporal liveness. Q48 needs Rob's approval before queueing.
+proof of unbounded temporal liveness. Covers require a disjoint leaf to pass
+a waiter blocked by an older overlapping waiter, then the oldest waiter to
+progress when its blocking holder completes. Rob approved Q48 on 2026-11-01.

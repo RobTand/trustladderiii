@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended. This branch proposes Q48, which needs Rob's approval before queueing. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q48. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -342,7 +342,7 @@ A leaf waits here for a slot, holding nothing. Settle grants it a slot and its f
 - the gate has room;
 - all its files are free.
 
-**Proposed Q48, needs Rob's approval:** an older waiter blocks a younger leaf if a slot is free for it, or if their footprints overlap. Only truly disjoint leaves pass a file-blocked waiter. A waiter keeps its ticket and holds nothing. A grant moves the leaf straight to its resume point.
+**Q48, Rob, 2026-11-01:** an older waiter blocks a younger leaf if it could actually run, or if their footprints overlap. Only truly disjoint leaves pass a blocked waiter. Evaluate tickets oldest first; a waiter could run only when a slot and its files are free and no older ticket blocks it. A waiter keeps its ticket and holds nothing. A grant moves the leaf straight to its resume point.
 
 | Resume point | Next | Effects, in order |
 |---|---|---|
@@ -618,7 +618,7 @@ The gate is part of the world, so its changes are atomic with the step that make
 
 **Slice one (Q29 amended, Rob 2026-10-31):** W is configurable from 1 through 3. Rob approved raising W from 1 to 3 slots per repo once built and proven.
 
-A leaf gets its slot and all its files together. **Proposed Q48, needs Rob's approval:** an older waiter blocks a younger leaf if a slot is free for it, or if their footprints overlap. Only truly disjoint leaves pass a file-blocked waiter. A leaf waiting for a slot holds neither a slot nor files and keeps its ticket.
+A leaf gets its slot and all its files together. **Q48, Rob, 2026-11-01:** an older waiter blocks a younger leaf if it could actually run, or if their footprints overlap. Only truly disjoint leaves pass a blocked waiter. Evaluate tickets oldest first; a waiter could run only when a slot and its files are free and no older ticket blocks it. A leaf waiting for a slot holds neither a slot nor files and keeps its ticket.
 
 **Slice two:**
 
@@ -712,7 +712,7 @@ A newer kernel never replays older events. They stay for audit.
 - **Rank:** the number of other nodes waiting on a node, directly or through a chain of waits. Higher ranks go first, and ties go to the older node (Q36). The wait graph has no cycles, so the count is always finite.
 - **Wait reason:** what every open node is waiting on.
 
-There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the proposed Q48 gate protects older runnable or overlapping waiters. Ranking starts in slice two.
+There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the Q48 gate (Rob, 2026-11-01) protects older runnable or overlapping waiters. Ranking starts in slice two.
 
 File waits and pauses count in the wait graph, and neither can close a cycle:
 
@@ -739,7 +739,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 
 - every phase under "Node phases, slice one";
 - Rob's pause, resume, stop and request changes, by answer or by comment;
-- one gate with an approved W of 3, with the proposed Q48 disjoint-overtaking rule pending Rob's approval;
+- one gate with an approved W of 3, with Q48 (Rob, 2026-11-01) allowing truly disjoint work to pass blocked waiters;
 - one model account, first come, first served;
 - the effect machine, progress credit, looks and stalls, and containment;
 - the plain status view, and code grades.

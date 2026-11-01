@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48 from 2026-11-01. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -68,7 +68,7 @@ Proposed rules:
    - **Delivered (merged or done):** the waiting nodes are released.
    - **Abandoned, stopped or replaced:** each waiting node gets an event, and its owner replans.
    - **Waiting on Rob or on an incident:** the waiting nodes stay blocked, and the status view shows the reason.
-5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one serves leaves in ticket order, with 3 slots approved under the Q29 amendment of 2026-10-31. Proposed Q48 would let truly disjoint younger leaves pass a file-blocked waiter while protecting every older runnable or overlapping waiter. It needs Rob's approval. The state table has the exact proposed rule.
+5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one serves leaves in ticket order, with 3 slots approved under the Q29 amendment of 2026-10-31. Q48 (Rob, 2026-11-01) lets truly disjoint younger leaves pass a blocked waiter while protecting every older runnable or overlapping waiter. The state table has the exact rule.
 
 ### Priority inheritance
 
@@ -551,10 +551,12 @@ again. These defaults do not expand #143 beyond its ticket. This tracer retains
 the existing once-per-issue intake rule. Issue-trigger intake, fork support,
 catch-up, steering, scope trimming and splitting remain later tickets.
 
-### Q48 proposed, awaiting Rob's approval
+### Q48, Rob, 2026-11-01
 
-An older waiter blocks a younger leaf if a slot is free for it, or if their footprints overlap. Only truly disjoint leaves pass a file-blocked waiter. Ticket identities, planning admission and agent-pool order remain unchanged.
+> A request waiting for files may be passed by work whose files don't overlap its own. Overlapping work never jumps ahead, so the waiting request can't be passed indefinitely.
+
+An older waiter blocks a younger leaf if it could actually run, or if their footprints overlap. Evaluate tickets oldest first: available files and a spare slot do not make a waiter runnable while an older overlapping ticket blocks it. Ticket identities, planning admission and agent-pool order remain unchanged.
 
 A younger grant cannot add a file holder that blocks an older waiter. When the older waiter's last conflicting holder releases, that release also frees a slot. Its older ticket protects the slot while disjoint younger holders continue running. This relies on holders eventually completing or being stopped, and on older eligible waiters eventually progressing.
 
-The per-leaf Kani proof bounds the world to four leaves at W=2 and W=3. It starts with an unpaused oldest waiter and its last conflicting holder. Younger leaves are visited before that waiter, both before and after the holder's successful teardown. The waiter must acquire a slot while disjoint overtakers remain active. It proves this bounded case, not unbounded temporal liveness with arbitrary arrivals or stalled upstreams. A scenario additionally repeats eight disjoint arrivals before the blocking holder releases.
+The per-leaf Kani proof bounds the world to four leaves at W=2 and W=3. It starts with an unpaused oldest waiter and its last conflicting holder. Younger leaves are visited before that waiter, both before and after the holder's successful teardown. The waiter must acquire a slot while disjoint overtakers remain active. It proves this bounded case, not unbounded temporal liveness with arbitrary arrivals or stalled upstreams. The covers require a disjoint bypass, including passing a waiter blocked by an older overlapping waiter. A scenario additionally repeats eight disjoint arrivals before the blocking holder releases. A store-backed scenario raises W from 1 to 3 with the oldest waiter at the highest node index; only disjoint work passes it, and it takes the next slot once its blocker releases.

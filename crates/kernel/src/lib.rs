@@ -2676,23 +2676,42 @@ fn slot_free(w: &World, i: usize) -> bool {
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
-    let for_slot = matches!(me.phase, Phase::Ready(_));
-    for (j, n) in w.nodes.iter().enumerate() {
-        if j == i {
-            continue;
+    if !matches!(me.phase, Phase::Ready(_)) {
+        return !w.nodes.iter().any(|n| {
+            !matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some_and(|theirs| theirs < mine)
+        });
+    }
+    let mut previous = None;
+    loop {
+        let mut next: Option<(usize, u64)> = None;
+        for (j, n) in w.nodes.iter().enumerate() {
+            let Some(theirs) = n.ticket else { continue };
+            if matches!(n.phase, Phase::Ready(_))
+                && n.repo == me.repo
+                && theirs < mine
+                && previous.is_none_or(|previous| theirs > previous)
+                && next.is_none_or(|(_, ticket)| theirs < ticket)
+            {
+                next = Some((j, theirs));
+            }
         }
-        let Some(theirs) = n.ticket else { continue };
-        let same_line = if for_slot {
-            matches!(n.phase, Phase::Ready(_)) && n.repo == me.repo
-        } else {
-            !matches!(n.phase, Phase::Ready(_))
+        let Some((j, theirs)) = next else {
+            return true;
         };
-        if same_line
-            && theirs < mine
-            && (!for_slot || slot_free(w, j) || !w.footprints_disjoint(n.footprint, me.footprint))
+        let waiter = &w.nodes[j];
+        // Earlier runnable tickets already returned false. Only an earlier
+        // overlap can still prevent this waiter from being first in line.
+        let older_overlap = w.nodes.iter().any(|older| {
+            matches!(older.phase, Phase::Ready(_))
+                && older.repo == me.repo
+                && older.ticket.is_some_and(|ticket| ticket < theirs)
+                && !w.footprints_disjoint(older.footprint, waiter.footprint)
+        });
+        if !w.footprints_disjoint(waiter.footprint, me.footprint)
+            || (slot_free(w, j) && !older_overlap)
         {
             return false;
         }
+        previous = Some(theirs);
     }
-    true
 }

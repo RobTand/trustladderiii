@@ -911,16 +911,15 @@ fn check_gate_grant(width: u8) {
             if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
                 if theirs < mine {
                     older_blocked |= !slot_free(&before, j);
-                    if slot_free(&before, j)
-                        || !before.footprints_disjoint(other.footprint, n.footprint)
-                    {
+                    let runnable = slot_free(&before, j) && first_in_line(&before, j);
+                    if runnable || !before.footprints_disjoint(other.footprint, n.footprint) {
                         assert!(
                             !after.nodes[0].holds,
                             "a runnable or overlapping older ticket prevents this grant"
                         );
                     }
                     if after.nodes[0].holds {
-                        assert!(!slot_free(&before, j));
+                        assert!(!runnable);
                         assert!(before.footprints_disjoint(other.footprint, n.footprint));
                     }
                 }
