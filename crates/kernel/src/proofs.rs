@@ -1000,13 +1000,20 @@ fn check_gate_progress(width: u8) {
             &mut out,
         ),
         Event::Fact {
-            fact: Fact::PrMerged { head, checks_passed },
+            fact:
+                Fact::PrMerged {
+                    head,
+                    checks_passed,
+                },
             ..
         } => apply(
             &mut after,
             Event::Fact {
                 node: NodeId(0),
-                fact: Fact::PrMerged { head, checks_passed },
+                fact: Fact::PrMerged {
+                    head,
+                    checks_passed,
+                },
             },
             &mut out,
         ),
