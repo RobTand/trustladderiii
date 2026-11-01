@@ -58,15 +58,16 @@ fn open_at(settings: &tl3_config::Store, root: &Path, slots: u8) -> Controller {
     Controller::open(Store::open(settings).unwrap(), registry(root), boot(slots)).unwrap()
 }
 fn seed(settings: &tl3_config::Store, root: &Path, slots: u8) -> Snapshot {
-    seed_with_look(settings, root, slots).0
+    seed_with_look(settings, root, slots, 3).0
 }
 fn seed_with_look(
     settings: &tl3_config::Store,
     root: &Path,
     slots: u8,
+    count: u64,
 ) -> (Snapshot, tl3_store::WorldRow) {
     let mut c = open_at(settings, root, slots);
-    for number in 1..=3 {
+    for number in 1..=count {
         assert!(
             c.intake(LabelledIssue {
                 delivery: format!("gate-{number}"),
@@ -87,7 +88,7 @@ fn seed_with_look(
         .unwrap()
         .rows
         .into_iter()
-        .find(|r| r.table == "allowances")
+        .find(|r| r.table == "allowances" && matches!(serde_json::from_value::<Delivery>(r.value["delivery"].clone()).unwrap().output, Out::Effect { node, .. } if node == NodeId(count - 1)))
         .unwrap();
     // Finish all plans after admission, so W=1 has two already-planned waiters.
     assert!(
@@ -97,7 +98,7 @@ fn seed_with_look(
             .iter()
             .all(|n| matches!(n.phase, Phase::Planning { .. }))
     );
-    for node in 0..3 {
+    for node in 0..count {
         let generation = c.world().unwrap().nodes[node].generation;
         c.observe(
             &format!("plan-{node}"),
@@ -111,6 +112,19 @@ fn seed_with_look(
         .unwrap();
         drain(&mut c);
     }
+    if count == 4 {
+        c.observe(
+            "stop-legacy-look-owner",
+            Observation::Kernel(Event::Command {
+                node: NodeId(3),
+                id: 1,
+                command: Control::Stop,
+            }),
+        )
+        .unwrap();
+        drain(&mut c);
+        assert!(c.world().unwrap().nodes[3].phase.is_closed());
+    }
     let w = c.world().unwrap();
     assert_eq!(w.gates[0].w, slots);
     assert_eq!(
@@ -119,7 +133,11 @@ fn seed_with_look(
         "{w:?}"
     );
     if slots == 1 {
-        assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
+        assert!(
+            w.nodes[1..]
+                .iter()
+                .all(|n| !n.holds && (n.ticket.is_some() || n.phase.is_closed()))
+        );
     }
     assert!(
         !c.snapshot()
@@ -137,7 +155,12 @@ fn verify_migrated(c: &mut Controller, before: &Snapshot) -> Snapshot {
         "configured W must reconcile the stored gate"
     );
     assert!(w.valid() && w.is_settled());
-    assert!(w.nodes.iter().all(|n| n.holds && n.phase == Phase::Making));
+    assert!(
+        w.nodes
+            .iter()
+            .filter(|n| !n.phase.is_closed())
+            .all(|n| n.holds && n.phase == Phase::Making)
+    );
     let after = c.snapshot().unwrap();
     assert_eq!(after.revision.get(), before.revision.get() + 1);
     let added: Vec<_> = after
@@ -418,7 +441,7 @@ pub(super) fn pool_idle_downgrade(settings: &tl3_config::Store) {
 }
 pub(super) fn ended_look_and_gate(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let (before, ended) = seed_with_look(settings, root.path(), 1);
+    let (before, ended) = seed_with_look(settings, root.path(), 1, 4);
     let mut store = Store::open(settings).unwrap();
     let mut commit = Commit::new("legacy-ended-plan-look", json!({"fixture": true}), &before);
     let key = ended.id.clone();
