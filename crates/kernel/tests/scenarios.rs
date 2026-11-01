@@ -1165,8 +1165,19 @@ fn publishing_ci_infrastructure_retries_once_then_raises_incident() {
         assert_eq!(run.credit(), credit);
         assert_eq!(run.node().waiting_incident, failures == 1);
         assert_eq!(run.node().run_failures, 1 - failures);
-        run.confirm();
-        assert_eq!(run.phase(), Phase::Publishing);
+        run.send(Event::Ack {
+            node: NodeId(0),
+            seq: enqueue.seq,
+            ack: Ack::Confirmed,
+        });
+        assert_eq!(
+            run.phase(),
+            if failures == 0 {
+                Phase::Publishing
+            } else {
+                Phase::Ready(Resume::Publishing)
+            }
+        );
     }
 }
 

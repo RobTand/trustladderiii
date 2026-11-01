@@ -1039,6 +1039,13 @@ impl Translator {
             }
             Event::CheckRunCompleted { check_run, .. }
             | Event::CheckRunUpdated { check_run, .. } => {
+                let queue_event = check_run.name == tl3_mergify::QUEUE_CHECK
+                    && check_run.app.as_ref().is_some_and(|app| {
+                        app.id == tl3_mergify::MERGIFY_APP_ID && app.slug == "mergify"
+                    });
+                if check_run.name == tl3_mergify::QUEUE_CHECK && !queue_event {
+                    return Ok(vec![]);
+                }
                 for item in tracked(snapshot, repo, true)?.iter().filter(|item| {
                     item.head == check_run.head_sha
                         && (check_run.pull_requests.is_empty()
@@ -1047,9 +1054,9 @@ impl Translator {
                                 .iter()
                                 .any(|pull| pull.number == item.number))
                 }) {
-                    facts.extend(self.look(github, repo, item)?);
+                    let mut pending = Vec::new();
                     for effect in &snapshot.pending_effects {
-                        let delivery: Delivery = serde_json::from_value(effect.payload.clone())?;
+                        let delivery = crate::hydrate(effect, snapshot)?;
                         if delivery.repository == *repo
                             && delivery.pull_request == Some(item.number)
                             && matches!(
@@ -1060,10 +1067,14 @@ impl Translator {
                                 }
                             )
                         {
-                            wake.push(Input::Look {
+                            pending.push(Input::Look {
                                 key: effect.key.clone(),
                             });
                         }
+                    }
+                    if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
+                        facts.extend(self.look(github, repo, item)?);
+                        wake.extend(pending);
                     }
                 }
             }
