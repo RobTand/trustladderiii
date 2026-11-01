@@ -52,6 +52,7 @@ pub fn delivery(role: Role) -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        proposed: None,
     }
 }
 

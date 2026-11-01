@@ -641,17 +641,48 @@ def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
     assert all(event['event'] != 'reply' for event in result.events)
 
 
-def test_missing_fix_session_fails_without_starting_fresh(tmp_path, maker_request):
+@pytest.mark.parametrize('resume_requested', [False, True])
+def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request, resume_requested):
     root = Path(maker_request['worktree'])
+    (root / 'author.txt').write_text('Keep the author commit.\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-m', 'Author proposal')
     before = git(root, 'rev-parse', 'HEAD')
-    maker_request['session_file'] = str(tmp_path / 'missing-session.json')
-    maker_request['resume_session'] = True
+    session = tmp_path / 'missing-session.json'
+    maker_request['session_file'] = str(session)
+    maker_request['resume_session'] = resume_requested
     maker_request['inputs']['round'] = 1
     maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
     result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
-    assert result.exit_code == 1
-    assert all(event['event'] != 'reply' for event in result.events)
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['kind'] == 'done'
+    assert git(root, 'rev-parse', 'HEAD^') == before
+    assert (root / 'author.txt').read_text() == 'Keep the author commit.\n'
+    history = json.loads(session.read_text())
+    assert len([message for message in history if message['type'] == 'human']) == 1
+    assert 'Greeting still fails.' in json.dumps(history)
+
+
+@pytest.mark.parametrize('session_path_supplied', [False, True])
+def test_accepted_maker_session_missing_fails_closed(tmp_path, maker_request, session_path_supplied):
+    root = Path(maker_request['worktree'])
+    before = git(root, 'rev-parse', 'HEAD')
+    session = tmp_path / 'missing-accepted-session.json'
+    if session_path_supplied:
+        maker_request['session_file'] = str(session)
+    maker_request['resume_session'] = True
+    maker_request['last_accepted_generation'] = 0
+    maker_request['operation']['generation'] = 1
+    maker_request['inputs']['round'] = 1
+    maker_request['inputs']['feedback'] = [{'kind': 'failed_check', 'report': 'Greeting still fails.', 'goal_ids': ['greeting']}]
+    result = start_worker(tmp_path, maker_request, [write_turn(), turn(DONE)])
+    assert result.exit_code == 1, result.stderr
+    assert result.stderr.strip() == 'tl3_workers: run failed'
+    assert result.events == []
     assert git(root, 'rev-parse', 'HEAD') == before
+    assert (root / 'greeting.py').read_text() == "def greet(): return 'goodbye'\n"
+    assert not session.exists()
+    assert not session.with_suffix('.head').exists()
 
 
 def test_retry_after_crash_after_commit_reuses_the_round_commit(maker_request, monkeypatch, tmp_path):

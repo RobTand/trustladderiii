@@ -514,3 +514,33 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q32 Postmortems and model trials:** they reuse TL1's rubric and judge. The judge grades everything that needed a fix, a retry or an escalation, plus a random share of clean work. 1 run in 10 tries a candidate model, never on work that other work is waiting on. A change reaches Rob as a proposal once 3 postmortems point to it.
 - **Q33 Earned autonomy:** a kind of change applies without Rob only after he grants that kind, following a clean record. Rolling back never needs approval.
 - **Q34 Decomposition dry run:** before splits go live, a dry run decomposes real requests without changing code, to calibrate the fit limit and the forecast.
+
+
+## Q45: adopting a proposed PR
+
+Decided by Rob on 2026-10-31, approving the associated state-table changes under Q27:
+
+- **Trigger:** either way.
+- **Fixes:** on TL3's own branch from the PR head.
+- **Scope:** the issue's goals only.
+- **Too big:** split into leaves.
+- **Q35:** this requirement supersedes Q35's deferral of reviewing existing PRs until after slice two, for this case.
+
+Ticket #143 implements only Rob's PR label on a same-repo PR. Its first Making
+preparation adopts the pinned head once, without running the maker or earning
+maker credit. Failed checks and review findings use the existing fix rounds on
+TL3's branch, retaining the author's commits. Scope trimming is #145; splitting
+adopted work into leaves is #147.
+
+**Confirmed by Rob, 2026-10-31:** The two PRD choices used by #143 are:
+
+- The closing keyword must identify exactly one issue. Zero or several linked issues get one clarification.
+- The proposed head never changes. It is pinned at label time and later pushes are ignored.
+
+The PRD's other choices are also **coordinator defaults, for Rob to check**:
+the existing rebase machinery keeps up with main; protected paths count
+as out of scope; and an author closing the original does not cancel the request.
+The PRD also proposes noting later pushes in the summary and relabelling to adopt
+again. These defaults do not expand #143 beyond its ticket. This tracer retains
+the existing once-per-issue intake rule. Issue-trigger intake, fork support,
+catch-up, steering, scope trimming and splitting remain later tickets.

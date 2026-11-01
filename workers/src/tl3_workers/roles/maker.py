@@ -162,6 +162,10 @@ def run(model, request, worktree, emit):
 
     inputs = request["inputs"]
     _check_inputs(inputs)
+    session = Path(request["session_file"]) if "session_file" in request else None
+    if (request.get("resume_session") and "last_accepted_generation" in request
+            and (session is None or not session.exists())):
+        raise ValueError("accepted maker session history is missing")
     worktree.test_settings = TestSettings(**inputs["tests"])
     worktree.test_checkout = Path(request["worktree"])
     worktree.progress_emit = emit
@@ -184,9 +188,8 @@ def run(model, request, worktree, emit):
     characters = ContextCharacters()
     last_message = None
     history = []
-    session = Path(request["session_file"]) if "session_file" in request else None
     starting_head, merge_target, merge_files = _starting_state(request, session)
-    if session and request.get("resume_session"):
+    if session and session.exists() and request.get("resume_session"):
         history = messages_from_dict(read_json(session.read_text()))
     history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
     for completion in range(2):

@@ -44,12 +44,12 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        if name in {"apply_new_request", "progress_from_queued", "apply_reviewer_out_of_room"}:
-            memory = 32
+        if name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
+            memory = 64
         elif name.startswith(("progress_from_", "gate_progress_")):
             memory = 24
         elif name in replies:
-            memory = 32
+            memory = 64
         else:
             memory = 10
         rows.append({"cwd": str(HERE), "argv": ["/usr/bin/python3", "run.py", *(["tests"] if name == "tests" else ["prove", name])],

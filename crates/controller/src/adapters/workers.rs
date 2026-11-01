@@ -223,7 +223,10 @@ impl Supervisor {
             } else if let Some(base) = materials["check_run"]["base_sha"].as_str() {
                 CommitId::new(base)?
             } else {
-                Worktrees::open(&checkout, &checkout)?.head()?
+                Worktrees::open(&checkout, &checkout)?
+                    .branch_state(&super::worktrees::Real::branch(delivery)?)?
+                    .ok_or(Error::Invalid("maker checkout has no base"))?
+                    .1
             };
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()
@@ -374,14 +377,14 @@ impl Supervisor {
             },
         });
         if role == "maker" {
-            request["session_file"] = json!(
-                self.settings
-                    .runs
-                    .join("sessions")
-                    .join(&node)
-                    .join(format!("plan-{}", u8::from(delivery.replanned)))
-                    .join(format!("attempt-{}.json", delivery.attempt))
-            );
+            let session_file = self
+                .settings
+                .runs
+                .join("sessions")
+                .join(&node)
+                .join(format!("plan-{}", u8::from(delivery.replanned)))
+                .join(format!("attempt-{}.json", delivery.attempt));
+            request["session_file"] = json!(session_file);
             let session = store
                 .worker_document(&node, "maker_session")?
                 .filter(|session| {
@@ -394,8 +397,9 @@ impl Supervisor {
                     .ok_or(Error::Invalid("maker session has no accepted generation"))?;
                 request["last_accepted_generation"] = json!(generation);
             }
+            let available = session.is_some() || session_file.exists();
             let needs_files = session.is_some_and(|session| session["needs_files"] == true);
-            request["resume_session"] = json!(delivery.round == 1 || needs_files);
+            request["resume_session"] = json!(available && (delivery.round == 1 || needs_files));
         } else if role == "reviewer" {
             request["session_file"] = json!(
                 self.settings

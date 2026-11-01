@@ -14,6 +14,11 @@ pub enum Input {
         key: String,
     },
     LabelledIssue(LabelledIssue),
+    ProposedIssue {
+        issue: LabelledIssue,
+        proposed: crate::adoption::ProposedPullRequest,
+    },
+    AdoptionClarification(crate::adoption::Clarification),
     Observation {
         key: String,
         observation: Observation,
@@ -138,6 +143,7 @@ pub fn daemon() -> Result<()> {
     } else {
         adapters::simulation(&simulation)?
     };
+    let mut adoption = None;
     if let Some(listen) = listen {
         if !listen.ip().is_loopback() {
             return Err(Error::Invalid("webhook listen address must be loopback"));
@@ -185,6 +191,10 @@ pub fn daemon() -> Result<()> {
                 tl3_github::GitHub::new(app, repo.installation, options.clone())?,
             );
         }
+        adoption = Some(crate::adoption::Translator::new(
+            clients.clone(),
+            bootstrap.clone(),
+        )?);
         adapters.register(
             crate::executor::Upstream::GitHub,
             adapters::github::Adapter::new(
@@ -207,6 +217,9 @@ pub fn daemon() -> Result<()> {
         sources.register(webhooks);
     }
     let mut controller = Controller::open(Store::open(&config.store)?, adapters, bootstrap)?;
+    if let Some(adoption) = adoption {
+        controller.register_github_translator("adoption", adoption);
+    }
     controller.set_allowances(config.allowances.clone());
     crate::ingress::drain(&mut controller)?;
     while controller.drive_once()? {}
@@ -226,6 +239,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     )?;
     controller.set_allowances(config.allowances.clone());
     controller.register_github_translator("mergify", registration.mergify);
+    controller.register_github_translator("adoption", registration.adoption);
     eprintln!(
         "GitHub webhooks listening on {}",
         registration.webhooks.address()

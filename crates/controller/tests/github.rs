@@ -590,7 +590,13 @@ fn main() {
     println!("test receiver_limits ... ok");
     source_failures(&database.create("source_failures"));
     println!("test source_failures ... ok");
-    delivery_reconnects(&database.create("reconnect"), &mut database);
+    {
+        let mut reconnect = support::Database::start();
+        let mut settings = reconnect.create("reconnect");
+        settings.connect_timeout_secs = 1;
+        delivery_reconnects(&settings, &mut reconnect);
+        reconnect.stop();
+    }
     println!("test delivery_reconnects ... ok");
     parsed_deliveries_and_translators(&database.create("parsed"));
     println!("test parsed_deliveries_and_translators ... ok");
@@ -883,6 +889,7 @@ fn delivery(notice: Notice) -> Delivery {
         question_context: None,
         steering: None,
         request_text: None,
+        proposed: None,
         checks: None,
         job_generation: None,
         marker_key: None,

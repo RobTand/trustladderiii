@@ -286,7 +286,7 @@ impl Worktrees {
         let path = self.destination(path)?;
         if path.exists() && fs::read_dir(&path).map_err(|_| Error::Io)?.next().is_some() {
             self.verify_checkout(&path, name)?;
-            if self.initializing_at_base(name, &path)? {
+            if self.initializing_at_start(name, &path)? {
                 return Ok(());
             }
             self.require_clean(&path)?;
@@ -493,7 +493,7 @@ impl Worktrees {
                     )?
                     .stdout,
             )?;
-            if lock.exists() && !self.initializing_at_base(name, &path)? {
+            if lock.exists() && !self.initializing_at_start(name, &path)? {
                 return Err(Error::WorktreeOccupied);
             }
             self.run(&path, "clean saved scratch", ["reset", "--hard", "HEAD"])?;
@@ -549,11 +549,14 @@ impl Worktrees {
         Ok(())
     }
 
-    fn initializing_at_base(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
+    fn initializing_at_start(&self, name: &BranchName, path: &Path) -> Result<bool, Error> {
         if !self.initializing(path)? {
             return Ok(false);
         }
-        let Some(base) = self.resolve_optional(&name.base_ref())? else {
+        let Some(base) = self
+            .resolve_optional(&format!("refs/tl3/starts/{}", name.as_str()))?
+            .or(self.resolve_optional(&name.base_ref())?)
+        else {
             return Ok(false);
         };
         Ok(self.resolve_optional(&name.reference())?.as_ref() == Some(&base))
@@ -565,7 +568,7 @@ impl Worktrees {
         self.remove_worktree_locked(name, path, true)
     }
 
-    /// Git's initializing lock and unchanged base authorize interrupted checkout repair.
+    /// Git's initializing lock and unchanged start authorize interrupted checkout repair.
     pub fn finish_prepare(
         &self,
         name: &BranchName,
@@ -583,7 +586,7 @@ impl Worktrees {
         if !writable {
             return Ok(false);
         }
-        if !self.initializing_at_base(name, path)? {
+        if !self.initializing_at_start(name, path)? {
             return Err(Error::Recovery);
         }
         // Repository ownership guarantees the killed controller's Git children have ended.
@@ -764,6 +767,104 @@ impl Worktrees {
         }
         self.verify_checkout(&path, name)?;
         Ok(true)
+    }
+
+    pub fn has_pull_head(&self, number: u64) -> Result<bool, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        Ok(self
+            .resolve_optional(&format!("refs/tl3/pulls/{number}"))?
+            .is_some())
+    }
+
+    pub fn delete_pull_head(&self, number: u64) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.run(
+            &self.repo,
+            "release pull head",
+            ["update-ref", "-d", &format!("refs/tl3/pulls/{number}")],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch the base repository's pull ref and retain the label-time commit.
+    pub fn fetch_pull_head(
+        &self,
+        remote: &Remote,
+        token: Option<&InstallationToken>,
+        number: u64,
+        pinned: &CommitId,
+    ) -> Result<CommitId, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        if number == 0 {
+            return Err(Error::Response);
+        }
+        let reference = format!("refs/tl3/pulls/{number}");
+        if self.resolve_optional(&reference)?.is_some()
+            && self.resolve_optional(pinned.as_str())?.is_some()
+        {
+            return Ok(pinned.clone());
+        }
+        self.network(
+            "fetch pull head",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
+                OsStr::new("--"),
+                &remote.0,
+                OsStr::new(&format!("+refs/pull/{number}/head:{reference}")),
+            ],
+            remote.credentials(token),
+        )?;
+        if self.resolve_optional(pinned.as_str())?.is_none() {
+            // A force-push can remove the label-time head from the current pull history.
+            self.network(
+                "fetch pinned pull commit",
+                [
+                    OsStr::new("fetch"),
+                    OsStr::new("--no-tags"),
+                    OsStr::new("--no-auto-maintenance"),
+                    OsStr::new("--no-write-fetch-head"),
+                    OsStr::new("--"),
+                    &remote.0,
+                    OsStr::new(pinned.as_str()),
+                ],
+                remote.credentials(token),
+            )?;
+        }
+        self.resolve(pinned.as_str())?;
+        self.update_refs(&format!("update {reference} {}\n", pinned.as_str()))?;
+        Ok(pinned.clone())
+    }
+
+    /// Atomically record a new branch, its comparison base, and its author start.
+    pub fn create_branch_from(
+        &self,
+        name: &BranchName,
+        base: &CommitId,
+        start: &CommitId,
+    ) -> Result<Branch, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        leaf(name)?;
+        let start_ref = format!("refs/tl3/starts/{}", name.as_str());
+        match (
+            self.resolve_optional(&name.reference())?,
+            self.resolve_optional(&name.base_ref())?,
+            self.resolve_optional(&start_ref)?,
+        ) {
+            (None, None, None) => self.update_refs(&format!(
+                "create {} {}\ncreate {} {}\ncreate {start_ref} {}\n",
+                name.reference(),
+                start.as_str(),
+                name.base_ref(),
+                base.as_str(),
+                start.as_str()
+            ))?,
+            (Some(_), Some(_), Some(existing)) if existing == *start => {}
+            _ => return Err(Error::Recovery),
+        }
+        self.create_branch_locked(name)
     }
 
     /// Fetches only main, with the same credential and transport policy as pushes.
@@ -1173,7 +1274,7 @@ impl Worktrees {
                     self.restore_removal_gitlink(name, &path)?;
                 }
                 self.verify_checkout(&path, name)?;
-                let initializing = allow_deletions && self.initializing_at_base(name, &path)?;
+                let initializing = allow_deletions && self.initializing_at_start(name, &path)?;
                 if allow_deletions && !initializing {
                     let status = self.status(&path)?;
                     if status
@@ -1188,7 +1289,7 @@ impl Worktrees {
                 }
             }
             let initializing =
-                allow_deletions && path.exists() && self.initializing_at_base(name, &path)?;
+                allow_deletions && path.exists() && self.initializing_at_start(name, &path)?;
             let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
             if allow_deletions {
                 args.push(OsStr::new("--force"));
@@ -1252,9 +1353,10 @@ impl Worktrees {
             return Err(Error::WorktreeOccupied);
         }
         self.update_refs(&format!(
-            "delete {}\ndelete {}\n",
+            "delete {}\ndelete {}\ndelete refs/tl3/starts/{}\n",
             name.reference(),
-            name.base_ref()
+            name.base_ref(),
+            name.as_str()
         ))
     }
 
