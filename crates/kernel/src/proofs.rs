@@ -1098,7 +1098,13 @@ fn check_gate_maker_progress(width: u8) {
     let before_measure = world.measure();
     let mut out = Outbox::new();
     // apply dispatches this fixed, valid node directly to on_reply.
-    on_reply(&mut world, 0, generation, Reply::MakerDone { head }, &mut out);
+    on_reply(
+        &mut world,
+        0,
+        generation,
+        Reply::MakerDone { head },
+        &mut out,
+    );
     require_consistent(&world);
     assert!(world.measure() < before_measure);
     kani::cover!(true, "maker completion lowers the gate world's measure");
