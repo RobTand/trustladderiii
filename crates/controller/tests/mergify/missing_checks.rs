@@ -10,7 +10,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         .as_str()
         .unwrap()
         .to_owned();
-    let before = controller.world().unwrap().nodes[0].clone();
+    let before = controller.world().unwrap().nodes[0];
     {
         let mut state = api.state.lock().unwrap();
         if mode == "wrong-app" {

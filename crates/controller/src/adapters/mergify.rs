@@ -1279,6 +1279,11 @@ impl Translator {
             }
             _ => {}
         }
+        // A held enqueue that is waiting for checks has not failed. Release the
+        // hold first, so the look does not spend a retry on its absence (Q52).
+        if !wake.is_empty() {
+            wake.insert(0, Input::GitHubWake);
+        }
         wake.extend(facts.into_iter().map(QueueFact::input));
         Ok(wake)
     }
