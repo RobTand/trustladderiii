@@ -1782,7 +1782,9 @@ fn main() {
     }
     let mut database = support::Database::start();
     oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
+    println!("test oversized_planner_reply_reaches_plan_feedback ... ok");
     result_budget_rejects_repeated_checks();
+    println!("test result_budget_rejects_repeated_checks ... ok");
     retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
     println!("test retirement_continues_after_corrupt_node ... ok");
     through_controller(&database.create("pb_pass"), false, false, false);
@@ -1796,7 +1798,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("26 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("35 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
