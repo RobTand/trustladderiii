@@ -5,7 +5,9 @@ mod support;
 use serde_json::{Value, json};
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository, adapters,
-    executor::{Completion, Delivery, Executor, Observation, Output, Reconciliation, Upstream},
+    executor::{
+        Completion, Delivery, Executor, Look, Observation, Output, Reconciliation, Upstream,
+    },
 };
 use tl3_kernel::{EffectKind, Event, NodeId, Phase, Reply, Role};
 use tl3_store::Store;
@@ -16,9 +18,20 @@ fn starts(d: &Delivery, effect: EffectKind) -> bool {
     matches!(d.output, Output::Effect { kind, .. } if kind == effect)
 }
 
-/// Holds maker runs open, so each scenario supplies the maker's reply.
-struct HeldMaker(adapters::workers::Fake);
+/// Holds maker runs open, so each scenario supplies the maker's reply. An
+/// unreadable maker fails every look, as an unreadable run directory would.
+struct HeldMaker(adapters::workers::Fake, bool);
 impl Executor for HeldMaker {
+    fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
+        if self.1 && starts(d, EffectKind::StartRun(Role::Make)) {
+            return Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into());
+        }
+        Ok(match self.reconcile(d)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if starts(d, EffectKind::StartRun(Role::Make)) {
             Ok(Completion::confirmed(vec![]))
@@ -57,11 +70,22 @@ impl Executor for LostChecks {
 }
 
 fn open(settings: &tl3_config::Store, root: &std::path::Path, upstream: Upstream) -> Controller {
+    open_with(settings, root, upstream, Some("release-1"), false)
+}
+
+fn open_with(
+    settings: &tl3_config::Store,
+    root: &std::path::Path,
+    upstream: Upstream,
+    release: Option<&str>,
+    unreadable: bool,
+) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     match upstream {
-        Upstream::Workers => {
-            registry.register(upstream, HeldMaker(adapters::workers::Fake::new(root)))
-        }
+        Upstream::Workers => registry.register(
+            upstream,
+            HeldMaker(adapters::workers::Fake::new(root), unreadable),
+        ),
         Upstream::PrismaBuild => {
             registry.register(upstream, LostChecks(adapters::prismabuild::Fake::new(root)))
         }
@@ -83,7 +107,9 @@ fn open(settings: &tl3_config::Store, root: &std::path::Path, upstream: Upstream
         },
     )
     .unwrap();
-    start(&mut c, "release-1");
+    if let Some(release) = release {
+        start(&mut c, release);
+    }
     c.intake(LabelledIssue {
         delivery: "label".into(),
         owner: "owner".into(),
@@ -132,9 +158,12 @@ fn maker_replies(c: &mut Controller, reply: &Value, count: usize) {
     }
 }
 
+/// The reply as worker code emits it: evidence it checked, with the class it
+/// recorded. The report is model text and must never reach GitHub.
 fn blocked() -> Value {
-    json!({"kind": "blocked", "evidence": {"action_key": KEY},
-        "report": "PrismaBuild returned an infrastructure error for every test run."})
+    json!({"kind": "blocked",
+        "evidence": {"action_key": KEY, "class": "test_infrastructure"},
+        "report": "@octocat see REPORT-TEXT for the broken sandbox."})
 }
 
 fn open_incidents(c: &mut Controller) -> Vec<Value> {
@@ -184,7 +213,11 @@ fn blocked_reply_spends_no_credit_and_cites_evidence_on_second_failure() {
     );
     let summary = incident["summary"].as_str().unwrap();
     assert!(summary.contains(KEY), "{summary}");
-    assert!(summary.contains("infrastructure error"), "{summary}");
+    assert!(summary.contains("test infrastructure error"), "{summary}");
+    assert!(
+        !summary.contains("REPORT-TEXT") && !summary.contains('@'),
+        "model text stays off GitHub: {summary}"
+    );
     assert!(c.world().unwrap().valid());
     db.stop();
 }
@@ -201,7 +234,7 @@ fn blocked_reply_without_evidence_is_rejected_as_an_invalid_reply() {
     let before = c.world().unwrap().nodes[0];
     for reply in [
         json!({"kind": "blocked", "report": "The sandbox refused to run the tests."}),
-        json!({"kind": "blocked", "evidence": {"action_key": "short"}, "report": "Broken."}),
+        json!({"kind": "blocked", "evidence": {"action_key": KEY}, "report": "No class."}),
     ] {
         maker_replies(&mut c, &reply, 1);
     }
@@ -288,11 +321,100 @@ fn new_release_leaves_upstream_incidents() {
 }
 
 #[test]
-fn release_identity_names_this_build() {
-    let id = tl3_controller::release::id();
-    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit());
-    assert!(
-        hex(&id, 40) || hex(&id, 64) || id.strip_prefix("sha256:").is_some_and(|h| hex(h, 64)),
-        "{id:?}"
+fn incident_cites_blocked_evidence_only_when_the_blocked_reply_raised_it() {
+    let mut db = support::Database::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&db.create("blocked_window"), root.path(), Upstream::Workers);
+    maker_replies(&mut c, &blocked(), 1);
+    maker_replies(&mut c, &json!({"kind": "done"}), 1);
+    let incidents = open_incidents(&mut c);
+    assert_eq!(incidents.len(), 1);
+    assert_ne!(incidents[0]["signature"]["class"], "environment_blocked");
+    let summary = incidents[0]["summary"].as_str().unwrap();
+    assert!(!summary.contains(KEY), "{summary}");
+    db.stop();
+}
+
+#[test]
+fn first_install_without_a_recorded_release_clears_tl3_incidents() {
+    let mut db = support::Database::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open_with(
+        &db.create("release_first"),
+        root.path(),
+        Upstream::Workers,
+        None,
+        false,
     );
+    maker_replies(&mut c, &blocked(), 2);
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "releases")
+    );
+    start(&mut c, "release-1");
+    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    assert!(open_incidents(&mut c).is_empty());
+    maker_replies(&mut c, &blocked(), 2);
+    start(&mut c, "release-1");
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    db.stop();
+}
+
+#[test]
+fn new_release_clears_a_tl3_side_look_incident_that_holds_an_effect() {
+    let mut db = support::Database::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open_with(
+        &db.create("release_effect"),
+        root.path(),
+        Upstream::Workers,
+        Some("release-1"),
+        true,
+    );
+    let key = c
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .iter()
+        .find(|e| e.kind == "Workers")
+        .unwrap()
+        .key
+        .clone();
+    c.look_key(&key).unwrap();
+    c.look_key(&key).unwrap();
+    let incidents = open_incidents(&mut c);
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(incidents[0]["blocking"], false);
+    assert_eq!(incidents[0]["effect"], key);
+    assert_eq!(incidents[0]["cause"], "tl3");
+    start(&mut c, "release-1");
+    assert_eq!(open_incidents(&mut c).len(), 1);
+    start(&mut c, "release-2");
+    assert!(open_incidents(&mut c).is_empty());
+    db.stop();
+}
+
+#[test]
+fn release_identity_is_the_built_source_tree() {
+    let id = tl3_controller::release::id();
+    let tree = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD^{tree}"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8(output.stdout).unwrap().trim().to_owned());
+    match tree {
+        Some(tree) => assert_eq!(id, tree),
+        None => {
+            let digest = id
+                .strip_prefix("sha256:")
+                .expect("a binary digest without Git");
+            assert!(digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+    }
 }

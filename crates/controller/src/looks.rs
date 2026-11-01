@@ -93,7 +93,7 @@ pub enum Cause {
 impl Cause {
     /// Workers and worktrees are TL3's own harness: agent runs, reply
     /// validation, Q50 blockers and Git checkouts.
-    pub(crate) fn of(upstream: Upstream) -> Self {
+    pub(crate) fn of(upstream: Upstream, _class: &str) -> Self {
         match upstream {
             Upstream::Workers | Upstream::Worktrees => Cause::Tl3,
             Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
@@ -106,7 +106,7 @@ impl Incident {
         self.cause.unwrap_or(if self.input_failure.is_some() {
             Cause::Upstream
         } else {
-            Cause::of(self.signature.upstream)
+            Cause::of(self.signature.upstream, &self.signature.class)
         })
     }
 }
@@ -1032,7 +1032,7 @@ impl Controller {
                 signature: signature.clone(),
                 effect: Some(state.delivery.key.clone()),
                 post_key: Some(format!("incident:{id}")),
-                cause: Some(Cause::of(signature.upstream)),
+                cause: Some(Cause::of(signature.upstream, &signature.class)),
             }),
         ));
         let mut delivery = state.delivery.clone();
@@ -1633,6 +1633,38 @@ mod git_failure_tests {
 #[cfg(test)]
 mod incident_tests {
     use super::*;
+
+    #[test]
+    fn git_remote_failures_in_worktrees_are_upstream() {
+        for operation in ["fetch", "push", "ls-remote", "read remote branch"] {
+            let error: crate::Error = tl3_worktrees::Error::Git {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&error), "git_remote", "{operation}");
+        }
+        let local: crate::Error = tl3_worktrees::Error::Git {
+            operation: "abort superseded merge",
+            code: Some(1),
+        }
+        .into();
+        assert_ne!(failure_class(&local), "git_remote");
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "git_remote"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, "invalid_token"),
+            Cause::Upstream
+        );
+        assert_eq!(
+            Cause::of(Upstream::Worktrees, failure_class(&local)),
+            Cause::Tl3
+        );
+        assert_eq!(Cause::of(Upstream::Workers, "transport"), Cause::Tl3);
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "setup"), Cause::Upstream);
+    }
 
     #[test]
     fn legacy_incident_signature_remains_readable() {

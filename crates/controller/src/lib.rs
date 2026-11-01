@@ -1713,7 +1713,7 @@ impl Controller {
                         signature: signature.clone(),
                         effect: None,
                         post_key: Some(key.clone()),
-                        cause: Some(looks::Cause::of(source)),
+                        cause: Some(looks::Cause::of(source, &class)),
                     }),
                 ));
                 delivery.note = Some(looks::incident_note(

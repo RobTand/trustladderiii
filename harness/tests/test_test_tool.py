@@ -119,3 +119,23 @@ def test_summary_accepts_node_ids_above_the_old_line_cap(fixture, monkeypatch):
     result = test_tool.run_current(fixture, execution.Container('sha256:' + '1' * 64), (test,))
     assert result['status'] == 'completed'
     assert result['totals']['passed'] == 1
+
+
+@pytest.mark.parametrize("path,source", [
+    ("test_value.py", "import os\n\ndef test_exit():\n    os._exit(3)\n"),
+    ("conftest.py", "import os\nos._exit(3)\n"),
+])
+def test_report_cut_short_by_the_code_under_test_is_marked(fixture, path, source):
+    # Q50: an incomplete report the tested code could cause is not citable environment evidence.
+    (fixture / path).write_text(source)
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ())
+    assert result["status"] == "infrastructure_error"
+    assert result["origin"] == "test_run"
+
+
+def test_container_that_cannot_start_is_harness_infrastructure(fixture, monkeypatch):
+    monkeypatch.setattr(test_tool, "container_command", lambda tree, container, tests: [
+        sys.executable, "-I", "-c", "import sys; sys.exit(125)"])
+    result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ())
+    assert result["status"] == "infrastructure_error"
+    assert "origin" not in result
