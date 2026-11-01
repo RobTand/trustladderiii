@@ -1247,6 +1247,9 @@ pub(crate) fn incident_summary(
         "no_progress" => "stopped making progress",
         "queue_unfinished" => "has not finished its queue check",
         "permission" => "refused access",
+        "queue_command_permission" => {
+            "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
+        }
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }

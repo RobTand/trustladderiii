@@ -294,6 +294,49 @@ impl Adapter {
             Err(error) => Err(error.into()),
         }
     }
+    fn dequeue_pending(
+        &self,
+        delivery: &Delivery,
+        state: &tl3_mergify::Observation,
+        issue: &tl3_github::Issue,
+    ) -> Result<bool> {
+        let retry = issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
+            || matches!(
+                state.state,
+                QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
+            );
+        if !retry || state.dequeue_rule_concluded {
+            return Ok(false);
+        }
+        if !issue.labels.iter().any(|label| label.name == "dequeued") {
+            return Ok(true);
+        }
+        let events = self.runtime.block_on(
+            self.clients[&delivery.repository.installation]
+                .issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
+        )?;
+        let label_event = |name: &str| {
+            events
+                .iter()
+                .filter(|event| event.label.as_ref().is_some_and(|label| label.name == name))
+                .max_by_key(|event| event.id)
+        };
+        // Mergify can leave the previous cycle's dequeued label after re-entry.
+        let fresh = label_event("dequeued").is_some_and(|dequeued| {
+            dequeued.event == "labeled"
+                && label_event("queued").map_or_else(
+                    || {
+                        state
+                            .check
+                            .as_ref()
+                            .and_then(|check| check.completed_at)
+                            .is_some_and(|finished| dequeued.created_at >= finished)
+                    },
+                    |queued| dequeued.id > queued.id,
+                )
+        });
+        Ok(!fresh)
+    }
     fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
         let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
@@ -376,7 +419,7 @@ impl Adapter {
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
         // Without a durable intent this key has never reached the label write.
         if baseline.is_none() {
-            return Ok(if dequeue_pending(&state, &issue) {
+            return Ok(if self.dequeue_pending(delivery, &state, &issue)? {
                 Reconciliation::Pending
             } else {
                 Reconciliation::Absent
@@ -384,7 +427,9 @@ impl Adapter {
         }
         if let Some(requeue) = baseline.as_ref().and_then(|attempt| attempt.requeue) {
             return Ok(
-                if matches!(requeue, Requeue::Sending) || dequeue_pending(&state, &issue) {
+                if matches!(requeue, Requeue::Sending)
+                    || self.dequeue_pending(delivery, &state, &issue)?
+                {
                     Reconciliation::Pending
                 } else {
                     Reconciliation::Absent
@@ -438,7 +483,7 @@ impl Executor for Adapter {
         let github = self.clients[&delivery.repository.installation].clone();
         let repo = full_name(&delivery.repository);
         let issue = self.runtime.block_on(github.issue(&repo, number))?;
-        if dequeue_pending(&state, &issue) {
+        if self.dequeue_pending(delivery, &state, &issue)? {
             return Err(Error::Invalid("Mergify dequeue is still finishing"));
         }
         self.rerun_head_checks(delivery, &state)?;
@@ -489,6 +534,14 @@ impl Executor for Adapter {
         };
         match result {
             Ok(()) => {}
+            Err(error @ tl3_mergify::Error::GitHub(tl3_github::Error::Http { status: 403 }))
+                if attempt.requeue.is_some() =>
+            {
+                return Err(Error::Permanent {
+                    class: "queue_command_permission",
+                    source: Box::new(error),
+                });
+            }
             Err(tl3_mergify::Error::HeadChanged) => {
                 return match self.completion(delivery)? {
                     Reconciliation::Found(completion) => Ok(completion),
@@ -531,17 +584,6 @@ impl Executor for Adapter {
         }
     }
 }
-fn dequeue_pending(state: &tl3_mergify::Observation, issue: &tl3_github::Issue) -> bool {
-    let retry = issue.labels.iter().any(|label| label.name == QUEUE_LABEL)
-        || matches!(
-            state.state,
-            QueueState::Dequeued | QueueState::FailedCi | QueueState::Conflict
-        );
-    retry
-        && !state.dequeue_rule_concluded
-        && !issue.labels.iter().any(|label| label.name == "dequeued")
-}
-
 fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
     if !matches!(
         delivery.output,

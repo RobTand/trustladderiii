@@ -1335,8 +1335,11 @@ unresolved write stays pending for the existing looks and incident machinery.
 The kernel's existing infrastructure retry bound still applies.
 
 A queue retry waits for Mergify's `dequeued` label or the current head's
-`Rule: Queue TL3-approved PRs` check to conclude. A rule result older than the
-queue's dequeue check does not release the wait. When the queue label already
+`Rule: Queue TL3-approved PRs (queue)` check to conclude. Both check completion
+times must be present; an older rule result does not release the wait. A
+`dequeued` label left from an earlier queue cycle does not release it either:
+GitHub's label events must show it was added after the last queue entry, or
+after the dequeue check if no queue entry event is available. When the queue label already
 exists, TL3 posts Mergify's documented queue command as its App instead of toggling
 the label. The command starts the comment; its effect marker follows it.
 
@@ -1345,6 +1348,10 @@ response cannot send the command twice. Explicit HTTP refusals permit a retry;
 unknown outcomes stay pending. Acceptance requires evidence that the PR re-entered
 the queue. Missing completion or acceptance uses the existing incident allowance;
 a second infrastructure dequeue uses the existing retry bound.
+A crash between writing `Sending` and the POST leaves the effect pending until
+the usual incident, because recovery cannot distinguish it from a lost response.
+A queue-command permission refusal raises an incident naming the App's
+**Issues: Read and write** repository permission.
 
 Missing Actions permission raises a setup incident naming **Actions: Read and
 write**; see [App setup](../../deploy/github-app/README.md#workflow-rerun-permission).
