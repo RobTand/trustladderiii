@@ -395,8 +395,21 @@ fn corrupt_incident_during_probe_stops_ingress() {
     });
     commit.rows.push(tl3_store::RowChange::Put { table: "incidents".into(), id: "probe-incident".into(), value: json!({"id":"probe-incident", "node":0, "open":true, "needs_rob":false, "blocking":false, "summary":"read failed", "signature":{"upstream":"Workers", "class":"transport"}, "effect":key}) });
     store.commit(&commit).unwrap();
+    let result = run(&mut c, Input::Wake);
     assert!(
-        run(&mut c, Input::Wake).is_err(),
+        result.is_err(),
         "incident corruption read inside a probe must stop ingress"
+    );
+    assert!(
+        !matches!(result, Err(Error::Json(_))),
+        "stored incident decoding must have a distinct fatal error"
+    );
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "allowances" && r.value["failure"] == "setup"),
+        "corruption must stop before mutating the allowance into a setup failure"
     );
 }
