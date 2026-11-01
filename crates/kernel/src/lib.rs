@@ -2715,3 +2715,4 @@ fn first_in_line(w: &World, i: usize) -> bool {
     }
     first_runnable == mine
 }
+pub fn synthetic_timing_marker() -> u32 { 1 }
