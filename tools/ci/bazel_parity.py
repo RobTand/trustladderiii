@@ -119,6 +119,8 @@ def compare(expected, actual):
             left, right = {'suites': left}, {'suites': right}
         for binary in sorted(left.keys() | right.keys()):
             a, b = left.get(binary), right.get(binary)
+            if a is None and b == [] and language == 'rust':
+                continue  # Zero-test binaries; static parity proves they exist.
             if a is None or b is None:
                 problems.append(f'{language} binary {binary}: missing from {"Cargo" if a is None else "Bazel"}')
                 continue
