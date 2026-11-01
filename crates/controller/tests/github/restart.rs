@@ -192,11 +192,26 @@ pub(super) fn reopens_issue_tl3_closed() {
     let root = tempfile::tempdir().unwrap();
     let mut adapter = adapter(&api.uri(), root.path());
     edit_issue(&api);
-    for (closer, reopened) in [("factory[bot]", true), ("owner", false)] {
+    let event = |id: u64, event: &str, login: &str| {
+        json!({"id": id, "event": event, "actor": {"id": 7, "login": login},
+            "created_at": format!("2026-10-30T0{id}:00:00Z")})
+    };
+    // Only the latest close counts: a person closing it again keeps it closed.
+    let history = vec![
+        event(1, "closed", "factory[bot]"),
+        event(2, "reopened", "owner"),
+        event(3, "closed", "owner"),
+    ];
+    for (closer, events, reopened) in [
+        ("factory[bot]", vec![], true),
+        ("owner", vec![], false),
+        ("owner after TL3", history, false),
+    ] {
         {
             let mut state = api.state.lock().unwrap();
             state.closed = true;
             state.closed_by = Some(closer.into());
+            state.issue_events = events;
             state.reopens = 0;
         }
         let completion = adapter.execute(&restart_delivery()).unwrap();
@@ -218,4 +233,282 @@ pub(super) fn reopens_issue_tl3_closed() {
         assert_eq!(issue.state, if reopened { "open" } else { "closed" });
     }
     println!("test restart_reopens_only_an_issue_tl3_closed ... ok");
+}
+
+struct RestartWorkers {
+    fake: adapters::workers::Fake,
+    early: Option<tl3_kernel::EarlyEnd>,
+}
+impl Executor for RestartWorkers {
+    fn execute(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        use tl3_controller::executor::Completion;
+        if delivery.is_classifier() {
+            return Ok(Completion::confirmed(vec![Observation::Classified {
+                key: delivery.key.clone(),
+                reply: Some(json!({"kind": "restart"})),
+            }]));
+        }
+        if let Some(end) = self.early
+            && delivery.node() == NodeId(0)
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::StartRun(tl3_kernel::Role::Ingest),
+                    ..
+                }
+            )
+        {
+            return Ok(Completion::confirmed(vec![Observation::Kernel(
+                Event::Reply {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    reply: tl3_kernel::Reply::IngestEarlyEnd(end),
+                },
+            )]));
+        }
+        self.fake.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.fake.reconcile(delivery)
+    }
+}
+
+/// Production always has an operations issue; failed restarts report there.
+fn operations_controller(
+    settings: &tl3_config::Store,
+    root: &Path,
+    api: &Server,
+    early: Option<tl3_kernel::EarlyEnd>,
+) -> Controller {
+    let mut registry = adapters::simulation(root).unwrap();
+    registry.register(Upstream::GitHub, adapter(&api.uri(), root));
+    registry.register(
+        Upstream::Workers,
+        RestartWorkers {
+            fake: adapters::workers::Fake::new(root),
+            early,
+        },
+    );
+    let mut boot = bootstrap();
+    boot.operations = Some(tl3_config::OperationsIssue {
+        owner: "owner".into(),
+        name: "tl3".into(),
+        installation_id: 3,
+        number: 17,
+    });
+    Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap()
+}
+
+fn step_until(controller: &mut Controller, mut done: impl FnMut(&mut Controller) -> bool) {
+    for _ in 0..200 {
+        if done(controller) {
+            return;
+        }
+        assert!(controller.drive_once().unwrap(), "controller settled first");
+    }
+    panic!("condition not reached");
+}
+
+fn stop(controller: &mut Controller) {
+    controller
+        .observe(
+            "stop-before-restart",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: KernelCommand::Stop,
+            }),
+        )
+        .unwrap();
+}
+
+fn open_restart_incident(controller: &mut Controller) -> Option<Value> {
+    controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| {
+            r.table == "incidents"
+                && r.value["open"] == true
+                && r.value["effect"]
+                    .as_str()
+                    .is_some_and(|key| key.starts_with("restart:"))
+        })
+        .map(|r| r.value)
+}
+
+pub(super) fn stopping_request(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller = operations_controller(settings, root.path(), &api, None);
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    stop(&mut controller);
+    step_until(&mut controller, |c| {
+        c.world().unwrap().nodes[0].phase == Phase::Stopping(Outcome::Stopped)
+    });
+    edit_issue(&api);
+    restart_comment(&mut controller, 20005);
+    step_until(&mut controller, |c| {
+        c.snapshot().unwrap().rows.iter().any(|r| {
+            r.table == "github_comments"
+                && r.value["comment"]["id"] == 20005
+                && r.value.get("classification").is_some()
+        })
+    });
+    let state = classifier_state(&mut controller, 20005);
+    assert_eq!(
+        state["phase"], "Stopping(Stopped)",
+        "restart arrived mid-stop"
+    );
+    assert_eq!(state["restartable"], true);
+    assert_eq!(controller.world().unwrap().nodes.len(), 1);
+    drain(&mut controller);
+    let world = controller.world().unwrap();
+    assert_eq!(
+        world.nodes.len(),
+        2,
+        "the restart starts once the stop closes"
+    );
+    assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Stopped));
+    assert!(!world.nodes[1].phase.is_closed());
+    assert_restarted(&mut controller, &api, "1", 0);
+    println!("test restart_during_stopping_starts_after_close ... ok");
+}
+
+pub(super) fn unreadable_issue(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller = operations_controller(settings, root.path(), &api, None);
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    restart_comment(&mut controller, 20006);
+    step_until(&mut controller, |c| {
+        let pending = c.snapshot().unwrap().pending_effects;
+        pending.iter().any(|e| e.key.starts_with("restart:"))
+            && !pending.iter().any(|e| e.key.starts_with("notice:"))
+    });
+    api.state.lock().unwrap().issue_read_status = Some(403);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes.len(), 1);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Replaced)
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "replacement" && r.id == "0"),
+        "the restart stays pending"
+    );
+    let incident = open_restart_incident(&mut controller).expect("Rob is told");
+    // Clearing the incident retries the read, so a Replaced request is no dead end.
+    api.state.lock().unwrap().issue_read_status = None;
+    edit_issue(&api);
+    let mut comment = fixture(true)["comment"].clone();
+    comment["id"] = json!(20016);
+    comment["body"] = json!(format!(
+        "clear incident {}",
+        incident["id"].as_str().unwrap()
+    ));
+    controller
+        .observe(
+            "clear-restart-incident",
+            Observation::GitHubComment {
+                repository: bootstrap().repos.remove(0),
+                issue: 12,
+                comment: serde_json::from_value(comment).unwrap(),
+            },
+        )
+        .unwrap();
+    drain(&mut controller);
+    let world = controller.world().unwrap();
+    assert_eq!(world.nodes.len(), 2, "clearing the incident restarts");
+    assert!(!world.nodes[1].phase.is_closed());
+    assert_restarted(&mut controller, &api, "1", 0);
+    assert!(open_restart_incident(&mut controller).is_none());
+    println!("test restart_unreadable_issue_retries_after_incident_clears ... ok");
+}
+
+pub(super) fn gone_issue(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
+    let api = Server::new();
+    let mut controller = operations_controller(settings, root.path(), &api, None);
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    stop(&mut controller);
+    drain(&mut controller);
+    api.state.lock().unwrap().intake_target_status = Some(410);
+    restart_comment(&mut controller, 20007);
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes.len(),
+        1,
+        "nothing is filed"
+    );
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|r| matches!(r.table.as_str(), "replacement" | "replacement_pending")),
+        "the pending restart is closed"
+    );
+    assert!(open_restart_incident(&mut controller).is_none());
+    let state = api.state.lock().unwrap();
+    assert!(state.linked.is_empty());
+    assert!(state.comments.iter().any(|c| {
+        c["body"]
+            .as_str()
+            .unwrap()
+            .contains("could not be found, so the restart was dropped")
+    }));
+    println!("test restart_gone_issue_drops_with_a_note ... ok");
+}
+
+pub(super) fn duplicate_request(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let api = Server::new();
+    api.state.lock().unwrap().closed_by = Some("factory[bot]".into());
+    let mut controller = operations_controller(
+        settings,
+        root.path(),
+        &api,
+        Some(tl3_kernel::EarlyEnd::Duplicate),
+    );
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Duplicate)
+    );
+    assert!(api.state.lock().unwrap().closed, "TL3 closed the duplicate");
+    edit_issue(&api);
+    restart_comment(&mut controller, 20008);
+    drain(&mut controller);
+    assert_eq!(
+        classifier_state(&mut controller, 20008)["restartable"],
+        true
+    );
+    let world = controller.world().unwrap();
+    assert_eq!(world.nodes.len(), 2);
+    assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Duplicate));
+    assert!(!world.nodes[1].phase.is_closed());
+    assert_restarted(&mut controller, &api, "1", 0);
+    assert_eq!(
+        api.state.lock().unwrap().reopens,
+        1,
+        "TL3 reopens its own close"
+    );
+    println!("test restart_duplicate_request_reopens_issue ... ok");
 }

@@ -128,6 +128,8 @@ struct ApiState {
     issue_title: Option<String>,
     issue_body: Option<String>,
     closed_by: Option<String>,
+    issue_events: Vec<Value>,
+    issue_read_status: Option<u16>,
     reopens: usize,
 }
 #[derive(Clone)]
@@ -179,6 +181,12 @@ impl Respond for Api {
         }
         if let Some(status) = state.intake_target_status
             && original_path.starts_with("/repos/owner/sandbox/issues/12")
+        {
+            return ResponseTemplate::new(status);
+        }
+        if let Some(status) = state.issue_read_status
+            && request.method.as_str() == "GET"
+            && original_path == "/repos/owner/sandbox/issues/12"
         {
             return ResponseTemplate::new(status);
         }
@@ -321,6 +329,9 @@ impl Respond for Api {
                     issue["state"] = json!("closed");
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
+            }
+            ("GET", "/repos/owner/sandbox/issues/12/events") if !state.issue_events.is_empty() => {
+                ResponseTemplate::new(200).set_body_json(json!(&state.issue_events))
             }
             ("GET", "/repos/owner/sandbox/issues/12/events") => ResponseTemplate::new(200)
                 .set_body_json(match &state.closed_by {
@@ -601,6 +612,10 @@ fn main() {
             "restart_stopped" => restart::stopped_request(&settings),
             "restart_merged" => restart::merged_request(&settings),
             "restart_reopen" => restart::reopens_issue_tl3_closed(),
+            "restart_stopping" => restart::stopping_request(&settings),
+            "restart_unreadable" => restart::unreadable_issue(&settings),
+            "restart_gone" => restart::gone_issue(&settings),
+            "restart_duplicate" => restart::duplicate_request(&settings),
             _ => panic!("unknown gate case: {case}"),
         }
         database.stop();
@@ -613,6 +628,10 @@ fn main() {
         restart::open_request(&database.create("restart_open"));
         restart::stopped_request(&database.create("restart_stopped"));
         restart::merged_request(&database.create("restart_merged"));
+        restart::stopping_request(&database.create("restart_stopping"));
+        restart::unreadable_issue(&database.create("restart_unreadable"));
+        restart::gone_issue(&database.create("restart_gone"));
+        restart::duplicate_request(&database.create("restart_duplicate"));
         database.stop();
         return;
     }
@@ -716,6 +735,10 @@ fn main() {
     restart::stopped_request(&database.create("restart_stopped"));
     restart::merged_request(&database.create("restart_merged"));
     restart::reopens_issue_tl3_closed();
+    restart::stopping_request(&database.create("restart_stopping"));
+    restart::unreadable_issue(&database.create("restart_unreadable"));
+    restart::gone_issue(&database.create("restart_gone"));
+    restart::duplicate_request(&database.create("restart_duplicate"));
     for point in [
         "none",
         "EventWritten",
@@ -733,7 +756,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 77 } else { 195 };
+    let scenario_count = if group == Some("flow") { 81 } else { 199 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
