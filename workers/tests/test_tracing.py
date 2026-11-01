@@ -40,7 +40,8 @@ def receiver():
 
         def do_POST(self):
             packets.append((self.path, self.headers, self.rfile.read(int(self.headers['Content-Length']))))
-            self.send_response(200)
+            self.send_response(getattr(packets, 'tag_status', 200)
+                               if self.path.endswith('set-experiment-tag') else 200)
             self.end_headers()
             self.wfile.write(b'{}')
 
@@ -426,3 +427,142 @@ def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, t
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+# Deliberately fake credentials. Exercise text even when it is nested JSON, as
+# repository files and tool results often contain serialized configuration.
+PLANTED = [
+    ('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296',
+     'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296'),
+    ('postgresql://u:postgres-password-296@h', 'postgres-password-296'),
+    ('redis://u:redis-password-296@h', 'redis-password-296'),
+    ('Authorization: Basic Zml4dHVyZTI5NjpwYXNzd29yZA==', 'Zml4dHVyZTI5NjpwYXNzd29yZA=='),
+    ('GITHUB_WEBHOOK_SECRET=webhook-env-296', 'webhook-env-296'),
+    ('webhook_secret: "webhook-quoted-296"', 'webhook-quoted-296'),
+    ('GITHUB_TOKEN=0123456789abcdef296', '0123456789abcdef296'),
+    ('{"token": "json-token-296"}', 'json-token-296'),
+    ('{"secret": "json-secret-296"}', 'json-secret-296'),
+    ('aws_secret_access_key=aws-lower-296', 'aws-lower-296'),
+    ('AWS_SECRET_ACCESS_KEY=aws-upper-296', 'aws-upper-296'),
+    ('ASIA0123456789ABCDEF', 'ASIA0123456789ABCDEF'),
+    ('xapp-fixture296application', 'xapp-fixture296application'),
+    ('pypi-fixture296package', 'pypi-fixture296package'),
+    (json.dumps(json.dumps({'password': 'nested-password-296'})), 'nested-password-296'),
+    ('credential_value="credential-296"', 'credential-296'),
+    ('key_value=key-value-296', 'key-value-296'),
+]
+
+
+@pytest.mark.parametrize('planted,secret', PLANTED)
+def test_redacts_review_credential_forms(planted, secret):
+    from tl3_workers.tracing import Redactor
+    result = Redactor(None).payload({'content': 'visible-before ' + planted + ' visible-after'})
+    assert secret not in json.dumps(result)
+    assert 'visible-after' in json.dumps(result)
+
+
+@pytest.mark.parametrize('key', ['OPENAI_API_KEY', 'x-api-key', 'github_token', 'webhook_secret',
+                                 'secret', 'token', 'passwd_hash', 'private_key_id', 'credential_id'])
+def test_redacts_sensitive_key_substrings(key):
+    from tl3_workers.tracing import Redactor
+    assert Redactor(None).payload({key: 'opaque-sensitive-value-296'})[key] == '[REDACTED]'
+
+
+@pytest.mark.parametrize('surface', ['tool_result', 'model_input', 'usage_chunks'])
+def test_review_secrets_never_reach_export(request_doc, exporters, receiver, surface):
+    import mlflow
+    from tl3_workers.tracing import observe, record_chunk_usage
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    planted = '\n'.join(text for text, _ in PLANTED)
+    with observe(request_doc):
+        with mlflow.start_span(name='review-fixture', span_type='CHAT_MODEL') as model:
+            if surface == 'model_input':
+                model.set_inputs({'messages': [{'content': planted}]})
+            if surface == 'usage_chunks':
+                model.set_attribute('tl3.proxy.usage_chunks', [{'fixture': planted}])
+            record_chunk_usage({'usage': {'prompt_tokens': 7, 'secret': planted,
+                                         'completion_tokens': planted}})
+        with mlflow.start_span(name='read', span_type='TOOL') as tool:
+            tool.set_inputs({'path': 'visible-file'})
+            tool.set_outputs(planted if surface == 'tool_result' else 'visible-result')
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    for _, secret in PLANTED:
+        assert secret.encode() not in packets[-1][2]
+    assert b'visible-file' in packets[-1][2]
+
+
+def test_payload_preserves_recent_messages_and_argument_tails():
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    messages = [{'role': 'system', 'content': ('old-system-line\n' * 20000)}]
+    messages += [{'role': 'user', 'content': f'turn-{i}\n' + 'old\n' * 10000 + f'newest-{i}'}
+                 for i in range(8)]
+    result = redactor.payload({'messages': messages})
+    assert isinstance(result.get('messages'), list), 'keep message structure'
+    assert 'newest-7' in json.dumps(result), 'keep the latest turn'
+    assert 'truncated' in json.dumps(result).lower()
+    args = redactor.payload({'path': 'file.txt', 'argument': 'old\n' * 50000 + 'argument-tail',
+                             'result': 'old\n' * 50000 + 'result-tail'})
+    assert args['path'] == 'file.txt'
+    assert 'argument-tail' in json.dumps(args['argument'])
+    assert 'result-tail' in json.dumps(args['result'])
+    assert len(json.dumps(args, ensure_ascii=False).encode()) <= 65536
+
+
+def test_oversized_strings_bound_redaction_work_without_cut_secret_leaks(monkeypatch):
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    original = redactor.text
+    seen = []
+    def text(value):
+        seen.append(len(value))
+        return original(value)
+    monkeypatch.setattr(redactor, 'text', text)
+    secret = 'sk-' + 'A' * 100000
+    result = redactor.payload({'content': 'old\n' * 3000000 + secret + '\nlatest-visible-line'})
+    assert max(seen) <= 65536, 'regex must never process the full oversized string'
+    assert 'latest-visible-line' in json.dumps(result)
+    assert 'A' * 32 not in json.dumps(result), 'no partial credential at the cut'
+    private = '-----BEGIN PRIVATE KEY-----\n' + 'A\n' * 100000 + '-----END PRIVATE KEY-----\nvisible-tail'
+    assert 'A\\n' not in json.dumps(redactor.payload(private))
+
+
+def test_trace_has_total_budget_and_keeps_root(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe, record_reply
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    with observe(request_doc):
+        for index in range(120):
+            with mlflow.start_span(name=f'model-{index}', span_type='CHAT_MODEL') as span:
+                span.set_inputs({'messages': [{'content': 'history-line\n' * 10000 + f'latest-{index}'}]})
+                span.set_outputs({'content': 'reply-line\n' * 10000 + f'reply-{index}'})
+        record_reply({'brief': 'final-readable-reply'})
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    assert len(packets[-1][2]) <= 1024 * 1024, 'total trace export must fit one MiB'
+    spans = exported_spans(packets)
+    assert len(spans) >= 121, 'budget keeps span metadata'
+    root = next(span for span in spans if span.parent_id is None)
+    assert root.inputs and root.outputs['brief'] == 'final-readable-reply'
+    assert root.get_attribute('tl3.trace.truncated') is True
+
+
+def test_malformed_chunk_cannot_escape_observer(request_doc, exporters, receiver):
+    from tl3_workers.tracing import observe, record_chunk_usage
+    uri, _ = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    with observe(request_doc):
+        record_chunk_usage(None)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+
+
+def test_experiment_tag_failure_does_not_discard_trace(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    packets.tag_status = 500
+    run_fake(request_doc, monkeypatch, exporters, uri)
+    assert all(child.wait(timeout=15) == 0 for child in exporters)
+    assert packets[-1][0] == '/v1/traces'
