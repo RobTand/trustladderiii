@@ -84,6 +84,7 @@ pub(super) fn stage(
     harness: &Path,
     delivery: &Delivery,
     image: &str,
+    exec_scratch: bool,
 ) -> Result<Vec<String>> {
     let run = delivery
         .checks
@@ -152,7 +153,7 @@ pub(super) fn stage(
         serde_json::to_vec(&serde_json::json!({
             "effect_key": delivery.key, "base": run.base_sha, "head": head.as_str(),
             "reviewed": run.reviewed_sha,
-            "plan": run.plan, "image": image,
+            "plan": run.plan, "image": image, "exec_scratch": exec_scratch,
         }))?,
     )?;
     Worktrees::commit_check_input(root)?;
@@ -200,7 +201,8 @@ mod tests {
                 let harness = f.root.path().join("harness");
                 fs::create_dir(&harness).unwrap();
                 fs::write(harness.join("__init__.py"), "").unwrap();
-                let changed = stage(&staged, &harness, &f.delivery(), "sha256:fixture").unwrap();
+                let changed =
+                    stage(&staged, &harness, &f.delivery(), "sha256:fixture", false).unwrap();
                 assert_eq!(changed, ["README.md"]);
                 assert!(staged.join("served.bundle").is_file());
                 assert_eq!(

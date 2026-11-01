@@ -1,8 +1,8 @@
 """Run the current tree for the worker's test tool, inside an admitted action."""
+import argparse
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
@@ -109,9 +109,13 @@ def run_current(tree, container, tests):
 
 def main():
     # This file is copied with the trusted harness, outside the served tree.
-    image, selectors = sys.argv[1:]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image")
+    parser.add_argument("selectors")
+    parser.add_argument("--exec-scratch", action="store_true")
+    args = parser.parse_args()
     try:
-        result = run_current(Path("checkout").resolve(), Container(image), tuple(json.loads(selectors)))
+        result = run_current(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch), tuple(json.loads(args.selectors)))
     except (OSError, RuntimeError, ValueError):
         result = infrastructure("Test infrastructure failed before a complete report was available.")
     print(PREFIX + json.dumps(result), flush=True)

@@ -68,7 +68,8 @@
         "tools_path": {"type": "string", "pattern": "^/", "minLength": 1},
         "cpus": {"type": "integer", "minimum": 1},
         "mem_gb": {"type": "integer", "minimum": 1},
-        "quiet_seconds": {"type": "integer", "minimum": 1}
+        "quiet_seconds": {"type": "integer", "minimum": 1},
+        "exec_scratch": {"type": "boolean"}
       },
       "required": ["image", "tools_path"], "additionalProperties": false
     },
