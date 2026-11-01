@@ -309,8 +309,9 @@ still uses the original model name and the OpenAI-compatible endpoint.
 Tests inspect the final model request to catch any injected prompts or tools.
 
 The worker asks for a JSON object directly and validates it against the schema.
-It does not use structured-output tool calls or model repair loops, so no
-implicit output tool or extra model turn can change the declared role tools.
+It does not use structured-output tool calls, so no implicit output tool can
+change the declared role tools. An invalid reply gets at most one tool-free
+repair turn, described with turn retries above.
 
 Every role prompt says: "Reply with one JSON object only: no prose, no code
 fences." Claude models still sometimes wrap the object in prose or a fence
@@ -319,7 +320,8 @@ the worker takes the one closed ``` or ```json block, or else the one
 outermost object in the text. The extracted text goes through the same strict
 parser, so duplicate keys and non-finite numbers still fail. Two candidates fail
 as "reply has more than one JSON object", and no candidate fails as "reply is
-not one JSON object". Both are reply-level diagnostics, not "invalid worker data".
+not one JSON object". Both are reply-level errors: they get the repair turn,
+and a second failure is an InvalidReply, not "invalid worker data".
 
 ## Add a role
 
