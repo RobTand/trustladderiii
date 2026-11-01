@@ -9,8 +9,8 @@ def validate_plan_size(tests):
     tests = tuple(dict.fromkeys(tests))
     record = {'event': 'collection', 'tests': tests}
     size = len(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()) + 1
-    # A phase repeats one node ID and can include a 1,000-character message.
-    largest_phase = max((len(json.dumps(test, ensure_ascii=False).encode()) + 4096
+    # A phase repeats one node ID and can include a 1,000-character JSON-escaped message.
+    largest_phase = max((len(json.dumps(test, ensure_ascii=False).encode()) + 8192
                          for test in tests), default=0)
     if max(size, largest_phase) > MAX_REPORT_LINE_BYTES:
         raise ValueError(PLAN_SIZE_ERROR)

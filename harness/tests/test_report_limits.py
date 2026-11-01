@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness.model import Outcome
+from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 IMAGE = execution.Container('sha256:' + '1' * 64)
@@ -65,7 +65,9 @@ def test_expansion_above_budget_is_a_plan_error(tmp_path, monkeypatch):
     messages = {}
     outcomes = execution.run_tree(tmp_path, IMAGE, ('test_many.py::test_many',),
                                   tmp_path / 'report.jsonl', Progress(), messages=messages)
-    assert outcomes == {'test_many.py::test_many': Outcome.ERROR}
+    assert outcomes == {'test_many.py::test_many': Outcome.UNCOLLECTED}
+    check = Check('large expansion', Kind.REGRESSION, ('test_many.py::test_many',))
+    assert judge(check, outcomes, outcomes).verdict == Verdict.FAIL
     assert '4194304' in messages['test_many.py::test_many']
     assert 'reduce' in messages['test_many.py::test_many']
 
@@ -80,3 +82,13 @@ def test_report_line_above_four_mib_stays_bounded(tmp_path, monkeypatch):
     outcomes = execution.run_tree(tmp_path, IMAGE, tests, report, Progress())
     assert outcomes == dict.fromkeys(tests, Outcome.NO_REPORT)
     assert report.stat().st_size < 4 * 1024 * 1024
+
+
+def test_plan_budget_counts_escaped_bytes_and_the_unique_union():
+    from tl3_harness.limits import validate_plan_size
+    first = 'test_many.py::test_' + 'é' * (1024 * 1024)
+    validate_plan_size((first, first, first))
+    with pytest.raises(ValueError, match='4194304.*reduce'):
+        validate_plan_size((first, first + 'second'))
+    with pytest.raises(ValueError, match='4194304.*reduce'):
+        validate_plan_size(('test_many.py::test_' + '"' * (2 * 1024 * 1024),))

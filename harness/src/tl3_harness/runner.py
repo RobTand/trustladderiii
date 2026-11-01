@@ -110,7 +110,7 @@ class Reporter:
             limits.validate_plan_size(item.nodeid for item in selected)
         except ValueError as error:
             items.clear()
-            self.emit(event="collection-error", message=str(error))
+            self.emit(event="plan-error", message=str(error))
             self.emit(event="collection", tests=[])
             pytest.exit(str(error), returncode=4)
         items[:] = selected

@@ -49,65 +49,61 @@ def run_current(tree, container, tests):
         return summary.result
     progress = Progress()
     command = container_command(tree, container, tests) + ["--summary"]
-    with tempfile.TemporaryFile() as selection:
-        selection.write(json.dumps(tests).encode())
-        selection.seek(0)
-        return _read(command, selection, summary, progress, tests)
-
-
-def _read(command, selection, summary, progress, tests):
     started = finished = False
     seen = set()
     collection_error = False
-    with subprocess.Popen(command, stdin=selection, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL) as child:
-        try:
-            while line := child.stdout.readline(65_537):
-                if len(line) > 65_536:
-                    raise ValueError("oversized report")
-                record = decode(line)
-                if not started:
-                    if record != {"event": "start", "schema": 1}:
-                        raise ValueError("missing report header")
-                    started = True
-                elif finished:
-                    raise ValueError("records after finish")
-                elif record.get("event") == "result":
-                    if (set(record) != {"event", "test", "outcome", "message", "truncated"}
-                            or not isinstance(record["test"], str) or record["test"] in seen
-                            or record["outcome"] not in OUTCOMES
-                            or not isinstance(record["message"], str)
-                            or type(record["truncated"]) is not bool):
-                        raise ValueError("invalid test result")
-                    seen.add(record["test"])
-                    summary.add(record["test"], record["outcome"], record["message"], record["truncated"])
-                    progress.commit(record["test"])
-                elif record.get("event") == "collection-error":
-                    collection_error = True
-                    summary.add(record["test"], "error", record["message"], record["truncated"])
-                    progress.commit(record["test"])
-                elif record.get("event") == "finish" and set(record) == {"event", "exit_code"}:
-                    finished = True
-                    reported_exit = record["exit_code"]
-                else:
-                    raise ValueError("unknown report event")
-            code = child.wait()
-            if (not finished or type(reported_exit) is not int or code != reported_exit
-                    or code not in (0, 1, 2, 4, 5)
-                    or code == 2 and not collection_error
-                    or code == 0 and (summary.result["totals"]["failed"] or summary.result["totals"]["error"])
-                    or code == 1 and not (summary.result["totals"]["failed"] or summary.result["totals"]["error"])):
-                raise ValueError("incomplete or inconsistent report")
-        except (ValueError, KeyError, TypeError):
-            child.terminate()
-            child.wait()
-            return infrastructure("Container or pytest report failed; no test verdict is available.")
-    if code == 4:
-        for test in tests:
-            summary.add(test, "error", f"Selector not found: {test}")
-    if code == 5:
-        summary.result["note"] = "No tests were collected."
-    return summary.result
+    with tempfile.TemporaryFile() as selection:
+        selection.write(json.dumps(tests).encode())
+        selection.seek(0)
+        with subprocess.Popen(command, stdin=selection, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL) as child:
+            try:
+                while line := child.stdout.readline(65_537):
+                    if len(line) > 65_536:
+                        raise ValueError("oversized report")
+                    record = decode(line)
+                    if not started:
+                        if record != {"event": "start", "schema": 1}:
+                            raise ValueError("missing report header")
+                        started = True
+                    elif finished:
+                        raise ValueError("records after finish")
+                    elif record.get("event") == "result":
+                        if (set(record) != {"event", "test", "outcome", "message", "truncated"}
+                                or not isinstance(record["test"], str) or record["test"] in seen
+                                or record["outcome"] not in OUTCOMES
+                                or not isinstance(record["message"], str)
+                                or type(record["truncated"]) is not bool):
+                            raise ValueError("invalid test result")
+                        seen.add(record["test"])
+                        summary.add(record["test"], record["outcome"], record["message"], record["truncated"])
+                        progress.commit(record["test"])
+                    elif record.get("event") == "collection-error":
+                        collection_error = True
+                        summary.add(record["test"], "error", record["message"], record["truncated"])
+                        progress.commit(record["test"])
+                    elif record.get("event") == "finish" and set(record) == {"event", "exit_code"}:
+                        finished = True
+                        reported_exit = record["exit_code"]
+                    else:
+                        raise ValueError("unknown report event")
+                code = child.wait()
+                if (not finished or type(reported_exit) is not int or code != reported_exit
+                        or code not in (0, 1, 2, 4, 5)
+                        or code == 2 and not collection_error
+                        or code == 0 and (summary.result["totals"]["failed"] or summary.result["totals"]["error"])
+                        or code == 1 and not (summary.result["totals"]["failed"] or summary.result["totals"]["error"])):
+                    raise ValueError("incomplete or inconsistent report")
+            except (ValueError, KeyError, TypeError):
+                child.terminate()
+                child.wait()
+                return infrastructure("Container or pytest report failed; no test verdict is available.")
+        if code == 4:
+            for test in tests:
+                summary.add(test, "error", f"Selector not found: {test}")
+        if code == 5:
+            summary.result["note"] = "No tests were collected."
+        return summary.result
 
 
 def main():

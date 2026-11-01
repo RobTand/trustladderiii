@@ -43,7 +43,7 @@ fn validate_plan_size(plan: &[Check]) -> Result<()> {
     let collection_bytes = collection.len() + 4 + tests.len().saturating_sub(1);
     let oversized_phase = tests.iter().try_fold(false, |oversized, test| {
         serde_json::to_vec(test)
-            .map(|bytes| oversized || bytes.len() + 4096 > MAX_REPORT_LINE_BYTES)
+            .map(|bytes| oversized || bytes.len() + 8192 > MAX_REPORT_LINE_BYTES)
     })?;
     if collection_bytes > MAX_REPORT_LINE_BYTES || oversized_phase {
         return Err(Error::Invalid(
