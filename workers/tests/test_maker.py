@@ -1190,3 +1190,29 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     assert reply['head'] != before
     assert git(root, 'show', 'HEAD:greeting.py') == "def greet(): return 'hello'"
     assert git(root, 'status', '--porcelain') == ''
+
+
+@pytest.mark.parametrize('final_done', [False, True])
+def test_maker_budget_exhaustion_finishes_without_claiming_unmade_changes(maker_request, monkeypatch,
+                                                                         final_done):
+    observed = []
+    maker_request['inputs']['context_size'] = 1_000_000
+    final = DONE if final_done else {'kind': 'cant_meet', 'report': 'The work is incomplete.'}
+
+    class EndlessMaker(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(list(messages))
+            exhausted = any('budget is exhausted' in m.text for m in messages if m.type == 'human')
+            response = turn(final) if exhausted or len(observed) >= 75 else turn(calls=[{
+                'name': 'read', 'args': {'path': 'greeting.py'}, 'id': str(len(observed)),
+                'type': 'tool_call'}])
+            self.responses = [AIMessage(**response)]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, 'create_model', lambda _: EndlessMaker(responses=[]))
+    events = []
+    runtime.run(maker_request, events.append)
+    assert len(observed) <= 65, 'maker allows at most 64 tool turns and one final answer'
+    assert events[-1]['reply'] == {'kind': 'cant_meet', 'report':
+                                  'no code change was made' if final_done else 'The work is incomplete.'}
