@@ -1,5 +1,4 @@
 """The GitHub side must fail on every way a remote run can go wrong."""
-import base64
 import json
 import unittest
 
@@ -19,13 +18,15 @@ class FakeClient:
     def __init__(self, statuses, files=None):
         self.statuses, self.files = list(statuses), files or {}
 
-    def call(self, method, body, timeout=120):
+    def call(self, method, body, timeout=120, raw=False):
         if method == 'GetInvocation':
             status = self.statuses.pop(0)
             return {'invocation': [{'invocationStatus': status, 'success': True,
                                     'artifacts': [{'name': name, 'uri': name} for name in self.files]}]}
         if method == 'GetFile':
-            return {'data': base64.b64encode(self.files[body['uri']]).decode()}
+            # Over HTTP, BuildBuddy returns the file's raw bytes, not JSON.
+            assert raw
+            return self.files[body['uri']]
         raise AssertionError(method)
 
 
