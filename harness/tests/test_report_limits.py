@@ -159,6 +159,11 @@ def test_failure_message_with_a_lone_surrogate_is_reported(tmp_path, monkeypatch
     assert execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl', Progress(),
                               messages=messages) == dict.fromkeys(tests, Outcome.ASSERTION)
     assert messages[tests[0]] == 'failure \ud800'
+    check = Check('surrogate', Kind.BEHAVIOR_PRESERVING, tests)
+    result = judge(check, dict.fromkeys(tests, Outcome.PASSED),
+                   dict.fromkeys(tests, Outcome.ASSERTION), messages=messages)
+    message = json.loads(execution.result_json((result,)))[0]['tests'][0]['message']
+    assert message == 'failure \\ud800', 'controller JSON must contain display text, not an unpaired Unicode surrogate'
 
 
 def test_runner_reads_selection_from_stdin(tmp_path, monkeypatch):
