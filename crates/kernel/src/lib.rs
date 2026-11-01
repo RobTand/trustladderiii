@@ -2681,37 +2681,29 @@ fn first_in_line(w: &World, i: usize) -> bool {
             !matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some_and(|theirs| theirs < mine)
         });
     }
-    let mut previous = None;
-    loop {
-        let mut next: Option<(usize, u64)> = None;
-        for (j, n) in w.nodes.iter().enumerate() {
-            let Some(theirs) = n.ticket else { continue };
-            if matches!(n.phase, Phase::Ready(_))
-                && n.repo == me.repo
-                && theirs < mine
-                && previous.is_none_or(|previous| theirs > previous)
-                && next.is_none_or(|(_, ticket)| theirs < ticket)
-            {
-                next = Some((j, theirs));
-            }
+    let mut first_runnable = mine;
+    for (j, waiter) in w.nodes.iter().enumerate() {
+        let Some(theirs) = waiter.ticket else { continue };
+        if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
+            continue;
         }
-        let Some((j, theirs)) = next else {
-            return true;
-        };
-        let waiter = &w.nodes[j];
-        // Earlier runnable tickets already returned false. Only an earlier
-        // overlap can still prevent this waiter from being first in line.
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) {
+            return false;
+        }
+        if theirs >= first_runnable || !slot_free(w, j) {
+            continue;
+        }
+        // The oldest candidate with free files and no earlier overlap is
+        // first in line. It blocks every younger ticket without recursion.
         let older_overlap = w.nodes.iter().any(|older| {
             matches!(older.phase, Phase::Ready(_))
                 && older.repo == me.repo
                 && older.ticket.is_some_and(|ticket| ticket < theirs)
                 && !w.footprints_disjoint(older.footprint, waiter.footprint)
         });
-        if !w.footprints_disjoint(waiter.footprint, me.footprint)
-            || (slot_free(w, j) && !older_overlap)
-        {
-            return false;
+        if !older_overlap {
+            first_runnable = theirs;
         }
-        previous = Some(theirs);
     }
+    first_runnable == mine
 }
