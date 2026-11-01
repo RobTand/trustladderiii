@@ -275,6 +275,28 @@ fn case(settings: &tl3_config::Store, name: &str) {
             assert_eq!(incidents(&mut c).len(), 1);
             assert!(!api.state.lock().unwrap().comments.is_empty());
         }
+        "forbidden_target" => {
+            api.state.lock().unwrap().intake_target_status = Some(403);
+            break_intake(settings);
+            c.intake(labelled()).unwrap();
+            drain(&mut c);
+            let requests = api
+                .runtime
+                .block_on(api.server.received_requests())
+                .unwrap();
+            assert!(
+                requests
+                    .iter()
+                    .any(|r| r.url.path().starts_with("/repos/owner/sandbox/issues/12"))
+            );
+            assert!(
+                !requests
+                    .iter()
+                    .any(|r| r.url.path().starts_with("/repos/owner/tl3/issues/17")),
+                "permission failures must not redirect the incident to operations"
+            );
+            assert_eq!(incidents(&mut c)[0].value["input_failure"]["posted"], false);
+        }
         "fatal" => {
             sql(
                 settings,
@@ -306,6 +328,7 @@ pub(super) fn run_with_database(db: &mut support::Database) {
         "conflict_unknown",
         "translator",
         "fatal",
+        "forbidden_target",
     ] {
         let settings = db.create(&format!("intake_errors_{name}"));
         if std::panic::catch_unwind(|| case(&settings, name)).is_err() {
