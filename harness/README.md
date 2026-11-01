@@ -298,3 +298,18 @@ The scratch verifier runs at production demand, 1 CPU and 2 GiB, including
 four consecutive tests that each write 384 MiB. Cleanup bounds cumulative
 plan use. One test must fit within that boundary; paths hardcoded outside its temporary directory and
 wider-scope fixture data still consume the shared bound.
+
+## Executable scratch
+
+`Container(image_digest, exec_scratch=True)` allows executables and native
+libraries on the private `/tmp` tmpfs. The default is noexec. Each test still
+gets its own pytest temporary directory as TMPDIR, TEMP and TMP, with cleanup
+after teardown. The mount retains its 512 MiB bound, nosuid and nodev.
+Tmpfs uses RAM charged to the action's declared memory demand. It shares that
+budget with the tests and their children. Cleanup errors retain the test's
+real outcome; retained files and session temporary data share the same bound.
+
+The controller selects this option from `[[github.repos]] exec_scratch` for
+checks and maker runs. Base-result caching includes the setting. Git metadata
+and disk scratch remain unavailable. See the
+[design note](../docs/design/executable-scratch.md).

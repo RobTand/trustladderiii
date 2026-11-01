@@ -928,3 +928,25 @@ fn repository_images_accept_immutable_overrides_and_reject_tags() {
         );
     }
 }
+
+#[test]
+fn repository_exec_scratch_is_an_optional_boolean() {
+    assert!(Config::parse(EXAMPLE).is_ok());
+    for enabled in [false, true] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert("exec_scratch".into(), Value::Boolean(enabled));
+        assert!(
+            Config::parse(&toml::to_string(&document).unwrap()).is_ok(),
+            "repository exec_scratch={enabled} must parse"
+        );
+    }
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["github"]["repos"][0]
+        .as_table_mut()
+        .unwrap()
+        .insert("exec_scratch".into(), Value::String("true".into()));
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
