@@ -201,6 +201,29 @@ fn case(settings: &tl3_config::Store, name: &str) {
                     .any(|r| r.table == "inbox")
             );
         }
+        "invalid_issue" => {
+            let mut issue = labelled();
+            issue.number = 0;
+            assert!(
+                c.intake(issue).is_ok(),
+                "invalid issue identity must not be a store failure"
+            );
+            healthy(&mut c);
+            assert_eq!(incidents(&mut c).len(), 1);
+        }
+        "invalid_head" => {
+            c.observe(
+                "invalid-head",
+                Observation::Made {
+                    node: NodeId(999),
+                    generation: 1,
+                    sha: "not-a-commit".into(),
+                },
+            )
+            .unwrap();
+            healthy(&mut c);
+            assert_eq!(incidents(&mut c).len(), 1);
+        }
         "rebased_unknown" | "conflict_unknown" => {
             let observation = if name == "rebased_unknown" {
                 Observation::Rebased {
@@ -277,6 +300,8 @@ pub(super) fn run_with_database(db: &mut support::Database) {
         "restart",
         "fallback",
         "observation",
+        "invalid_issue",
+        "invalid_head",
         "rebased_unknown",
         "conflict_unknown",
         "translator",
@@ -295,7 +320,6 @@ pub(super) fn run_with_database(db: &mut support::Database) {
             }
         );
     }
-    db.stop();
     assert!(
         failed.is_empty(),
         "intake error regressions failed: {failed:?}"
