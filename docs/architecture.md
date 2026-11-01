@@ -489,3 +489,4 @@ Fixes keep the same branch.
 After TL3's PR merges, summary delivery also reconciles a fixed note and closes
 the original PR. It verifies the landed PR's merge before doing so. A failed or
 stopped request continues to close only TL3's own PR.
+<!-- synthetic timing change -->
