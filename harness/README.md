@@ -184,6 +184,16 @@ PB's managed Docker shim and commits the admitted container. Its default
 `sandbox` profile retains the original dependencies. The `prismabuild` profile
 adds GCC, libc development headers, bubblewrap, pytest-xdist 3.8.0, PyYAML
 6.0.3, and setuptools 80.9.0. Both profiles use pytest 9.0.2 and Python 3.14.
+The `prismaquant` and `tessera` profiles use the reviewed frozen dependency
+lists in `tools/images/`. They add g++, make, Python development headers,
+libgomp, CPU-only Torch 2.11.0, Triton and the repositories' Python dependencies.
+PrismaQuant uses pytest 9.1.1 and Triton 3.6.0; Tessera uses pytest 8.4.2
+and Triton 3.8.0. Build tools are bootstrapped before installing the frozen
+lists without dependency resolution or build isolation. The CPU Torch wheel
+index is available only during trusted preparation. The served repository
+is not installed into its own image; checks import the exported candidate.
+PrismaQuant's frozen Tessera dependency is a separate, pinned Git install.
+
 Bubblewrap's presence does not grant user namespaces or privileges to tests.
 Use a distinct tag for a candidate so preparation preserves the current image.
 
@@ -203,8 +213,12 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Inspect the terminal record, verified logs, CAS receipt and cleanup. The log's
 `container_image` is the immutable ID to qualify and configure. The tag is
 only a preparation label. The image ID is the real pin: apt packages and pip's
-transitive dependencies resolve at build time. An image built on dl380g10 is local to dl380g10;
+transitive dependencies resolve at build time. An image built on dl380g10 is amd64 and local to dl380g10;
 the ARM workers need a separate native build and its own immutable image ID.
+The pinned Torch CPU and Triton releases publish Python 3.14 aarch64 wheels.
+Native arm64 builds are worth qualifying to use the Sparks' CPU capacity;
+CPU Torch itself is not an architecture blocker. An amd64 image does not
+qualify an arm64 build or prove the remaining native dependencies there.
 PB's `--container-image` requirement keeps checks on a worker that positively
 reports the image. Do not add a host tag to ordinary checks.
 

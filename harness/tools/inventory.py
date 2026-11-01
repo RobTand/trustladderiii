@@ -16,6 +16,11 @@ def node_ids(repo, files):
     nodes = []
     for name in files:
         module = ast.parse((repo / name).read_bytes())
+        cases = {f"{alias.asname or alias.name}.TestCase" for node in module.body
+                 if isinstance(node, ast.Import) for alias in node.names if alias.name == "unittest"}
+        cases.update(alias.asname or alias.name for node in module.body
+                     if isinstance(node, ast.ImportFrom) and node.module == "unittest"
+                     for alias in node.names if alias.name == "TestCase")
         disabled = {target.value.id for statement in module.body
                     if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant)
                     and statement.value.value is False for target in statement.targets
@@ -26,7 +31,8 @@ def node_ids(repo, files):
                 continue
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
                 nodes.append(f"{name}::{node.name}")
-            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            elif isinstance(node, ast.ClassDef) and (node.name.startswith("Test")
+                    or any(ast.unparse(base) in cases for base in node.bases)):
                 nodes.extend(f"{name}::{node.name}::{method.name}" for method in node.body
                              if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
                              and method.name.startswith("test_"))
