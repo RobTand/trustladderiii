@@ -62,6 +62,14 @@ pub enum Error {
     HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
+    #[error(
+        "repository {owner}/{name} (installation {installation}) has open requests; keep it in github.repos until drained"
+    )]
+    RepositoryInFlight {
+        owner: String,
+        name: String,
+        installation: u64,
+    },
     #[error("upstream permanently failed: {class}")]
     Permanent {
         class: &'static str,
@@ -107,12 +115,20 @@ impl From<tl3_worktrees::Error> for Error {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Repository {
     pub owner: String,
     pub name: String,
     pub installation: u64,
 }
+impl PartialEq for Repository {
+    fn eq(&self, other: &Self) -> bool {
+        self.installation == other.installation
+            && self.owner.eq_ignore_ascii_case(&other.owner)
+            && self.name.eq_ignore_ascii_case(&other.name)
+    }
+}
+impl Eq for Repository {}
 #[derive(Clone, Debug)]
 pub struct Bootstrap {
     pub repos: Vec<Repository>,
@@ -275,6 +291,23 @@ impl Controller {
     fn reconcile_capacity(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut world = snapshot::decode(&snapshot)?;
+        let mut repositories = stored_repositories(&snapshot)?;
+        if repositories.len() != world.gates.len() {
+            return Err(Error::Invalid("stored repositories and gates differ"));
+        }
+        for (index, repository) in repositories.iter().enumerate() {
+            if !self.bootstrap.repos.contains(repository)
+                && world.nodes.iter().any(|node| {
+                    node.repo == tl3_kernel::RepoId(index as u64) && !node.phase.is_closed()
+                })
+            {
+                return Err(Error::RepositoryInFlight {
+                    owner: repository.owner.clone(),
+                    name: repository.name.clone(),
+                    installation: repository.installation,
+                });
+            }
+        }
         let configured = self.bootstrap.slots;
         let configured_pool = self.bootstrap.pool;
         if configured_pool < world.pool_capacity
@@ -305,14 +338,32 @@ impl Controller {
             changes.push(json!({"repo": repo, "stored": gate.w, "configured": configured}));
             gate.w = configured;
         }
-        if changes.is_empty() && pool_change.is_none() {
+        let mut additions = Vec::new();
+        for repository in &self.bootstrap.repos {
+            if !repositories.contains(repository) {
+                let index = repositories.len();
+                repositories.push(repository.clone());
+                world.gates.push(tl3_kernel::Gate { w: configured });
+                additions.push((index, repository));
+            }
+        }
+        if changes.is_empty() && pool_change.is_none() && additions.is_empty() {
             return Ok(());
         }
         let mut commit = Commit::new(
             format!("controller:gates:{}", snapshot.revision.get()),
-            json!({"gate_capacity": changes, "agent_capacity": pool_change}),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change, "repositories": additions}),
             &snapshot,
         );
+        for (index, repository) in additions {
+            self.store
+                .intern_repo(&repository.owner, &repository.name)?;
+            commit.rows.push(put(
+                "repos",
+                index.to_string(),
+                serde_json::to_value(repository)?,
+            ));
+        }
         let (world, outputs) = tl3_kernel::settle_world(world);
         self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         self.store.commit(&commit)?;
@@ -429,16 +480,13 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let world = snapshot::decode(snapshot)?;
-        let index = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "repos" && r.value == json!(repo))
+        let (index, repo) = stored_repositories(snapshot)?
+            .into_iter()
+            .enumerate()
+            .find(|(_, stored)| *stored == repo)
             .ok_or(Error::Invalid(
                 "served repository requires a snapshot migration",
-            ))?
-            .id
-            .parse::<u64>()
-            .map_err(|_| Error::Invalid("invalid repository index"))?;
+            ))?;
         let repo_id = self.store.intern_repo(&repo.owner, &repo.name)?;
         let issue_id = self.store.intern_issue(repo_id, issue.number)?.get();
         let existing = latest_request(snapshot, &repo, issue.number);
@@ -473,12 +521,12 @@ impl Controller {
             };
             let event = if let Some(proposed) = &proposed {
                 Event::NewAdoption {
-                    repo: tl3_kernel::RepoId(index),
+                    repo: tl3_kernel::RepoId(index as u64),
                     head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
                 }
             } else {
                 Event::NewRequest {
-                    repo: tl3_kernel::RepoId(index),
+                    repo: tl3_kernel::RepoId(index as u64),
                 }
             };
             commit.rows.push(put(
@@ -2527,6 +2575,28 @@ impl Controller {
             self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
         ))
     }
+}
+
+fn stored_repositories(snapshot: &Snapshot) -> Result<Vec<Repository>> {
+    let mut repositories = BTreeMap::new();
+    for row in snapshot.rows.iter().filter(|row| row.table == "repos") {
+        let index = row
+            .id
+            .parse::<usize>()
+            .map_err(|_| Error::Invalid("invalid repository index"))?;
+        let repository: Repository = serde_json::from_value(row.value.clone())?;
+        if repositories.insert(index, repository).is_some() {
+            return Err(Error::Invalid("duplicate repository index"));
+        }
+    }
+    let mut result = Vec::new();
+    for (index, repository) in repositories {
+        if index != result.len() {
+            return Err(Error::Invalid("gap in repository indices"));
+        }
+        result.push(repository);
+    }
+    Ok(result)
 }
 
 fn latest_request<'a>(
