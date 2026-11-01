@@ -2608,7 +2608,10 @@ fn latest_request<'a>(
         .rows
         .iter()
         .filter(|r| {
-            r.table == "requests" && r.value["repo"] == json!(repo) && r.value["issue"] == issue
+            r.table == "requests"
+                && r.value["issue"] == issue
+                && serde_json::from_value::<Repository>(r.value["repo"].clone())
+                    .is_ok_and(|stored| stored == *repo)
         })
         .max_by_key(|r| r.id.parse::<u64>().unwrap_or(0))
 }

@@ -56,6 +56,8 @@ fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
 
 #[path = "simulation/gate_migration.rs"]
 mod gate_migration;
+#[path = "simulation/repository_followups.rs"]
+mod repository_followups;
 #[path = "simulation/repository_migration.rs"]
 mod repository_migration;
 
@@ -79,6 +81,28 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("repository_count_mismatch", |s| {
+            repository_followups::corrupt_index(s, "count")
+        }),
+        ("repository_invalid_index", |s| {
+            repository_followups::corrupt_index(s, "invalid")
+        }),
+        ("repository_duplicate_index", |s| {
+            repository_followups::corrupt_index(s, "duplicate")
+        }),
+        ("repository_index_gap", |s| {
+            repository_followups::corrupt_index(s, "gap")
+        }),
+        ("repository_comment_case_identity", |s| {
+            repository_followups::comment_case_identity(s, false)
+        }),
+        ("repository_pr_comment_case_identity", |s| {
+            repository_followups::comment_case_identity(s, true)
+        }),
+        (
+            "repository_capacity_and_addition",
+            repository_followups::capacity_and_addition,
+        ),
         ("repository_add_reorder", repository_migration::add_reorder),
         (
             "repository_case_identity",
