@@ -70,6 +70,7 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("q48_capacity_ticket_order", gate_migration::q48_ticket_order),
         ("agent_capacity_reopen", gate_migration::pool_reopen),
         ("agent_capacity_downgrade", gate_migration::pool_downgrade),
         (

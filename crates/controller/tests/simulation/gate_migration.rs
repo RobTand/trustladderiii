@@ -466,3 +466,74 @@ pub(super) fn ended_look_and_gate(settings: &tl3_config::Store) {
     let mut c = open_at(settings, root.path(), 3);
     assert_eq!(c.snapshot().unwrap(), after);
 }
+
+pub(super) fn q48_ticket_order(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open_at(settings, root.path(), 1);
+    for number in 1..=4 {
+        c.intake(LabelledIssue {
+            delivery: format!("q48-order-{number}"),
+            owner: "owner".into(),
+            repo: "gate-migration".into(),
+            installation: 1,
+            number,
+            title: format!("Ticket order {number}"),
+            actor: 42,
+            label: "tl3".into(),
+        })
+        .unwrap();
+        drain(&mut c);
+    }
+    for (node, files) in [
+        (0, vec!["0"]),
+        (3, vec!["0", "1"]),
+        (1, vec!["1", "2"]),
+        (2, vec!["5"]),
+    ] {
+        let generation = c.world().unwrap().nodes[node].generation;
+        c.observe(
+            &format!("q48-order-plan-{node}"),
+            Observation::Plan {
+                node: NodeId(node as u64),
+                generation,
+                paths: files.into_iter().map(str::to_owned).collect(),
+                fits: true,
+            },
+        )
+        .unwrap();
+        drain(&mut c);
+    }
+    let before = c.world().unwrap();
+    let oldest = before.nodes[3].ticket.unwrap();
+    assert!(oldest < before.nodes[1].ticket.unwrap());
+    assert!(before.nodes[1].ticket < before.nodes[2].ticket);
+    assert_eq!(before.nodes.iter().filter(|n| n.holds).count(), 1);
+    close(c, settings);
+
+    let mut c = open_at(settings, root.path(), 3);
+    let w = c.world().unwrap();
+    assert!(
+        w.nodes[2].holds,
+        "W reconciliation must admit the truly disjoint leaf"
+    );
+    assert!(!w.nodes[1].holds && !w.nodes[3].holds);
+    assert_eq!(w.nodes[3].ticket, Some(oldest));
+    let after = close(c, settings);
+    let mut c = open_at(settings, root.path(), 3);
+    assert_eq!(c.snapshot().unwrap(), after);
+    c.observe(
+        "q48-release-blocker",
+        Observation::Kernel(Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Control::Stop,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    let w = c.world().unwrap();
+    assert!(w.nodes[0].phase.is_closed());
+    assert!(w.nodes[3].holds, "the oldest ticket gets the spare slot");
+    assert!(w.nodes[2].holds && !w.nodes[1].holds);
+    assert!(w.valid() && w.is_settled());
+}

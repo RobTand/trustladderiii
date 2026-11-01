@@ -1223,12 +1223,21 @@ fn check_gate_leaf_progress(width: u8) {
         }
     }
     let full = w.nodes.iter().filter(|n| n.holds).count() == usize::from(width);
+    let chained_waiter = matches!(w.nodes[2].phase, Phase::Ready(_))
+        && matches!(w.nodes[3].phase, Phase::Ready(_))
+        && slot_free(&w, 2)
+        && w.nodes[2].ticket < w.nodes[3].ticket
+        && !w.footprints_disjoint(w.nodes[0].footprint, w.nodes[2].footprint)
+        && w.footprints_disjoint(w.nodes[0].footprint, w.nodes[3].footprint)
+        && w.footprints_disjoint(w.nodes[2].footprint, w.nodes[3].footprint);
     let mut passed = false;
+    let mut passed_chain = false;
     for i in 2..4 {
         let held = w.nodes[i].holds;
         advance(&mut w, i, &mut Outbox::new());
         if !held && w.nodes[i].holds {
             passed = true;
+            passed_chain |= i == 3 && chained_waiter;
             assert!(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
         }
     }
@@ -1260,6 +1269,10 @@ fn check_gate_leaf_progress(width: u8) {
     kani::cover!(
         passed && w.nodes[0].holds,
         "an older leaf progresses while a disjoint overtaker remains active"
+    );
+    kani::cover!(
+        passed_chain && w.nodes[0].holds,
+        "passes a waiter blocked by an older overlapping waiter"
     );
 }
 

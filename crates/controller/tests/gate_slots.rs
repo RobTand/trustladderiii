@@ -227,3 +227,33 @@ fn q48_repeated_disjoint_arrivals_cannot_delay_the_older_waiter_after_release() 
         assert!(r.0.nodes[last.unwrap().0 as usize].holds);
     }
 }
+
+#[test]
+fn q48_disjoint_leaf_passes_a_waiter_blocked_by_an_older_overlapping_waiter() {
+    let mut r = GateRun(World::new(&[3], 8));
+    let holder = r.request();
+    r.plan(holder, 0);
+    for files in [[0, 1], [1, 2]] {
+        let node = r.request();
+        let footprint = r.0.intern_footprint(files.map(FileId));
+        r.reply(
+            node,
+            Reply::PlanLeaf {
+                footprint,
+                fits: true,
+            },
+        );
+        assert!(!r.0.nodes[node.0 as usize].holds);
+    }
+    let disjoint = r.request();
+    r.plan(disjoint, 5);
+    assert!(
+        r.0.nodes[disjoint.0 as usize].holds,
+        "disjoint work must pass a waiter held back by an older overlapping ticket"
+    );
+    assert!(!r.0.nodes[1].holds && !r.0.nodes[2].holds);
+    r.stop(holder);
+    assert!(r.0.nodes[1].holds && !r.0.nodes[2].holds);
+    r.stop(NodeId(1));
+    assert!(r.0.nodes[2].holds);
+}
