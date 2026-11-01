@@ -45,8 +45,13 @@ fn exploration_checkout_uses_pinned_commit_and_recovers_partial_checkout() {
     let root = f.root.path().join("explore");
     fs::create_dir(&root).unwrap();
     fs::write(root.join("partial"), "interrupted clone").unwrap();
+    let bare = f.root.path().join("fetched.git");
+    Worktrees::init_bare(&bare).unwrap();
+    let mut source = Worktrees::open(&bare, &bare).unwrap();
+    source.set_base_branch("main").unwrap();
+    source.fetch_base(&tl3_worktrees::Remote::local(&f.path).unwrap(), None).unwrap();
     let materials = json!({
-        "base_checkout": {"repository": f.path, "commit": f.base},
+        "base_checkout": {"repository": bare, "commit": f.base},
         "repo": {"readme": "base", "file_list": ["README.md"]}
     });
     materialize(&root, &materials).unwrap();

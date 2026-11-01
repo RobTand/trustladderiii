@@ -7,7 +7,8 @@
       "$ref": "ingest-input.json#/$defs/issue"
     },
     "repo": {
-      "$ref": "ingest-input.json#/$defs/repo"
+      "$ref": "ingest-input.json#/$defs/repo",
+      "description": "Bounded orientation at the pinned base. Explore source evidence with read-only tools."
     },
     "memories": {
       "$ref": "ingest-input.json#/$defs/memories"
