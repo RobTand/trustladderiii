@@ -250,7 +250,7 @@ pub(super) fn child(args: &[String]) {
     let point = args[4].clone();
     let mut store = Store::open(&settings).unwrap();
     store.set_boundary_hook(move |at, key, _| {
-        if (key.starts_with("controller:gates:") || key == "intern:repo:robtand:prismabuild")
+        if (key.starts_with("controller:gates:") || key == "intern:Repo:robtand:prismabuild")
             && format!("{at:?}") == point
         {
             park();
