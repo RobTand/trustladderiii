@@ -105,7 +105,8 @@ def test_restart_needs_a_restartable_request(tmp_path, request_doc, state, reply
     request_doc["inputs"]["state"].update(state)
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("kind,answers,body,answer,data", [
