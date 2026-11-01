@@ -68,7 +68,7 @@ def main():
                 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
                 from langchain_core.messages import AIMessage
                 reply = {'kind': 'brief', 'brief': 'The sandbox exercises TL3 changes.',
-                         'goals': [{'description': title, 'verification': 'read the README'}], 'memory_ids': []}
+                         'goals': [{'description': title, 'verification': 'test'}], 'memory_ids': []}
                 counts = {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18,
                           'input_token_details': {'cache_read': 8, 'cache_creation': 2}}
                 class RecordedModel(FakeMessagesListChatModel):
