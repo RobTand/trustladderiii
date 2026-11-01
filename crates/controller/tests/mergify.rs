@@ -2,6 +2,8 @@
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
 mod head_checks;
+#[path = "mergify/merge_closure.rs"]
+mod merge_closure;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -2421,6 +2423,16 @@ fn legacy_intent_ignores_completed_at() {
 fn main() {
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--merge-closure-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        merge_closure::scenario(&database.create("merge_closure"), &mode);
+        database.stop();
+        return;
+    }
+
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--requeue-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2736,6 +2748,9 @@ fn main() {
     for quota in [false, true] {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
+    for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
+        merge_closure::scenario(&database.create(&format!("merge_closure_{mode}")), mode);
+    }
     database.stop();
-    println!("93 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("98 Mergify scenarios passed; no skips; no live upstream calls");
 }
