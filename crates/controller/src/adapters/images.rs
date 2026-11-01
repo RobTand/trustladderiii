@@ -2,27 +2,29 @@ use crate::Repository;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
-pub(super) struct Images(BTreeMap<(String, String, u64), String>);
+pub(super) struct Images(BTreeMap<(String, String, u64), (Option<String>, bool)>);
 
 impl Images {
     pub(super) fn new(repos: &[tl3_config::Repository]) -> Self {
         Self(
             repos
                 .iter()
-                .filter_map(|repo| {
-                    repo.container_image.as_ref().map(|image| {
-                        (
-                            (
-                                repo.owner.to_ascii_lowercase(),
-                                repo.name.to_ascii_lowercase(),
-                                repo.installation_id,
-                            ),
-                            image.clone(),
-                        )
-                    })
+                .map(|repo| {
+                    (
+                        (repo.owner.to_ascii_lowercase(), repo.name.to_ascii_lowercase(), repo.installation_id),
+                        (repo.container_image.clone(), repo.exec_scratch),
+                    )
                 })
                 .collect(),
         )
+    }
+
+    pub(super) fn exec_scratch(&self, repo: &Repository) -> bool {
+        self.0.get(&(
+            repo.owner.to_ascii_lowercase(),
+            repo.name.to_ascii_lowercase(),
+            repo.installation,
+        )).is_some_and(|(_, enabled)| *enabled)
     }
 
     pub(super) fn for_repository<'a>(&'a self, repo: &Repository, fallback: &'a str) -> &'a str {
@@ -32,7 +34,7 @@ impl Images {
                 repo.name.to_ascii_lowercase(),
                 repo.installation,
             ))
-            .map(String::as_str)
+            .and_then(|(image, _)| image.as_deref())
             .unwrap_or(fallback)
     }
 }

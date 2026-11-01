@@ -219,6 +219,8 @@ pub struct Identity {
 pub struct Repository {
     #[serde(default)]
     pub container_image: Option<String>,
+    #[serde(default)]
+    pub exec_scratch: bool,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,

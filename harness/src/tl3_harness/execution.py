@@ -23,8 +23,11 @@ _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
 @dataclass(frozen=True)
 class Container:
     image: str
+    exec_scratch: bool = False
 
     def __post_init__(self):
+        if type(self.exec_scratch) is not bool:
+            raise ValueError("exec_scratch must be a boolean")
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("use an immutable image ID or manifest digest")
 
@@ -37,7 +40,7 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
-        "--tmpfs", f"/tmp:rw,nosuid,nodev,size={TMPFS_MIB}m,mode=1777",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,{'exec' if container.exec_scratch else 'noexec'},size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
         "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",
@@ -170,7 +173,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         demonstrating = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.DEMONSTRATING
                                             for test in check.tests))
         progress = Progress()
-        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container.image, ordinary)
+        cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
             observed = run_tree(old, container, ordinary, root / "base.jsonl", progress)
             if Outcome.NO_REPORT not in observed.values():
