@@ -7,7 +7,7 @@ use std::{
 };
 use support::{executor_probe::delivery, workers::Workers};
 use tl3_controller::{
-    Result,
+    Observation, Result,
     executor::{Completion, Delivery, Executor, Look, Reconciliation, WaitRecord},
 };
 use tl3_kernel::{EffectKind, Role};
@@ -51,6 +51,9 @@ impl Executor for Spy {
     }
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.hit("execute", delivery.key.clone())
+    }
+    fn observations(&mut self, delivery: &Delivery) -> Result<Vec<Observation>> {
+        self.hit("observations", delivery.key.clone())
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         self.hit("reconcile", delivery.key.clone())
@@ -201,6 +204,7 @@ fn assert_delivery_methods(
 ) {
     calls.lock().unwrap().clear();
     assert!(router.execute(d).is_err());
+    assert!(router.observations(d).is_err());
     assert!(router.reconcile(d).is_err());
     assert!(router.reconcile_cancellation(d).is_err());
     assert!(router.look(d).is_err());
@@ -213,6 +217,7 @@ fn assert_delivery_methods(
         *calls.lock().unwrap(),
         [
             "execute",
+            "observations",
             "reconcile",
             "reconcile_cancellation",
             "look",

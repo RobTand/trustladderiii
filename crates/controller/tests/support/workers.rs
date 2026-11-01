@@ -1,6 +1,6 @@
 use std::path::Path;
 use tl3_controller::{
-    Result,
+    Observation, Result,
     executor::{Completion, Delivery, Executor, Look, Output, Reconciliation, WaitRecord},
 };
 use tl3_kernel::{EffectKind, Role};
@@ -101,6 +101,9 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
         let mut completion = self.fake.execute(delivery)?;
         (self.fake_completion)(delivery, &mut completion);
         Ok(completion)
+    }
+    fn observations(&mut self, delivery: &Delivery) -> Result<Vec<Observation>> {
+        self.backend(delivery).observations(delivery)
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         if self.is_real(delivery) {
