@@ -2894,7 +2894,16 @@ fn main() {
             mode
         ));
     }
-    for mode in ["path-filter", "wrong-app", "late-report", "rob-clear"] {
+    for mode in [
+        "path-filter",
+        "wrong-app",
+        "late-report",
+        "rob-clear",
+        "clock-running",
+        "clock-missing",
+        "ci-failed",
+        "head-replaced",
+    ] {
         scenario!(missing_checks::scenario(
             &database.create(&format!("missing_{mode}")),
             mode

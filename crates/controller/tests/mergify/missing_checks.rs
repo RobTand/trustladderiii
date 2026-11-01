@@ -5,12 +5,77 @@ use super::*;
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = publishing(settings, &api, root.path());
+    let (mut controller, clock) = publishing(settings, &api, root.path());
     let head = api.state.lock().unwrap().pull["head"]["sha"]
         .as_str()
         .unwrap()
         .to_owned();
     let before = controller.world().unwrap().nodes[0];
+    match mode {
+        "clock-running" => {
+            // A slow required check: its allowance timer must not count a failure.
+            let mut running = check_run(&head, 904, "Sandbox tests", "in_progress", 15368);
+            {
+                let mut state = api.state.lock().unwrap();
+                state.head_checks = vec![running.clone()];
+                state.suites = json!([suite(&head, 804, "in_progress")]);
+            }
+            deliver_run(&mut controller, &api, running.clone());
+            for _ in 0..4 {
+                tick(&mut controller, &clock);
+                assert_waiting(&mut controller, &api, &before);
+                assert!(
+                    incidents(&mut controller).is_empty(),
+                    "waiting for a running check is not a stall"
+                );
+            }
+            running["status"] = json!("completed");
+            running["conclusion"] = json!("success");
+            api.state.lock().unwrap().head_checks[0] = running.clone();
+            deliver_run(&mut controller, &api, running);
+            assert_enqueued(&mut controller, &api, &before);
+            println!("test missing_check_{mode} ... ok");
+            return;
+        }
+        "ci-failed" => {
+            // Q47 through the check wake: a code failure takes the failed round.
+            let mut failed = check_run(&head, 901, "Sandbox tests", "completed", 15368);
+            failed["conclusion"] = json!("failure");
+            api.state.lock().unwrap().head_checks = vec![failed.clone()];
+            let mut body = webhook_fixture();
+            body["action"] = json!("completed");
+            body["check_run"] = failed;
+            let snapshot = controller.snapshot().unwrap();
+            for input in Translator::new(api.clients())
+                .unwrap()
+                .webhook(&parsed("check_run", body), &snapshot, &bootstrap().repos)
+                .unwrap()
+            {
+                ingress::apply(&mut controller, input).unwrap();
+            }
+            // Stop at the failed round; simulated agents would otherwise carry it on.
+            ingress::drain(&mut controller).unwrap();
+            for _ in 0..50 {
+                if controller.world().unwrap().nodes[0].phase != Phase::Publishing
+                    || !controller.drive_once().unwrap()
+                {
+                    break;
+                }
+            }
+            let node = controller.world().unwrap().nodes[0];
+            assert!(matches!(node.phase, Phase::Making), "{:?}", node.phase);
+            assert_eq!(node.round, 1);
+            assert_eq!(
+                node.fx_failures, before.fx_failures,
+                "no failure is counted"
+            );
+            assert_eq!(node.fx_incidents, before.fx_incidents);
+            assert_eq!(api.state.lock().unwrap().posts, 0);
+            println!("test missing_check_{mode} ... ok");
+            return;
+        }
+        _ => {}
+    }
     {
         let mut state = api.state.lock().unwrap();
         if mode == "wrong-app" {
@@ -54,6 +119,36 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     assert_waiting(&mut controller, &api, &before);
     match mode {
         "path-filter" => {}
+        "clock-missing" => {
+            for _ in 0..4 {
+                tick(&mut controller, &clock);
+                assert_waiting(&mut controller, &api, &before);
+                assert_eq!(
+                    incidents(&mut controller).len(),
+                    1,
+                    "only the missing-check incident; no stall incident"
+                );
+                assert_eq!(only_incident(&mut controller).value["open"], true);
+            }
+            let report = check_run(&head, 905, "Sandbox tests", "completed", 15368);
+            api.state.lock().unwrap().head_checks.push(report.clone());
+            deliver_run(&mut controller, &api, report);
+            assert_eq!(only_incident(&mut controller).value["open"], false);
+            assert_enqueued(&mut controller, &api, &before);
+        }
+        "head-replaced" => {
+            let mut body = pull_event(&api, "synchronize");
+            body["before"] = json!(head);
+            body["after"] = json!("cccccccccccccccccccccccccccccccccccccccc");
+            body["pull_request"]["head"]["sha"] = body["after"].clone();
+            api.state.lock().unwrap().pull = body["pull_request"].clone();
+            apply_webhook(&mut controller, &api, "pull_request", body);
+            assert_eq!(
+                only_incident(&mut controller).value["open"],
+                false,
+                "a replaced head's missing-check incident clears on that evidence"
+            );
+        }
         "wrong-app" => {
             // A rerun from the wrong app is not the required report.
             let rerun = check_run(&head, 903, "Sandbox tests", "completed", 15368);
@@ -100,12 +195,28 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     println!("test missing_check_{mode} ... ok");
 }
 
-fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Controller {
+fn publishing(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+) -> (Controller, head_checks::Clock) {
     api.state.lock().unwrap().required = true;
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+        std::time::SystemTime::now(),
+    )));
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
-    let mut controller =
-        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    let mut controller = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.github_mergify.silence_secs = 1;
+    allowances.github_mergify.no_progress_secs = 3;
+    controller.set_allowances(allowances);
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());
     controller
         .intake(LabelledIssue {
@@ -150,7 +261,24 @@ fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Contro
         0,
         "the enqueue waits for the required check"
     );
+    (controller, clock)
+}
+
+/// Moves past every allowance timer, then runs the looks that come due.
+fn tick(controller: &mut Controller, clock: &head_checks::Clock) {
+    clock.0.set(clock.0.get() + Duration::from_secs(10));
+    controller.look_due().unwrap();
+    drain(controller);
+}
+
+fn incidents(controller: &mut Controller) -> Vec<tl3_store::WorldRow> {
     controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.table == "incidents")
+        .collect()
 }
 
 fn check_run(head: &str, id: u64, name: &str, status: &str, app: u64) -> Value {
