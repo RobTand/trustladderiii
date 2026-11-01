@@ -94,7 +94,9 @@ class Reporter:
         self.collection_errors = []
 
     @pytest.fixture(autouse=True)
-    def _tl3_scratch(self):
+    def _tl3_scratch(self, tmp_path_factory):
+        # A lazily used session factory must not live inside function scratch.
+        tmp_path_factory.getbasetemp()
         # Function fixtures finish before this directory is released; wider
         # scoped fixtures keep their own session-owned temporary directories.
         with tempfile.TemporaryDirectory(prefix='tl3-test-') as directory:
