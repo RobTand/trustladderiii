@@ -1081,7 +1081,7 @@ fn message_reconciliation() {
     assert!(!api.state.lock().unwrap().closed);
     assert!(api.state.lock().unwrap().comments.iter().any(|c| {
         let body = c["body"].as_str().unwrap();
-        body.contains("notice:0:3")
+        body.contains(&GitHub::marker("notice:0:3"))
             && body.contains("Comment `restart` on this issue to start again.")
     }));
     let mut summary = delivery(Notice::Summary(Outcome::NotActionable));
