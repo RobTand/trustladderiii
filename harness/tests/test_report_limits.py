@@ -92,3 +92,19 @@ def test_plan_budget_counts_escaped_bytes_and_the_unique_union():
         validate_plan_size((first, first + 'second'))
     with pytest.raises(ValueError, match='4194304.*reduce'):
         validate_plan_size(('test_many.py::test_' + '"' * (2 * 1024 * 1024),))
+
+
+def test_oversized_expansion_with_collection_errors_is_still_a_plan_error(tmp_path, monkeypatch):
+    (tmp_path / 'test_many.py').write_text(
+        'import pytest\n@pytest.mark.parametrize("value", [1], '
+        'ids=["x" * (4 * 1024 * 1024)])\n'
+        'def test_many(value): assert value == 1\n')
+    (tmp_path / 'test_broken.py').write_text('raise RuntimeError("collection error")\n')
+    monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
+    tests = ('test_many.py::test_many', 'test_broken.py::test_broken')
+    messages = {}
+    outcomes = execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl',
+                                  Progress(), messages=messages)
+    assert outcomes == dict.fromkeys(tests, Outcome.UNCOLLECTED)
+    assert all('4194304' in messages[test] for test in tests)
