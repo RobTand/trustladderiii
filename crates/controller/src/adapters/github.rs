@@ -186,6 +186,30 @@ impl Adapter {
         ))?;
         Ok(Self::linked(delivery, issue))
     }
+    /// Q49: read the issue's current text, and reopen it only if TL3 closed it.
+    fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let mut issue = self.runtime.block_on(client.issue(&repo, delivery.issue))?;
+        if issue.state == "closed" {
+            let app = format!("{}[bot]", client.app_slug());
+            let events = self
+                .runtime
+                .block_on(client.issue_events(&repo, delivery.issue))?;
+            if events
+                .iter()
+                .rev()
+                .find(|event| event.event == "closed")
+                .and_then(|event| event.actor.as_ref())
+                .is_some_and(|actor| actor.login == app)
+            {
+                issue = self
+                    .runtime
+                    .block_on(client.reopen_issue(&repo, delivery.issue))?;
+            }
+        }
+        Ok(Self::linked(delivery, issue))
+    }
     fn close_reason(delivery: &Delivery) -> Option<CloseReason> {
         match delivery.output {
             Out::Notice {
@@ -193,8 +217,7 @@ impl Adapter {
                 ..
             } => Some(CloseReason::Completed),
             Out::Notice {
-                notice:
-                    Notice::Summary(Outcome::Stopped | Outcome::Duplicate | Outcome::NotActionable),
+                notice: Notice::Summary(Outcome::Duplicate | Outcome::NotActionable),
                 ..
             } => Some(CloseReason::NotPlanned),
             _ => None,
@@ -387,6 +410,10 @@ impl Executor for Adapter {
                 },
             );
         }
+        // A restart only reads the issue and reopens it, so running it again is safe.
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return Ok(Reconciliation::Absent);
+        }
         if Self::request_notice(delivery).is_none()
             && !matches!(
                 delivery.output,
@@ -458,6 +485,15 @@ fn writer_input(
             kind: MessageKind::Note,
             facts: json!({"issue_title": title, "request": request,
                 "change": change, "change_quote": text}),
+            violations: vec![],
+        });
+    }
+    if let Some(crate::steering::Task::RestartDropped { text }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": "The issue for this request could not be found, so the restart was dropped. Nothing was filed.",
+                "change_quote": text}),
             violations: vec![],
         });
     }
@@ -618,6 +654,9 @@ impl Adapter {
         if let Some(crate::steering::Task::FileRequest { .. }) = &delivery.steering {
             return self.file_request(delivery);
         }
+        if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
+            return self.restart(delivery);
+        }
         let notice = Self::request_notice(delivery);
         if notice.is_none()
             && !matches!(
@@ -652,7 +691,12 @@ impl Adapter {
             .is_none()
         {
             let mut policy = self.policy.clone();
-            let input = if matches!(notice, Some(Notice::Incident { .. })) {
+            // These posts can't read the request's issue: it lives elsewhere or is gone.
+            let input = if matches!(notice, Some(Notice::Incident { .. }))
+                || matches!(
+                    delivery.steering,
+                    Some(crate::steering::Task::RestartDropped { .. })
+                ) {
                 let context = delivery
                     .question_context
                     .as_ref()
@@ -777,9 +821,16 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
             )))
         }
         Out::Notice {
-            notice: Notice::Summary(_),
+            notice: Notice::Summary(outcome),
             ..
-        } => Ok(delivery.note.clone()),
+        } => {
+            let restart = (outcome == Outcome::Stopped)
+                .then_some("Comment `restart` on this issue to start again.");
+            Ok(match (restart, delivery.note.as_deref()) {
+                (Some(restart), Some(note)) => Some(format!("{restart}\n\n{note}")),
+                (restart, note) => restart.or(note).map(str::to_owned),
+            })
+        }
         _ => Ok(None),
     }
 }
@@ -787,6 +838,38 @@ fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
 #[cfg(test)]
 mod scope_summary_tests {
     use super::*;
+
+    #[test]
+    fn stopped_summary_keeps_issue_open_and_offers_restart() {
+        let summary = |outcome: Outcome, note: Option<&str>| -> Delivery {
+            serde_json::from_value(json!({
+                "key":"summary:0", "epoch":1,
+                "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(outcome)},
+                "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+                "issue":42, "paths":[], "attempt":1, "round":0, "note":note
+            }))
+            .unwrap()
+        };
+        let restart = "Comment `restart` on this issue to start again.";
+        assert!(Adapter::close_reason(&summary(Outcome::Stopped, None)).is_none());
+        assert_eq!(
+            fixed_notice_text(&summary(Outcome::Stopped, None)).unwrap(),
+            Some(restart.into())
+        );
+        let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
+        let text = fixed_notice_text(&summary(Outcome::Stopped, Some(saved)))
+            .unwrap()
+            .unwrap();
+        assert!(text.starts_with(restart) && text.ends_with(saved));
+        for outcome in [
+            Outcome::Duplicate,
+            Outcome::NotActionable,
+            Outcome::AlreadyDone,
+        ] {
+            assert!(Adapter::close_reason(&summary(outcome, None)).is_some());
+            assert_eq!(fixed_notice_text(&summary(outcome, None)).unwrap(), None);
+        }
+    }
 
     #[test]
     fn scope_summary_keeps_scratch_and_trim_notes_separate_and_appends_each_once() {

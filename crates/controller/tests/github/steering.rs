@@ -1087,7 +1087,7 @@ impl Executor for RaceWorkers {
     }
 }
 
-fn race_controller(
+pub(super) fn race_controller(
     settings: &tl3_config::Store,
     root: &Path,
     api: &Server,

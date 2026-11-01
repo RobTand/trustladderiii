@@ -223,7 +223,8 @@ pub(crate) fn validate_classification(inputs: &Value, reply: &Value) -> Result<(
     classifier_schema(reply, true)?;
     let closed = inputs["state"]["closed"] == true;
     let kind = reply["kind"].as_str().unwrap();
-    if (closed && !matches!(kind, "complaint" | "remark" | "unsure"))
+    if (kind == "restart" && inputs["state"]["restartable"] != true)
+        || (closed && !matches!(kind, "complaint" | "remark" | "unsure" | "restart"))
         || (!closed && kind == "complaint")
     {
         return Err(Error::Invalid(
@@ -350,6 +351,39 @@ mod classifier_tests {
         assert!(
             validate_classification(&inputs, &json!({"kind": "complaint", "summary": "Broken"}))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn restart_needs_a_restartable_request() {
+        let restart = json!({"kind": "restart"});
+        for (closed, restartable, valid) in [
+            (false, Some(true), true),
+            (true, Some(true), true),
+            (true, Some(false), false),
+            (false, Some(false), false),
+            (true, None, false),
+        ] {
+            let mut inputs = json!({"comment": {"author": "owner", "body": "Restart this."},
+                "state": {"phase": "Making", "closed": closed, "open_question": null}});
+            if let Some(restartable) = restartable {
+                inputs["state"]["restartable"] = json!(restartable);
+            }
+            validate_inputs("classifier", &inputs).unwrap();
+            assert_eq!(
+                validate_classification(&inputs, &restart).is_ok(),
+                valid,
+                "closed={closed} restartable={restartable:?}"
+            );
+        }
+        let inputs = json!({"comment": {"author": "owner", "body": "Restart this."},
+            "state": {"phase": "Making", "closed": false, "restartable": true}});
+        assert!(
+            validate_classification(
+                &inputs,
+                &json!({"kind": "restart", "new_text": "Return goodbye."})
+            )
+            .is_err()
         );
     }
 

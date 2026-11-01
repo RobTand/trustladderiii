@@ -1460,7 +1460,7 @@ impl Controller {
                 notice: tl3_kernel::Notice::FileReplacement,
             } = output
             {
-                self.pending_replacement(snapshot, commit, node)?;
+                self.pending_replacement(snapshot, &world, commit, node)?;
                 continue;
             }
             let (node, key) = match output {

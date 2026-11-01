@@ -30,6 +30,9 @@
         "closed": {
           "type": "boolean"
         },
+        "restartable": {
+          "type": "boolean"
+        },
         "open_question": {
           "oneOf": [
             {

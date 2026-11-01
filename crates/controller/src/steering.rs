@@ -27,6 +27,16 @@ pub enum Task {
         since: String,
         comment_issue: u64,
     },
+    /// Q49: a restart files its request from the issue text read when it applies.
+    Restart {
+        comment_key: String,
+        text: String,
+        issue: Option<tl3_github::Issue>,
+    },
+    /// The request's issue is gone, so the restart was dropped and nothing filed.
+    RestartDropped {
+        text: String,
+    },
 }
 
 impl Delivery {
@@ -82,15 +92,21 @@ impl Controller {
             if outcome == Outcome::Replaced || previous.nodes[index].phase.is_closed() {
                 continue;
             }
-            let Task::FileRequest {
-                text,
-                correction: false,
-                ..
-            } = crate::decode_stored(row.value.clone())?
-            else {
-                return Err(Error::Invalid("invalid pending replacement"));
-            };
             let node = NodeId(index as u64);
+            let text = match crate::decode_stored(row.value.clone())? {
+                Task::FileRequest {
+                    text,
+                    correction: false,
+                    ..
+                } => text,
+                // A restart asked for while the stop finished applies once the node closes.
+                restart @ Task::Restart { issue: None, .. } if restartable_outcome(outcome) => {
+                    self.queue_restart(snapshot, world, node, restart, commit)?;
+                    continue;
+                }
+                Task::Restart { text, .. } => text,
+                _ => return Err(Error::Invalid("invalid pending replacement")),
+            };
             let binding = request(snapshot, node)?;
             commit.rows.push(RowChange::Delete {
                 table: "replacement".into(),
@@ -181,7 +197,8 @@ impl Controller {
             json!({"id": q.id.to_string(), "kind": if q.clarified { "unclear_answer" } else { kind }, "answers": answers})
         });
         let mut inputs = json!({"comment": {"author": row.value["comment"]["user"]["login"], "body": row.value["comment"]["body"]},
-                "state": {"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question}});
+                "state": {"phase": format!("{:?}", n.phase), "closed": n.phase.is_closed(), "open_question": open_question,
+                    "restartable": restartable(n.phase)}});
         if let Some(pending) = snapshot
             .rows
             .iter()
@@ -257,7 +274,9 @@ impl Controller {
                     || (r.table == "comment_jobs"
                         && r.value["steering"]["Classify"]["comment_key"] == row.id)
             }) || snapshot.pending_effects.iter().any(|e| {
-                e.key == format!("clarify:{}", row.id) || e.key == format!("correction:{}", row.id)
+                e.key == format!("clarify:{}", row.id)
+                    || e.key == format!("correction:{}", row.id)
+                    || e.key == format!("restart:{}", row.id)
             });
             if closed && !pending {
                 let mut commit = Commit::new(
@@ -389,6 +408,33 @@ impl Controller {
             queue_comment(self, commit, clarification);
             return Ok(None);
         }
+        if kind == "restart" {
+            // The phase can change while the classifier runs, for example by a merge.
+            if !restartable(n.phase) {
+                return Ok(None);
+            }
+            let restart = Task::Restart {
+                comment_key: comment_key.clone(),
+                text: inputs["comment"]["body"].as_str().unwrap().into(),
+                issue: None,
+            };
+            commit
+                .rows
+                .push(put("replacement", node.0.to_string(), json!(restart)));
+            return Ok(match n.phase {
+                Phase::Closed(_) => {
+                    self.queue_restart(snapshot, world, node, restart, commit)?;
+                    None
+                }
+                // Stopping already tears the work down; close_replacement starts it again.
+                Phase::Stopping(_) => None,
+                _ => Some(Event::Command {
+                    node,
+                    id: n.last_cmd + 1,
+                    command: Command::ChangeRequest,
+                }),
+            });
+        }
         if kind == "complaint" && n.phase.is_closed() {
             let mut correction = delivery.clone();
             correction.key = format!("correction:{comment_key}");
@@ -497,6 +543,7 @@ impl Controller {
     pub(crate) fn pending_replacement(
         &self,
         snapshot: &Snapshot,
+        world: &World,
         commit: &mut Commit,
         node: NodeId,
     ) -> Result<()> {
@@ -521,7 +568,105 @@ impl Controller {
                     .map(|row| row.value.clone())
             })
             .ok_or(Error::Invalid("steering notice context missing"))?;
+        // A restart reads the issue first; its observation fills in replacement_pending.
+        if let restart @ Task::Restart { .. } = crate::decode_stored(value.clone())? {
+            return self.queue_restart(snapshot, world, node, restart, commit);
+        }
         commit.rows.push(put("replacement_pending", id, value));
+        Ok(())
+    }
+
+    fn queue_restart(
+        &self,
+        snapshot: &Snapshot,
+        world: &World,
+        node: NodeId,
+        restart: Task,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Task::Restart { comment_key, .. } = &restart else {
+            return Err(Error::Invalid("invalid restart"));
+        };
+        let binding = request(snapshot, node)?;
+        let n = &world.nodes[node.0 as usize];
+        queue_comment(
+            self,
+            commit,
+            Delivery {
+                key: format!("restart:{comment_key}"),
+                epoch: snapshot.epoch.get(),
+                output: Output::Comment {
+                    node,
+                    kind: CommentKind::Restart,
+                },
+                generation: n.generation,
+                head_sha: None,
+                repository: binding.repo,
+                issue: binding.issue,
+                pull_request: None,
+                paths: vec![],
+                attempt: 1,
+                round: 0,
+                replanned: n.replanned,
+                checks: None,
+                job_generation: None,
+                question: None,
+                marker_key: None,
+                note: None,
+                scope_removals: None,
+                question_context: None,
+                request_text: binding.source,
+                proposed: None,
+                steering: Some(restart),
+            },
+        );
+        Ok(())
+    }
+
+    /// Q49: a gone issue (404 or 410) ends the restart. Other read failures keep
+    /// it pending behind their incident, and clearing that incident retries it.
+    pub(crate) fn drop_restart(
+        &self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Some(Task::Restart { text, .. }) = &delivery.steering else {
+            return Err(Error::Invalid("invalid restart"));
+        };
+        let node = delivery.node();
+        let id = node.0.to_string();
+        for table in ["replacement", "replacement_pending"] {
+            if snapshot.rows.iter().any(|r| r.table == table && r.id == id) {
+                commit.rows.push(RowChange::Delete {
+                    table: table.into(),
+                    id: id.clone(),
+                });
+            }
+        }
+        let binding = request(snapshot, node)?;
+        let mut note = delivery.clone();
+        note.key = format!("restart-dropped:{}", delivery.key);
+        note.marker_key = None;
+        note.epoch = snapshot.epoch.get();
+        note.output = Output::Comment {
+            node,
+            kind: CommentKind::ReplacementDropped,
+        };
+        note.question_context = Some(json!({"issue_title": binding.title,
+            "request": format!("{} (https://github.com/{}/{}/issues/{})", binding.title,
+                binding.repo.owner, binding.repo.name, binding.issue)}));
+        note.steering = Some(Task::RestartDropped { text: text.clone() });
+        // The request's own issue is gone, so the note goes to the operations issue.
+        if let Some(operations) = &self.bootstrap.operations {
+            note.repository = Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
+            };
+            note.issue = operations.number;
+        }
+        queue_comment(self, commit, note);
         Ok(())
     }
 
@@ -572,12 +717,34 @@ impl Controller {
         if old.repo != repository {
             return Err(Error::Invalid("linked request repository mismatch"));
         }
+        let id = original.0.to_string();
         if issue.number == old.issue
             && !snapshot
                 .rows
                 .iter()
-                .any(|row| row.table == "replacement_pending" && row.id == original.0.to_string())
+                .any(|row| row.table == "replacement_pending" && row.id == id)
         {
+            // Q49: the restart's new request starts from the issue text read just now.
+            if let Some(row) = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "replacement" && row.id == id)
+                && let Task::Restart {
+                    comment_key,
+                    text,
+                    issue: None,
+                } = crate::decode_stored(row.value.clone())?
+            {
+                commit.rows.push(put(
+                    "replacement_pending",
+                    id,
+                    json!(Task::Restart {
+                        comment_key,
+                        text,
+                        issue: Some(issue),
+                    }),
+                ));
+            }
             return Ok(None);
         }
         let labelled = crate::LabelledIssue {
@@ -635,14 +802,17 @@ pub(crate) fn replacement_issue(
     original: NodeId,
     value: &Value,
 ) -> Result<tl3_github::Issue> {
-    let Task::FileRequest {
-        text,
-        since,
-        correction: false,
-        ..
-    } = crate::decode_stored(value.clone())?
-    else {
-        return Err(Error::Invalid("invalid pending replacement"));
+    let (text, since) = match crate::decode_stored(value.clone())? {
+        Task::FileRequest {
+            text,
+            since,
+            correction: false,
+            ..
+        } => (text, since),
+        Task::Restart {
+            issue: Some(issue), ..
+        } => return Ok(issue),
+        _ => return Err(Error::Invalid("invalid pending replacement")),
     };
     let old = request(snapshot, original)?;
     Ok(tl3_github::Issue {
@@ -656,6 +826,21 @@ pub(crate) fn replacement_issue(
         labels: vec![],
         pull_request: None,
     })
+}
+
+/// Q49: restart is offered until the work merges or is already being replaced.
+fn restartable(phase: Phase) -> bool {
+    match phase {
+        Phase::Stopping(outcome) | Phase::Closed(outcome) => restartable_outcome(outcome),
+        _ => true,
+    }
+}
+
+fn restartable_outcome(outcome: Outcome) -> bool {
+    matches!(
+        outcome,
+        Outcome::Stopped | Outcome::Duplicate | Outcome::AlreadyDone | Outcome::NotActionable
+    )
 }
 
 fn queue_comment(controller: &Controller, commit: &mut Commit, delivery: Delivery) {
