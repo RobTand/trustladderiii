@@ -38,3 +38,28 @@ def test_temporary_files_are_removed_after_passes_and_failures(tmp_path, monkeyp
         result = execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl', Progress())
         assert result == {test: Outcome.ASSERTION if i == 1 else Outcome.PASSED for i, test in enumerate(tests)}
     assert not list(scratch.rglob('*payload*')), 'earlier tests must release their scratch before the next test'
+
+
+@pytest.mark.parametrize('summary', [False, True])
+def test_lazily_used_session_factory_survives_function_scratch(tmp_path, monkeypatch, summary):
+    import json
+    import subprocess
+
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    monkeypatch.setenv('TMPDIR', str(scratch))
+    monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    (tmp_path / 'test_factory.py').write_text('''import pytest
+
+@pytest.mark.parametrize('value', range(2))
+def test_factory(tmp_path_factory, value):
+    path = tmp_path_factory.mktemp('shared')
+    (path / 'marker').write_text(str(value))
+''')
+    tests = tuple(f'test_factory.py::test_factory[{i}]' for i in range(2))
+    command = [sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tmp_path)]
+    if summary:
+        command.append('--summary')
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout
+    assert len(list(scratch.rglob('marker'))) == 2, 'session-factory files must outlive function scratch'
