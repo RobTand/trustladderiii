@@ -26,6 +26,52 @@ fn recorded(name: &str) -> (PullRequest, Vec<CheckRun>) {
     )
 }
 
+fn dequeue_completion(rule_name: &str) -> (PullRequest, Vec<CheckRun>) {
+    let (pull, _) = recorded("running");
+    let mut checks: Vec<CheckRun> =
+        serde_json::from_value(fixture("interrupted", "checks")).unwrap();
+    for check in &mut checks {
+        check.head_sha = pull.head.sha.clone();
+    }
+    let queue = checks
+        .iter_mut()
+        .find(|check| check.name == tl3_mergify::QUEUE_CHECK)
+        .unwrap();
+    queue.completed_at = Some("2026-10-31T22:19:34Z".parse().unwrap());
+    let mut rule = queue.clone();
+    rule.id += 1;
+    rule.name = rule_name.into();
+    rule.status = "completed".into();
+    rule.conclusion = Some("failure".into());
+    rule.completed_at = Some("2026-10-31T22:20:02Z".parse().unwrap());
+    checks.push(rule);
+    (pull, checks)
+}
+
+#[test]
+fn live_queue_rule_name_releases_dequeue() {
+    let (pull, checks) = dequeue_completion("Rule: Queue TL3-approved PRs (queue)");
+    assert!(observe(pull.clone(), &checks, &pull.head.sha).dequeue_rule_concluded);
+}
+
+#[test]
+fn queue_rule_completion_requires_both_timestamps() {
+    let (pull, checks) = dequeue_completion(tl3_mergify::QUEUE_RULE_CHECK);
+    assert!(observe(pull.clone(), &checks, &pull.head.sha).dequeue_rule_concluded);
+    for missing in [tl3_mergify::QUEUE_CHECK, tl3_mergify::QUEUE_RULE_CHECK] {
+        let mut checks = checks.clone();
+        checks
+            .iter_mut()
+            .find(|check| check.name == missing)
+            .unwrap()
+            .completed_at = None;
+        assert!(
+            !observe(pull.clone(), &checks, &pull.head.sha).dequeue_rule_concluded,
+            "completion without {missing}'s timestamp cannot release a dequeue"
+        );
+    }
+}
+
 #[test]
 fn recorded_checks_recognize_queue_facts() {
     for (name, expected) in [

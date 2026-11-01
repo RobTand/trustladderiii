@@ -72,9 +72,10 @@ Retrying a label operation converges without an effect key. A successful write
 confirms the label change, not queue membership. Reconcile through `read`.
 The controller must serialize opposing queue and dequeue effects and handle a
 push between queue's preflight read and label write. Before requeueing, it waits
-for the `dequeued` label or the served repo's `Rule: Queue TL3-approved PRs` check
+for a fresh `dequeued` label or the served repo's `Rule: Queue TL3-approved PRs (queue)` check
 to conclude. `Observation.dequeue_rule_concluded` rejects an older rule result
-when the queue check supplies its dequeue time.
+and requires both check completion times. The adapter uses GitHub label events
+to reject a `dequeued` label left over from before the latest queue entry.
 
 Mergify's [queue command](https://docs.mergify.com/commands/queue/) resets a dequeued
 PR; the older requeue command is deprecated. Its [command syntax](https://docs.mergify.com/commands/)
