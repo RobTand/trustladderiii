@@ -763,9 +763,18 @@ fn check_gate_grant(width: u8) {
     let changed = advance(&mut after, 0, &mut out);
     require_consistent(&after);
     let holders = before.nodes.iter().filter(|n| n.holds).count();
-    kani::cover!(after.nodes[0].holds && holders == usize::from(width - 1), "last available slot granted");
-    kani::cover!(n.ticket.is_some() && !n.paused && !slot_free(&before, 0), "full gate or overlapping footprint blocks");
-    kani::cover!(n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0), "older ticket keeps its place");
+    kani::cover!(
+        after.nodes[0].holds && holders == usize::from(width - 1),
+        "last available slot granted"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && !slot_free(&before, 0),
+        "full gate or overlapping footprint blocks"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0),
+        "older ticket keeps its place"
+    );
     let mut older_blocked = false;
     for j in 1..before.nodes.len() {
         let other = before.nodes[j];
@@ -773,21 +782,30 @@ fn check_gate_grant(width: u8) {
             if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
                 if theirs < mine {
                     older_blocked |= !slot_free(&before, j);
-                    if after.nodes[0].holds { assert!(!slot_free(&before, j)); }
+                    if after.nodes[0].holds {
+                        assert!(!slot_free(&before, j));
+                    }
                 }
             }
         }
     }
-    kani::cover!(after.nodes[0].holds && older_blocked, "a file-blocked older waiter reserves no slot");
+    kani::cover!(
+        after.nodes[0].holds && older_blocked,
+        "a file-blocked older waiter reserves no slot"
+    );
     assert_eq!(&after.nodes[1..], &before.nodes[1..]);
     if after.nodes[0].holds {
         assert!(slot_free(&before, 0) && first_in_line(&before, 0) && !n.paused);
         assert!(after.nodes[0].ticket.is_none());
     } else {
         assert!(!after.nodes[0].pool);
-        if n.ticket.is_some() && !n.paused { assert_eq!(after.nodes[0].ticket, n.ticket); }
+        if n.ticket.is_some() && !n.paused {
+            assert_eq!(after.nodes[0].ticket, n.ticket);
+        }
     }
-    if changed { assert!(after.nodes[0].settle_rank() < n.settle_rank()); }
+    if changed {
+        assert!(after.nodes[0].settle_rank() < n.settle_rank());
+    }
     check_nodes(&before, &after);
     check_outputs(&before, &after, &out, None);
 }
@@ -796,24 +814,42 @@ fn check_gate_planning(width: u8) {
     let before = gate_world(width);
     kani::assume(before.nodes[0].phase == Phase::Unplanned);
     kani::assume(!before.nodes[0].paused);
-    let waiting = before.nodes.iter().filter(|n| matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some()).count();
+    let waiting = before
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some())
+        .count();
     let mut after = before.clone();
     let mut out = Outbox::new();
     let changed = advance(&mut after, 0, &mut out);
     require_consistent(&after);
     assert_eq!(changed, waiting < usize::from(width));
     assert!(!after.nodes[0].holds && !after.nodes[0].pool);
-    kani::cover!(waiting == usize::from(width) && !changed, "W waiters block planning");
-    kani::cover!(waiting == usize::from(width - 1) && changed, "fewer than W waiters admit planning");
-    if changed { assert!(after.nodes[0].settle_rank() < before.nodes[0].settle_rank()); }
+    kani::cover!(
+        waiting == usize::from(width) && !changed,
+        "W waiters block planning"
+    );
+    kani::cover!(
+        waiting == usize::from(width - 1) && changed,
+        "fewer than W waiters admit planning"
+    );
+    if changed {
+        assert!(after.nodes[0].settle_rank() < before.nodes[0].settle_rank());
+    }
 }
 
 fn check_gate_progress(width: u8) {
     let before = gate_world(width);
     kani::assume(before.is_settled());
     let event = before.witness().unwrap();
-    kani::cover!(before.nodes.iter().filter(|n| n.holds).count() == usize::from(width), "a full gate has a progress event");
-    kani::cover!(before.nodes.iter().filter(|n| n.pool).count() == usize::from(width), "all W leaves have admitted maker runs");
+    kani::cover!(
+        before.nodes.iter().filter(|n| n.holds).count() == usize::from(width),
+        "a full gate has a progress event"
+    );
+    kani::cover!(
+        before.nodes.iter().filter(|n| n.pool).count() == usize::from(width),
+        "all W leaves have admitted maker runs"
+    );
     let mut after = before.clone();
     let mut out = Outbox::new();
     apply(&mut after, event, &mut out);
