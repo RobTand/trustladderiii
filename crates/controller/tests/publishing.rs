@@ -337,6 +337,15 @@ impl Respond for Api {
         let prefix = "/repos/RobTand/tl3-sandbox";
         let path = path.strip_prefix(prefix).unwrap_or(path);
         let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
+        if method == "GET"
+            && matches!(
+                path,
+                "/branches/main/protection/required_status_checks"
+                    | "/branches/master/protection/required_status_checks"
+            )
+        {
+            return ResponseTemplate::new(404);
+        }
         if path == "/pulls/17" {
             if method == "PATCH" {
                 s.proposed.as_mut().unwrap()["state"] = body["state"].clone();
@@ -357,6 +366,7 @@ impl Respond for Api {
             response
         } else {
             let value = match (method, path) {
+                ("GET", "/rules/branches/main" | "/rules/branches/master") => json!([]),
                 ("POST", "/pulls") => {
                     s.opens += 1;
                     s.operations.push("open".into());
