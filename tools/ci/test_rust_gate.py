@@ -12,6 +12,82 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_recorded_hosted_noise_passes_but_clear_regressions_fail(self):
+        bridge = 'tl3-controller/tl3_controller::adapters::worktrees::tests::github_installation_and_synchronous_token_bridge'
+        policy = {'seconds': 10, 'slow': {bridge: 15}}
+        samples = {
+            'hosted-x64': {'scope': 11.251069221, 'fixture routing': 10.36821593,
+                           'effect_http_brief': 10.880650097},
+            'hosted-arm64': {bridge: 15.343474895},
+        }
+        for runner, results in samples.items():
+            with self.subTest(runner=runner):
+                rust_gate.check_budget(results, policy, policy, runner_class=runner)
+                with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
+                    rust_gate.check_budget({name: policy['slow'].get(name, 10) * 2
+                                            for name in results}, policy, policy,
+                                           runner_class=runner)
+                with self.assertRaisesRegex(RuntimeError, 'budget exceeded'):
+                    rust_gate.check_budget(results, policy, policy)
+
+    def test_hosted_limits_have_fixed_boundaries_and_cannot_mask_policy_growth(self):
+        baseline = {'seconds': 10, 'slow': {'bridge': 15}}
+        for runner, limit in [('hosted-x64', 12.5), ('hosted-arm64', 11.5)]:
+            with self.subTest(runner=runner):
+                rust_gate.check_budget({'fast': limit}, baseline, baseline, runner_class=runner)
+                with self.assertRaisesRegex(RuntimeError, 'fast'):
+                    rust_gate.check_budget({'fast': limit + .001}, baseline, baseline,
+                                           runner_class=runner)
+                for policy in [{'seconds': 11, 'slow': {}},
+                               {'seconds': 10, 'slow': {'bridge': 16}},
+                               {'seconds': 10, 'slow': {'new': 1}}]:
+                    with self.assertRaisesRegex(RuntimeError, 'may not grow'):
+                        rust_gate.check_budget({}, policy, baseline, runner_class=runner)
+        with self.assertRaisesRegex(ValueError, 'runner class'):
+            rust_gate.check_budget({}, baseline, baseline, runner_class='unmeasured')
+
+    def test_runner_class_uses_hosted_linux_metadata_and_keeps_fleet_strict(self):
+        for environment, arch, expected in [('github-hosted', 'X64', 'hosted-x64'),
+                                             ('github-hosted', 'ARM64', 'hosted-arm64'),
+                                             ('self-hosted', 'ARM64', 'baseline'),
+                                             ('', 'X64', 'baseline')]:
+            with self.subTest(environment=environment, arch=arch), patch.dict(
+                    os.environ, {'RUNNER_ENVIRONMENT': environment, 'RUNNER_OS': 'Linux',
+                                 'RUNNER_ARCH': arch}):
+                self.assertEqual(rust_gate.runner_class(), expected)
+        with patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'github-hosted',
+                                    'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'unknown'}):
+            with self.assertRaisesRegex(ValueError, 'runner class'):
+                rust_gate.runner_class()
+
+    def test_hosted_workspace_records_class_and_preserves_functional_failures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / 'native.py'
+            policy = root / rust_gate.POLICY
+            policy.parent.mkdir(parents=True)
+            policy.write_text(json.dumps({'seconds': 10, 'slow': {}}))
+            valid = ('print(\'{"type":"test","event":"ok","name":"one","exec_time":11.251069221}\')\n'
+                     'print(\'{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0}\')\n')
+            fixture.write_text(valid)
+            binary = {'name': 'fixture', 'custom': False,
+                      'command': [sys.executable, str(fixture)]}
+            with patch.object(rust_gate, 'ROOT', root), \
+                 patch.object(rust_gate, 'baseline_policy', return_value={'seconds': 10, 'slow': {}}), \
+                 patch.object(rust_gate, 'collect_binaries', return_value=[binary]), \
+                 patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'github-hosted',
+                                         'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64'}):
+                report = rust_gate.test_workspace(Path('Cargo.toml'))
+                self.assertEqual(report['runner_class'], 'hosted-x64')
+                self.assertEqual(report['budget_multiplier'], 1.25)
+                self.assertEqual(report['tests']['fixture::one'], 11.251069221)
+                for content, message in [(valid + 'raise SystemExit(1)\n', 'exit'),
+                                         (valid.replace('"event":"ok","name"',
+                                                        '"event":"ignored","name"'), 'skipped')]:
+                    fixture.write_text(content)
+                    with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
+                        rust_gate.test_workspace(Path('Cargo.toml'))
+
     def test_shallow_pr_checkout_uses_target_policy_instead_of_its_own_exceptions(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'source'

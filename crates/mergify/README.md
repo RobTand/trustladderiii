@@ -42,7 +42,26 @@ pull_request_rules:
     actions:
       queue:
         name: default
+
+commands_restrictions:
+  queue:
+    conditions:
+      - or:
+          - sender-permission>=write
+          - sender=tl3-robtand[bot]
+  requeue:
+    conditions:
+      - or:
+          - sender-permission>=write
+          - sender=tl3-robtand[bot]
 ```
+
+Allow TL3's App login in `.mergify.yml` `commands_restrictions` for both `queue`
+and `requeue` before serving the repository. The deployed App is
+`tl3-robtand[bot]`; replace that login if using another App. Installing the App
+does not give its commands a human collaborator's write permission. Without an
+explicit allowance, Mergify can accept the comment and then refuse the command.
+See [command restrictions](https://docs.mergify.com/commands/restrictions/).
 
 Keep the label in `queue_conditions` so removing it dequeues the PR. TL3 posts
 its successful approval check on the reviewed head before adding the label.

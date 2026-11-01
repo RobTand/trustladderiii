@@ -1066,6 +1066,27 @@ their delivery and allowance without recursively creating incident posts.
 Stop and quota-resume errors are also logged, counted and re-armed. A persisted
 stop intent keeps the exact attempt identity across restart.
 
+Mergify recovery probes read the PR issue with one GET through the existing
+incident allowance. A successful read releases the hold on a quiet upstream.
+A confirmed effect resolves its recovery incident. Closing a request resolves
+its remaining operation recovery incidents; restart also repairs older closed
+rows. Failed notices still need delivery after closure. Kernel warnings,
+including unapproved merges, retain their own lifecycle.
+
+Cancelling queue admission ends its local watch without waiting for Mergify.
+The synchronous dispatch has ended, and the existing ClosePr teardown removes
+the queue label and closes the PR to undo any accepted write. This cancellation
+uses the original effect key across restart and does not claim queue acceptance.
+
+Mergify command comments have a separate reply. The adapter matches that reply
+to the App's marked command, requires Mergify's bot identity, and ignores old
+replies or replies following someone else's command. A refusal immediately
+raises a setup incident and is journalled across restart. That incident stops
+automatic recovery probes because a healthy GET cannot prove that command
+restrictions were corrected. Fix the served repo's command restrictions and
+clear the incident before retrying; the command receipt alone never proves
+queue acceptance.
+
 Set `[github.operations]` to the existing pinned operations issue in TL3's own
 repo. The app needs an installation there as well as on served repos. That
 repository participates in authenticated comment intake and catch-up, but cannot

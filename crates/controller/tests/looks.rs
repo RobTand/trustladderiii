@@ -1132,7 +1132,122 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
     println!("test stopped_worktree_saves_scratch_{check} ... ok");
 }
 
+struct QuotaGitHub {
+    fake: adapters::github::Fake,
+    reconciles: Rc<Cell<usize>>,
+}
+impl Executor for QuotaGitHub {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::PostApproval,
+                ..
+            }
+        ) {
+            Err(tl3_controller::Error::Quota {
+                retry_after: Duration::from_secs(5),
+            })
+        } else {
+            self.fake.execute(delivery)
+        }
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::PostApproval,
+                ..
+            }
+        ) {
+            self.reconciles.set(self.reconciles.get() + 1);
+            Ok(Reconciliation::Pending)
+        } else {
+            self.fake.reconcile(delivery)
+        }
+    }
+}
+fn cancelling_github_respects_quota(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let reconciles = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::GitHub,
+        QuotaGitHub {
+            fake: adapters::github::Fake::new(root.path()),
+            reconciles: reconciles.clone(),
+        },
+    );
+    let key = c
+        .snapshot()
+        .unwrap()
+        .pending_effects
+        .into_iter()
+        .find(|effect| effect.payload["output"]["Effect"]["kind"] == "PostApproval")
+        .unwrap()
+        .key;
+    assert_eq!(reconciles.get(), 0);
+    c.observe(
+        "stop-during-github-quota",
+        Observation::Kernel(Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(
+        reconciles.get(),
+        0,
+        "cancelling GitHub must not read an exhausted API"
+    );
+    assert_eq!(
+        c.effect(&key).unwrap().unwrap().state,
+        EffectState::Cancelling
+    );
+    drop(c);
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::GitHub,
+        QuotaGitHub {
+            fake: adapters::github::Fake::new(root.path()),
+            reconciles: reconciles.clone(),
+        },
+    );
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    drain(&mut c);
+    assert_eq!(
+        reconciles.get(),
+        0,
+        "restart must retain GitHub's quota wait"
+    );
+    clock.advance(5);
+    c.look_due().unwrap();
+    drain(&mut c);
+    assert!(
+        reconciles.get() > 0,
+        "the existing quota look must resume cancellation"
+    );
+    println!("test cancelling_github_respects_quota ... ok");
+}
+
 fn main() {
+    if std::env::args().any(|arg| arg == "--cancel-github-quota") {
+        let mut db = support::Database::start();
+        cancelling_github_respects_quota(&db.create("cancel_github_quota"));
+        db.stop();
+        return;
+    }
     if std::env::args().any(|s| s == "--r5") {
         let mut db = support::Database::start();
         let mut failures = 0;
@@ -1243,6 +1358,7 @@ fn main() {
         return;
     }
     let mut db = support::Database::start();
+    cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {
         effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
     }
@@ -1301,7 +1417,7 @@ fn main() {
     settled_looks_are_quiet(&db.create("quiet_timer"));
     token_only_queue_progress(&db.create("token_only_queue"));
     db.stop();
-    println!("16 allowance and incident scenarios passed; no skips");
+    println!("17 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
