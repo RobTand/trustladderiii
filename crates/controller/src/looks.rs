@@ -1460,16 +1460,8 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
         }
         crate::Error::Io(_) => "transport",
         crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
-            // Git operations that talk to the remote over HTTPS.
-            Some(tl3_worktrees::Error::Git {
-                operation:
-                    "fetch"
-                    | "push"
-                    | "ls-remote"
-                    | "read remote branch"
-                    | "delete recorded remote branch",
-                ..
-            }) => "git_remote",
+            // Git's own message showed a network or remote cause.
+            Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
             _ => error
                 .downcast_ref::<tl3_github::Error>()
                 .map_or("transport", |error| error.failure_class().as_str()),
@@ -1636,15 +1628,17 @@ mod git_failure_tests {
     #[test]
     fn ambiguous_git_failures_remain_transport() {
         use tl3_worktrees::Error as W;
-        for error in [W::Io, W::Spawn, W::Poisoned] {
+        for error in [
+            W::Io,
+            W::Spawn,
+            W::Poisoned,
+            W::Git {
+                operation: "fetch",
+                code: Some(128),
+            },
+        ] {
             assert_eq!(failure_class(&error.into()), "transport");
         }
-        // Still retryable; Q51 attributes a failed remote operation upstream.
-        let fetch = W::Git {
-            operation: "fetch",
-            code: Some(128),
-        };
-        assert_eq!(failure_class(&fetch.into()), "git_remote");
     }
 }
 

@@ -587,18 +587,23 @@ Incidents map onto cause classes by their source:
 | Source | Cause |
 |---|---|
 | Agent runs: crashes, stalls, reply-validation failures and Q50 blockers | TL3 |
-| Local Git worktree operations | TL3 |
-| Worktree operations that reach the Git remote or its GitHub token | Upstream |
+| Git worktree operations, including remote ones whose failure is ambiguous | TL3 |
+| Remote Git operations whose stderr clearly shows a network or remote cause, and invalid GitHub tokens | Upstream |
 | GitHub, Mergify and PrismaBuild operations, looks and stalls | Upstream |
 | Posting notices, reading incoming input, and required-check setup | Upstream |
 
 The model proxy is an upstream, but an agent run that fails because the proxy
 is down counts as TL3-side, because the controller can't yet tell it from a
 worker bug. A release retries it once; a proxy that is still down raises the
-incident again. Worktree failures are classified by their Git operation:
-fetch, push and remote reads are upstream. A GitHub token request that fails
-in transport still counts as TL3-side. #309 tracks precise attribution of
-both.
+incident again.
+
+A remote Git failure counts as upstream only when Git's stderr clearly shows a
+network or remote cause: "Could not resolve host", "Connection refused", "timed
+out", an HTTP 5xx or 429 from the remote, or "remote end hung up". Ambiguous
+exits, including a lock Git couldn't take during a fetch, stay TL3-side until
+#309. A GitHub token request that fails in transport during a worktree effect
+also stays TL3-side. The reasoning: a wasted deploy retry costs nothing, and a
+missed one costs Rob a manual clear. #309 tracks precise attribution.
 
 ## Q47: required checks before enqueue
 

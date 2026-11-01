@@ -125,22 +125,18 @@ fn worktree_error_classes_distinguish_permanent_failures() {
         assert!(matches!(error, Error::Permanent { .. }));
         assert_eq!(crate::looks::failure_class(&error), class);
     }
-    for (error, class) in [
-        (GitError::Io, "transport"),
-        (GitError::Spawn, "transport"),
-        (GitError::Poisoned, "transport"),
-        // Q51: a failed remote operation stays retryable but counts as upstream.
-        (
-            GitError::Git {
-                operation: "fetch",
-                code: Some(128),
-            },
-            "git_remote",
-        ),
+    for error in [
+        GitError::Io,
+        GitError::Spawn,
+        GitError::Poisoned,
+        GitError::Git {
+            operation: "fetch",
+            code: Some(128),
+        },
     ] {
         let error = adapter(error);
         assert!(matches!(error, Error::Adapter(_)));
-        assert_eq!(crate::looks::failure_class(&error), class);
+        assert_eq!(crate::looks::failure_class(&error), "transport");
     }
 }
 

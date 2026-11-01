@@ -63,6 +63,10 @@ def _parts(path):
     parts = PurePosixPath(path).parts
     if ".git" in parts:
         raise ValueError("Git metadata paths are forbidden")
+    # NAME_MAX per part. The total leaves room under PATH_MAX for the test
+    # tool's staging directory, where a longer path would fail outside the tool.
+    if len(path.encode("utf-8")) > 3072 or any(len(part.encode("utf-8")) > 255 for part in parts):
+        raise ValueError("Path is too long")
     return parts
 
 
@@ -412,6 +416,8 @@ def build_tools(worktree, descriptions):
                     return result
                 except UnicodeError as exc:
                     raise ToolException("Expected valid UTF-8 text.") from exc
+                except RecursionError as exc:
+                    raise ToolException("The worktree is nested too deeply to walk.") from exc
                 except ValueError as exc:
                     raise ToolException(str(exc)) from exc
                 except FileNotFoundError as exc:
