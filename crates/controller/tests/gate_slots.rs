@@ -158,24 +158,72 @@ fn w2_gate_uses_both_slots_and_preserves_waiters() {
 }
 
 #[test]
-fn w3_older_waiter_blocks_younger_disjoint_leaves() {
+fn q48_file_blocked_waiter_allows_disjoint_but_reserves_overlapping_files() {
     let mut r = GateRun(World::new(&[3], 8));
     let holder = r.request();
     r.plan(holder, 0);
     let waiter = r.request();
-    r.plan(waiter, 0);
+    let footprint = r.0.intern_footprint([FileId(0), FileId(1)]);
+    r.reply(
+        waiter,
+        Reply::PlanLeaf {
+            footprint,
+            fits: true,
+        },
+    );
     let place = r.0.nodes[waiter.0 as usize].ticket;
-    for file in [1, 2] {
-        let younger = r.request();
-        r.plan(younger, file);
-        assert!(
-            !r.0.nodes[younger.0 as usize].holds,
-            "today's ticket order blocks younger leaves behind the older waiter"
-        );
-    }
-    assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 1);
+    let disjoint = r.request();
+    r.plan(disjoint, 2);
+    assert!(
+        r.0.nodes[disjoint.0 as usize].holds,
+        "Q48 lets a truly disjoint leaf use a spare slot"
+    );
+    let overlapping = r.request();
+    r.plan(overlapping, 1);
+    assert!(
+        !r.0.nodes[overlapping.0 as usize].holds,
+        "a younger leaf cannot take an older waiter's free file"
+    );
     assert_eq!(r.0.nodes[waiter.0 as usize].ticket, place);
+    assert!(!r.0.nodes[waiter.0 as usize].holds);
     r.stop(holder);
-    assert_eq!(r.0.nodes.iter().filter(|n| n.holds).count(), 3);
-    assert!(r.0.nodes[waiter.0 as usize].holds);
+    assert!(
+        r.0.nodes[waiter.0 as usize].holds,
+        "the older waiter gets the released slot"
+    );
+    assert!(!r.0.nodes[overlapping.0 as usize].holds);
+    r.stop(waiter);
+    assert!(r.0.nodes[overlapping.0 as usize].holds);
+}
+
+#[test]
+fn q48_repeated_disjoint_arrivals_cannot_delay_the_older_waiter_after_release() {
+    for width in [2, 3] {
+        let mut r = GateRun(World::new(&[width], 8));
+        let holder = r.request();
+        r.plan(holder, 0);
+        let waiter = r.request();
+        r.plan(waiter, 0);
+        let place = r.0.nodes[waiter.0 as usize].ticket;
+        let mut last = None;
+        for _ in 0..8 {
+            if let Some(last) = last {
+                r.stop(last);
+            }
+            let disjoint = r.request();
+            r.plan(disjoint, 1);
+            assert!(
+                r.0.nodes[disjoint.0 as usize].holds,
+                "Q48 permits disjoint arrivals while a file is blocked"
+            );
+            assert_eq!(r.0.nodes[waiter.0 as usize].ticket, place);
+            last = Some(disjoint);
+        }
+        r.stop(holder);
+        assert!(
+            r.0.nodes[waiter.0 as usize].holds,
+            "the older leaf progresses while the younger leaf stays in flight"
+        );
+        assert!(r.0.nodes[last.unwrap().0 as usize].holds);
+    }
 }
