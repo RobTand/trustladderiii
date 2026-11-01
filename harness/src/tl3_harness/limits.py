@@ -1,6 +1,10 @@
 """Report budgets shared by planning, collection and the trusted reader."""
 import json
 
+
+def validate_check_plan(plan):
+    pass
+
 MAX_REPORT_LINE_BYTES = 4 * 1024 * 1024
 PLAN_SIZE_ERROR = f'Check plan exceeds the {MAX_REPORT_LINE_BYTES}-byte report limit; reduce the selected tests or parameter cases.'
 

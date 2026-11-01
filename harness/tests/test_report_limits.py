@@ -108,3 +108,62 @@ def test_oversized_expansion_with_collection_errors_is_still_a_plan_error(tmp_pa
                                   Progress(), messages=messages)
     assert outcomes == dict.fromkeys(tests, Outcome.UNCOLLECTED)
     assert all('4194304' in messages[test] for test in tests)
+
+
+def test_many_failures_keep_every_verdict_within_the_controller_result_budget():
+    from tl3_harness.model import Result, TestResult as Case
+    tests = tuple(Case(f'test_many.py::test_{i}', Outcome.ERROR, Outcome.ERROR,
+                       False, False, '\U0001f680' * 1000) for i in range(12000))
+    encoded = execution.result_json((Result('failures', Kind.BEHAVIOR_PRESERVING, Verdict.FAIL, tests),))
+    assert len(encoded.encode()) < 8 * 1024 * 1024 - 65536
+    reported = json.loads(encoded)[0]
+    assert reported['verdict'] == 'fail'
+    assert len(reported['tests']) == len(tests)
+    assert all(not test['passed'] and test['head'] == 'error' for test in reported['tests'])
+    assert sum(bool(test['message']) for test in reported['tests']) == 20
+
+
+def test_result_budget_counts_repeated_checks_and_escaped_names():
+    from tl3_harness.limits import validate_check_plan
+    checks = tuple(Check(f'check-{i}', Kind.REGRESSION, ('test_many.py::test_one',)) for i in range(40000))
+    with pytest.raises(ValueError, match='8388608.*reduce'):
+        validate_check_plan(checks)
+    with pytest.raises(ValueError, match='8388608.*reduce'):
+        validate_check_plan((Check('\U0001f680' * 800000, Kind.REGRESSION, ('test_many.py::test_one',)),))
+
+
+def test_phase_line_budget_shrinks_after_collection(tmp_path, monkeypatch):
+    script = tmp_path / 'flood.py'
+    script.write_text('import json\n'
+                      'print(json.dumps({"event":"start","schema":1}))\n'
+                      'print(json.dumps({"event":"collection","tests":["test_many.py::test_one"]}))\n'
+                      'print(json.dumps({"event":"phase","message":"x" * 1000000}))\n')
+    monkeypatch.setattr(execution, 'container_command', lambda *args: [sys.executable, str(script)])
+    report = tmp_path / 'report.jsonl'
+    tests = ('test_many.py::test_one',)
+    assert execution.run_tree(tmp_path, IMAGE, tests, report, Progress()) == dict.fromkeys(tests, Outcome.NO_REPORT)
+    assert report.stat().st_size < 16384
+
+
+def test_failure_message_with_a_lone_surrogate_is_reported(tmp_path, monkeypatch):
+    (tmp_path / 'test_many.py').write_text('def test_one(): assert False\n')
+    (tmp_path / 'conftest.py').write_text(
+        'import pytest\n@pytest.hookimpl(hookwrapper=True)\n'
+        'def pytest_runtest_makereport(item, call):\n'
+        '    outcome = yield\n    report = outcome.get_result()\n'
+        '    if report.failed: report.longrepr = "failure " + chr(0xd800)\n')
+    monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)])
+    messages = {}
+    tests = ('test_many.py::test_one',)
+    assert execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl', Progress(),
+                              messages=messages) == dict.fromkeys(tests, Outcome.ASSERTION)
+    assert messages[tests[0]] == 'failure \ud800'
+
+
+def test_runner_reads_selection_from_stdin(tmp_path, monkeypatch):
+    (tmp_path / 'test_many.py').write_text('def test_one(): pass\ndef test_two(): assert False\n')
+    monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
+        sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
+    tests = ('test_many.py::test_one',)
+    assert execution.run_tree(tmp_path, IMAGE, tests, tmp_path / 'report.jsonl', Progress()) == dict.fromkeys(tests, Outcome.PASSED)
