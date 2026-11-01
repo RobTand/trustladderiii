@@ -170,6 +170,7 @@ struct State {
     operations_comments: Vec<Value>,
     labels: bool,
     conflicting_enqueue: bool,
+    mergeable_override: Option<bool>,
     closed: bool,
     fail_reads: bool,
     not_found: Option<&'static str>,
@@ -190,6 +191,7 @@ impl Default for State {
             operations_comments: vec![],
             labels: false,
             conflicting_enqueue: false,
+            mergeable_override: None,
             closed: false,
             fail_reads: false,
             not_found: None,
@@ -362,6 +364,7 @@ impl Respond for Api {
                             &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
                         ));
                     }
+                    let mergeable_override = s.mergeable_override;
                     if let Some(pull) = &mut s.pull {
                         let output = Command::new("git")
                             .current_dir(&self.fixture.remote)
@@ -373,8 +376,9 @@ impl Respond for Api {
                             ])
                             .output()
                             .unwrap();
-                        pull["mergeable"] = json!(output.status.success());
-                        pull["mergeable_state"] = json!(if output.status.success() {
+                        let mergeable = mergeable_override.unwrap_or(output.status.success());
+                        pull["mergeable"] = json!(mergeable);
+                        pull["mergeable_state"] = json!(if mergeable {
                             "clean"
                         } else {
                             "dirty"
@@ -897,6 +901,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         {
             let mut state = server.api.state.lock().unwrap();
             state.queue_fixture = "dequeued";
+            state.mergeable_override = Some(false);
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");
@@ -933,6 +938,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         {
             let mut state = server.api.state.lock().unwrap();
             state.queue_fixture = "running";
+            state.mergeable_override = None;
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
