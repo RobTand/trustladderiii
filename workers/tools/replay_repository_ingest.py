@@ -56,7 +56,7 @@ def main():
     }
     calls = [("list", {"path": "tools/fleet"}),
              ("glob", {"pattern": "*docker*", "path": "tests"}),
-             ("grep", {"pattern": "--gpus", "path": "tools/fleet/docker"}),
+             ("grep", {"pattern": "--gpus", "path": "tools/fleet"}),
              ("read", {"path": "tools/fleet/docker", "offset": 470, "limit": 100}),
              ("read", {"path": "tests/test_docker_shim_global_options.py", "limit": 100})]
     turns = [{"content": "", "tool_calls": [

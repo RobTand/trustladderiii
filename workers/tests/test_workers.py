@@ -331,7 +331,7 @@ def test_large_repository_explored_with_tools(tmp_path, request_doc, role, reply
 
     calls = [{"name": name, "args": args, "id": name, "type": "tool_call"}
              for name, args in [("list", {}), ("glob", {"pattern": "*.py"}),
-                                ("grep", {"pattern": "greeting", "path": "greeting.py"}),
+                                ("grep", {"pattern": "greeting"}),
                                 ("read", {"path": "greeting.py"})]]
     monkeypatch.setattr(runtime, "create_model", lambda request: InspectModel(responses=[
         AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(reply)),
@@ -346,7 +346,7 @@ def test_large_repository_explored_with_tools(tmp_path, request_doc, role, reply
     assert "materials" not in json.loads(initial_prompt)["repo"]
     results = [m for m in observed[-1] if m.type == "tool"]
     assert len(results) == 4
-    assert all(m.status == "success" for m in results)
+    assert all(m.status == "success" for m in results), results
     assert any("source-only-never-inline" in m.text for m in results)
     assert events[-1]["reply"] == reply
     assert (tmp_path / "greeting.py").read_text() == source
