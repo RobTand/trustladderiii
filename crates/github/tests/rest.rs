@@ -1167,6 +1167,10 @@ async fn required_status_checks_protection_403_keeps_rulesets() {
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"message":"Forbidden"})))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/sandbox/branches/main/protection/required_status_checks"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server).await;
     let required = github.required_status_checks("owner/sandbox", "main").await.unwrap();
     assert_eq!(required.len(), 1);
     assert_eq!(required[0].context, "ruleset");
