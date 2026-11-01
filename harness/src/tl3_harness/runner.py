@@ -13,6 +13,9 @@ spec = importlib.util.spec_from_file_location("tl3_node_ids", Path(__file__).wit
 node_ids = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(node_ids)
 selects = node_ids.selects
+spec = importlib.util.spec_from_file_location("tl3_limits", Path(__file__).with_name("limits.py"))
+limits = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(limits)
 
 
 def module_candidates(module):
@@ -90,7 +93,7 @@ class Reporter:
         self.collection_errors = []
 
     def emit(self, **record):
-        data = (json.dumps(record, sort_keys=True) + "\n").encode()
+        data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
         while data:
             data = data[os.write(self.descriptor, data):]
 
@@ -101,8 +104,16 @@ class Reporter:
     def pytest_collection_modifyitems(self, items):
         if self.summary:
             return
-        self.emit_collection_errors()
         selected = [item for item in items if any(selects(test, item.nodeid) for test in self.tests)]
+        try:
+            limits.validate_plan_size(item.nodeid for item in selected)
+        except ValueError as error:
+            self.collection_errors.clear()
+            items.clear()
+            self.emit(event="plan-error", message=str(error))
+            self.emit(event="collection", tests=[])
+            pytest.exit(str(error), returncode=4)
+        self.emit_collection_errors()
         items[:] = selected
         self.emit(event="collection", tests=[item.nodeid for item in selected])
 
@@ -163,7 +174,7 @@ class Reporter:
 
 
 def main():
-    tests = json.loads(sys.argv[1])
+    tests = json.load(sys.stdin) if sys.argv[1] == "-" else json.loads(sys.argv[1])
     descriptor = os.dup(1)
     with open(os.devnull, "wb") as sink:
         os.dup2(sink.fileno(), 1)

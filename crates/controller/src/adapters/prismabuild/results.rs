@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read};
 use tl3_prismabuild::{ActionKey, Tool};
 
+pub(super) const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Deserialize)]
 struct Endings {
     schema: String,
@@ -155,7 +157,7 @@ fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
                             .bytes()
                             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 }))
-            || evidence.stdout.bytes > 8 * 1024 * 1024
+            || evidence.stdout.bytes > MAX_RESULT_BYTES as u64
         {
             return Err(Error::Invalid(
                 "unverified or oversized PrismaBuild check result",

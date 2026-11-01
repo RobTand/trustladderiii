@@ -24,4 +24,4 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
               "base": request["base"], "head": request["head"],
               "reviewed": request.get("reviewed"),
               "results": json.loads(result_json(results))}
-    print("TL3_CHECKS " + json.dumps(report, sort_keys=True), flush=True)
+    print("TL3_CHECKS " + json.dumps(report, sort_keys=True, separators=(',', ':')), flush=True)

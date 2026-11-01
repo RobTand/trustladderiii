@@ -49,6 +49,7 @@ impl Executor for Fake {
 mod checks;
 mod results;
 mod source;
+pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};
 pub use source::{RunningSource, Source};
 
@@ -401,6 +402,39 @@ impl Adapter {
         write(&path, &epoch)
     }
 
+    fn plan_failure(&self, delivery: &Delivery) -> Result<Option<Completion>> {
+        if self.job(delivery)?.is_some() {
+            return Ok(None);
+        }
+        let Some(run) = &delivery.checks else {
+            return Ok(None);
+        };
+        match validate_plan_size(&run.plan) {
+            Ok(()) => Ok(None),
+            Err(crate::Error::Invalid(message)) => {
+                Ok(Some(Completion::confirmed(vec![Observation::Checks {
+                    node: delivery.node(),
+                    generation: delivery.generation,
+                    action_key: "plan-rejected".into(),
+                    base_sha: run.base_sha.to_string(),
+                    sha: delivery
+                        .head_sha
+                        .clone()
+                        .ok_or(crate::Error::Invalid("missing check head"))?,
+                    changed_paths: vec![],
+                    failed_tests: vec![crate::findings::FailedTest {
+                        test: "check plan".into(),
+                        message: message.into(),
+                    }],
+                    report: true,
+                    pass: false,
+                    results: vec![],
+                }])))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn submit(&self, delivery: &Delivery) -> Result<Job> {
         if let Some(job) = self.job(delivery)? {
             self.remove_input(delivery)?;
@@ -616,6 +650,9 @@ impl Executor for Adapter {
                 kind: EffectKind::SubmitChecks,
                 ..
             } => {
+                if let Some(completion) = self.plan_failure(delivery)? {
+                    return Ok(completion);
+                }
                 let job = self.submit(delivery)?;
                 let _ = self.keys.send(delivery.node());
                 if matches!(
@@ -662,6 +699,9 @@ impl Executor for Adapter {
                 // Reconciliation also settles cancelled effects that will never execute again.
                 self.remove_input(delivery)?;
                 let Some(job) = self.job(delivery)? else {
+                    if let Some(completion) = self.plan_failure(delivery)? {
+                        return Ok(Reconciliation::Found(completion));
+                    }
                     // Publication requires this durable binding, so no attempt can exist without it.
                     return Ok(Reconciliation::Absent);
                 };
