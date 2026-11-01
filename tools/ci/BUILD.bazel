@@ -151,6 +151,7 @@ py_binary(
     name = "bazel_budget_calibration",
     srcs = ["bazel_budget_calibration.py"],
     visibility = ["//visibility:public"],
+    deps = [":bazel_parity"],
 )
 
 tl3_py_test(

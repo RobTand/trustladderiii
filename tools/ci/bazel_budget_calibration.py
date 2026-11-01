@@ -12,23 +12,19 @@ import json
 import math
 from pathlib import Path
 import re
-import zipfile
+
+from bazel_parity import read_receipt
 
 RUN = re.compile(r'run_(\d+)_of_(\d+)$')
 
 
 def receipts(testlogs):
     """Yield (target, run, total, seconds) for each Rust receipt."""
-    for archive in sorted(testlogs.rglob('test.outputs/outputs.zip')):
-        run_directory = archive.parent.parent
+    for outputs in sorted(testlogs.rglob('test.outputs')):
+        run_directory = outputs.parent
         match = RUN.match(run_directory.name)
-        if not match:
-            continue
-        with zipfile.ZipFile(archive) as outputs:
-            if 'inventory.json' not in outputs.namelist():
-                continue
-            receipt = json.loads(outputs.read('inventory.json'))
-        if 'seconds' in receipt:
+        receipt = read_receipt(outputs) if match else None
+        if receipt and 'seconds' in receipt:
             target = str(run_directory.parent.relative_to(testlogs))
             yield target, int(match[1]), int(match[2]), receipt['seconds']
 
