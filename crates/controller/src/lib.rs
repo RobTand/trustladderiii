@@ -258,7 +258,7 @@ impl Controller {
         if !backfill.rows.is_empty() {
             store.commit(&backfill)?;
         }
-        Ok(Self {
+        let mut controller = Self {
             store,
             adapters,
             bootstrap,
@@ -266,7 +266,9 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
-        })
+        };
+        controller.cleanup_ended_looks()?;
+        Ok(controller)
     }
 
     pub fn register_github_translator(
@@ -656,9 +658,12 @@ impl Controller {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
-                    DeliveryOutput::Effect { node, seq, .. } => world.nodes
-                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
-                    .effect_cancelling(seq),
+                    DeliveryOutput::Effect { node, seq, .. } => {
+                        let node = &world.nodes
+                            [node.index().ok_or(Error::Invalid("node index overflow"))?];
+                        node.effect_cancelling(seq)
+                            || matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    }
                     DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                 };
             if cancelling {
@@ -1512,6 +1517,7 @@ impl Controller {
                 });
             }
         }
+        self.retire_ended_effect_looks(snapshot, &world, commit)?;
         Ok(())
     }
 
