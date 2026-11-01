@@ -54,6 +54,21 @@ An Actions API permission refusal raises a setup incident with that instruction.
 It prevents re-enqueueing until access is restored and the failed effect is retried.
 The controller does not change App permissions.
 
+## Classic branch protection permissions
+
+No new App permissions are needed. TL3 reads classic required checks from
+`GET /repos/{owner}/{repo}/branches/{branch}`, using the App's existing
+**Contents: Read** access. The branch protection summary includes contexts and
+App ids. TL3 combines those with ruleset requirements and reads check runs with
+its existing **Checks: Read and write** access. Administration is not required.
+
+Legacy commit statuses are optional. When **Commit statuses: Read** is unavailable,
+TL3 skips status-only evidence and keeps available check-run requirements. A 403
+or 404 on a protection or status read raises one nonblocking setup incident naming
+the permission and continues with the available evidence. Other errors retain the
+usual retry handling. The App does not request a `status` subscription; status
+changes are picked up by existing looks. The controller does not change permissions.
+
 ## Served repository command permissions
 
 Before serving a repo, allow `tl3-robtand[bot]` in its `.mergify.yml`

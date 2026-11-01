@@ -823,6 +823,16 @@ impl Controller {
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
+            // ClosePr removes the queue label without waiting for Mergify admission reads.
+            let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Mergify
+                && matches!(
+                    world.nodes[delivery
+                        .node()
+                        .index()
+                        .ok_or(Error::Invalid("node index overflow"))?]
+                    .phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                );
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
                     DeliveryOutput::Effect { node, seq, .. } => {
@@ -836,6 +846,17 @@ impl Controller {
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
+                        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+                            && !closing_queue
+                            && !matches!(
+                                self.adapters
+                                    .adapter(&delivery)?
+                                    .reconcile_cancellation(&delivery),
+                                Ok(Reconciliation::Found(_))
+                            )
+                        {
+                            continue;
+                        }
                         self.cancel_absent(effect, &delivery)?;
                         return Ok(true);
                     }
@@ -855,6 +876,9 @@ impl Controller {
                     hook(Boundary::BeforeDispatch, &effect.key);
                     let current = self.store.load()?;
                     let delivery = hydrate(effect, &current)?;
+                    if self.observe_pending_effect(&delivery)? {
+                        return Ok(true);
+                    }
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
                     match result {
@@ -892,6 +916,9 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
+                    if !cancelling && self.observe_pending_effect(&delivery)? {
+                        return Ok(true);
+                    }
                     let local_cancellation = effect.state == EffectState::Cancelling
                         && executor::upstream(delivery.output) == executor::Upstream::Mergify;
                     if !local_cancellation
@@ -901,9 +928,13 @@ impl Controller {
                     }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
-                        self.adapters
-                            .adapter(&delivery)?
-                            .reconcile_cancellation(&delivery)
+                        if closing_queue {
+                            Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                        } else {
+                            self.adapters
+                                .adapter(&delivery)?
+                                .reconcile_cancellation(&delivery)
+                        }
                     } else {
                         self.adapters.adapter(&delivery)?.reconcile(&delivery)
                     };
@@ -1086,6 +1117,22 @@ impl Controller {
         });
         self.store.commit(&commit)?;
         Ok(())
+    }
+
+    fn observe_pending_effect(&mut self, delivery: &Delivery) -> Result<bool> {
+        let before = self.store.load()?.revision;
+        // Dispatch and reconciliation retain their existing error/allowance handling.
+        if let Ok(observations) = self.adapters.adapter(delivery)?.observations(delivery) {
+            for (index, observation) in observations.into_iter().enumerate() {
+                let key = format!(
+                    "pending:{}:{index}:{}",
+                    delivery.key,
+                    evidence_key(&observation)?
+                );
+                self.observe(&key, observation)?;
+            }
+        }
+        Ok(self.store.load()?.revision != before)
     }
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
@@ -1939,6 +1986,23 @@ impl Controller {
                 {
                     return Ok(None);
                 }
+                if matches!(
+                    fact.evidence,
+                    Evidence::CiFailed {
+                        head_check: true,
+                        ..
+                    }
+                ) {
+                    let can_consume = current.phase == tl3_kernel::Phase::Queued
+                        || current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            });
+                    // A later active enqueue must still be able to consume this head evidence.
+                    if !can_consume {
+                        return Ok(None);
+                    }
+                }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. }
                 | Evidence::Conflict { head, .. }
@@ -1951,6 +2015,11 @@ impl Controller {
                     }
                 }
                 let fact = match fact.evidence {
+                    Evidence::ChecksUnavailable { permissions } => {
+                        self.check_setup_incident(snapshot, commit, node, &permissions)?;
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
                     Evidence::Merged {
                         head,
                         checks_passed,

@@ -186,6 +186,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                             completed_at: None,
                             head,
                             infra: true,
+                            head_check: false,
                         },
                     }),
                 )

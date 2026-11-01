@@ -1100,3 +1100,96 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
     assert_eq!(again, world);
     assert!(out.is_empty(), "settle must not repeat grants or effects");
 }
+
+fn publishing_enqueue() -> Run {
+    let mut run = Run::new();
+    run.start_making();
+    run.pass(&mut HeadId(0));
+    let node = &mut run.w.nodes[0];
+    node.phase = Phase::Publishing;
+    node.pos = 3;
+    node.effect = Some(InFlight {
+        seq: node.next_seq,
+        kind: EffectKind::Enqueue,
+        cancelling: false,
+    });
+    node.next_seq += 1;
+    assert!(run.w.valid() && run.w.is_settled());
+    run
+}
+
+#[test]
+fn publishing_ci_test_failure_cancels_enqueue_and_starts_fix_round() {
+    let mut run = publishing_enqueue();
+    let credit = run.credit();
+    let enqueue = run.node().effect.unwrap();
+    run.send(Event::Fact {
+        node: NodeId(0),
+        fact: Fact::CiFailed { infra: false },
+    });
+    assert_eq!(run.phase(), Phase::Making);
+    assert_eq!(run.node().round, 1);
+    assert_eq!(run.credit(), credit);
+    assert!(run.node().effect_cancelling(enqueue.seq));
+    run.confirm();
+    assert_eq!(run.phase(), Phase::Making);
+}
+
+#[test]
+fn publishing_ci_failed_fix_round_respects_credit() {
+    let mut run = publishing_enqueue();
+    run.w.nodes[0].round = 1;
+    run.w.nodes[0].credit.spent = run.w.nodes[0].credit.start;
+    let enqueue = run.node().effect.unwrap();
+    run.send(Event::Fact {
+        node: NodeId(0),
+        fact: Fact::CiFailed { infra: false },
+    });
+    assert_eq!(run.phase(), Phase::AwaitingRob);
+    assert_eq!(run.credit(), 0);
+    assert!(run.node().effect_cancelling(enqueue.seq));
+}
+
+#[test]
+fn publishing_ci_infrastructure_retries_once_then_raises_incident() {
+    for failures in [0, 1] {
+        let mut run = publishing_enqueue();
+        run.w.nodes[0].run_failures = failures;
+        let credit = run.credit();
+        let enqueue = run.node().effect.unwrap();
+        run.send(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::CiFailed { infra: true },
+        });
+        assert!(run.node().effect_cancelling(enqueue.seq));
+        assert_eq!(run.credit(), credit);
+        assert_eq!(run.node().waiting_incident, failures == 1);
+        assert_eq!(run.node().run_failures, 1 - failures);
+        run.send(Event::Ack {
+            node: NodeId(0),
+            seq: enqueue.seq,
+            ack: Ack::Confirmed,
+        });
+        assert_eq!(
+            run.phase(),
+            if failures == 0 {
+                Phase::Publishing
+            } else {
+                Phase::Ready(Resume::Publishing)
+            }
+        );
+    }
+}
+
+#[test]
+fn publishing_ci_failure_before_enqueue_step_is_ignored() {
+    let mut run = publishing_enqueue();
+    run.w.nodes[0].pos = 1;
+    run.w.nodes[0].effect.as_mut().unwrap().kind = EffectKind::PostApproval;
+    let before = run.node();
+    run.send(Event::Fact {
+        node: NodeId(0),
+        fact: Fact::CiFailed { infra: false },
+    });
+    assert_eq!(run.node(), before);
+}

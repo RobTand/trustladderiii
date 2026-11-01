@@ -97,16 +97,40 @@ fn hostile_maker_head() {
                         "plans",
                         json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
                     ),
+                    (
+                        "maker_findings",
+                        json!([{"kind":"failed_check", "report":"Earlier round failed", "goal_ids":[]}]),
+                    ),
                 ],
             );
             let request = supervisor
                 .request(&delivery, "maker", &mut store, &snapshot)
                 .unwrap();
             assert_eq!(request["worktree"], json!(checkout));
+            assert_eq!(request["inputs"]["check_base_sha"], f.base);
             assert_eq!(
                 store.worker_materials("0").unwrap().unwrap()["check_run"]["base_sha"],
                 f.base
             );
+            // A fix round may start after commits and a rebase changed the check base.
+            fs::write(checkout.join("README.md"), "earlier maker round\n").unwrap();
+            git(&checkout, &["commit", "-qam", "Earlier maker round"]);
+            delivery.round = 1;
+            delivery.checks = f.delivery().checks;
+            delivery.checks.as_mut().unwrap().base_sha = CommitId::new(&f.head).unwrap();
+            let request = supervisor
+                .request(&delivery, "maker", &mut store, &snapshot)
+                .unwrap();
+            assert_eq!(request["inputs"]["check_base_sha"], f.head);
+            assert_ne!(
+                request["inputs"]["check_base_sha"],
+                git(&checkout, &["rev-parse", "HEAD"])
+            );
+            delivery.checks = None;
+            let request = supervisor
+                .request(&delivery, "maker", &mut store, &snapshot)
+                .unwrap();
+            assert_eq!(request["inputs"]["check_base_sha"], f.head);
         },
     );
 }
