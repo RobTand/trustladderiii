@@ -50,6 +50,8 @@ def create_model(request) -> BaseChatModel:
     key = Path(request["key_file"]).read_text().strip()
     if not key:
         raise ValueError("empty model key")
+    from tl3_workers.tracing import record_model_key
+    record_model_key(key)
     spec = request["model"]
     return ProxyChatOpenAI(
         base_url=spec["base_url"],
@@ -59,6 +61,7 @@ def create_model(request) -> BaseChatModel:
         api_key=key,
         use_responses_api=False,
         streaming=True,
+        stream_usage=True,
         max_retries=0,
     )
 
@@ -111,7 +114,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
 
 
 def run(request, emit: Callable[[dict], None]):
-    from tl3_workers.tracing import observe
+    from tl3_workers.tracing import observe, record_reply
 
     with observe(request):
         summary = Summary(request)
@@ -120,6 +123,7 @@ def run(request, emit: Callable[[dict], None]):
         reply, error = None, None
         try:
             reply = _run(request, emit)
+            record_reply(reply)
         except BaseException as exc:
             error = exc
             raise

@@ -1,13 +1,79 @@
-"""Observational MLflow capture. Only an allowlisted payload leaves the worker."""
+"""Observational MLflow capture with bounded, redacted content and detached export."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import tomllib
+
+
+active = ContextVar('tl3_trace_capture', default=None)
+PAYLOAD_BYTES = 65536
+TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'total_tokens',
+                'cache_read_input_tokens', 'cache_creation_input_tokens')
+SENSITIVE_KEY = re.compile(
+    r'(?i)(?:api[_-]?key|authorization|password|passwd|access[_-]?token|refresh[_-]?token|'
+    r'client[_-]?secret|private[_-]?key|model[_-]?key|key[_-]?file|credentials?)')
+SECRET_PATTERNS = [
+    re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?'
+               r'(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)', re.DOTALL),
+    re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+'),
+    re.compile(r'\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|'
+               r'AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+)\b'),
+    re.compile(r'(?i)https?://[^/\s:@]+:[^@\s/]+@'),
+    re.compile(r'(?i)["\']?(?:api[_-]?key|password|passwd|access[_-]?token|client[_-]?secret)'
+               r'["\']?\s*[:=]\s*["\']?[^\s"\',;}&]+'),
+]
+
+
+class Redactor:
+    def __init__(self, key_path):
+        # The runtime supplies an already-loaded key. Tracing never opens key files.
+        self.secrets = {key_path} if key_path else set()
+
+    def text(self, value):
+        for secret in sorted(self.secrets, key=len, reverse=True):
+            value = value.replace(secret, '[REDACTED]')
+        for pattern in SECRET_PATTERNS:
+            value = pattern.sub('[REDACTED]', value)
+        return value
+
+    def clean(self, value):
+        if isinstance(value, str):
+            return self.text(value)
+        if isinstance(value, dict):
+            return {self.text(str(key)): '[REDACTED]' if SENSITIVE_KEY.fullmatch(str(key))
+                    else self.clean(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.clean(item) for item in value]
+        return value
+
+    def payload(self, value):
+        value = self.clean(value)
+        encoded = json.dumps(value, ensure_ascii=False).encode()
+        if len(encoded) > PAYLOAD_BYTES:
+            # JSON-escaping this prefix can at most double its size.
+            value = {'preview': encoded[:PAYLOAD_BYTES // 4].decode(errors='ignore'),
+                     'truncated': True, 'original_bytes': len(encoded)}
+        return value
+
+
+def record_model_key(key):
+    if capture := active.get():
+        capture.redactor.secrets.add(key)
+
+
+def record_reply(reply):
+    if capture := active.get():
+        try:
+            capture.root.set_outputs(reply)
+        except Exception:
+            failure()
 
 
 def failure():
@@ -24,6 +90,9 @@ class Capture:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
+        self.redactor = Redactor(request.get('key_file'))
+        self.role = request['role']
+        self.model = request['model']['name']
         self.spans = []
         self.dropped = False
         capture = self
@@ -37,7 +106,7 @@ class Capture:
                     if len(capture.spans) >= 4096:
                         capture.dropped = True
                         break
-                    capture.spans.append(safe_span(span))
+                    capture.spans.append(safe_span(span, capture.redactor, capture.role, capture.model))
                 return SpanExportResult.SUCCESS
 
         # MLflow 3.17.2 has no public in-memory destination. Pin this adapter to
@@ -48,8 +117,9 @@ class Capture:
         provider.provider.once.do_once(lambda: provider.provider.set(tracer))
         provider.provider.set(tracer)
         mlflow.langchain.autolog(silent=True)
-        self.context = mlflow.start_span(name='tl3_agent', span_type='AGENT')
+        self.context = mlflow.start_span(name='tl3_' + self.role, span_type='AGENT')
         self.root = self.context.__enter__()
+        self.root.set_inputs(request['inputs'])
         trace = request.get('trace', {})
         self.tags = {key: str(trace.get(key, 'unknown'))
                      for key in ('repo', 'issue', 'request', 'attempt', 'round')}
@@ -74,12 +144,12 @@ class Capture:
             for attr in span.attributes:
                 if attr.key == 'mlflow.chat.tokenUsage':
                     for item in attr.value.kvlist_value.values:
-                        usage[item.key] += item.value.int_value
+                        usage[item.key] = usage.get(item.key, 0) + item.value.int_value
         self.tags.update(outcome=outcome, **{key: str(value) for key, value in usage.items()})
         root = next(span for span in self.spans if not span.parent_span_id)
         root.status.code = 1 if outcome == 'succeeded' else 2
         for key, value in self.tags.items():
-            root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = value
+            root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = self.redactor.text(value)[:512]
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
         packet = ExportTraceServiceRequest()
         packet.resource_spans.add().scope_spans.add().spans.extend(self.spans)
@@ -93,24 +163,34 @@ class Capture:
                              stdout=subprocess.DEVNULL, stderr=sys.stderr, close_fds=True)
 
 
-def safe_span(span):
+def safe_span(span, redactor=None, role="unknown", model="unknown"):
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
+    redactor = redactor or Redactor(None)
     kind = json.loads(span.attributes.get('mlflow.spanType', '"CHAIN"'))
     if kind not in {'LLM', 'CHAT_MODEL', 'TOOL', 'AGENT', 'CHAIN', 'RETRIEVER'}:
         kind = 'CHAIN'
     result = Span(trace_id=span.context.trace_id.to_bytes(16, 'big'),
                   span_id=span.context.span_id.to_bytes(8, 'big'),
                   parent_span_id=span.parent.span_id.to_bytes(8, 'big') if span.parent else b'',
-                  name='tl3_' + kind.lower(), start_time_unix_nano=span.start_time,
+                  name=redactor.text(
+                      f'tl3_{role}:{model}' if kind in {'LLM', 'CHAT_MODEL'} else span.name
+                  )[:256], start_time_unix_nano=span.start_time,
                   end_time_unix_nano=span.end_time)
     result.status.code = 2 if span.status.status_code.name == 'ERROR' else 1
     result.attributes.add(key='mlflow.spanType').value.string_value = kind
-    # Prompts, replies, tool arguments/results, events, headers, provider metadata,
-    # resource attributes and exception messages are deliberately never serialized.
+    result.attributes.add(key='tl3.role').value.string_value = redactor.text(role)[:256]
+    if kind in {'LLM', 'CHAT_MODEL'}:
+        result.attributes.add(key='mlflow.llm.model').value.string_value = redactor.text(model)[:256]
+    # Retain only content and usage. Headers, provider metadata, resources and
+    # raw exceptions stay local. Apply redaction before truncating or serializing.
+    for key in ('mlflow.spanInputs', 'mlflow.spanOutputs'):
+        if (raw := span.attributes.get(key)) is not None:
+            value = redactor.payload(json.loads(raw))
+            result.attributes.add(key=key).value.string_value = json.dumps(value, ensure_ascii=False)
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
         usage = json.loads(raw)
-        usage = {key: value for key in ('input_tokens', 'output_tokens', 'total_tokens')
+        usage = {key: value for key in TOKEN_FIELDS
                  if type(value := usage.get(key)) is int and value >= 0}
         attr = result.attributes.add(key='mlflow.chat.tokenUsage')
         for key, value in usage.items():
@@ -172,13 +252,16 @@ def observe(request):
             capture = Capture(request)
         except Exception:
             failure()
+    token = active.set(capture)
     outcome = 'failed'
     try:
         yield
         outcome = 'succeeded'
     except BaseException as error:
         if capture is not None:
-            capture.tags.update(failure_tags(error))
+            diagnostics = failure_tags(error)
+            capture.tags.update(diagnostics)
+            record_reply(diagnostics)
         raise
     finally:
         if capture is not None:
@@ -186,6 +269,7 @@ def observe(request):
                 capture.finish(outcome)
             except Exception:
                 failure()
+        active.reset(token)
 
 
 def export():
@@ -213,6 +297,10 @@ def export():
             response.raise_for_status()
             data = response.json()
             experiment = data.get('experiment', data)['experiment_id']
+            response = client.post('/api/2.0/mlflow/experiments/set-experiment-tag',
+                                   json={'experiment_id': experiment, 'key': 'mlflow.experimentKind',
+                                         'value': 'genai_development'})
+            response.raise_for_status()
             response = client.post('/v1/traces', content=packet,
                                    headers={'Content-Type': 'application/x-protobuf',
                                             'x-mlflow-experiment-id': experiment})
