@@ -1625,10 +1625,6 @@ fn main() {
         let mut failures = 0;
         for (name, test) in [
             (
-                "repository_image_is_sealed_and_staged_with_global_fallback",
-                repository_image_is_sealed_and_staged_with_global_fallback as fn(),
-            ),
-            (
                 "moving_wait_bell_is_quiet",
                 moving_wait_bell_is_quiet as fn(),
             ),
@@ -1686,6 +1682,10 @@ fn main() {
         return;
     }
     for (name, test) in [
+        (
+            "repository_image_is_sealed_and_staged_with_global_fallback",
+            repository_image_is_sealed_and_staged_with_global_fallback as fn(),
+        ),
         (
             "moving_wait_bell_is_quiet",
             moving_wait_bell_is_quiet as fn(),

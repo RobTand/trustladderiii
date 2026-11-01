@@ -232,12 +232,16 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     tests/test_example.py
 ```
 
+The runner bounds each report record to 64 KiB. For a large expanded suite,
+call the inventory once per file from a loop inside one admitted action.
+Each invocation continues the action's cumulative progress count.
+
 An inventory action exits nonzero if any selected node does not pass. Its
 JSON retains every node's outcome and failure message. Record skips and
 classify failures as image dependencies, host requirements, or test defects.
 Do not grant root, GPUs, the shared mount, or additional container access to
 make a pilot pass. A Git export has no `.git` directory, and `/tmp` is tmpfs;
-tests requiring repository metadata or qualified disk scratch need separate
+tests requiring repository metadata, executable temporary files, or qualified disk scratch need separate
 pilot eligibility decisions.
 
 Repeat the same selection in the candidate image, run the sandbox suite
