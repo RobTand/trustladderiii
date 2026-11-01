@@ -228,12 +228,7 @@ fn invalid_values_name_the_setting_and_the_fix() {
             "limits.fit_tokens",
             "less than",
         ),
-        (
-            vec!["limits", "w"],
-            Value::Integer(0),
-            "limits.w",
-            "greater than zero",
-        ),
+        (vec!["limits", "w"], Value::Integer(0), "limits.w", "1..=3"),
         (
             vec!["github", "rob", "id"],
             Value::Integer(0),

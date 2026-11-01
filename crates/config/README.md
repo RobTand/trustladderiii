@@ -73,7 +73,7 @@ All paths are absolute. No tilde or environment-variable expansion occurs.
 The worktrees root and tools directory need not exist during offline validation.
 Allowances use positive integer seconds. Expiry triggers a look at the upstream,
 not a work-duration deadline. Credit reserve and free rechecks allow zero;
-W must be at least 1. The kernel accepts up to 255 slots per repo. Rob approved
+W must be in 1..=3, matching the approved capacity and proof bounds. Rob approved
 3 slots per repo once built and proven (Q29 amended, 2026-10-31). The coordinator
 selects the deployment value; the example remains at 1. Slots and file locks are
 granted together. Disjoint leaves can run concurrently when agent capacity is
@@ -84,10 +84,13 @@ sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP 
 queries, and fragments. Parse diagnostics omit source lines.
 
 `limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.
-It defaults to 1 for existing configuration files. Changing an initialized
-world's capacity requires a snapshot migration. The same applies to `limits.w`:
-configuration initializes new worlds, while existing gates retain their stored
-capacity until the coordinator migrates the snapshot.
+It defaults to 1 for existing configuration files. Changing the stored agent pool
+requires a separate snapshot migration. `Controller::open` reconciles `limits.w`
+with stored gate capacity. Increases
+settle through the kernel, then persist the gate, admitted leaves and resulting
+effects atomically. Reopening at the same width writes nothing. A decrease
+refuses startup while any request in the repo is open; an idle decrease is
+recorded in the event journal.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.

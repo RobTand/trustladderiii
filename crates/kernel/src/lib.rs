@@ -1569,6 +1569,13 @@ pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
     (world, out)
 }
 
+/// Settle after the controller reconciles stored gate capacity.
+pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
+    let mut out = Vec::new();
+    settle(&mut world, &mut out, None);
+    (world, out)
+}
+
 /// `step`, also reporting how many passes settle needed. Tests use it to size
 /// the loop bound that Kani's unwinding check then proves.
 pub fn step_with_passes(mut world: World, event: Event) -> (World, Vec<Out>, u32) {
@@ -2664,7 +2671,7 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// Oldest runnable slot waiter, or oldest waiter for the agent pool.
+/// Oldest slot waiter, or oldest waiter for the agent pool.
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
@@ -2679,7 +2686,7 @@ fn first_in_line(w: &World, i: usize) -> bool {
         } else {
             !matches!(n.phase, Phase::Ready(_))
         };
-        if same_line && theirs < mine && (!for_slot || slot_free(w, j)) {
+        if same_line && theirs < mine {
             return false;
         }
     }

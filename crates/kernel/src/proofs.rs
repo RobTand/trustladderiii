@@ -911,16 +911,17 @@ fn check_gate_grant(width: u8) {
             if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
                 if theirs < mine {
                     older_blocked |= !slot_free(&before, j);
-                    if after.nodes[0].holds {
-                        assert!(!slot_free(&before, j));
-                    }
+                    assert!(
+                        !after.nodes[0].holds,
+                        "an older slot ticket prevents this grant"
+                    );
                 }
             }
         }
     }
     kani::cover!(
-        after.nodes[0].holds && older_blocked,
-        "a file-blocked older waiter reserves no slot"
+        !after.nodes[0].holds && older_blocked && slot_free(&before, 0) && !n.paused,
+        "a file-blocked older waiter keeps its place despite spare capacity"
     );
     assert_eq!(&after.nodes[1..], &before.nodes[1..]);
     if after.nodes[0].holds {

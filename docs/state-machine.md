@@ -68,7 +68,7 @@ Proposed rules:
    - **Delivered (merged or done):** the waiting nodes are released.
    - **Abandoned, stopped or replaced:** each waiting node gets an event, and its owner replans.
    - **Waiting on Rob or on an incident:** the waiting nodes stay blocked, and the status view shows the reason.
-5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one serves runnable leaves in ticket order, with 3 slots approved under the Q29 amendment of 2026-10-31. A file-blocked leaf keeps its ticket while disjoint leaves use free slots. The state table has the exact rule.
+5. **What unblocks the most goes first.** Rob decided on 2026-10-30: "we should be pulling work off that blocks the most other work. I don't really care about starvation." (Q30) From slice two, the gate grants each free slot to the runnable leaf with the highest rank: the number of other nodes waiting on it, directly or through a chain of waits. Ties go to the older leaf (Q36). There is no rule against starvation. When two leaves want the same file, the one that unblocks more gets it (Q38). Paused leaves reserve nothing. Slice one serves leaves in ticket order, with 3 slots approved under the Q29 amendment of 2026-10-31. A leaf waiting on files keeps its place and blocks younger leaves. The state table has the exact rule.
 
 ### Priority inheritance
 
@@ -300,7 +300,7 @@ Agreed (Q6): after the first 25 requests, Rob reviews these numbers.
 Proposed:
 
 - **One PR per leaf.**
-- **At most W leaves in flight per repo.** W is configurable and must be positive. Rob approved 3 slots per repo once built and proven (Q29 amended, 2026-10-31). W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
+- **At most W leaves in flight per repo.** W is configurable from 1 through 3. Rob approved 3 slots per repo once built and proven (Q29 amended, 2026-10-31). W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
 - **Plan just in time.** A repo's next node gets planned when fewer than W leaves are waiting for a slot.
 - **Leaves span one repo.** A request that touches several repos splits into one child per repo, so no lock ever spans two gates.
 - **The parent checks the combined result.** After its last child closes, the parent runs its own acceptance check.
@@ -385,7 +385,7 @@ Version 4 of the state table fixes these:
 - isolated CI;
 - upgrades that keep pending actions.
 
-Slice one also shrank to one slot, one model account and a plain status view.
+Slice one uses one model account and a plain status view. Rob later approved raising its gate from 1 to 3 slots under the Q29 amendment of 2026-10-31.
 
 Both reviewers asked for proof to be tested before more design work. The next step is a kernel spike: slice one's kernel and its Kani harnesses, run on PrismaBuild.
 
@@ -480,7 +480,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 
 **Order of work**
 
-- **Q29 W (amended by Rob, 2026-10-31):** raise the per-repo gate from 1 to 3 slots once built and proven. Positive W values are allowed. Disjoint leaves run concurrently; overlapping footprints serialize through file locks. A leaf waiting for the gate holds nothing and keeps its ticket. A file-blocked waiter does not block disjoint leaves from using free slots. Planning admits the next node when fewer than W leaves wait for a slot.
+- **Q29 W (amended by Rob, 2026-10-31):** raise the per-repo gate from 1 to 3 slots once built and proven. Existing ticket order and file-lock rules remain in force. Planning admits the next node when fewer than W leaves wait for a slot.
 - **Q30 What runs first:** Rob: "we should be pulling work off that blocks the most other work. I don't really care about starvation." So there is no rule against starvation.
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later.

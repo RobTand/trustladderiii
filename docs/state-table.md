@@ -335,13 +335,14 @@ goals and forecast settings:
 
 ### Ready(resume point)
 
-A leaf waits here for a slot, holding nothing. Settle grants it a slot and its files when all three hold:
+A leaf waits here for a slot, holding nothing. Settle grants it a slot and its files when all four hold:
 
 - it isn't paused;
 - it isn't waiting on an incident;
-- the gate has room.
+- the gate has room;
+- all its files are free.
 
-In slice one, the gate grants first come, first served among runnable leaves whose files are free. A file-blocked leaf keeps its ticket while disjoint leaves use free slots (Q29 amended, Rob 2026-10-31). A grant moves the leaf straight to its resume point.
+In slice one, the gate grants first come, first served in ticket order. A leaf waiting on files keeps its place and blocks younger leaves. A grant moves the leaf straight to its resume point.
 
 | Resume point | Next | Effects, in order |
 |---|---|---|
@@ -615,9 +616,9 @@ Every effect carries the controller's epoch, and executors refuse effects from a
 
 The gate is part of the world, so its changes are atomic with the step that makes them.
 
-**Slice one (Q29 amended, Rob 2026-10-31):** W is configurable and must be at least 1. Rob approved 3 slots per repo once built and proven.
+**Slice one (Q29 amended, Rob 2026-10-31):** W is configurable from 1 through 3. Rob approved raising W from 1 to 3 slots per repo once built and proven.
 
-A leaf is runnable when it is neither paused nor waiting on an incident, and all its files are free. Runnable leaves are served in ticket order. A leaf gets its slot and all its files together. A leaf waiting for a slot holds neither a slot nor files. A file-blocked leaf keeps its ticket while disjoint leaves use free slots. Planning is admitted when fewer than W leaves are waiting for a slot.
+A leaf gets its slot and all its files together. Leaves are served in ticket order, including a leaf waiting on files. A leaf waiting for a slot holds neither a slot nor files and keeps its place in line. Planning is admitted when fewer than W leaves are waiting for a slot.
 
 **Slice two:**
 
@@ -709,7 +710,7 @@ A newer kernel never replays older events. They stay for audit.
 - **Rank:** the number of other nodes waiting on a node, directly or through a chain of waits. Higher ranks go first, and ties go to the older node (Q36). The wait graph has no cycles, so the count is always finite.
 - **Wait reason:** what every open node is waiting on.
 
-There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one nothing waits on anything else, so every rank is 0, and serving requests first come, first served is the same rule.
+There are no manual priorities in slices one and two. A label such as `tl3-urgent` could be added later if Rob finds he wants one (Q37). In slice one there are no dependencies between leaves. Leaves can wait on a file holder or an older gate ticket; the gate serves them first come, first served. Ranking starts in slice two.
 
 File waits and pauses count in the wait graph, and neither can close a cycle:
 
@@ -736,7 +737,7 @@ File waits and pauses count in the wait graph, and neither can close a cycle:
 
 - every phase under "Node phases, slice one";
 - Rob's pause, resume, stop and request changes, by answer or by comment;
-- one gate with an approved W of 3, first come, first served among runnable leaves (Q29 amended, Rob 2026-10-31);
+- one gate with an approved W of 3, first come, first served in ticket order (Q29 amended, Rob 2026-10-31);
 - one model account, first come, first served;
 - the effect machine, progress credit, looks and stalls, and containment;
 - the plain status view, and code grades.

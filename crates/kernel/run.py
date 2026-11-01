@@ -44,12 +44,12 @@ if mode == "manifest":
         sys.exit("unknown proof name")
     rows = []
     for name in selected:
-        if name.startswith(("gate_progress_", "gate_waiting_progress_")) or name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room", "apply_rebase_clean", "apply_rebase_needs_changes"}:
+        if name.startswith("gate_"):
+            memory = 10
+        elif name in {"apply_rebase_clean", "apply_rebase_needs_changes"}:
+            memory = 48
+        elif name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
             memory = 44
-        elif name.startswith("gate_maker_progress_"):
-            memory = 44
-        elif name.startswith(("gate_merge_progress_", "gate_resume_progress_")):
-            memory = 32
         elif name.startswith("progress_from_"):
             memory = 24
         elif name in replies:
