@@ -185,7 +185,10 @@ impl Materials {
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});
         let inputs = json!({"issue":issue,"repo":repo});
-        Ok(json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs}))
+        Ok(
+            json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs,
+            "base_checkout":{"repository":path,"commit":base.as_str()}}),
+        )
     }
 }
 
@@ -219,10 +222,17 @@ pub(crate) fn repository_materials(
     let commit = CommitId::new(commit)?;
     let repository = Worktrees::open(repository, repository)?;
     let tree = repository.list_tree(&commit)?;
+    const README_BYTES: usize = 64 * 1024;
+    const FILE_LIST_BYTES: usize = 64 * 1024;
+    const FILE_LIST_ENTRIES: usize = 10_000;
+    const SUMMARY_BYTES: usize = 16 * 1024;
+    const TRUNCATED: &str = "\n[truncated; use read for the rest]";
     let mut files = Vec::new();
-    let mut materials = Vec::new();
+    let mut file_bytes = 0;
+    let mut file_count = 0;
+    let mut directories = std::collections::BTreeMap::<&str, usize>::new();
     let mut readme = String::new();
-    let mut total = 0usize;
+    let mut truncated_list = false;
     for entry in tree.split(|b| *b == 0).filter(|e| !e.is_empty()) {
         let entry = std::str::from_utf8(entry)
             .map_err(|_| Error::Invalid("repository paths must be UTF-8"))?;
@@ -233,42 +243,66 @@ pub(crate) fn repository_materials(
         if fields.len() != 4 {
             return Err(Error::Invalid("invalid Git tree metadata"));
         }
-        files.push(path.to_owned());
-        if files.len() > 10000 {
-            return Err(Error::Invalid("repository snapshot exceeds the file bound"));
+        file_count += 1;
+        *directories
+            .entry(path.split_once('/').map_or(".", |(dir, _)| dir))
+            .or_default() += 1;
+        // Bound serialized paths as well as their count, including JSON escaping.
+        let size = serde_json::to_string(path)?.len() + 1;
+        if !truncated_list
+            && files.len() < FILE_LIST_ENTRIES
+            && file_bytes + size <= FILE_LIST_BYTES
+        {
+            file_bytes += size;
+            files.push(path);
+        } else {
+            truncated_list = true;
         }
-        if !matches!(fields[0], "100644" | "100755") || fields[1] != "blob" {
-            continue;
-        }
-        let size: usize = fields[3]
-            .parse()
-            .map_err(|_| Error::Invalid("invalid Git blob size"))?;
-        if size > 1024 * 1024 {
-            continue;
-        }
-        total += size;
-        if total > 32 * 1024 * 1024 {
-            return Err(Error::Invalid("repository text exceeds the input bound"));
-        }
-        let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
-        if bytes.contains(&0) {
-            continue;
-        }
-        if let Ok(content) = String::from_utf8(bytes) {
-            if path.eq_ignore_ascii_case("README.md") {
-                readme = content.clone();
+        if path.eq_ignore_ascii_case("README.md")
+            && matches!(fields[0], "100644" | "100755")
+            && fields[1] == "blob"
+        {
+            let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
+            if !bytes.contains(&0)
+                && let Ok(content) = String::from_utf8(bytes)
+            {
+                readme = content;
+                if readme.len() > README_BYTES {
+                    let mut end = README_BYTES - TRUNCATED.len();
+                    while !readme.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    readme.truncate(end);
+                    readme.push_str(TRUNCATED);
+                }
             }
-            materials.push(json!({"path":path,"content":content}));
         }
     }
-    Ok(json!({"readme":readme, "file_list":files, "materials":materials}))
+    let mut summary = String::new();
+    if truncated_list {
+        summary =
+            format!("{file_count} files total; file_list is a prefix. Use list/glob to explore.\n");
+        for (dir, count) in directories {
+            let line = format!("{dir}/: {count} files\n");
+            if summary.len() + line.len() + TRUNCATED.len() > SUMMARY_BYTES {
+                summary.push_str(TRUNCATED);
+                break;
+            }
+            summary.push_str(&line);
+        }
+    }
+    Ok(json!({"readme":readme, "file_list":files, "file_count":file_count, "tree_summary":summary}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::{fs, process::Command};
+    use std::{
+        fs,
+        io::Write,
+        process::{Command, Stdio},
+    };
 
     #[test]
     fn accepted_plan_supplies_maker_goals_and_named_checks() {
@@ -283,6 +317,57 @@ mod tests {
         );
         let invalid = json!({"kind":"leaf","files":[],"checks":[{"kind":"regression","node_ids":["test.py::test_it"],"goal_ids":[9]}]});
         assert!(maker_inputs(&brief, &invalid).is_err());
+    }
+
+    #[test]
+    fn repository_orientation_ignores_total_text_size() {
+        let f = crate::git_tests::Repo::new();
+        let content = "source-only-never-inline\n".repeat(40_000);
+        for index in 0..36 {
+            fs::write(f.path.join(format!("source-{index}.txt")), &content).unwrap();
+        }
+        crate::git_tests::git(&f.path, &["add", "."]);
+        crate::git_tests::git(&f.path, &["commit", "-qm", "large repository"]);
+        let head = crate::git_tests::git(&f.path, &["rev-parse", "HEAD"]);
+        let repo = repository_materials(&f.path, &head).unwrap();
+        assert!(repo.get("materials").is_none());
+        assert!(!repo.to_string().contains("source-only-never-inline"));
+        assert_eq!(repo["file_list"].as_array().unwrap().len(), 37);
+    }
+
+    #[test]
+    fn repository_orientation_summarizes_many_files_and_truncates_readme() {
+        let f = crate::git_tests::Repo::new();
+        fs::write(f.path.join("README.md"), "é".repeat(40_000)).unwrap();
+        crate::git_tests::git(&f.path, &["add", "README.md"]);
+        let blob = crate::git_tests::git(&f.path, &["hash-object", "-w", "README.md"]);
+        let mut child = Command::new("git")
+            .current_dir(&f.path)
+            .args(["update-index", "--index-info"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        for index in 0..10_001 {
+            writeln!(input, "100644 {blob}\tsrc/{index:05}.txt").unwrap();
+        }
+        drop(input);
+        assert!(child.wait().unwrap().success());
+        crate::git_tests::git(&f.path, &["commit", "-qm", "many files"]);
+        let head = crate::git_tests::git(&f.path, &["rev-parse", "HEAD"]);
+        let repo = repository_materials(&f.path, &head).unwrap();
+        assert!(repo["file_list"].as_array().unwrap().len() <= 10_000);
+        assert_eq!(repo["file_count"], 10_002);
+        assert!(
+            repo["tree_summary"]
+                .as_str()
+                .unwrap()
+                .contains("src/: 10001 files")
+        );
+        let readme = repo["readme"].as_str().unwrap();
+        assert!(readme.len() <= 65_536);
+        assert!(readme.ends_with("[truncated; use read for the rest]"));
+        assert!(repo.to_string().len() < 150_000);
     }
 
     #[test]
@@ -318,20 +403,8 @@ mod tests {
         fs::write(root.path().join("greeting.py"), "dirty\n").unwrap();
         let repo = repository_materials(root.path(), &sha).unwrap();
         assert_eq!(repo["readme"], "Committed readme");
-        assert!(
-            repo["materials"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|m| m["path"] == "greeting.py" && m["content"] == "hello\n")
-        );
-        assert!(
-            !repo["materials"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|m| m["path"] == "link" || m["path"] == "binary")
-        );
+        assert!(repo.get("materials").is_none());
+        assert!(!repo.to_string().contains("dirty"));
         assert_eq!(repo["file_list"].as_array().unwrap().len(), 4);
     }
 }

@@ -28,6 +28,7 @@ from langchain_core.messages import AIMessage
 from tl3_workers import runtime
 
 script = json.loads(Path(sys.argv[1]).read_text())
+FakeMessagesListChatModel.bind_tools = lambda self, tools, **kwargs: self
 model = FakeMessagesListChatModel(responses=[AIMessage(**turn) for turn in script])
 mode = sys.argv[2] if len(sys.argv) > 2 else ''
 def create_model(request):

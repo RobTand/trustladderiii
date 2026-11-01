@@ -14,3 +14,9 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", offline)
     monkeypatch.setattr(socket.socket, "connect_ex", offline)
     monkeypatch.setattr(socket, "getaddrinfo", offline)
+
+
+@pytest.fixture(autouse=True)
+def fake_model_tool_binding(monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    monkeypatch.setattr(FakeMessagesListChatModel, "bind_tools", lambda self, tools, **kwargs: self)

@@ -347,6 +347,12 @@ impl Supervisor {
                 .ok_or(Error::Invalid("worker materials must be an object"))?
                 .remove("standing_rules");
         }
+        if matches!(role, "ingest" | "audit") {
+            // Cached simulation materials may still contain inline fixture text.
+            if let Some(repo) = inputs["repo"].as_object_mut() {
+                repo.remove("materials");
+            }
+        }
         protocol::validate_inputs(role, &inputs)?;
         let ladder: &[tl3_config::Model] = match role {
             "classifier" => &self.models.comment_classifier,
@@ -660,9 +666,9 @@ impl Supervisor {
         }
         if role == "reviewer" {
             review::checkout(&root.join("worktree"), delivery)?;
-        } else if matches!(role, "ingest" | "planner") {
+        } else if matches!(role, "ingest" | "audit" | "planner") {
             let materials = self.materials(delivery, &mut store, &snapshot)?;
-            materialize(&root.join("worktree"), &materials["repo"])?;
+            materialize(&root.join("worktree"), &materials)?;
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
@@ -951,7 +957,26 @@ fn watched_deliveries(store: &mut Store) -> Result<Vec<Delivery>> {
     Ok(deliveries)
 }
 
-fn materialize(root: &Path, repo: &Value) -> Result<()> {
+fn materialize(root: &Path, materials: &Value) -> Result<()> {
+    if let Some(base) = materials.get("base_checkout") {
+        let repository = Path::new(
+            base["repository"]
+                .as_str()
+                .ok_or(Error::Invalid("base repository missing"))?,
+        );
+        let commit = CommitId::new(
+            base["commit"]
+                .as_str()
+                .ok_or(Error::Invalid("base commit missing"))?,
+        )?;
+        // A retry must discard a partial clone and return to the same committed base.
+        if root.exists() {
+            fs::remove_dir_all(root)?;
+        }
+        Worktrees::open(repository, repository)?.clone_checkout(root, &commit)?;
+        return Ok(());
+    }
+    let repo = materials.get("repo").unwrap_or(materials);
     let files = repo["file_list"]
         .as_array()
         .ok_or(Error::Invalid("repository file list missing"))?;

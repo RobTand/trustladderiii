@@ -50,8 +50,7 @@ def cache_tokenizer(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def tool_capable_fake(monkeypatch):
-    # The shared launcher uses the tool-less fake needed by ingest and audit.
-    # Adapt only that fake; production tool binding and dispatch still run.
+    # Check the shared fake binds precisely the planner's read-only tools.
     setup = '''
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 def bind_tools(self, tools, **kwargs):
