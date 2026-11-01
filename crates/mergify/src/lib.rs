@@ -28,6 +28,7 @@ pub struct Observation {
     pub pull_request: PullRequest,
     pub state: QueueState,
     pub check: Option<CheckRun>,
+    pub check_runs: Vec<CheckRun>,
     pub unapproved_merge: bool,
     pub dequeue_rule_concluded: bool,
 }
@@ -237,6 +238,7 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
         pull_request,
         state,
         check,
+        check_runs: checks.to_vec(),
         unapproved_merge,
         dequeue_rule_concluded,
     }
