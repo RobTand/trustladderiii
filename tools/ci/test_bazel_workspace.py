@@ -25,6 +25,14 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotIn('x-buildbuddy-api-key=', config)
 
 
+class Arm64ToolchainTests(unittest.TestCase):
+    def test_both_executor_platforms_have_a_cc_toolchain(self):
+        module = (ROOT / 'MODULE.bazel').read_text()
+        self.assertIn('bazel_dep(name = "toolchains_buildbuddy"', module)
+        platforms = (ROOT / 'tools/bazel/BUILD.bazel').read_text()
+        self.assertEqual(platforms.count('"@bazel_tools//tools/cpp:gcc"'), 2)
+
+
 class RuntimeInputsTests(unittest.TestCase):
     def test_postgres_is_a_checksummed_input_and_not_a_runtime_download(self):
         repository = (ROOT / 'tools/bazel/postgres.bzl').read_text()
