@@ -237,6 +237,16 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "mergify[bot]",
             "> `refresh`\n\n#### ❌ Command failed: unrelated command.",
         ));
+        api.state
+            .lock()
+            .unwrap()
+            .comments
+            .push(reply(1003, "someone", "@mergifyio queue"));
+        api.state.lock().unwrap().comments.push(reply(
+            1004,
+            "mergify[bot]",
+            "> `queue`\n\n#### ❌ Command failed: someone else's command.",
+        ));
         drain(&mut controller);
         assert!(
             !controller

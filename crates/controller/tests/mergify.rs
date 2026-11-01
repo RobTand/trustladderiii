@@ -297,7 +297,8 @@ impl Respond for Api {
                     "issue_url":"local"});
                 state.comments.push(comment.clone());
                 if let Some(reply) = state.command_reply.clone() {
-                    state.comments.push(json!({"id":1001 + 2 * state.requeues,"body":reply,
+                    let reply_id = 1001 + 2 * state.requeues;
+                    state.comments.push(json!({"id":reply_id,"body":reply,
                         "user":{"id":37929162,"login":"mergify[bot]"},
                         "created_at":"2026-10-31T22:20:06Z","updated_at":"2026-10-31T22:20:06Z",
                         "issue_url":"local"}));
