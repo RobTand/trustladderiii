@@ -1,0 +1,17 @@
+load("//tools/bazel:python.bzl", "tl3_py_test")
+
+tl3_py_test(
+    name = "test_fleet",
+    srcs = ["test_fleet.py"],
+    deps = [":test_runners"],
+)
+
+tl3_py_test(
+    name = "test_hardening",
+    srcs = ["test_hardening.py"],
+)
+
+tl3_py_test(
+    name = "test_runners",
+    srcs = ["test_runners.py"],
+)

@@ -1,0 +1,64 @@
+module(name = "tl3")
+
+bazel_dep(name = "rules_rust", version = "0.75.0")
+bazel_dep(name = "rules_python", version = "2.4.6")
+bazel_dep(name = "rules_python_gazelle_plugin", version = "2.4.6")
+bazel_dep(name = "gazelle", version = "0.54.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(edition = "2024", versions = ["1.99.1"])
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+cargo_feature_lock = use_repo_rule("//tools/bazel:cargo_lock.bzl", "cargo_feature_lock")
+cargo_feature_lock(name = "bazel_cargo_lock", source = "//:Cargo.lock")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "@bazel_cargo_lock//:Cargo.lock",
+    skip_cargo_lockfile_overwrite = False,
+    supported_platform_triples = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"],
+    manifests = ["//:Cargo.toml"],
+)
+# crate_universe unifies sqlx-core's host and target features. Its Executor
+# trait enables describe with offline, so its Postgres implementation must agree.
+crate.spec(package = "sqlx-postgres", version = "=0.9.0", default_features = False, features = ["offline"])
+use_repo(crate, "crates")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(python_version = "3.14")
+python.toolchain(python_version = "3.14")
+use_repo(python, "python_3_14", "pythons_hub")
+register_toolchains("@pythons_hub//:all")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "tl3_pip",
+    python_version = "3.14",
+    # amd64 for PR gates, arm64 for the post-merge run.
+    requirements_by_platform = {"//tools/bazel:requirements.txt": "linux_x86_64,linux_aarch64"},
+    target_platforms = ["linux_x86_64", "linux_aarch64"],
+)
+use_repo(pip, "tl3_pip")
+
+postgres_archive = use_repo_rule("//tools/bazel:postgres.bzl", "postgres_archive")
+postgres_archive(
+    name = "postgres_linux_amd64",
+    url = "https://repo.maven.apache.org/maven2/io/zonky/test/postgres/embedded-postgres-binaries-linux-amd64/17.4.0/embedded-postgres-binaries-linux-amd64-17.4.0.jar",
+    sha256 = "d9d216d3c1c119ad31b8a8de60b3cf2826516f711a04d3745ef4f1913f21a938",
+)
+postgres_archive(
+    name = "postgres_linux_arm64",
+    url = "https://repo.maven.apache.org/maven2/io/zonky/test/postgres/embedded-postgres-binaries-linux-arm64v8/17.4.0/embedded-postgres-binaries-linux-arm64v8-17.4.0.jar",
+    sha256 = "28d7265e7f049ffc9f80867f2f99ebfe92eadec3dd3c8e819f3136c3b2e86a05",
+)
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+http_file(
+    name = "o200k_base",
+    urls = ["https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"],
+    sha256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+    downloaded_file_path = "fb374d419588a4632f3f557e76b4b70aebbca790",
+)

@@ -1,0 +1,46 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
+
+exports_files(["helper.rs"])
+
+# The MLflow server runs in its own uv environment on the deployment host and
+# has no tests; Light checks only verify its lockfile.
+# gazelle:python_ignore_files mlflow-server.py
+
+py_binary(
+    name = "deploy",
+    srcs = ["deploy.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "smoke-models",
+    srcs = ["smoke-models.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "verify-live",
+    srcs = ["verify-live.py"],
+    visibility = ["//visibility:public"],
+)
+
+# Live verifier uses the deployed worker and database environments.
+exports_files(["verify-mlflow.py"])
+# gazelle:python_ignore_files verify-mlflow.py
+
+py_library(
+    name = "verify-preparation",
+    srcs = ["verify-preparation.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_deploy",
+    srcs = ["test_deploy.py"],
+)
+
+tl3_py_test(
+    name = "test_mlflow_deploy",
+    srcs = ["test_mlflow_deploy.py"],
+)

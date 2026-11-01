@@ -34,6 +34,16 @@ class HostedTests(unittest.TestCase):
                 shards.parse_shard(value)
 
     def test_plan_uses_both_architectures_and_respects_one_total_setting(self):
+        # A fixed inventory keeps this a planner test, independent of the checkout.
+        files = [Path(n) for n in ['workers/pyproject.toml', 'workers/tests/test_worker.py',
+                                   'harness/pyproject.toml', 'harness/tests/test_harness.py',
+                                   'deploy/dl380g10/test_deploy.py', 'tools/ci/test_tool.py']]
+        projects = {Path('workers'): {'project': {}}, Path('harness'): {'project': {}}}
+        with patch.object(check, 'tracked_files', return_value=files), \
+             patch.object(check, 'python_projects', return_value=projects):
+            self.assert_plans_use_both_architectures()
+
+    def assert_plans_use_both_architectures(self):
         for total in [8, 10, 12]:
             result = hosted.plan(total)
             self.assertEqual(sum(len(matrix['include']) for matrix in result.values()), total)
