@@ -1,9 +1,4 @@
 use super::*;
-use rand::rngs::OsRng;
-use rsa::{
-    RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, LineEnding},
-};
 use serde_json::json;
 use std::{process::Command, time::Duration};
 use wiremock::{
@@ -18,11 +13,7 @@ fn github_installation_and_synchronous_token_bridge() {
         .build()
         .unwrap();
     let server = runtime.block_on(MockServer::start());
-    let pem = RsaPrivateKey::new(&mut OsRng, 2048)
-        .unwrap()
-        .to_pkcs8_pem(LineEnding::LF)
-        .unwrap()
-        .to_string();
+    let pem = include_str!("../../../../mergify/tests/fixtures/throwaway-key.pem").into();
     let github = tl3_github::GitHub::new(
         tl3_github::AppConfig {
             id: 123,

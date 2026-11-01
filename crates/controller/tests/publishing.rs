@@ -658,19 +658,22 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     let f = Arc::new(fixture);
     let original = git(&f.source, &["rev-parse", "HEAD"]);
-    commit(&f.source, "value.py", "def value(): return 1\n");
-    commit(
-        &f.source,
-        "pyproject.toml",
+    fs::write(f.source.join("value.py"), "def value(): return 1\n").unwrap();
+    fs::write(
+        f.source.join("pyproject.toml"),
         "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
-    );
+    )
+    .unwrap();
     commit(
         &f.source,
         "test_value.py",
         "from value import value\ndef test_value(): assert value() == 2\n",
     );
     assert_eq!(
-        git(&f.source, &["rev-list", "--count", &format!("{original}..HEAD")]),
+        git(
+            &f.source,
+            &["rev-list", "--count", &format!("{original}..HEAD")]
+        ),
         "1",
         "publishing setup needs one base commit, not one per file"
     );
