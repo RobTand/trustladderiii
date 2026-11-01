@@ -15,6 +15,55 @@ use tl3_kernel::{EffectKind, Notice, Outcome, Phase, Role};
 use tl3_store::Store;
 use worktree_fixture::{Fixture, commit, git, identity};
 
+#[test]
+fn repository_protected_paths_trim_only_that_repository() {
+    for (name, changelog_protected) in [("tl3-sandbox", true), ("other-repo", false)] {
+        let root = tempfile::tempdir().unwrap();
+        let f = Fixture::create(root.path());
+        let mut repositories = f.repositories.clone();
+        repositories[0].protected_paths = vec!["CHANGELOG.md".into()];
+        let mut other = repositories[0].clone();
+        other.name = "other-repo".into();
+        other.protected_paths = vec![];
+        repositories.push(other);
+        let mut adapter = adapters::worktrees::Real::new(f.root.join("worktrees"), 1)
+            .unwrap()
+            .with_repositories(&repositories)
+            .unwrap();
+        let mut repo = identity();
+        repo.name = name.to_ascii_uppercase();
+        adapter
+            .serve_local(repo.clone(), &f.repo, &f.remote)
+            .unwrap();
+        let mut delivery = f.delivery(EffectKind::PrepareWorktree, 0);
+        delivery.repository = repo;
+        adapter.execute(&delivery).unwrap();
+        let checkout = adapter.checkout(&delivery);
+        for file in ["CHANGELOG.md", "global.txt", "pyproject.toml"] {
+            fs::write(checkout.join(file), "requested\n").unwrap();
+        }
+        commit(&checkout, "shared.txt", "requested\n");
+        delivery.paths = ["shared.txt", "CHANGELOG.md", "global.txt", "pyproject.toml"]
+            .map(String::from)
+            .to_vec();
+        let trim = adapter
+            .trim_scope(&delivery, &["global.txt".into()])
+            .unwrap();
+        assert_eq!(
+            trim.removed_paths.contains(&"CHANGELOG.md".into()),
+            changelog_protected,
+            "{name}"
+        );
+        assert!(trim.removed_paths.contains(&"global.txt".into()));
+        assert!(
+            trim.removed_paths.contains(&"pyproject.toml".into()),
+            "defaults remain mandatory"
+        );
+        assert!(checkout.join("shared.txt").exists());
+        assert_eq!(checkout.join("CHANGELOG.md").exists(), !changelog_protected);
+    }
+}
+
 struct Capture {
     inner: Box<dyn Executor>,
     making: Arc<Mutex<Option<Delivery>>>,

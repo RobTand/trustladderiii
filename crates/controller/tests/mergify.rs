@@ -1,3 +1,5 @@
+#[path = "mergify/check_reads.rs"]
+mod check_reads;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
@@ -105,6 +107,7 @@ struct State {
     pull_reads: usize,
     changing_reads: usize,
     reads: usize,
+    get_paths: BTreeMap<String, usize>,
     head_checks: Vec<Value>,
     workflow: Option<Value>,
     reruns: usize,
@@ -156,6 +159,7 @@ impl State {
             pull_reads: 0,
             changing_reads: 0,
             reads: 0,
+            get_paths: BTreeMap::new(),
             head_checks: vec![],
             workflow: None,
             reruns: 0,
@@ -241,6 +245,7 @@ impl Respond for Api {
         }
         if method == "GET" {
             state.reads += 1;
+            *state.get_paths.entry(path.into()).or_default() += 1;
         }
         if let Some(status) = state.http_failure.filter(|_| method == "GET") {
             return ResponseTemplate::new(status)
@@ -2677,6 +2682,12 @@ fn main() {
     scenario!(label_removed_before_confirmation());
     scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
+    for mode in ["gaps", "adapter", "source", "reopen-look", "reopen-source"] {
+        scenario!(check_reads::scenario(
+            &database.create(&format!("check_read_{mode}")),
+            mode
+        ));
+    }
     for status in [403, 429] {
         scenario!(rate_limited_read_defers_quota(
             &database.create(&format!("quota_{status}")),

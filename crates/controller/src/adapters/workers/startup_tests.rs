@@ -2,6 +2,79 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
+fn planner_protected_paths_follow_the_request_repository() {
+    use crate::git_tests::{Repo, documents, support::Database};
+    let f = Repo::new();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("repo_protection");
+    config.workers.runs = f.root.path().join("runs");
+    config.planning.protected_paths.push("global/**".into());
+    config.github.repos[0].protected_paths = vec!["CHANGELOG.md".into()];
+    let mut other = config.github.repos[0].clone();
+    other.name = "other-repo".into();
+    other.protected_paths = vec!["other-only/**".into()];
+    config.github.repos.push(other);
+    let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
+    let mut controller = crate::Controller::open(
+        Store::open(&config.store).unwrap(),
+        registry,
+        crate::Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller
+        .intake(crate::LabelledIssue {
+            delivery: "repo-protection".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Protect only this repo".into(),
+            actor: config.github.rob.id,
+            label: "tl3".into(),
+        })
+        .unwrap();
+    let mut store = Store::open(&config.store).unwrap();
+    store.put_worker_materials("0", &json!({})).unwrap();
+    let snapshot = documents(
+        &mut store,
+        &[(
+            "briefs",
+            json!({
+                "kind":"brief", "memory_ids":[], "brief":"Keep repository policies separate",
+                "goals":[{"description":"Use this repo's files","verification":"review"}],
+            }),
+        )],
+    );
+    let supervisor = Supervisor::new(&config, &f.root.path().join("records")).unwrap();
+    for (name, own, foreign) in [
+        ("TL3-SANDBOX", "CHANGELOG.md", "other-only/**"),
+        ("OTHER-REPO", "other-only/**", "CHANGELOG.md"),
+    ] {
+        let mut delivery = f.delivery();
+        delivery.repository.owner = "ROBTAND".into();
+        delivery.repository.name = name.into();
+        let request = supervisor
+            .request(&delivery, "planner", &mut store, &snapshot)
+            .unwrap();
+        let paths = request["inputs"]["protected_paths"].as_array().unwrap();
+        assert!(paths.contains(&json!(own)), "missing {own}: {paths:?}");
+        assert!(
+            !paths.contains(&json!(foreign)),
+            "leaked {foreign}: {paths:?}"
+        );
+        assert!(paths.contains(&json!("global/**")));
+        for required in tl3_config::Planning::default().protected_paths {
+            assert!(paths.contains(&json!(required)));
+        }
+    }
+    drop(controller);
+    drop(supervisor);
+    db.stop();
+}
+
+#[test]
 fn worker_credentials_survive_controller_credential_removal_and_expose_only_model_key() {
     let root = tempfile::tempdir().unwrap();
     let inherited = root.path().join("systemd-credentials");

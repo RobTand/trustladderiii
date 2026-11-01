@@ -1309,6 +1309,9 @@ Before reporting a leaf's proposed head or starting its first check, call:
 controller.trim_scope(&worktrees, &delivery, &config.planning.protected_paths)?;
 ```
 
+The adapter adds the mandatory defaults and the `github.repos` protected paths
+matching `delivery.repository`; callers pass only the global additions.
+
 `delivery.paths` contains the plan's declared files. The trim runs once per branch.
 Its receipt always returns the original trimmed head, even after later maker
 commits. The adoption tracer must re-read the current branch head after the hook
@@ -1391,6 +1394,8 @@ write**; see [App setup](../../deploy/github-app/README.md#workflow-rerun-permis
 
 Run `bash crates/controller/tools/verify-head-checks.sh` through PrismaBuild for the
 focused D4 scenarios. The Mergify and publishing suites cover the surrounding flow.
+Run `bash crates/controller/tools/verify-classic-protection.sh` through PrismaBuild
+for classic branch protection, App bindings, and unavailable protection or status reads.
 
 Workflow recovery waits while a cancelled check's workflow run is still finishing.
 A later look reruns the completed workflow before enqueueing. Explicit Actions
@@ -1406,6 +1411,12 @@ existing looks recover missed events. Legacy commit statuses satisfy requirement
 without an App binding when status reads are available. Classic protection uses
 the branch summary and existing Contents read access. No new App permission is
 needed. A 403 or 404 on protection or status reads raises one nonblocking setup
-incident naming the permission. Available requirements and queued CI failure
+incident for each distinct permission gap. Available requirements and queued CI failure
 observations are retained; unavailable status-only contexts are skipped. Status
 changes rely on existing looks, with no `status` webhook subscription.
+
+Queue observations evaluate the check runs already read with the PR, removing
+one duplicate REST read per look. Protection requirements, legacy statuses and
+failure annotations stay fresh. A queued look with one App-bound requirement
+uses five REST reads instead of six. Cleared setup incidents reopen when fresh
+evidence reports that the same permission gap persists.
