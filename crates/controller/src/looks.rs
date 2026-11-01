@@ -82,7 +82,7 @@ pub(crate) fn resolve_effect_incidents(
     mut resolved: impl FnMut(&Incident, &str) -> Result<bool>,
 ) -> Result<()> {
     for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
-        let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+        let mut incident: Incident = crate::decode_stored(row.value.clone())?;
         if incident.open
             && let Some(key) = incident.effect.as_deref()
             && resolved(&incident, key)?
@@ -184,7 +184,7 @@ impl Controller {
             let Some(effect) = self.store.effect(key)? else {
                 return Ok(false);
             };
-            let delivery: Delivery = serde_json::from_value(effect.payload)?;
+            let delivery: Delivery = crate::decode_stored(effect.payload)?;
             // Failed summaries and other notices still need delivery after closure.
             Ok(matches!(delivery.output, Out::Effect { .. }))
         })
@@ -215,13 +215,13 @@ impl Controller {
             .rows
             .iter()
             .filter(|row| row.table == "allowances")
-            .map(|row| serde_json::from_value::<AllowanceState>(row.value.clone()))
+            .map(|row| crate::decode_stored::<AllowanceState>(row.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         for row in &commit.rows {
             if let RowChange::Put { table, value, .. } = row
                 && table == "allowances"
             {
-                states.push(serde_json::from_value(value.clone())?);
+                states.push(crate::decode_stored(value.clone())?);
             }
         }
         let mut retired = std::collections::BTreeSet::new();
@@ -289,7 +289,7 @@ impl Controller {
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             state.incident = Some(id.into());
             commit
                 .rows
@@ -309,7 +309,7 @@ impl Controller {
             &snapshot,
         );
         for row in snapshot.rows.iter().filter(|row| row.table == "allowances") {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             if !matches!(
                 state.delivery.output,
                 Out::Effect {
@@ -384,7 +384,7 @@ impl Controller {
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
-            .map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()))
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?
             .iter()
             .filter_map(|s| s.due_ms)
@@ -412,7 +412,7 @@ impl Controller {
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
-            .map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()))
+            .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let now = self.now_ms();
         let mut github_due = false;
@@ -500,7 +500,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
-            let incident: Incident = serde_json::from_value(row.value.clone())?;
+            let incident: Incident = crate::decode_stored(row.value.clone())?;
             // A healthy GET cannot prove that command restrictions were fixed.
             // Keep this setup refusal for explicit incident clearance, even
             // after the failed delivery's adapter records have retired.
@@ -762,7 +762,7 @@ impl Controller {
                 .rows
                 .into_iter()
                 .find(|r| r.table == "incidents" && r.id == *id)
-                .map(|r| serde_json::from_value::<Incident>(r.value))
+                .map(|r| crate::decode_stored::<Incident>(r.value))
                 .transpose()?;
             if let Some(incident) = incident.filter(|i| i.open) {
                 if !incident.needs_rob {
@@ -806,7 +806,7 @@ impl Controller {
         let previous: Option<crate::executor::WatchProgress> = row
             .value
             .get("progress")
-            .map(|value| serde_json::from_value(value.clone()))
+            .map(|value| crate::decode_stored(value.clone()))
             .transpose()?;
         let progress = crate::executor::WatchProgress {
             previous: previous.as_ref().map(|p| p.current.clone()),
@@ -824,7 +824,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             state.progress_ms = self.now_ms();
             state.due_ms = Some(state.progress_ms.saturating_add(
                 u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
@@ -1049,7 +1049,7 @@ impl Controller {
         else {
             return Ok(());
         };
-        let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+        let mut incident: Incident = crate::decode_stored(row.value.clone())?;
         if !incident.open || incident.needs_rob {
             return Ok(());
         }
@@ -1093,7 +1093,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "allowances" && r.id == *key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             state.due_ms = Some(self.now_ms());
             commit
                 .rows
@@ -1143,7 +1143,7 @@ impl Controller {
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             state.failure = Some(class.into());
             state.healthy = false;
             if state.quota_ms.is_none() {
@@ -1170,7 +1170,7 @@ impl Controller {
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             if state.progress.as_ref() != Some(&checkpoint) {
                 if state.external_wait.take().is_some() {
                     self.adapters
@@ -1209,7 +1209,7 @@ impl Controller {
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             if state.last_quota_ms.is_some_and(|old| old >= reset_ms) {
                 return Ok(());
             }
@@ -1230,7 +1230,7 @@ impl Controller {
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
-            let mut state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             let reset = self
                 .now_ms()
                 .saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
@@ -1252,7 +1252,7 @@ impl Controller {
             .rows
             .iter()
             .filter(|r| r.table == "allowances")
-            .filter_map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()).ok())
+            .filter_map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()).ok())
             .filter(|s| {
                 s.delivery.node() == node && matches!(s.delivery.output, Out::Effect { .. })
             })
@@ -1272,7 +1272,7 @@ impl Controller {
                 }
                 _ => None,
             }) {
-                state = serde_json::from_value(value.clone())?;
+                state = crate::decode_stored(value.clone())?;
             }
             state.incident = Some(id.into());
             state.healthy = false;
@@ -1304,7 +1304,7 @@ impl Controller {
         self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
         self.retire_ended_effect_looks(snapshot, &world, &mut commit)?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
-            let state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            let state: AllowanceState = crate::decode_stored(row.value.clone())?;
             if ended_effect_look(snapshot, &world, &state.delivery) {
                 continue;
             }
@@ -1346,7 +1346,7 @@ impl Controller {
             }
         }
         for row in snapshot.rows.iter().filter(|r| r.table == "watches") {
-            let delivery: Delivery = serde_json::from_value(row.value.clone())?;
+            let delivery: Delivery = crate::decode_stored(row.value.clone())?;
             let node = &world.nodes[delivery.node().0 as usize];
             if let Out::Effect { kind, .. } = delivery.output
                 && !ended_effect_look(snapshot, &world, &delivery)
@@ -1386,7 +1386,7 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
         .rows
         .iter()
         .find(|r| r.table == "allowances" && r.id == key)
-        .map(|r| serde_json::from_value::<AllowanceState>(r.value.clone()))
+        .map(|r| crate::decode_stored::<AllowanceState>(r.value.clone()))
         .transpose()?;
     Ok(state.is_some_and(|s| s.quota_ms.is_some()))
 }
@@ -1488,11 +1488,11 @@ pub(crate) fn queue_incident_detail(snapshot: &Snapshot, node: NodeId) -> Option
         .iter()
         .filter(|r| r.table == "watches")
         .find_map(|row| {
-            let delivery: Delivery = serde_json::from_value(row.value.clone()).ok()?;
+            let delivery: Delivery = crate::decode_stored(row.value.clone()).ok()?;
             (delivery.node() == node)
                 .then(|| row.value.get("progress"))
                 .flatten()
-                .and_then(|value| serde_json::from_value::<WatchProgress>(value.clone()).ok())
+                .and_then(|value| crate::decode_stored::<WatchProgress>(value.clone()).ok())
         })?;
     let ProgressToken::Mergify(progress) = progress.current;
     let check = progress.queue_check?;
@@ -1579,7 +1579,7 @@ mod incident_tests {
     #[test]
     fn legacy_incident_signature_remains_readable() {
         let signature: IncidentSignature =
-            serde_json::from_value(json!("Workers:transport")).unwrap();
+            crate::decode_stored(json!("Workers:transport")).unwrap();
         assert_eq!(signature.upstream, Upstream::Workers);
         assert_eq!(signature.class, "transport");
         assert_eq!(

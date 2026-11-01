@@ -34,10 +34,22 @@ pub(crate) struct InputFailure {
     attempted_epoch: Option<i64>,
     #[serde(default)]
     post_failure: Option<String>,
+    #[serde(default)]
+    retry_after_ms: Option<u64>,
 }
 
 pub(crate) fn recoverable(error: &Error) -> bool {
-    !matches!(error, Error::Store(_) | Error::Config(_))
+    !matches!(
+        error,
+        Error::Store(_) | Error::Config(_) | Error::StoredJson(_)
+    )
+}
+
+fn post_backoff_ms(class: &str) -> u64 {
+    match class {
+        "transport" | "quota" => 30_000,
+        _ => 300_000,
+    }
 }
 
 impl Controller {
@@ -63,7 +75,7 @@ impl Controller {
             .rows
             .iter()
             .filter(|row| row.table == "incidents")
-            .map(|row| serde_json::from_value::<Incident>(row.value.clone()))
+            .map(|row| crate::decode_stored::<Incident>(row.value.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if previous.iter().any(|incident| {
             incident.open
@@ -116,6 +128,7 @@ impl Controller {
                 posted: false,
                 attempted_epoch: None,
                 post_failure: None,
+                retry_after_ms: None,
             }),
         };
         commit.rows.push(put("incidents", id, json!(incident)));
@@ -124,13 +137,17 @@ impl Controller {
 
     pub(crate) fn post_input_incident(&mut self, snapshot: &Snapshot) -> Result<bool> {
         for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
-            let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+            let mut incident: Incident = crate::decode_stored(row.value.clone())?;
             let Some(failure) = incident.input_failure.as_mut() else {
                 continue;
             };
             if !incident.open
                 || failure.posted
                 || failure.attempted_epoch == Some(snapshot.epoch.get())
+                || (failure.post_failure.is_some()
+                    && failure
+                        .retry_after_ms
+                        .is_some_and(|retry| retry > self.now_ms()))
             {
                 continue;
             }
@@ -142,36 +159,41 @@ impl Controller {
                 },
                 issue: o.number,
             });
-            let Some(target) = failure.target.clone().or_else(|| operations.clone()) else {
-                continue;
-            };
-            let mut notice = IncidentNotice {
-                key: incident.post_key.clone().expect("input incident post key"),
-                target,
-                title: failure.title.clone(),
-                summary: incident.summary.clone(),
-                id: incident.id.clone(),
-            };
-            let result = self
-                .adapters
-                .get(Upstream::GitHub)?
-                .input_incident(&notice, snapshot.epoch.get());
-            let result = match result {
-                Err(Error::Permanent { .. })
-                    if failure.target.is_some() && operations.is_some() =>
+            let result = if let Some(target) = failure.target.clone().or_else(|| operations.clone())
+            {
+                let mut notice = IncidentNotice {
+                    key: incident.post_key.clone().expect("input incident post key"),
+                    target,
+                    title: failure.title.clone(),
+                    summary: incident.summary.clone(),
+                    id: incident.id.clone(),
+                };
+                match self
+                    .adapters
+                    .get(Upstream::GitHub)?
+                    .input_incident(&notice, snapshot.epoch.get())
                 {
-                    notice.target = operations.expect("operations destination");
-                    self.adapters
-                        .get(Upstream::GitHub)?
-                        .input_incident(&notice, snapshot.epoch.get())
+                    Err(error)
+                        if error.is_github_not_found()
+                            && failure.target.is_some()
+                            && operations.is_some() =>
+                    {
+                        notice.target = operations.expect("operations destination");
+                        self.adapters
+                            .get(Upstream::GitHub)?
+                            .input_incident(&notice, snapshot.epoch.get())
+                    }
+                    result => result,
                 }
-                result => result,
+            } else {
+                Err(Error::Invalid("no issue or operations destination"))
             };
             failure.attempted_epoch = Some(snapshot.epoch.get());
             match result {
                 Ok(()) => {
                     failure.posted = true;
                     failure.post_failure = None;
+                    failure.retry_after_ms = None;
                 }
                 Err(error) => {
                     if !recoverable(&error) {
@@ -181,7 +203,15 @@ impl Controller {
                         "input incident {} could not be posted: {error}",
                         incident.id
                     );
-                    failure.post_failure = Some(crate::looks::failure_class(&error).into());
+                    let class = crate::looks::failure_class(&error);
+                    let delay = match &error {
+                        Error::Quota { retry_after } => {
+                            retry_after.as_millis().min(u64::MAX as u128) as u64
+                        }
+                        _ => post_backoff_ms(class),
+                    };
+                    failure.post_failure = Some(class.into());
+                    failure.retry_after_ms = Some(self.now_ms().saturating_add(delay));
                 }
             }
             let mut commit = Commit::new(
@@ -210,13 +240,28 @@ impl Controller {
             &snapshot,
         );
         for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
-            let mut incident: Incident = serde_json::from_value(row.value.clone())?;
+            let mut incident: Incident = crate::decode_stored(row.value.clone())?;
             if incident.open
                 && let Some(failure) = incident.input_failure.as_mut()
                 && !failure.posted
                 && failure.attempted_epoch.is_some()
             {
-                failure.attempted_epoch = None;
+                // Old rows have a failure class but no persisted deadline.
+                if let Some(class) = failure.post_failure.as_deref() {
+                    if failure.retry_after_ms.is_none() {
+                        failure.retry_after_ms =
+                            Some(self.now_ms().saturating_add(post_backoff_ms(class)));
+                    } else if failure
+                        .retry_after_ms
+                        .is_some_and(|retry| retry <= self.now_ms())
+                    {
+                        failure.attempted_epoch = None;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    failure.attempted_epoch = None;
+                }
                 commit
                     .rows
                     .push(put("incidents", row.id.clone(), json!(incident)));
@@ -262,7 +307,7 @@ pub(crate) fn observation_context(
             .rows
             .iter()
             .find(|row| row.table == "allowances" && row.id == *key)
-            .map(|row| serde_json::from_value::<crate::looks::AllowanceState>(row.value.clone()))
+            .map(|row| crate::decode_stored::<crate::looks::AllowanceState>(row.value.clone()))
             .transpose()?
             .map(|state| state.delivery.node()),
         Observation::ScratchPruned { .. }
