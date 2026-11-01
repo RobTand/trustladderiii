@@ -1180,3 +1180,84 @@ proof!(apply_rebase_progress_gate, {
     kani::cover!(awaiting, "the rebase is awaiting its reply");
     assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
 });
+
+fn check_publishing_ci(infra: bool) {
+    let before = any_settled_world(Some(Phase::Publishing));
+    let b = &before.nodes[0];
+    kani::assume(b.current() == Some(Item::Do(EffectKind::Enqueue)));
+    kani::assume(!b.waiting_incident);
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(&mut after, fact(Fact::CiFailed { infra }), &mut out);
+    let n = &after.nodes[0];
+    require_consistent(&after);
+    check_nodes(&before, &after);
+    check_outputs(&before, &after, &out, None);
+    assert_eq!(after.nodes[1], before.nodes[1]);
+    if let Some(effect) = b.effect {
+        assert!(
+            n.effect
+                .is_some_and(|current| current.seq == effect.seq && current.cancelling)
+        );
+    }
+    if infra {
+        assert_eq!(n.credit, b.credit);
+        assert!(n.waiting_incident || n.run_failures > b.run_failures);
+        kani::cover!(
+            b.run_failures == 0 && !n.waiting_incident,
+            "first infrastructure failure retries"
+        );
+        kani::cover!(
+            b.run_failures == 1 && n.waiting_incident,
+            "second infrastructure failure raises an incident"
+        );
+    } else {
+        assert_ne!(n.phase, Phase::Publishing);
+        // Compare the credit ladder with the existing Queued rule.
+        let mut queued = before.clone();
+        queued.nodes[0].phase = Phase::Queued;
+        queued.nodes[0].pos = 0;
+        queued.nodes[0].effect = None;
+        apply(
+            &mut queued,
+            fact(Fact::CiFailed { infra: false }),
+            &mut Outbox::new(),
+        );
+        assert_eq!(n.credit, queued.nodes[0].credit);
+        assert_eq!(n.round, queued.nodes[0].round);
+        assert_eq!(n.attempt, queued.nodes[0].attempt);
+        assert!(n.round != b.round || n.credit.spent > b.credit.spent || n.question.is_some());
+        kani::cover!(b.round == 0 && n.round == 1, "a free fix round");
+        kani::cover!(
+            b.round == 1 && n.credit.spent > b.credit.spent,
+            "a paid next attempt"
+        );
+        kani::cover!(
+            b.round == 1 && !b.credit.can_spend(1) && n.phase == Phase::AwaitingRob,
+            "exhausted credit asks Rob"
+        );
+    }
+    kani::cover!(b.effect.is_some(), "an enqueue is cancelled");
+}
+proof!(apply_publishing_ci_tests, check_publishing_ci(false));
+proof!(
+    apply_publishing_ci_infrastructure,
+    check_publishing_ci(true)
+);
+
+fn check_publishing_ci_earlier_step() {
+    let before = any_settled_world(Some(Phase::Publishing));
+    kani::assume(before.nodes[0].current() != Some(Item::Do(EffectKind::Enqueue)));
+    let mut after = before.clone();
+    apply(
+        &mut after,
+        fact(Fact::CiFailed { infra: kani::any() }),
+        &mut Outbox::new(),
+    );
+    assert_eq!(after, before);
+    kani::cover!(before.nodes[0].pos == 0, "a failure before push is ignored");
+}
+proof!(
+    apply_publishing_ci_earlier_step,
+    check_publishing_ci_earlier_step()
+);

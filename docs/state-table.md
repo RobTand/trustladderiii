@@ -418,8 +418,12 @@ When the last step confirms, the leaf moves to Queued.
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Conflict with current main | | Rebasing | Rebase onto main, in a new generation (Q46, Rob 2026-10-31) |
+| CI failed | A required check failed on the approved head before enqueue, because a test failed on the code | A failed round | Cancel the pending enqueue; remove `tl3-queue` if it was added (Q47, Rob, 2026-11-01) |
+| CI failed | The runner or its setup failed at the enqueue step | See "Failures" | Rerun the check, then enqueue when the failure rules allow (Q47, Rob, 2026-11-01) |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
+
+Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
 
 ### A failed round
 

@@ -550,3 +550,13 @@ The PRD also proposes noting later pushes in the summary and relabelling to adop
 again. These defaults do not expand #143 beyond its ticket. This tracer retains
 the existing once-per-issue intake rule. Issue-trigger intake, fork support,
 catch-up, steering, scope trimming and splitting remain later tickets.
+
+
+## Q47: required checks before enqueue
+
+Rob, 2026-11-01 approved handling CI failures during Publishing at the enqueue
+step. TL3 waits for the approved head's required checks before adding
+`tl3-queue`. A code failure takes the existing failed-round path, cancels the
+pending enqueue and removes the label if it was added. An infrastructure failure
+reruns the check, then enqueues when the existing failure rules allow.
+Credit costs and infrastructure retry limits are the same as in Queued.

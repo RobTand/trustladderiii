@@ -2231,8 +2231,14 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
             }
         }
         Fact::CiFailed { infra } => {
-            if w.nodes[i].phase != Phase::Queued {
+            let m = &mut w.nodes[i];
+            let before_enqueue =
+                m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
+            if m.phase != Phase::Queued && !before_enqueue {
                 return;
+            }
+            if before_enqueue && let Some(effect) = m.effect.as_mut() {
+                effect.cancelling = true;
             }
             if !infra {
                 failed_round(w, i, out);

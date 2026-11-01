@@ -717,6 +717,16 @@ impl Controller {
             if cancelling {
                 match effect.state {
                     EffectState::Intended => {
+                        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+                            && !matches!(
+                                self.adapters
+                                    .adapter(&delivery)?
+                                    .reconcile_cancellation(&delivery),
+                                Ok(Reconciliation::Found(_))
+                            )
+                        {
+                            continue;
+                        }
                         self.cancel_absent(effect, &delivery)?;
                         return Ok(true);
                     }
@@ -736,6 +746,9 @@ impl Controller {
                     hook(Boundary::BeforeDispatch, &effect.key);
                     let current = self.store.load()?;
                     let delivery = hydrate(effect, &current)?;
+                    if self.observe_pending_effect(&delivery)? {
+                        return Ok(true);
+                    }
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
                     hook(Boundary::AfterDispatch, &effect.key);
                     match result {
@@ -773,6 +786,9 @@ impl Controller {
                     return Ok(true);
                 }
                 EffectState::Uncertain | EffectState::Cancelling => {
+                    if !cancelling && self.observe_pending_effect(&delivery)? {
+                        return Ok(true);
+                    }
                     let local_cancellation = effect.state == EffectState::Cancelling
                         && executor::upstream(delivery.output) == executor::Upstream::Mergify;
                     if !local_cancellation
@@ -967,6 +983,22 @@ impl Controller {
         });
         self.store.commit(&commit)?;
         Ok(())
+    }
+
+    fn observe_pending_effect(&mut self, delivery: &Delivery) -> Result<bool> {
+        let before = self.store.load()?.revision;
+        // Dispatch and reconciliation retain their existing error/allowance handling.
+        if let Ok(observations) = self.adapters.adapter(delivery)?.observations(delivery) {
+            for (index, observation) in observations.into_iter().enumerate() {
+                let key = format!(
+                    "pending:{}:{index}:{}",
+                    delivery.key,
+                    evidence_key(&observation)?
+                );
+                self.observe(&key, observation)?;
+            }
+        }
+        Ok(self.store.load()?.revision != before)
     }
 
     fn transition(&mut self, effect: &Effect, to: EffectState) -> Result<()> {
