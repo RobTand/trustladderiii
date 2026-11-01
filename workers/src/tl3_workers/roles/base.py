@@ -19,4 +19,3 @@ class Role:
     # Session runners validate before saving a completed reply.
     validates_reply: bool = False
     exploration_budget: ExplorationBudget | None = None
-
