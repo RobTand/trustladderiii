@@ -307,12 +307,10 @@ fn seed_agents(settings: &tl3_config::Store, root: &Path, slots: u8, pool: u8) -
         world.nodes.iter().filter(|n| n.pool).count(),
         usize::from(pool.min(3))
     );
-    assert!(
-        world
-            .nodes
-            .iter()
-            .all(|n| matches!(n.phase, Phase::Planning { .. }))
-    );
+    assert!(world.nodes.iter().all(|n| matches!(
+        n.phase,
+        Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }
+    )));
     close(c, settings)
 }
 fn verify_agents(c: &mut Controller, before: &Snapshot) -> Snapshot {
@@ -344,7 +342,7 @@ fn verify_agents(c: &mut Controller, before: &Snapshot) -> Snapshot {
                     .unwrap()
                     .output,
                 Out::Effect {
-                    kind: EffectKind::StartRun(Role::Plan),
+                    kind: EffectKind::StartRun(_),
                     ..
                 }
             )
@@ -366,6 +364,14 @@ pub(super) fn pool_reopen(settings: &tl3_config::Store) {
             .filter(|n| n.run.is_some())
             .count(),
         3
+    );
+    assert!(
+        c.world()
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|n| matches!(n.phase, Phase::Planning { .. })),
+        "all three planners must be running together"
     );
     let dispatched = close(c, settings);
     assert!(dispatched.revision >= after.revision);
