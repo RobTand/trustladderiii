@@ -878,14 +878,24 @@ fn status_incident_commands(settings: &tl3_config::Store, page: bool, unposted: 
     ] {
         assert!(output.contains(&format!("clear incident {id}")), "{output}");
         let escaped = if page { "Rob&#39;s" } else { "Rob's" };
-        assert!(output.contains(&summary.replace("Rob's", escaped)), "{output}");
+        assert!(
+            output.contains(&summary.replace("Rob's", escaped)),
+            "{output}"
+        );
     }
     assert!(!output.contains("3285.0"), "{output}");
-    assert!(!output.contains("This incident is already closed."), "{output}");
+    assert!(
+        !output.contains("This incident is already closed."),
+        "{output}"
+    );
     if unposted {
         assert!(output.contains(suffix), "{output}");
     }
-    assert_eq!(controller.snapshot().unwrap(), before, "status must write nothing");
+    assert_eq!(
+        controller.snapshot().unwrap(),
+        before,
+        "status must write nothing"
+    );
     drop(server);
 }
 
