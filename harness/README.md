@@ -176,3 +176,73 @@ xfail, uncollected tests, pre-existing failures, and a process exiting without
 a report. A live fixture checks the exact admitted CPU mask, blocked network,
 absent fleet and socket paths, absent inherited environment, and read-only
 checkout and harness mounts.
+
+## Prepare and roll a repository image
+
+Build from a clean commit through PrismaBuild. The preparation script uses
+PB's managed Docker shim and commits the admitted container. Its default
+`sandbox` profile retains the original dependencies. The `prismabuild` profile
+adds GCC, libc development headers, bubblewrap, pytest-xdist 3.8.0, PyYAML
+6.0.3, and setuptools 80.9.0. Both profiles use pytest 9.0.2 and Python 3.14.
+Bubblewrap's presence does not grant user namespaces or privileges to tests.
+Use a distinct tag for a candidate so preparation preserves the current image.
+
+On dl380g10, with a locally available Ubuntu 26.04 base image:
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+    --cwd "$CHECKOUT" --tag dl380g10 \
+    --cpus 2 --demand mem_gb=4 --priority -9 \
+    --container-image "$BASE_IMAGE_ID" \
+    --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 \
+    --env OPENBLAS_NUM_THREADS=1 --detach -- \
+    /usr/bin/python3.14 harness/tools/prepare_image.py "$BASE_IMAGE_ID" \
+    --profile prismabuild --tag tl3-harness:pb-candidate
+```
+
+Inspect the terminal record, verified logs, CAS receipt and cleanup. The log's
+`container_image` is the immutable ID to qualify and configure. The tag is
+only a preparation label. An image built on dl380g10 is local to dl380g10;
+the ARM workers need a separate native build and its own immutable image ID.
+PB's `--container-image` requirement keeps checks on a worker that positively
+reports the image. Do not add a host tag to ordinary checks.
+
+Make a clean, unshallowed clone of the served repository and create a bundle:
+
+```sh
+git -C "$SERVED_CLONE" bundle create "$INPUT/served.bundle" HEAD
+```
+
+Install the trusted harness outside the served checkout. Snapshot the bundle,
+trusted package and inventory script together in a separate committed input
+repository. Submit `tools/inventory.py` with the bundle path, image ID and
+selected test file paths. For PB, use the files listed in `tools/verify.py`'s
+`FAST` tuple plus the existing test files for each pilot issue. The script
+extracts function and method node IDs and calls `run_checks` on the exact
+bundled revision for both base and head. Pytest expands parametrized cases.
+Functions explicitly marked `__test__ = False` are excluded.
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+    --cwd "$INPUT" --anywhere --cpus 1 --demand mem_gb=4 --priority -9 \
+    --container-image "$IMAGE_ID" --progress-phase tests=300 \
+    --env PYTHONPATH=trusted --env OMP_NUM_THREADS=1 \
+    --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
+    /usr/bin/python3.14 inventory.py served.bundle "$IMAGE_ID" \
+    tests/test_example.py
+```
+
+An inventory action exits nonzero if any selected node does not pass. Its
+JSON retains every node's outcome and failure message. Record skips and
+classify failures as image dependencies, host requirements, or test defects.
+Do not grant root, GPUs, the shared mount, or additional container access to
+make a pilot pass. A Git export has no `.git` directory, and `/tmp` is tmpfs;
+tests requiring repository metadata or qualified disk scratch need separate
+pilot eligibility decisions.
+
+Repeat the same selection in the candidate image, run the sandbox suite
+through `run_checks`, and run `tools/verify.py` for the harness boundary checks.
+Record action keys and every remaining limitation in the PR. After review,
+the coordinator sets the immutable ID on the relevant `[[github.repos]]`
+entry, or updates the global default. Keep the previous ID for rollback.
+Preparation and verification do not edit live configuration.

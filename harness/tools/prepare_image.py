@@ -9,8 +9,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base", help="locally available Ubuntu 26.04 image")
     parser.add_argument("--profile", choices=("sandbox", "prismabuild"), default="sandbox")
-    parser.add_argument("--tag", default="tl3-harness:t5")
+    parser.add_argument("--tag")
     args = parser.parse_args()
+    args.tag = args.tag or ("tl3-harness:prismabuild" if args.profile == "prismabuild" else "tl3-harness:t5")
     owner = os.environ.get("PRISMABUILD_CONTAINER_OWNER")
     if not owner or not os.environ.get("PRISMABUILD_CONTAINER_MARKER"):
         raise RuntimeError("image preparation requires a PrismaBuild action")
