@@ -202,6 +202,56 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn input_incident(
+        &mut self,
+        notice: &crate::input_errors::IncidentNotice,
+        epoch: i64,
+    ) -> Result<()> {
+        if epoch < self.epoch {
+            return Err(Error::Invalid("GitHub intake epoch is fenced"));
+        }
+        self.records.fence(epoch)?;
+        self.epoch = epoch;
+        let client = self
+            .clients
+            .get(&notice.target.repository.installation)
+            .ok_or(Error::Invalid("missing GitHub installation client"))?;
+        let repo = format!(
+            "{}/{}",
+            notice.target.repository.owner, notice.target.repository.name
+        );
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, notice.target.issue, &notice.key))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.runtime
+            .block_on(client.issue(&repo, notice.target.issue))?;
+        let mut policy = self.policy.clone();
+        policy.request_title = Some(notice.title.clone());
+        policy.request_body.clear();
+        policy.own_repository = Some(repo.clone());
+        policy.own_issue = Some(notice.target.issue);
+        let input = WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title":notice.title, "request":notice.title, "change":notice.summary}),
+            violations: vec![],
+        };
+        let mut draft = checked_draft(self.writer.as_mut(), &notice.key, input, &policy)?;
+        draft.push_str(&format!(
+            "\n\nReply with \"clear incident {}\" after fixing the cause.",
+            notice.id
+        ));
+        self.runtime.block_on(client.post_comment(
+            &repo,
+            notice.target.issue,
+            &notice.key,
+            &draft,
+        ))?;
+        Ok(())
+    }
     fn intake_question(
         &mut self,
         question: &crate::adoption::Clarification,

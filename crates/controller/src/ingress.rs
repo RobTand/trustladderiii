@@ -126,6 +126,7 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
     match input {
         Input::Wake => {}
         Input::GitHubWake => {
+            controller.retry_input_incident_posts()?;
             controller.retry_held_effects(crate::executor::Upstream::GitHub);
             controller.retry_held_effects(crate::executor::Upstream::Mergify);
         }
@@ -311,11 +312,8 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
                         .translate(&delivery, snapshot.as_ref().expect("batch snapshot"))
                     {
                         Ok(inputs) => inputs,
-                        Err(Error::Permanent { class, source }) => {
-                            eprintln!(
-                                "discarding permanent observation failure for {name}, delivery {} ({}): {class}: {source}",
-                                stored.delivery_key, stored.event_name
-                            );
+                        Err(error @ Error::Permanent { .. }) => {
+                            translator_failed(controller, &name, &stored, error)?;
                             Vec::new()
                         }
                         Err(error @ (Error::Adapter(_) | Error::Quota { .. })) => {
@@ -328,9 +326,13 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
                                 "observation retry bound exhausted for {name}, delivery {} ({}); advancing the cursor and retaining allowance recovery: {error}",
                                 stored.delivery_key, stored.event_name
                             );
+                            translator_failed(controller, &name, &stored, error)?;
                             Vec::new()
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            translator_failed(controller, &name, &stored, error)?;
+                            Vec::new()
+                        }
                     };
                     for input in inputs {
                         apply(controller, input)?;
@@ -344,6 +346,38 @@ fn drain_pending(controller: &mut Controller) -> Result<bool> {
         }
     }
     Ok(deferred)
+}
+
+fn translator_failed(
+    controller: &mut Controller,
+    name: &str,
+    stored: &tl3_store::Ingress,
+    error: Error,
+) -> Result<()> {
+    let snapshot = controller.store.load()?;
+    let mut commit = tl3_store::Commit::new(
+        format!(
+            "translation-failed:{name}:{}:{}",
+            stored.sequence,
+            snapshot.revision.get()
+        ),
+        json!({"translation_failed":stored.delivery_key}),
+        &snapshot,
+    );
+    controller.input_failed(
+        &snapshot,
+        &format!("translator:{name}:{}", stored.delivery_key),
+        None,
+        "An incoming GitHub update",
+        None,
+        crate::executor::Upstream::GitHub,
+        error,
+        &mut commit,
+    )?;
+    if !commit.rows.is_empty() {
+        controller.store.commit(&commit)?;
+    }
+    Ok(())
 }
 
 fn replay(stored: &tl3_store::Ingress) -> Option<GitHubDelivery> {

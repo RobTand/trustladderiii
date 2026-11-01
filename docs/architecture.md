@@ -242,8 +242,9 @@ using batch queries in the same read-only transaction.
 
 Both commands use `Config::load` to check secret-file metadata, including the
 optional store password. They do not read GitHub or model secrets in simulation.
-`limits.agent_pool` configures bootstrap capacity and defaults to 1. Existing
-world capacity requires a snapshot migration.
+`limits.agent_pool` configures capacity and defaults to 1. Capacity and served
+repositories are reconciled at open. See
+[the configuration reference](../crates/config/README.md).
 
 `tl3d --config FILE --simulate DIRECTORY` reads one JSON `Input` per stdin line.
 It recovers existing work before accepting input, drains available events after
