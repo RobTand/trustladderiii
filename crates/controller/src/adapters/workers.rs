@@ -959,8 +959,16 @@ fn watched_deliveries(store: &mut Store) -> Result<Vec<Delivery>> {
 
 fn materialize(root: &Path, materials: &Value) -> Result<()> {
     if let Some(base) = materials.get("base_checkout") {
-        let repository = Path::new(base["repository"].as_str().ok_or(Error::Invalid("base repository missing"))?);
-        let commit = CommitId::new(base["commit"].as_str().ok_or(Error::Invalid("base commit missing"))?)?;
+        let repository = Path::new(
+            base["repository"]
+                .as_str()
+                .ok_or(Error::Invalid("base repository missing"))?,
+        );
+        let commit = CommitId::new(
+            base["commit"]
+                .as_str()
+                .ok_or(Error::Invalid("base commit missing"))?,
+        )?;
         // A retry must discard a partial clone and return to the same committed base.
         if root.exists() {
             fs::remove_dir_all(root)?;

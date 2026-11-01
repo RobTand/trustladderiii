@@ -185,8 +185,10 @@ impl Materials {
         let issue = json!({"number": issue.number, "title":issue.title, "body":delivery.request_text.clone().or(issue.body).unwrap_or_default(), "author":"unknown",
             "comments":comments.iter().map(|c| json!({"author":c.user.login,"body":c.body})).collect::<Vec<_>>()});
         let inputs = json!({"issue":issue,"repo":repo});
-        Ok(json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs,
-            "base_checkout":{"repository":path,"commit":base.as_str()}}))
+        Ok(
+            json!({"issue":issue,"repo":repo,"ingest":inputs,"audit":inputs,
+            "base_checkout":{"repository":path,"commit":base.as_str()}}),
+        )
     }
 }
 
@@ -242,17 +244,23 @@ pub(crate) fn repository_materials(
             return Err(Error::Invalid("invalid Git tree metadata"));
         }
         file_count += 1;
-        *directories.entry(path.split_once('/').map_or(".", |(dir, _)| dir)).or_default() += 1;
+        *directories
+            .entry(path.split_once('/').map_or(".", |(dir, _)| dir))
+            .or_default() += 1;
         // Bound serialized paths as well as their count, including JSON escaping.
         let size = serde_json::to_string(path)?.len() + 1;
-        if !truncated_list && files.len() < FILE_LIST_ENTRIES && file_bytes + size <= FILE_LIST_BYTES {
+        if !truncated_list
+            && files.len() < FILE_LIST_ENTRIES
+            && file_bytes + size <= FILE_LIST_BYTES
+        {
             file_bytes += size;
             files.push(path);
         } else {
             truncated_list = true;
         }
         if path.eq_ignore_ascii_case("README.md")
-            && matches!(fields[0], "100644" | "100755") && fields[1] == "blob"
+            && matches!(fields[0], "100644" | "100755")
+            && fields[1] == "blob"
         {
             let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
             if !bytes.contains(&0) {
@@ -272,7 +280,8 @@ pub(crate) fn repository_materials(
     }
     let mut summary = String::new();
     if truncated_list {
-        summary = format!("{file_count} files total; file_list is a prefix. Use list/glob to explore.\n");
+        summary =
+            format!("{file_count} files total; file_list is a prefix. Use list/glob to explore.\n");
         for (dir, count) in directories {
             let line = format!("{dir}/: {count} files\n");
             if summary.len() + line.len() + TRUNCATED.len() > SUMMARY_BYTES {
@@ -336,7 +345,12 @@ mod tests {
         let repo = repository_materials(&f.path, &head).unwrap();
         assert!(repo["file_list"].as_array().unwrap().len() <= 10_000);
         assert_eq!(repo["file_count"], 10_002);
-        assert!(repo["tree_summary"].as_str().unwrap().contains("src/: 10001 files"));
+        assert!(
+            repo["tree_summary"]
+                .as_str()
+                .unwrap()
+                .contains("src/: 10001 files")
+        );
         let readme = repo["readme"].as_str().unwrap();
         assert!(readme.len() <= 65_536);
         assert!(readme.ends_with("[truncated; use read for the rest]"));

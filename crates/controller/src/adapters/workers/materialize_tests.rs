@@ -49,16 +49,73 @@ fn exploration_checkout_uses_pinned_commit_and_recovers_partial_checkout() {
     Worktrees::init_bare(&bare).unwrap();
     let mut source = Worktrees::open(&bare, &bare).unwrap();
     source.set_base_branch("main").unwrap();
-    source.fetch_base(&tl3_worktrees::Remote::local(&f.path).unwrap(), None).unwrap();
+    source
+        .fetch_base(&tl3_worktrees::Remote::local(&f.path).unwrap(), None)
+        .unwrap();
     let materials = json!({
         "base_checkout": {"repository": bare, "commit": f.base},
         "repo": {"readme": "base", "file_list": ["README.md"]}
     });
     materialize(&root, &materials).unwrap();
-    assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "base\n");
+    assert_eq!(
+        fs::read_to_string(root.join("README.md")).unwrap(),
+        "base\n"
+    );
     assert_eq!(crate::git_tests::git(&root, &["rev-parse", "HEAD"]), f.base);
     assert!(!root.join("partial").exists());
     fs::write(root.join("README.md"), "dirty").unwrap();
     materialize(&root, &materials).unwrap();
-    assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "base\n");
+    assert_eq!(
+        fs::read_to_string(root.join("README.md")).unwrap(),
+        "base\n"
+    );
+}
+
+#[test]
+#[ignore = "requires explicit test-only repository clones; run through PrismaBuild"]
+fn real_repository_orientation_and_ingest_replay() {
+    let repositories =
+        PathBuf::from(std::env::var_os("TL3_TEST_REPOSITORIES").expect("test clones required"));
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../workers/tests/fixtures/prismabuild-1968.json"
+    ))
+    .unwrap();
+    let issue = json!({"number": fixture["number"], "title": fixture["title"], "body": fixture["body"], "author":"requester", "comments":[]});
+    let root = tempfile::tempdir().unwrap();
+    for name in ["prismabuild", "prismaquant", "tessera"] {
+        let repository = repositories.join(format!("{name}.git"));
+        let source = Worktrees::open(&repository, &repository).unwrap();
+        let head = source.head().unwrap();
+        let repo = crate::production::repository_materials(&repository, head.as_str()).unwrap();
+        let inputs = json!({"issue":issue,"repo":repo});
+        protocol::validate_inputs("ingest", &inputs).unwrap();
+        protocol::validate_inputs("audit", &json!({"issue":issue,"repo":repo,"ingest":{
+            "kind":"brief","brief":"Check GPU options","goals":[{"description":"Reject invalid options","verification":"test"}],"memory_ids":[]
+        }})).unwrap();
+        println!(
+            "ORIENTATION {}",
+            json!({"repository":name,"head":head.as_str(),"file_count":repo["file_count"],"listed_files":repo["file_list"].as_array().unwrap().len(),"orientation_bytes":repo.to_string().len(),"summarized":repo["tree_summary"] != ""})
+        );
+        if name == "prismabuild" {
+            let checkout = root.path().join("checkout");
+            fs::create_dir(&checkout).unwrap();
+            materialize(&checkout, &json!({"base_checkout":{"repository":repository,"commit":head.as_str()},"repo":repo})).unwrap();
+            let inputs_path = root.path().join("inputs.json");
+            fs::write(&inputs_path, inputs.to_string()).unwrap();
+            let workers = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../workers");
+            let output = Command::new(workers.join(".venv/bin/python"))
+                .arg(workers.join("tools/replay_repository_ingest.py"))
+                .arg(&inputs_path)
+                .arg(&checkout)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            println!("REPLAY {}", String::from_utf8_lossy(&output.stdout));
+        }
+    }
 }
