@@ -8,6 +8,7 @@ import pytest
 from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from test_workers import AGREE, BRIEF
+from message_invariants import assert_tool_pairs
 
 
 @pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])
@@ -46,6 +47,8 @@ def test_exploration_finishes_within_turn_and_input_budgets(tmp_path, monkeypatc
         inputs["ingest"] = BRIEF
     events = []
     runtime.run({"role": role, "worktree": str(tmp_path), "inputs": inputs}, events.append)
+    for messages in seen:
+        assert_tool_pairs(messages)
     assert len(seen) <= 5, "at most four exploration turns and one final answer"
     assert len(seen) * (120_000 if large_input else 1000) <= 300_000
     assert events[-1]["reply"] == reply
@@ -82,8 +85,61 @@ def test_parallel_results_are_bounded_and_marked_as_clipped(tmp_path, monkeypatc
         AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(reply))]))
     events = []
     runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {}}, events.append)
+    for messages in observed:
+        assert_tool_pairs(messages)
     results = [m for m in observed[-1] if isinstance(m, ToolMessage)]
     assert {m.tool_call_id for m in results} == {str(i) for i in range(5)}
     assert sum(len(m.text.encode()) for m in results) <= 32_768
     assert any("clipped" in m.text for m in observed[-1] if m.type == "human")
     assert events[-1]["reply"] == reply
+
+
+@pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])
+@pytest.mark.parametrize("reported", [True, False])
+def test_real_orientation_allows_four_exploration_turns(tmp_path, monkeypatch, role, reply, reported):
+    observed = []
+    (tmp_path / "evidence.txt").write_text("evidence")
+
+    class OrientationModel(FakeMessagesListChatModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            exhausted = any("budget is exhausted" in m.text for m in messages if m.type == "human")
+            final = exhausted or len(observed) == 5
+            self.responses = [AIMessage(
+                content=json.dumps(reply) if final else "",
+                tool_calls=[] if final else [{"name": "read", "args": {"path": "evidence.txt"},
+                                              "id": str(len(observed)), "type": "tool_call"}],
+                usage_metadata={"input_tokens": 25_000, "output_tokens": 10,
+                                "total_tokens": 25_010} if reported else None)]
+            self.i = 0
+            return super()._generate(messages, **kwargs)
+
+    monkeypatch.setattr(runtime, "create_model", lambda _: OrientationModel(responses=[]))
+    events = []
+    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {"orientation": "x" * 88_000}},
+                events.append)
+    assert len(observed) == 5, "88 KB orientation must leave room for all four exploration rounds"
+    for messages in observed:
+        assert_tool_pairs(messages)
+    assert events[-1]["reply"] == reply
+
+
+def test_newest_large_write_keeps_its_call_and_result():
+    from langchain_core.messages import HumanMessage
+    from tl3_workers.exploration import retained
+
+    messages = [HumanMessage(content="Implement the change"),
+                AIMessage(content="", tool_calls=[{"name": "read", "args": {"path": "old.py"},
+                                                   "id": "old", "type": "tool_call"}]),
+                ToolMessage(content="old evidence", tool_call_id="old"),
+                AIMessage(content="", tool_calls=[{"name": "write", "args": {
+                    "path": "new.py", "content": "new file content\n" * 20_000},
+                    "id": "latest", "type": "tool_call"}]),
+                ToolMessage(content="wrote new.py", tool_call_id="latest")]
+    result = retained(messages, 4096)
+    assert_tool_pairs(result)
+    latest = [m for m in result if isinstance(m, ToolMessage) and m.tool_call_id == "latest"]
+    assert len(latest) == 1, "the newest edit must survive an oversized call argument"
+    assert latest[0].text == "wrote new.py"
+    assert sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in result
+               if isinstance(m, (AIMessage, ToolMessage))) <= 4096

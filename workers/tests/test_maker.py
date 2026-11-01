@@ -12,6 +12,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 import pytest
+from message_invariants import assert_tool_pairs
 
 from tl3_workers import runtime
 from tl3_workers.contracts import validate
@@ -1177,6 +1178,8 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
         responses=[AIMessage(**message) for message in script]))
     events = []
     runtime.run(maker_request, events.append)
+    for messages in observed:
+        assert_tool_pairs(messages)
     assert len(observed) == 51, 'a long maker session can finish its planned edits'
     assert max(sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
                    for m in messages if isinstance(m, (AIMessage, ToolMessage)))
