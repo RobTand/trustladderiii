@@ -11,15 +11,20 @@ import bazel_budget_calibration as calibration
 POLICY = {'seconds': 10, 'slow': {'slow_test': 20}}
 
 
-def receipt(directory, target, run, total, seconds, runner='baseline'):
+def receipt(directory, target, run, total, seconds, runner='baseline', zipped=False):
+    """Bazel 9 leaves test.outputs/ unzipped by default; older layouts zip it."""
     folder = Path(directory, target, f'run_{run}_of_{total}', 'test.outputs')
     folder.mkdir(parents=True)
-    data = io.BytesIO()
-    with zipfile.ZipFile(data, 'w') as archive:
-        archive.writestr('inventory.json', json.dumps(
-            {'rust': {'b': list(seconds)}, 'seconds': {f'b::{name}': value for name, value in seconds.items()},
-             'runner_class': runner}))
-    (folder / 'outputs.zip').write_bytes(data.getvalue())
+    body = json.dumps({'rust': {'b': list(seconds)},
+                       'seconds': {f'b::{name}': value for name, value in seconds.items()},
+                       'runner_class': runner})
+    if zipped:
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as archive:
+            archive.writestr('inventory.json', body)
+        (folder / 'outputs.zip').write_bytes(data.getvalue())
+    else:
+        (folder / 'inventory.json').write_text(body)
 
 
 class CalibrationTests(unittest.TestCase):
@@ -33,6 +38,12 @@ class CalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(summary['run_max_ratio_p99'], 1.1)
         self.assertEqual(summary['multiplier'], 1.25)
         self.assertEqual(len(summary['overruns']), 5)
+
+    def test_zipped_receipts_are_read_too(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for run in range(1, 11):
+                receipt(directory, 'crates/a', run, 10, {'fast': 5}, zipped=True)
+            self.assertEqual(calibration.summarize(Path(directory), POLICY, 'x')['complete_runs'], 10)
 
     def test_tail_markers_use_the_default_budget(self):
         with tempfile.TemporaryDirectory() as directory:
