@@ -199,6 +199,10 @@ fn check_effect(
     }
 }
 
+fn rebase_progress_applies(node: &Node, generation: u64) -> bool {
+    node.phase == Phase::Rebasing && node.run == Some(generation)
+}
+
 /// Applying one event keeps the world consistent and keeps every rule.
 fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
@@ -295,7 +299,7 @@ fn check_apply(event: Event) -> World {
     {
         let b = &before.nodes[0];
         let n = &after.nodes[0];
-        if b.phase == Phase::Rebasing && b.run == Some(generation) {
+        if rebase_progress_applies(b, generation) {
             // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
             let fuel =
                 |n: &Node| n.credit.balance() + i64::from(FREE_RECHECKS.saturating_sub(n.rechecks));
@@ -791,3 +795,15 @@ proof!(
     apply_adoption_has_no_maker_credit,
     check_adoption_has_no_maker_credit()
 );
+
+proof!(apply_rebase_progress_gate, {
+    let mut node = Node::new(RepoId(0));
+    node.phase = Phase::Rebasing;
+    node.run = Some(node.generation);
+    node.pos = kani::any();
+    kani::assume(node.pos < 2);
+    let awaiting = node.current() == Some(Item::Await);
+    kani::cover!(!awaiting, "the rebase has not reached Await");
+    kani::cover!(awaiting, "the rebase is awaiting its reply");
+    assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
+});
