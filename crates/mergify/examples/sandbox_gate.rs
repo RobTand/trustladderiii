@@ -133,6 +133,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 subject,
                 head.ok_or("title required")?,
                 args.next().ok_or("trial body required")?,
+                "main",
             );
             let pull = github.open_pull_request(repo, &request).await?;
             println!("sandbox PR {}", pull.number);
@@ -208,7 +209,7 @@ async fn main() {
     }
 }
 
-fn trial_pull_request(branch: String, title: String, body: String) -> NewPullRequest {
+fn trial_pull_request(branch: String, title: String, body: String, _base: &str) -> NewPullRequest {
     NewPullRequest {
         head: branch,
         base: "main".into(),
@@ -284,9 +285,10 @@ mod tests {
             "tl3/issue-17-node-201".into(),
             "Verify the approved head while main advances".into(),
             "Merge a separate approved PR, then confirm this head is unchanged.".into(),
+            "master",
         );
         assert_eq!(request.head, "tl3/issue-17-node-201");
-        assert_eq!(request.base, "main");
+        assert_eq!(request.base, "master");
         assert_eq!(
             request.title,
             "Verify the approved head while main advances"

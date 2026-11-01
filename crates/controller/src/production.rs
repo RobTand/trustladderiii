@@ -385,3 +385,25 @@ mod reply_defects {
         ));
     }
 }
+
+#[cfg(test)]
+mod repo_conventions_tests {
+    #[test]
+    fn repo_conventions_unconfigured_materials_refuse_load() {
+        let fixture = crate::git_tests::Repo::new();
+        let materials = super::Materials::fixture(fixture.root.path().join("worktrees"));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            materials.load(&fixture.delivery())
+        }));
+        assert!(
+            result.is_ok(),
+            "unconfigured materials must return an error before contacting an upstream"
+        );
+        assert!(matches!(
+            result.unwrap(),
+            Err(crate::Error::Invalid(
+                "repository branch conventions are not configured"
+            ))
+        ));
+    }
+}

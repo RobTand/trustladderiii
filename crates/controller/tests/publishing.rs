@@ -1314,6 +1314,38 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     drop(c);
     drop(server.runtime);
 }
+fn publication_requires_conventions() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = Arc::new(Fixture::create(root.path()));
+    let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
+    fixture.adapter().execute(&prepare).unwrap();
+    let mut push = fixture.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(fixture.head(&prepare));
+    fixture.adapter().execute(&push).unwrap();
+    let server = Server::new(fixture.clone());
+    let mut adapter = server
+        .adapter(&root.path().join("github"), 1)
+        .with_repositories(&[])
+        .unwrap();
+    let result = adapter.execute(&fixture.delivery(EffectKind::OpenPr, 3));
+    assert!(
+        matches!(
+            result,
+            Err(tl3_controller::Error::Invalid(
+                "repository branch conventions are not configured"
+            ))
+        ),
+        "an unconfigured publisher must reject publication, got {result:?}"
+    );
+    assert!(
+        server
+            .runtime
+            .block_on(server.server.received_requests())
+            .unwrap()
+            .is_empty()
+    );
+}
+
 fn publication_recovery() {
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
@@ -1532,6 +1564,11 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--require-conventions") {
+        publication_requires_conventions();
+        println!("test publication_requires_conventions ... ok");
+        return;
+    }
     if let Some(case) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
@@ -1567,6 +1604,8 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    publication_requires_conventions();
+    println!("test publication_requires_conventions ... ok");
     publication_recovery();
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();

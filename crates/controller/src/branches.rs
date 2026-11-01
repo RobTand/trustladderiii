@@ -57,3 +57,31 @@ impl Branches {
             .map_or(DEFAULT_BASE, |(_, _, base)| base.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_conventions_empty_registry_requires_configuration() {
+        let fixture = crate::git_tests::Repo::new();
+        let branches = Branches::new(&[]).unwrap();
+        assert!(
+            branches.branch(&fixture.delivery()).is_err(),
+            "an empty registry must not invent repository conventions"
+        );
+    }
+
+    #[test]
+    fn repo_conventions_unknown_repository_requires_configuration() {
+        let fixture = crate::git_tests::Repo::new();
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let branches = Branches::new(&config.github.repos).unwrap();
+        let mut delivery = fixture.delivery();
+        delivery.repository.name = "unconfigured".into();
+        assert!(
+            branches.branch(&delivery).is_err(),
+            "an unknown repository must not inherit default conventions"
+        );
+    }
+}

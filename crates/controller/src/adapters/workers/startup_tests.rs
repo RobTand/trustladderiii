@@ -46,6 +46,7 @@ fn hostile_maker_head() {
             let mut config =
                 tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
             config.store = settings.clone();
+            config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
             config.workers.runs = f.root.path().join("runs");
             config.worktrees_root = f.root.path().join("worktrees");
             let supervisor = Supervisor::new(&config, &f.root.path().join("records"))
@@ -68,6 +69,7 @@ fn hostile_maker_head() {
                 ],
             );
             let branch = super::super::worktrees::Real::branch(&delivery).unwrap();
+            assert_eq!(branch.as_str(), "prismabuild-42-tl3-0");
             Worktrees::open(&checkout, &checkout)
                 .unwrap()
                 .create_branch_from(

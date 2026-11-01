@@ -141,3 +141,25 @@ fn worktree_error_classes_distinguish_permanent_failures() {
         assert_eq!(crate::looks::failure_class(&error), "transport");
     }
 }
+
+#[test]
+fn repo_conventions_unconfigured_worktrees_refuse_branch() {
+    let fixture = crate::git_tests::Repo::new();
+    let adapter = Real::new(fixture.root.path().join("worktrees"), 1).unwrap();
+    assert!(
+        adapter.branch_for(&fixture.delivery()).is_err(),
+        "an unconfigured worktree adapter must reject branch lookup"
+    );
+}
+
+#[test]
+fn repo_conventions_unconfigured_worktrees_refuse_base() {
+    let fixture = crate::git_tests::Repo::new();
+    let mut adapter = Real::new(fixture.root.path().join("worktrees"), 1).unwrap();
+    assert!(
+        adapter
+            .serve_local(fixture.delivery().repository, &fixture.path, &fixture.path)
+            .is_err(),
+        "an unconfigured worktree adapter must reject repository registration"
+    );
+}
