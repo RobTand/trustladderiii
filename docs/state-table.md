@@ -428,7 +428,7 @@ Publication guards report a Conflict fact when the checked head conflicts with c
 
 Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
 
-The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app.
+The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app. Waiting for required checks arms no allowance timer and spends no retry. The incident also clears when its head is replaced or the leaf closes.
 
 ### A failed round
 

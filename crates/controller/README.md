@@ -1425,11 +1425,14 @@ A required check that never reports raises a missing-check setup incident (Q52).
 When a required context from the expected app is absent, the look reads the
 head's check suites. If every suite has completed, it opens one nonblocking
 incident per head, context and app. A `check_suite` completion on the approved
-head now wakes a pending enqueue, like a check run. A check wake releases the
-enqueue's hold before its look, so waiting for checks never spends a retry. A
-later report of that
+head now wakes a pending enqueue, like a check run. An enqueue whose required
+checks are pending or missing is held with its own `checks_pending` class. That
+hold arms no silence timer. A look that finds it releases it to run the guard
+again, instead of spending a retry, so a slow or missing check never counts a
+failure. Transport-error holds keep the usual allowance. A later report of that
 context from that app clears the incident. `clear incident <id>` also clears it,
-and it stays cleared for that head. Neither path reaches the kernel, so no
+and it stays cleared for that head. It also clears when its head stops being the
+node's head or approved head, or the node closes. Neither path reaches the kernel, so no
 failure or credit is charged, and the enqueue still waits for the check. Run
 `bash crates/controller/tools/verify-missing-checks.sh` through PrismaBuild for
 the focused scenarios.

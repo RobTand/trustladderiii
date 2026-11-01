@@ -665,7 +665,7 @@ impl Executor for Adapter {
             .block_on(head_checks::read(&github, &repo, &state.pull_request))?
             .ready
         {
-            return Err(Error::Invalid("required head checks are still pending"));
+            return Err(Error::ChecksPending);
         }
         let mut attempt = match self.baseline(delivery)? {
             Some(attempt) => attempt,
@@ -1278,11 +1278,6 @@ impl Translator {
                 }
             }
             _ => {}
-        }
-        // A held enqueue that is waiting for checks has not failed. Release the
-        // hold first, so the look does not spend a retry on its absence (Q52).
-        if !wake.is_empty() {
-            wake.insert(0, Input::GitHubWake);
         }
         wake.extend(facts.into_iter().map(QueueFact::input));
         Ok(wake)

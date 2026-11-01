@@ -579,3 +579,5 @@ Rob approved three Publishing rows for a required check that never reports on th
 - `clear incident <id>` clears the incident. Required-check enforcement still applies, so the enqueue waits for the check.
 
 TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
+
+A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.

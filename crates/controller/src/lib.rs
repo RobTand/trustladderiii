@@ -81,6 +81,10 @@ pub enum Error {
     },
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
+    /// The enqueue guard is waiting for required checks to report. This is
+    /// evidence of a legitimate wait, not a failure (Q52).
+    #[error("required head checks are still pending")]
+    ChecksPending,
 }
 
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
@@ -717,6 +721,13 @@ impl Controller {
             .is_some_and(|effects| effects.contains_key(&delivery.key))
     }
 
+    fn hold_class(&self, delivery: &Delivery) -> Option<&str> {
+        self.held_effects
+            .get(&executor::upstream(delivery.output))
+            .and_then(|effects| effects.get(&delivery.key))
+            .map(String::as_str)
+    }
+
     fn remove_hold(&mut self, delivery: &Delivery) {
         if let Some(effects) = self
             .held_effects
@@ -1178,11 +1189,13 @@ impl Controller {
             from: effect.state,
             to,
         });
+        // A pending-checks hold waits on check webhooks; it arms no silence timer.
         if to == EffectState::Uncertain
             && let Some(class) = self
                 .held_effects
                 .get(&executor::upstream(delivery.output))
                 .and_then(|effects| effects.get(&effect.key))
+            && class != looks::CHECKS_PENDING
         {
             self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
         }
@@ -1430,6 +1443,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
                 .nodes
