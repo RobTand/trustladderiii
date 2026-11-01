@@ -71,7 +71,7 @@ def exporters(monkeypatch):
         child.wait(timeout=15)
 
 
-def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='fixture-secret-value', wait=True):
+def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='sk-fixture296secretvalue0123456789', wait=True):
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
     request_doc['trace'] = {'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7',
                             'attempt': 2, 'round': 1}
@@ -135,7 +135,7 @@ def test_no_secret_in_trace(request_doc, monkeypatch, exporters, receiver):
     uri, packets = receiver
     run_fake(request_doc, monkeypatch, exporters, uri)
     spans = decode(packets)
-    assert b'fixture-secret-value' not in packets[-1][2]
+    assert b'sk-fixture296secretvalue0123456789' not in packets[-1][2]
     assert request_doc['key_file'].encode() not in packets[-1][2]
     assert b'Authorization' not in packets[-1][2]
     assert all(not span.events and not span.status.message for span in spans)
@@ -202,3 +202,136 @@ def test_schema_failure_diagnostic_does_not_assume_reply_validation():
         Draft202012Validator({"type": "integer"}).validate("fixture-secret-value")
     assert failure_tags(caught.value) == {
         "failure_class": "ValidationError", "failure_message": "schema validation failed: type at schema type"}
+
+
+def exported_spans(packets):
+    from mlflow.entities import Span
+    return [Span.from_otel_proto(span) for span in decode(packets)]
+
+
+def test_model_and_root_capture_readable_content(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    run_fake(request_doc, monkeypatch, exporters, uri, secret='Return a friendly greeting.')
+    spans = exported_spans(packets)
+    root = next(span for span in spans if span.parent_id is None)
+    model = next(span for span in spans if span.span_type == 'CHAT_MODEL')
+    assert 'ingest' in root.name
+    assert 'ingest' in model.name and 'fixture-model' in model.name
+    assert root.inputs == request_doc['inputs']
+    assert root.outputs['brief'] == 'Return a friendly greeting.'
+    assert 'Return a friendly greeting.' in json.dumps(model.inputs)
+    assert 'Return a friendly greeting.' in json.dumps(model.outputs)
+
+
+@pytest.mark.parametrize('metadata,expected', [
+    ({'usage_metadata': {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18,
+                        'input_token_details': {'cache_read': 8, 'cache_creation': 2}}},
+     {'cache_read_input_tokens': 8, 'cache_creation_input_tokens': 2}),
+    ({'response_metadata': {'token_usage': {'prompt_tokens': 11, 'completion_tokens': 7,
+         'total_tokens': 18, 'prompt_tokens_details': {'cached_tokens': 6}}}},
+     {'cache_read_input_tokens': 6}),
+    ({'usage_metadata': {'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18,
+                        'input_token_details': {'cache_read': 0}}},
+     {'cache_read_input_tokens': 0}),
+])
+def test_cached_tokens_reach_model_and_root(request_doc, monkeypatch, exporters, receiver,
+                                          metadata, expected):
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    model = FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(BRIEF), **metadata)])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    runtime.run(request_doc, lambda event: None)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    spans = exported_spans(packets)
+    model_span = next(span for span in spans if span.span_type == 'CHAT_MODEL')
+    root = next(span for span in spans if span.parent_id is None)
+    usage = model_span.get_attribute('mlflow.chat.tokenUsage')
+    for key, count in expected.items():
+        assert usage.get(key) == count
+        assert root.get_attribute('mlflow.traceTag.' + key) == str(count)
+    assert usage['input_tokens'] == 11 and usage['total_tokens'] == 18
+    if 'cache_creation_input_tokens' not in expected:
+        assert 'cache_creation_input_tokens' not in usage
+        assert root.get_attribute('mlflow.traceTag.cache_creation_input_tokens') is None
+
+
+def test_tool_arguments_results_and_model_tool_calls_are_bounded(request_doc, tmp_path,
+                                                               monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    body = 'tool-result-marker ' + '文' * 40000
+    (tmp_path / 'large.txt').write_text(body)
+    model = FakeMessagesListChatModel(responses=[
+        AIMessage(content='', tool_calls=[{'name': 'read', 'args': {'path': 'large.txt'}, 'id': 'read1'}]),
+        AIMessage(content=json.dumps(BRIEF)),
+    ])
+    monkeypatch.setattr(runtime, 'create_model', lambda _: model)
+    runtime.run(request_doc, lambda event: None)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    spans = exported_spans(packets)
+    tool = next(span for span in spans if span.span_type == 'TOOL')
+    assert 'read' in tool.name
+    assert 'large.txt' in json.dumps(tool.inputs)
+    assert 'tool-result-marker' in json.dumps(tool.outputs)
+    assert 'truncated' in json.dumps(tool.outputs)
+    assert len(json.dumps(tool.outputs, ensure_ascii=False).encode()) <= 65536
+    assert any('read1' in json.dumps(span.outputs) for span in spans if span.span_type == 'CHAT_MODEL')
+
+
+def test_redacts_planted_secrets_without_tracing_reading_files(request_doc, tmp_path,
+                                                              monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    from pathlib import Path
+    key = 'opaque-model-key-296-which-has-no-provider-prefix'
+    key_path = tmp_path / 'planted-key'
+    key_path.write_text(key)
+    request_doc['key_file'] = str(key_path)
+    secrets = [key, 'sk-test296abcdefghijklmnop', 'ghp_test296abcdefghijklmnop',
+               'bearer296abcdefghijklmnop', 'url-password-296', 'private296contents',
+               'assigned-password-296']
+    planted = (f'{key} sk-test296abcdefghijklmnop ghp_test296abcdefghijklmnop '
+               'Bearer bearer296abcdefghijklmnop https://user:url-password-296@example.test '
+               '-----BEGIN PRIVATE KEY-----\nprivate296contents\n-----END PRIVATE KEY----- '
+               'password=assigned-password-296')
+    request_doc['inputs']['issue']['body'] = 'Visible request. ' + planted
+    request_doc['trace'] = {'repo': planted}
+    reply = {**BRIEF, 'brief': 'Visible reply. ' + planted}
+    fake = FakeMessagesListChatModel(responses=[AIMessage(content=json.dumps(reply))])
+    monkeypatch.setattr(runtime, 'ProxyChatOpenAI', lambda **kwargs: fake)
+    original = Path.read_text
+    reads = []
+    def read(path, *args, **kwargs):
+        if path == key_path:
+            reads.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read)
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    runtime.run(request_doc, lambda event: None)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    spans = exported_spans(packets)
+    root = next(span for span in spans if span.parent_id is None)
+    assert 'Visible request.' in json.dumps(root.inputs)
+    assert 'Visible reply.' in json.dumps(root.outputs)
+    assert '[REDACTED]' in json.dumps(root.inputs)
+    assert reads == [key_path], 'only normal model loading may read the key'
+    for secret in secrets:
+        assert secret.encode() not in packets[-1][2]
+    assert all(not span.events for span in decode(packets))
+
+
+def test_failed_root_has_readable_safe_output(request_doc, monkeypatch, exporters, receiver):
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    def fail(_):
+        raise ValueError('done requires code changes')
+    monkeypatch.setattr(runtime, 'create_model', fail)
+    with pytest.raises(ValueError):
+        runtime.run(request_doc, lambda event: None)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    root = next(span for span in exported_spans(packets) if span.parent_id is None)
+    assert root.inputs == request_doc['inputs']
+    assert root.outputs['failure_message'] == 'done requires code changes'
