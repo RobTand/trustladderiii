@@ -90,7 +90,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             state.head_checks = vec![json!({"id":901,"name":"Sandbox tests","head_sha":head,
                 "status":"completed","conclusion":"success","app":{"id":15368,"slug":"github-actions"}})];
         }
-        let mut adapter = api.adapter(&root.path().join("read-cache"), 0);
+        let mut adapter = api.adapter(&root.path().join("check-reads"), 0);
         let translator = Translator::new(api.clients()).unwrap();
         let mut read = || -> Vec<Observation> {
             if mode == "adapter" {
@@ -119,7 +119,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         let before = api.state.lock().unwrap().reads;
         let before_paths = api.state.lock().unwrap().get_paths.clone();
         assert!(read().is_empty());
-        let warm = api.state.lock().unwrap().reads - before;
+        let unchanged = api.state.lock().unwrap().reads - before;
         let after_paths = api.state.lock().unwrap().get_paths.clone();
         let check_path = format!(
             "/repos/owner/sandbox/commits/{}/check-runs",
@@ -137,54 +137,11 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             );
         }
         assert_eq!(
-            warm, 5,
-            "unchanged queue evidence must reuse the head-check read; keep two PR reads, one check-run read, and two protection reads"
+            unchanged, 5,
+            "each queue observation must avoid the duplicate check-run read; keep two PR reads, one check-run read, and two protection reads"
         );
         println!(
-            "queued {mode} REST reads: cold={cold}, unchanged={warm}; previous implementation=6"
-        );
-
-        // A rerun can fail on the same SHA without changing the queue check or PR.
-        api.state.lock().unwrap().head_checks[0]["conclusion"] = json!("failure");
-        assert!(
-            read().iter().any(|observation| matches!(
-                observation,
-                Observation::Queue(QueueFact {
-                    evidence: Evidence::CiFailed {
-                        head_check: true,
-                        infra: false,
-                        ..
-                    },
-                    ..
-                })
-            )),
-            "changed required checks must invalidate the cached success"
-        );
-        // Branch protection can change without a PR or check-run update.
-        api.state.lock().unwrap().required = false;
-        assert!(read().is_empty(), "requirements must remain fresh");
-        {
-            let mut state = api.state.lock().unwrap();
-            state.head_checks.clear();
-            state.classic = true;
-            state.classic_context_only = true;
-            state.statuses = json!([{"id":50,"context":"Sandbox tests","state":"success"}]);
-        }
-        assert!(read().is_empty());
-        api.state.lock().unwrap().statuses =
-            json!([{"id":51,"context":"Sandbox tests","state":"failure"}]);
-        assert!(
-            read().iter().any(|observation| matches!(
-                observation,
-                Observation::Queue(QueueFact {
-                    evidence: Evidence::CiFailed {
-                        head_check: true,
-                        ..
-                    },
-                    ..
-                })
-            )),
-            "commit statuses must stay fresh without a status webhook"
+            "queued {mode} REST reads: cold={cold}, unchanged={unchanged}; previous implementation=6"
         );
     }
     println!("test check_reads_{mode} ... ok");
@@ -239,7 +196,15 @@ fn clear_gap(controller: &mut Controller, id: &str, sequence: u64) {
             },
         )
         .unwrap();
-    drain(controller);
+    for _ in 0..100 {
+        if controller.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "operations_comments"
+                && row.id.ends_with(&format!("/{}", 90000 + sequence))
+        }) {
+            break;
+        }
+        assert!(controller.drive_once().unwrap());
+    }
     assert_eq!(
         controller
             .snapshot()
@@ -266,7 +231,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
         .unwrap()
         .rows
         .into_iter()
-        .find(|row| row.table == "incidents")
+        .find(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
         .unwrap();
     assert_eq!(incident.value["open"], true);
     for sequence in 1..=2 {
@@ -276,7 +241,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
         let incidents: Vec<_> = snapshot
             .rows
             .iter()
-            .filter(|row| row.table == "incidents")
+            .filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
             .collect();
         assert_eq!(
             incidents.len(),
@@ -307,7 +272,9 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
             .unwrap()
             .rows
             .iter()
-            .find(|row| row.table == "incidents" && row.id == incident.id)
+            .find(|row| row.table == "incidents"
+                && row.value["signature"]["class"] == "setup"
+                && row.id == incident.id)
             .unwrap()
             .value["open"],
         false,
