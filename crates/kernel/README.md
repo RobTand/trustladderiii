@@ -153,7 +153,7 @@ Earlier runs:
 Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
 Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
 
-From the repo root, generate and submit all 81 proofs and the tests:
+From the repo root, generate and submit all 86 proofs and the tests:
 
 ```bash
 python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json
@@ -163,9 +163,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 32 GiB, and progress proofs reserve 24 GiB.
-`progress_from_queued` and `apply_new_request` reserve 32 GiB.
-These budgets use measurements from the production representation: reply proofs peaked at 21.8 GiB, progress proofs at 19.1 GiB and new requests at 27.9 GiB.
+Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 44 GiB, and general progress proofs reserve 24 GiB.
+`progress_from_queued`, `apply_new_request`, `apply_new_adoption` and `apply_reviewer_out_of_room` reserve 44 GiB.
+The coordinator set the 44 GiB budget on 2026-11-01 after six proofs from the former 64 GiB class peaked at 27.9–35.3 GiB. Keep 32 GiB for any 32 GiB class. Critical-path development tests use priority -9 when named by the coordinator; bulk proofs remain at -10.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.
 Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
