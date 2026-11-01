@@ -628,7 +628,10 @@ def test_trace_has_total_budget_and_keeps_root(request_doc, exporters, receiver)
     assert len(packets[-1][2]) <= 1024 * 1024, 'total trace export must fit one MiB'
     spans = exported_spans(packets)
     assert len(spans) >= 121, 'budget keeps span metadata'
-    assert any('trace content budget exhausted' in json.dumps(span.inputs) for span in spans)
+    # Older spans shrink to a floor instead of losing all content; the newest keep the most.
+    models = [span for span in spans if span.span_type == 'CHAT_MODEL']
+    assert 'latest-119' in json.dumps(models[-1].inputs) and 'reply-119' in json.dumps(models[-1].outputs)
+    assert all('latest-' in json.dumps(span.inputs) for span in models)
     root = next(span for span in spans if span.parent_id is None)
     assert root.inputs and root.outputs['brief'] == 'final-readable-reply'
     assert root.get_attribute('tl3.trace.truncated') is True
@@ -661,3 +664,334 @@ def test_json_model_reply_keeps_readable_tail_without_escaped_secrets():
     assert 'opaque-json-reply-secret-296' not in json.dumps(result)
     assert isinstance(json.loads(result['content']), dict), 'keep the structured model reply readable'
     assert len(json.dumps(result).encode()) <= 65536
+
+
+# Third review round. The reviewer's 245 planted forms each pass through every
+# way a string reaches a span. Only the limits that workers/README.md lists may leak.
+from tracing_forms import FORMS, B64, r  # noqa: E402
+
+DOCUMENTED_LIMITS = {'DOC_unquoted_spaces', 'url_no_scheme', 'generic_webhook_path', 'cli_gh_with_token'}
+CARRIERS = {
+    'text': lambda R, F: R.text(F),
+    'payload': lambda R, F: R.payload(F),
+    'line': lambda R, F: R.payload('lead line\n' + F + '\ntrailer line that follows'),
+    'inline': lambda R, F: R.payload('I looked at ' + F + ' and then moved on.'),
+    'dict_value': lambda R, F: R.payload({'note': F}),
+    'json': lambda R, F: R.payload(json.dumps({'text': F})),
+    'json_twice': lambda R, F: R.payload(json.dumps(json.dumps({'text': F}))),
+    'json_thrice': lambda R, F: R.payload(json.dumps(json.dumps(json.dumps({'text': F})))),
+    'tool_args': lambda R, F: R.payload({'tool_calls': [{'name': 'bash', 'args': {'command': F}}],
+                                         'messages': [{'role': 'user', 'content': F}]}),
+    'tool_result_json': lambda R, F: R.payload([{'role': 'tool', 'content': json.dumps({'stdout': F})}]),
+    'function_arguments': lambda R, F: R.payload({'tool_calls': [{'function': {
+        'name': 'bash', 'arguments': json.dumps({'command': F})}}]}),
+}
+
+
+def leaked(output, secrets, width=8):
+    flat = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+    return [secret for secret in secrets
+            if any(secret[i:i + width] in flat for i in range(max(1, len(secret) - width + 1)))]
+
+
+@pytest.mark.parametrize('name,text,secrets', [(name, text, secrets) for name, text, secrets, _ in FORMS
+                                               if name not in DOCUMENTED_LIMITS],
+                         ids=[name for name, *_ in FORMS if name not in DOCUMENTED_LIMITS])
+def test_planted_form_never_leaks_through_any_carrier(name, text, secrets):
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor('/nonexistent/key-file-path')
+    leaks = {carrier: leaked(build(redactor, text), secrets) for carrier, build in CARRIERS.items()}
+    assert not any(leaks.values()), leaks
+
+
+def test_planted_forms_never_reach_the_packet(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe, record_reply
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    forms = [(name, text, secrets) for name, text, secrets, _ in FORMS if name not in DOCUMENTED_LIMITS]
+    with observe(request_doc):
+        with mlflow.start_span(name='chat', span_type='CHAT_MODEL') as model:
+            model.set_inputs({'messages': [[{'type': 'system', 'content': 'MARKER_SYS'}] +
+                                           [{'type': 'human', 'content': text} for _, text, _ in forms]]})
+        for name, text, _ in forms:
+            with mlflow.start_span(name='tool ' + text, span_type='TOOL') as tool:
+                tool.set_inputs({'command': text, 'note': 'MARKER_TOOL_IN'})
+                tool.set_outputs(text + '\nMARKER_TOOL_OUT')
+        record_reply({'verdict': 'MARKER_REPLY'})
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    data = packets[-1][2].decode('utf-8', 'replace')
+    assert {name for name, _, secrets in forms if leaked(data, secrets)} == set()
+    for marker in ('MARKER_SYS', 'MARKER_TOOL_IN', 'MARKER_TOOL_OUT', 'MARKER_REPLY'):
+        assert marker in data
+
+
+ORDINARY = [
+    'def test_password_reset_sends_email(client):',
+    'The password must be at least 12 characters and contain a digit.',
+    'Users reset their password by clicking the link in the email.',
+    'for token in tokens:\n    count += 1',
+    'self.token_count += len(tokens)',
+    'max_tokens=4096',
+    'sorted(items, key=lambda kv: kv[1])',
+    'max(words, key=len)',
+    'if token == expected:',
+    'def verify(token: str, key: bytes) -> bool:',
+    '# TODO: rotate the API key every 90 days',
+    'class TokenBucket:\n    def __init__(self, capacity, rate):',
+    "tokenizer = AutoTokenizer.from_pretrained('gpt2')",
+    "assert 'password' in error_message",
+    "git commit -m 'Fix password hashing'",
+    "key = d.get('name')",
+    'input_tokens: 123, output_tokens: 456',
+    'The cache key is derived from the file path.',
+    'export PATH=/usr/bin:$PATH',
+    'HTTP 401: invalid token',
+    'ssh -p 2222 host',
+    'pytest -p no:cacheprovider -q workers/tests',
+    "python -m pytest -k 'test_token or test_key' -q",
+    'primary_key=True, sort_keys=True',
+    'https://github.com/RobTand/trustladderiii/pull/302',
+    'git@github.com:RobTand/trustladderiii.git',
+    'ssh://git@github.com/o/r.git',
+    'http://localhost:8080/path@2x.png',
+    'email bob@example.com: thanks',
+    'let token = self.next_token()?;',
+    'for (key, value) in map.iter() {',
+    'fn parse_token(s: &str) -> Option<Token> {',
+    'The authorization header is required for this endpoint.',
+    'Missing password for user bob; ask the requester.',
+    '- [ ] rotate secrets quarterly',
+    'secret handshake protocol (SHP) v2 is documented in docs/shp.md',
+    'a passkey is not a password',
+    'use `--token-budget 4000` to cap spend',
+    'Cookie banner copy lives in web/consent.html',
+    'commit 29280f4b147fd889f848c51300ba3352b9e26d9d and 3f14146feb2902d35819403c0a83bb2a0ead9a36',
+    'sha256:81a462f2634e11c5372eb8822209d17cf6ca5ad653cda0315171c3a26b396cfe',
+    'uuid 6f59aec1-88d6-170c-0ce7-0fdb4eebbb70',
+    'Bearer tokens are described in RFC 6750.',
+    'Basic usage: run `tl3 start`.',
+    'basic authentication is disabled',
+    'a key-value store',
+    'keyboard shortcuts: ctrl+s to save',
+    'monkey patch the key function',
+    'tokens per second: 41.7',
+    'trace tr-6f59aec188d6170c0ce70ecdb4fde685, request cdc57fa99768407bb915874b3d9fde54',
+    'integrity sha512-Q2xvdWRmbGFyZS1zZWN1cml0eS10ZXN0LXZhbHVlLWZvci1pbnRlZ3JpdHk=',
+]
+
+
+@pytest.mark.parametrize('text', ORDINARY)
+def test_ordinary_text_survives_redaction(text):
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor('/nonexistent/key-file-path')
+    assert redactor.text(text) == text
+    assert redactor.payload(text) == text
+
+
+def test_usage_counts_and_harmless_token_fields_survive():
+    from tl3_workers.tracing import Redactor
+    usage = {'input_tokens': 5, 'output_tokens': 6, 'total_tokens': 11, 'cache_read_input_tokens': 3,
+             'cache_creation_input_tokens': 2, 'max_tokens': 4096, 'budget_tokens': 32000,
+             'token_count': 12, 'tokenizer': 'gpt2', 'key': 'name', 'primary_key': 'id',
+             'input_token_details': {'cache_read': 8, 'cache_creation': 2},
+             'usage_metadata': {'input_tokens': 9, 'output_token_details': {'reasoning': 4}}}
+    assert Redactor(None).payload(usage) == usage
+
+
+@pytest.mark.parametrize('document,secret', [
+    ({'env': [{'name': 'DB_PASSWORD', 'value': 'k8s-json-env-296'}]}, 'k8s-json-env-296'),
+    ({'secret': 123456789012}, '123456789012'),
+    ({'auth': 'Ym9iOmh1bnRlcjI5Ng=='}, 'Ym9iOmh1bnRlcjI5Ng=='),
+])
+def test_structured_secrets_are_redacted_by_field(document, secret):
+    from tl3_workers.tracing import Redactor
+    assert secret not in json.dumps(Redactor(None).payload(document))
+
+
+def test_high_entropy_tokens_are_redacted_but_digests_survive():
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    for secret in [r(40, B64), r(24), r(32, '0123456789abcdef'), r(56, B64)]:
+        assert leaked(redactor.text(f'the value {secret} was set'), [secret]) == []
+        assert 'the value' in redactor.text(f'the value {secret} was set')
+
+
+SENSITIVE_PATHS = ['.env', 'config/.env.local', 'deploy/server.pem', 'tls/site.key', '/home/u/.ssh/id_ed25519',
+                   '.netrc', 'web/.npmrc', '.pypirc', 'aws/credentials', 'k8s/db-secret.yaml',
+                   '/home/u/.docker/config.json', 'keys/putty.ppk', 'certs/client.p12', '/home/u/.kube/config']
+
+
+@pytest.mark.parametrize('path', SENSITIVE_PATHS)
+def test_content_from_sensitive_files_is_replaced_by_a_marker(path):
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    grep = redactor.payload({'matches': [{'path': path, 'line': 1, 'text': 'visible-sensitive-line'},
+                                         {'path': 'src/app.py', 'line': 2, 'text': 'ordinary-line'}]})
+    assert 'visible-sensitive-line' not in json.dumps(grep)
+    assert path in json.dumps(grep) and 'ordinary-line' in json.dumps(grep)
+    messages = redactor.payload({'messages': [
+        {'type': 'ai', 'content': '', 'tool_calls': [{'name': 'read', 'args': {'path': path}, 'id': 'call-s'},
+                                                    {'name': 'read', 'args': {'path': 'README.md'}, 'id': 'call-o'}]},
+        {'type': 'tool', 'tool_call_id': 'call-s', 'content': 'visible-sensitive-line'},
+        {'type': 'tool', 'tool_call_id': 'call-o', 'content': 'ordinary-line'}]})
+    assert 'visible-sensitive-line' not in json.dumps(messages)
+    assert 'ordinary-line' in json.dumps(messages)
+
+
+def test_sensitive_file_tool_result_names_the_path(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    with observe(request_doc):
+        with mlflow.start_span(name='read', span_type='TOOL') as tool:
+            tool.set_inputs({'path': 'config/.env'})
+            tool.set_outputs('PLAIN=visible-env-line\nDB_PASSWORD=plain-env-296')
+        with mlflow.start_span(name='read', span_type='TOOL') as tool:
+            tool.set_inputs({'path': 'src/ordinary.py'})
+            tool.set_outputs('ordinary-source-line')
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    tools = [span for span in exported_spans(packets) if span.span_type == 'TOOL']
+    assert 'config/.env' in json.dumps(tools[0].outputs)
+    assert b'visible-env-line' not in packets[-1][2] and b'plain-env-296' not in packets[-1][2]
+    assert tools[1].outputs == 'ordinary-source-line'
+
+
+def _filler(count, width=70):
+    return '\n'.join(f'filler {i} ' + 'f' * width for i in range(count))
+
+
+@pytest.mark.parametrize('begin,end', [
+    ('-----BEGIN RSA PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----'),
+    ('-----BEGIN OPENSSH PRIVATE KEY-----', '-----END OPENSSH PRIVATE KEY-----'),
+    ('-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: x\n', '-----END PGP PRIVATE KEY BLOCK-----'),
+    ('-----BEGIN ENCRYPTED PRIVATE KEY-----', '-----END ENCRYPTED PRIVATE KEY-----'),
+    ('api_key: |', 'next: 1'),
+])
+def test_multiline_secret_straddling_a_cut_never_leaks(begin, end):
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    indent = '  ' if begin.startswith('api_key') else ''
+    body = [r(64, B64) for _ in range(40)]
+    key = begin + '\n' + '\n'.join(indent + line for line in body) + '\n' + end
+    bad = [fill for fill in range(60, 135)
+           if leaked(redactor.text(_filler(150) + '\n' + key + '\n' + _filler(fill, 60)), body)
+           or leaked(redactor.payload(_filler(150) + '\n' + key + '\n' + _filler(fill, 60)), body)]
+    assert bad == []
+
+
+def test_single_line_secrets_straddling_any_cut_never_leak():
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    model_key = 'zz' + r(40) + '-mk'
+    redactor.secrets.add(model_key)
+    password = 'Qx' + r(22)
+    for fill in range(60, 135):
+        text = _filler(150) + f'\npassword={password}\nx {model_key} y\n' + _filler(fill, 60)
+        assert leaked(redactor.text(text), [password, model_key]) == []
+    # One oversized line is cut twice, keeping its head and its tail. Sweep the
+    # secret across the whole line so it straddles both cuts wherever they fall.
+    for offset in range(0, 9000, 5):
+        line = 'A' * offset + f' password={password} x {model_key} y ' + 'B' * (9000 - offset)
+        assert leaked(redactor.text(line), [password, model_key]) == [], offset
+
+
+def test_oversized_single_line_keeps_its_head_and_tail():
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    result = redactor.payload('HEAD_MARK ' + 'z' * 20000 + ' FINAL_ONE_LINE_MARK')
+    assert result.startswith('HEAD_MARK') and result.endswith('FINAL_ONE_LINE_MARK')
+    assert 'truncated' in result
+    args = redactor.payload({'command': 'START_ARG ' + 'a' * 30000 + ' ENDARG'})
+    assert args['command'].startswith('START_ARG') and args['command'].endswith('ENDARG')
+    reply = redactor.payload({'text': 'REPLY_HEAD ' + 'o' * 3000}, 2048)
+    assert 'REPLY_HEAD' in json.dumps(reply)
+
+
+ADVERSARIAL = ['key', 'token', 'token=', 'secret_', 'password', 'credential', 'signature', 'a.', 'a-', 'a:',
+               'a://', 'sk-', 'Bearer ', 'authorization:', 'Authorization: Basic ', 'cookie=', '"password": ',
+               '\\"', '\\\\\\"', "'", '--password ', '-u a:', '-u ', 'https://u:', 'eyJ.', 'ghp_', 'AKIA',
+               '-----BEGIN PRIVATE KEY-----\n', '-----BEGIN A A A ', ' ', '\t', '\\n', 'token\\n', 'key=\\n ',
+               '= ', 'x_token_', 'secret secret ', 'key=key=', 'password:  ', 'password="', '| ', '[a]\n',
+               'name: a\n', 'x: |\n', 'mysql ', 'Private-Lines: 1\n', 'aB3', '//', ':@']
+
+
+@pytest.mark.parametrize('unit', ADVERSARIAL)
+def test_redaction_is_linear_on_adversarial_text(unit):
+    import time
+    from tl3_workers.tracing import Redactor
+    redactor = Redactor(None)
+    text = (unit * (8192 // len(unit) + 1))[:8192]
+    started = time.process_time()
+    redactor.text(text)
+    redactor.text('x\n' + text)
+    # The quadratic label pattern this replaces took 2 s per call on dl380g10.
+    assert time.process_time() - started < 0.5
+
+
+def _maker_trace(mlflow):
+    for step in range(30):
+        with mlflow.start_span(name='chat', span_type='CHAT_MODEL') as span:
+            span.set_inputs({'messages': [[{'type': 'human', 'content': f'step{step} line{j} ' + 'm' * 80}
+                                           for j in range(400)]]})
+            span.set_outputs({'generations': [[{'text': f'REPLY_STEP_{step} ' + 'o' * 3000}]]})
+            span.set_attribute('mlflow.chat.tokenUsage', {'input_tokens': 10, 'output_tokens': 5,
+                                                          'total_tokens': 15})
+        for tool in range(3):
+            with mlflow.start_span(name='read', span_type='TOOL') as span:
+                span.set_inputs({'path': f'file{step}_{tool}.py'})
+                span.set_outputs('\n'.join(f'TOOL_{step}_{tool} line {j} ' + 't' * 60 for j in range(900)))
+
+
+def test_trace_budget_keeps_the_newest_turns_and_a_floor_for_older_spans(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe, record_reply
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    request_doc['inputs']['issue']['body'] = 'ROOT_BRIEF ' + 'b' * 20000
+    with observe(request_doc):
+        _maker_trace(mlflow)
+        record_reply({'verdict': 'ROOT_FINAL_REPLY'})
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    assert len(packets[-1][2]) <= 1024 * 1024
+    spans = exported_spans(packets)
+    models = [span for span in spans if span.span_type == 'CHAT_MODEL']
+    tools = [span for span in spans if span.span_type == 'TOOL']
+    assert len(models) == 30 and len(tools) == 90
+    assert 'step29 line399' in json.dumps(models[-1].inputs)
+    assert 'REPLY_STEP_29' in json.dumps(models[-1].outputs)
+    for index, span in enumerate(tools[-3:]):
+        assert f'TOOL_29_{index} line 899' in json.dumps(span.outputs)
+        assert len(json.dumps(span.outputs)) > 8000, 'newest tool results keep full content'
+    for span in models + tools:
+        content = json.dumps([span.inputs, span.outputs])
+        assert 'budget exhausted' not in content and ('step' in content or 'TOOL_' in content)
+    assert 'REPLY_STEP_0 ' in json.dumps(models[0].outputs)
+    root = next(span for span in spans if span.parent_id is None)
+    assert 'ROOT_BRIEF' in json.dumps(root.inputs) and root.outputs['verdict'] == 'ROOT_FINAL_REPLY'
+    assert root.get_attribute('tl3.trace.truncated') is True
+
+
+def test_very_long_trace_keeps_its_first_and_last_spans(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe
+    uri, packets = receiver
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    with observe(request_doc):
+        for index in range(4200):
+            with mlflow.start_span(name=f'n{index}', span_type='TOOL') as span:
+                span.set_inputs({'i': index})
+                span.set_outputs('ok')
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    spans = exported_spans(packets)
+    names = {span.name for span in spans}
+    assert len(spans) <= 4096 and {'n0', 'n4199'} <= names
+    root = next(span for span in spans if span.parent_id is None)
+    assert root.get_attribute('tl3.trace.omitted_spans') == 4201 - len(spans)
+    ids = {span.span_id for span in spans}
+    assert all(span.parent_id in ids for span in spans if span.parent_id), 'every kept span has a kept parent'
