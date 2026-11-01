@@ -90,4 +90,5 @@ class OtherHelper(Helper):
 ''')
     assert inventory.node_ids(tmp_path, ['test_policy.py']) == [
         'test_policy.py::Intermediate::test_admission',
+        'test_policy.py::Policy::test_admission',
         'test_policy.py::Policy::test_refusal']
