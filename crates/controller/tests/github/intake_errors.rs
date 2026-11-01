@@ -64,7 +64,7 @@ fn sql(settings: &tl3_config::Store, statement: &str) {
 fn break_intake(settings: &tl3_config::Store) {
     sql(
         settings,
-        "DELETE FROM tl3_world WHERE table_name = 'repos' AND row_id = '0'",
+        "UPDATE tl3_world SET value = jsonb_set(value, '{name}', '\"unavailable-sandbox\"') WHERE table_name = 'repos' AND value->>'name' = 'sandbox'",
     );
 }
 fn healthy(c: &mut Controller) {
