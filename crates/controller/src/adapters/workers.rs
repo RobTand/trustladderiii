@@ -121,6 +121,7 @@ pub struct Supervisor {
     active: ActiveRuns,
     worktrees: PathBuf,
     tests: tl3_config::PrismaBuild,
+    images: super::images::Images,
     hindsight: tl3_config::Hindsight,
     memory: crate::memory::Feed,
 }
@@ -157,6 +158,7 @@ impl Supervisor {
             materials_provider: None,
             worktrees: config.worktrees_root.clone(),
             tests: config.prismabuild.clone(),
+            images: super::images::Images::new(&config.github.repos),
             hindsight: config.hindsight.clone(),
             memory: crate::memory::Feed::start(config.store.clone(), config.hindsight.clone()),
         })
@@ -298,8 +300,7 @@ impl Supervisor {
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["fit_tokens"] = json!(self.limits.fit_tokens);
-            inputs["tests"] =
-                json!({"image": self.tests.container_image, "tools_path": self.tests.tools_dir});
+            inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
             inputs["hindsight"] =
                 json!({"endpoint": self.hindsight.endpoint, "bank": self.hindsight.bank});
             super::worktrees::checkout_path(&self.worktrees, delivery)

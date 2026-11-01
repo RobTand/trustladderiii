@@ -111,6 +111,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             },
         },
     )?;
+    let pb = pb.with_repositories(&config.github.repos);
     let bell = pb.source();
     let writer = adapters::workers::writer::ProcessWriter::new(config, &records.join("writer"))?;
     adapters.register(
