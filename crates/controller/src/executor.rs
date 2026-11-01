@@ -341,11 +341,11 @@ pub trait Executor {
     fn wait_record(&mut self, _key: &str, _checkout: &std::path::Path) -> Result<WaitRecord> {
         Ok(WaitRecord::Ended)
     }
-    /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     /// Facts learned while a delivery is still pending, without acknowledging it.
     fn observations(&mut self, _delivery: &Delivery) -> Result<Vec<Observation>> {
         Ok(vec![])
     }
+    /// Return Err when the response is unknown. Only upstream answers are acknowledgements.
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion>;
     /// Reads by the original key and epoch remain valid after a fence advances.
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation>;

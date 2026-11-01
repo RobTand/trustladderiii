@@ -38,7 +38,7 @@ Public operations:
 | `post_comment`, `edit_comment`, `reconcile_comments`, `delete_comment` | Post, edit and deduplicate comments |
 | `close_issue` | Close with `Completed` or `NotPlanned` |
 | `create_request_issue`, `reconcile_issue` | File a labelled request and find it by its effect marker |
-| `required_status_checks`, `check_annotations`, `workflow_runs`, `workflow_run`, `rerun_workflow_run` | Read ruleset requirements and Actions evidence; rerun a workflow with Actions write permission |
+| `required_status_checks`, `check_annotations`, `workflow_runs`, `workflow_run`, `rerun_workflow_run` | Read ruleset and classic-protection requirements and Actions evidence; rerun a workflow with Actions write permission |
 | `create_check_run`, `check_runs`, `check_suites` | Create a check with a head and external id; read all check pages |
 | `open_pull_request`, `reopen_pull_request`, `pull_request`, `pull_requests_for_branch`, `close_pull_request` | Open, inspect, reconcile and close PRs |
 | `branch`, `delete_branch` | Read or delete a branch, including names containing slashes |
@@ -190,3 +190,10 @@ A submission acknowledgement is not a pass.
 GitHub references: [JWT claims](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app),
 [REST rate limits and retries](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api),
 [webhook payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads).
+`required_status_checks` combines rulesets with classic branch protection and
+preserves classic `checks[].app_id`. It treats `contexts` as unbound requirements
+when they are not already represented by `checks`. A classic-protection 404 adds
+no requirements; other failures propagate. GitHub requires **Administration: Read**
+for the classic required-status-checks endpoint. Existing App installations need
+that permission approved before using it. `commit_statuses` reads the approved
+commit's legacy status contexts.

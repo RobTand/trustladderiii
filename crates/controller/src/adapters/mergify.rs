@@ -1074,7 +1074,9 @@ impl Translator {
                     }
                     if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
                         facts.extend(self.look(github, repo, item)?);
-                        wake.extend(pending);
+                        if !queue_event {
+                            wake.extend(pending);
+                        }
                     }
                 }
             }

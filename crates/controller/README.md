@@ -1353,10 +1353,12 @@ reviewer and writer suites on dl380g10 and sparky. After those pass, submit the
 
 ### Required head checks before queue retry
 
-The enqueue adapter reads the base branch's active ruleset requirements. It matches
-each required check's name and App ID against the latest GitHub Actions check on
-the approved PR head. Cancelled, timed-out, and startup failures rerun their workflow
-before re-enqueueing. A `failure` needs explicit runner-failure annotations to take
+The enqueue adapter reads the union of the base branch's ruleset and classic
+branch-protection requirements. A classic-protection 404 means no classic requirements.
+It waits for every required check on the approved head before queueing, and matches
+each required check's name and App ID against the latest check on the approved
+PR head. Cancelled, timed-out, and startup failures from GitHub Actions rerun their
+workflow. Enqueueing waits for a successful rerun. A `failure` needs explicit runner-failure annotations to take
 that path; ordinary test failures enter the existing fix round. A generic GitHub
 merge refusal uses the same evidence. Optional checks and older heads are excluded.
 
@@ -1395,3 +1397,10 @@ A later look reruns the completed workflow before enqueueing. Explicit Actions
 refusals retain only a safe reason: missing App access, an expired run, or other
 workflow restrictions. A refused POST can be retried with the same delivery key;
 a lost response still needs an increased `run_attempt` before enqueueing.
+Required head-check failures during the Publishing enqueue step use Q47. Code
+failures cancel the pending enqueue and enter the existing fix round. Cancellation
+removes `tl3-queue` if present. Infrastructure failures use the same retry bound
+as Queued. Check events wake only a pending enqueue on the approved head; the
+existing looks recover missed events. Legacy commit statuses satisfy requirements
+without an App binding. Permission errors retain the wait instead of treating the
+repository as unprotected.

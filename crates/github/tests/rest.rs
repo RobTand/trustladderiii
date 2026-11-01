@@ -1172,3 +1172,61 @@ async fn required_status_checks_protection_errors_are_not_empty_requirements() {
         Err(Error::Http { status: 403 })
     ));
 }
+
+#[tokio::test]
+async fn required_status_checks_classic_404_preserves_rulesets() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    get(
+        &server,
+        "/repos/owner/sandbox/rules/branches/main",
+        json!([
+            {"type":"required_status_checks","parameters":{"required_status_checks":[
+                {"context":"ruleset", "integration_id":42}
+            ]}}
+        ]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+        ))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let required = github
+        .required_status_checks("owner/sandbox", "main")
+        .await
+        .unwrap();
+    assert_eq!(required.len(), 1);
+    assert_eq!(required[0].context, "ruleset");
+    assert_eq!(required[0].integration_id, Some(42));
+}
+
+#[tokio::test]
+async fn required_status_checks_unprotected_branch_has_none() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    get(
+        &server,
+        "/repos/owner/sandbox/rules/branches/main",
+        json!([]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+        ))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+    assert!(
+        github
+            .required_status_checks("owner/sandbox", "main")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
