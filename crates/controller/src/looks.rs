@@ -1563,3 +1563,80 @@ mod incident_tests {
         }
     }
 }
+
+impl Controller {
+    pub(crate) fn check_setup_incident(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        permissions: &[String],
+    ) -> Result<()> {
+        let id = format!("required-checks:{}", node.0);
+        let key = format!("incident:{id}");
+        let request = crate::request(snapshot, node)?;
+        let summary = format!(
+            "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
+            permissions.join("; ")
+        );
+        let signature = IncidentSignature {
+            upstream: Upstream::Mergify,
+            class: "setup".into(),
+        };
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node,
+                open: true,
+                needs_rob: false,
+                blocking: false,
+                summary: summary.clone(),
+                signature: signature.clone(),
+                effect: None,
+                post_key: Some(key.clone()),
+            }),
+        ));
+        let mut delivery = Delivery {
+            key,
+            epoch: snapshot.epoch.get(),
+            output: Out::Notice {
+                node,
+                notice: tl3_kernel::Notice::Incident { needs_rob: false },
+            },
+            generation: 0,
+            head_sha: None,
+            repository: request.repo.clone(),
+            issue: request.issue,
+            pull_request: None,
+            proposed: None,
+            paths: vec![],
+            attempt: 0,
+            round: 0,
+            replanned: false,
+            checks: None,
+            job_generation: None,
+            question: None,
+            note: Some(incident_note(&request.repo, request.issue, &summary)),
+            scope_removals: None,
+            marker_key: None,
+            steering: None,
+            request_text: None,
+            question_context: Some(
+                json!({"issue_title":request.title, "signature":signature,"incident_id":id}),
+            ),
+        };
+        if let Some(operations) = &self.bootstrap.operations {
+            delivery.repository = crate::Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
+            };
+            delivery.issue = operations.number;
+        }
+        commit.rows.push(self.allowance_row(delivery.clone()));
+        commit.effects.push(delivery.into_effect());
+        Ok(())
+    }
+}

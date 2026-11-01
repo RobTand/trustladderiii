@@ -11,10 +11,17 @@ enum Failure {
 
 pub(super) struct Checks {
     pub ready: bool,
+    pub unavailable: Vec<String>,
     failure: Option<Failure>,
 }
 
 impl Checks {
+    pub(super) fn infrastructure(&self) -> Option<bool> {
+        self.failure
+            .as_ref()
+            .map(|failure| matches!(failure, Failure::Infrastructure(_)))
+    }
+
     pub(super) fn evidence(&self, pull: &PullRequest) -> Option<Evidence> {
         let (check, completed_at, infra) = match self.failure.as_ref()? {
             Failure::Tests {
@@ -41,12 +48,15 @@ impl Checks {
 }
 
 pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Result<Checks> {
-    let required = github
+    let requirements = github
         .required_status_checks(repo, &pull.base.branch)
         .await?;
+    let required = requirements.checks;
+    let mut unavailable = requirements.unavailable;
     if required.is_empty() {
         return Ok(Checks {
             ready: true,
+            unavailable,
             failure: None,
         });
     }
@@ -61,8 +71,20 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
         }
     }
     let mut statuses = BTreeMap::new();
+    let mut statuses_available = true;
     if required.iter().any(|rule| rule.integration_id.is_none()) {
-        for status in github.commit_statuses(repo, &pull.head.sha).await? {
+        let read = match github.commit_statuses(repo, &pull.head.sha).await {
+            Ok(statuses) => statuses,
+            Err(tl3_github::Error::Http {
+                status: status @ (403 | 404),
+            }) => {
+                unavailable.push(format!("Commit statuses: read unavailable (HTTP {status})"));
+                statuses_available = false;
+                vec![]
+            }
+            Err(error) => return Err(error.into()),
+        };
+        for status in read {
             let entry = statuses
                 .entry(status.context.clone())
                 .or_insert_with(|| status.clone());
@@ -89,11 +111,19 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
             .is_none()
             .then(|| statuses.get(&rule.context))
             .flatten();
-        if checks.is_empty() && status.is_none() {
+        if checks.is_empty()
+            && status.is_none()
+            && (rule.integration_id.is_some() || statuses_available)
+        {
             ready = false;
         }
         for check in checks {
-            if check.status != "completed" {
+            if check.status != "completed"
+                || matches!(
+                    check.conclusion.as_deref(),
+                    Some("action_required" | "stale")
+                )
+            {
                 ready = false;
                 continue;
             }
@@ -137,6 +167,7 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
     }
     Ok(Checks {
         ready,
+        unavailable,
         failure: tests.or_else(|| {
             (!infrastructure.is_empty()).then_some(Failure::Infrastructure(infrastructure))
         }),
@@ -163,16 +194,6 @@ fn runner_failure(annotations: &[CheckAnnotation]) -> bool {
             .iter()
             .any(|prefix| annotation.message.starts_with(prefix))
         })
-}
-
-pub(super) async fn infrastructure(
-    github: &GitHub,
-    repo: &str,
-    pull: &PullRequest,
-) -> Result<Option<bool>> {
-    Ok(failure(github, repo, pull)
-        .await?
-        .map(|failure| matches!(failure, Failure::Infrastructure(_))))
 }
 
 #[derive(Serialize, Deserialize)]

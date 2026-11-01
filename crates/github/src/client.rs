@@ -787,7 +787,7 @@ impl GitHub {
         &self,
         repo: &str,
         branch: &str,
-    ) -> Result<Vec<RequiredStatusCheck>, Error> {
+    ) -> Result<RequiredChecks, Error> {
         #[derive(Deserialize)]
         struct Rule {
             #[serde(rename = "type")]
@@ -811,6 +811,15 @@ impl GitHub {
             #[serde(default)]
             checks: Vec<ClassicCheck>,
         }
+        #[derive(Deserialize)]
+        struct Branch {
+            protection: Option<BranchProtection>,
+        }
+        #[derive(Deserialize)]
+        struct BranchProtection {
+            required_status_checks: Option<Protection>,
+        }
+        let mut unavailable = Vec::new();
         let repo = repo_path(repo)?;
         let branch = segment(branch)?;
         let rules: Vec<Rule> = match self
@@ -818,7 +827,14 @@ impl GitHub {
             .await
         {
             Ok(rules) => rules,
-            Err(Error::Http { status: 404 }) => vec![],
+            Err(Error::Http {
+                status: status @ (403 | 404),
+            }) => {
+                unavailable.push(format!(
+                    "Metadata: read for branch rules unavailable (HTTP {status})"
+                ));
+                vec![]
+            }
             Err(error) => return Err(error),
         };
         let mut required: BTreeSet<_> = rules
@@ -828,20 +844,30 @@ impl GitHub {
             .flat_map(|parameters| parameters.required_status_checks)
             .map(|check| (check.context, check.integration_id))
             .collect();
-        let protection: Option<Protection> = match self
+        let branch_summary: Option<Branch> = match self
             .request(
                 Method::GET,
-                format!("{repo}/branches/{branch}/protection/required_status_checks"),
+                format!("{repo}/branches/{branch}"),
                 vec![],
                 None,
             )
             .await
         {
             Ok(protection) => Some(protection),
-            Err(Error::Http { status: 404 }) => None,
+            Err(Error::Http {
+                status: status @ (403 | 404),
+            }) => {
+                unavailable.push(format!(
+                    "Contents: read for branch protection summary unavailable (HTTP {status})"
+                ));
+                None
+            }
             Err(error) => return Err(error),
         };
-        if let Some(protection) = protection {
+        if let Some(protection) = branch_summary
+            .and_then(|branch| branch.protection)
+            .and_then(|protection| protection.required_status_checks)
+        {
             // GitHub repeats checks in contexts. Keep the App binding when present.
             for context in protection.contexts {
                 if !protection
@@ -859,13 +885,16 @@ impl GitHub {
                 )
             }));
         }
-        Ok(required
-            .into_iter()
-            .map(|(context, integration_id)| RequiredStatusCheck {
-                context,
-                integration_id,
-            })
-            .collect())
+        Ok(RequiredChecks {
+            checks: required
+                .into_iter()
+                .map(|(context, integration_id)| RequiredStatusCheck {
+                    context,
+                    integration_id,
+                })
+                .collect(),
+            unavailable,
+        })
     }
 
     pub async fn commit_statuses(&self, repo: &str, sha: &str) -> Result<Vec<CommitStatus>, Error> {

@@ -1841,6 +1841,11 @@ impl Controller {
                     }
                 }
                 let fact = match fact.evidence {
+                    Evidence::ChecksUnavailable { permissions } => {
+                        self.check_setup_incident(snapshot, commit, node, &permissions)?;
+                        commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
                     Evidence::Merged {
                         head,
                         checks_passed,

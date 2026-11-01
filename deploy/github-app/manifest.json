@@ -10,14 +10,12 @@
   },
   "default_permissions": {
     "actions": "write",
-    "administration": "read",
     "issues": "write",
     "pull_requests": "write",
     "checks": "write",
     "contents": "write",
     "metadata": "read",
-    "merge_queues": "read",
-    "statuses": "read"
+    "merge_queues": "read"
   },
   "default_events": [
     "issues",
@@ -25,7 +23,6 @@
     "pull_request",
     "check_run",
     "check_suite",
-    "merge_group",
-    "status"
+    "merge_group"
   ]
 }

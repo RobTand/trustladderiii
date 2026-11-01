@@ -76,6 +76,9 @@ pub struct QueueFact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
+    ChecksUnavailable {
+        permissions: Vec<String>,
+    },
     Merged {
         head: String,
         checks_passed: bool,
@@ -140,6 +143,7 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::ChecksUnavailable { .. } => "required-checks-setup".into(),
             Evidence::Merged { head, .. } => format!("merged:{head}"),
             Evidence::CiFailed {
                 check, head_check, ..
@@ -519,7 +523,7 @@ impl Executor for Adapter {
                         evidence: Evidence::CiFailed {
                             head_check: true,
                             ..
-                        },
+                        } | Evidence::ChecksUnavailable { .. },
                         ..
                     })
                 )
@@ -743,27 +747,34 @@ async fn queue_facts(
             },
         }]);
     }
+    let mut facts = Vec::new();
+    let mut head_infrastructure = None;
     if pull.state == "open"
         && matches!(
             state.state,
             QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
         )
-        && let Some(evidence) = head_checks::read(github, &full_name(repo), pull)
-            .await?
-            .evidence(pull)
     {
-        return Ok(vec![QueueFact {
-            repository: repo.clone(),
-            number: pull.number,
-            evidence,
-        }]);
+        let checks = head_checks::read(github, &full_name(repo), pull).await?;
+        head_infrastructure = checks.infrastructure();
+        if !checks.unavailable.is_empty() {
+            facts.push(QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::ChecksUnavailable {
+                    permissions: checks.unavailable.clone(),
+                },
+            });
+        }
+        if let Some(evidence) = checks.evidence(pull) {
+            facts.push(QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence,
+            });
+            return Ok(facts);
+        }
     }
-    let head_infrastructure = if matches!(state.state, QueueState::FailedCi | QueueState::Dequeued)
-    {
-        head_checks::infrastructure(github, &full_name(repo), pull).await?
-    } else {
-        None
-    };
     let evidence = match state.state {
         QueueState::Merged => {
             // Mergify publishes its final queue result after GitHub records the merge.
@@ -823,14 +834,12 @@ async fn queue_facts(
         }),
         _ => None,
     };
-    Ok(evidence
-        .into_iter()
-        .map(|evidence| QueueFact {
-            repository: repo.clone(),
-            number: pull.number,
-            evidence,
-        })
-        .collect())
+    facts.extend(evidence.into_iter().map(|evidence| QueueFact {
+        repository: repo.clone(),
+        number: pull.number,
+        evidence,
+    }));
+    Ok(facts)
 }
 fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
     let mut latest = BTreeMap::new();

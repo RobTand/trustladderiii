@@ -551,7 +551,6 @@ again. These defaults do not expand #143 beyond its ticket. This tracer retains
 the existing once-per-issue intake rule. Issue-trigger intake, fork support,
 catch-up, steering, scope trimming and splitting remain later tickets.
 
-
 ## Q47: required checks before enqueue
 
 Rob, 2026-11-01 approved handling CI failures during Publishing at the enqueue

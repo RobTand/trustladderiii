@@ -193,8 +193,9 @@ GitHub references: [JWT claims](https://docs.github.com/en/apps/creating-github-
 
 `required_status_checks` combines rulesets with classic branch protection and
 preserves classic `checks[].app_id`. It treats `contexts` as unbound requirements
-when they are not already represented by `checks`. A classic-protection 404 adds
-no requirements; other failures propagate. GitHub requires **Administration: Read**
-for the classic required-status-checks endpoint. Existing App installations need
-that permission approved before using it. `commit_statuses` reads the approved
-commit's legacy status contexts.
+when they are not already represented by `checks`. Classic checks come from the
+Get a branch protection summary, using existing Contents read permission.
+Administration is not required. A 403 or 404 on either protection read returns the
+available requirements with diagnostics for the controller's nonblocking setup
+incident. Other errors propagate. `commit_statuses` reads the approved commit's
+legacy status contexts; the adapter skips inaccessible status-only evidence.

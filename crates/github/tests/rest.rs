@@ -1093,9 +1093,7 @@ async fn required_status_checks_union_preserves_classic_app_ids() {
     .await;
     // contexts repeats checks on modern GitHub responses; it must not erase app binding.
     Mock::given(method("GET"))
-        .and(path(
-            "/repos/owner/sandbox/branches/main",
-        ))
+        .and(path("/repos/owner/sandbox/branches/main"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "protection":{"required_status_checks":{"contexts":["shared", "legacy"],
             "checks":[{"context":"shared", "app_id":15368},
@@ -1108,6 +1106,7 @@ async fn required_status_checks_union_preserves_classic_app_ids() {
         .required_status_checks("owner/sandbox", "main")
         .await
         .unwrap()
+        .checks
         .into_iter()
         .map(|check| (check.context, check.integration_id))
         .collect();
@@ -1135,19 +1134,19 @@ async fn required_status_checks_classic_contexts_without_rulesets() {
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(
-            "/repos/owner/sandbox/branches/main",
+        .and(path("/repos/owner/sandbox/branches/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"protection":{"required_status_checks":{"contexts":["issue-link"]}}}),
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"protection":{"required_status_checks":{"contexts":["issue-link"]}}})))
         .mount(&server)
         .await;
     let required = github
         .required_status_checks("owner/sandbox", "main")
         .await
         .unwrap();
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0].context, "issue-link");
-    assert_eq!(required[0].integration_id, None);
+    assert_eq!(required.checks.len(), 1);
+    assert_eq!(required.checks[0].context, "issue-link");
+    assert_eq!(required.checks[0].integration_id, None);
 }
 
 #[tokio::test]
@@ -1161,19 +1160,23 @@ async fn required_status_checks_protection_403_keeps_rulesets() {
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(
-            "/repos/owner/sandbox/branches/main",
-        ))
+        .and(path("/repos/owner/sandbox/branches/main"))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"message":"Forbidden"})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/repos/owner/sandbox/branches/main/protection/required_status_checks"))
+        .and(path(
+            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+        ))
         .respond_with(ResponseTemplate::new(403))
-        .mount(&server).await;
-    let required = github.required_status_checks("owner/sandbox", "main").await.unwrap();
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0].context, "ruleset");
+        .mount(&server)
+        .await;
+    let required = github
+        .required_status_checks("owner/sandbox", "main")
+        .await
+        .unwrap();
+    assert_eq!(required.checks.len(), 1);
+    assert_eq!(required.checks[0].context, "ruleset");
 }
 
 #[tokio::test]
@@ -1191,9 +1194,7 @@ async fn required_status_checks_classic_404_preserves_rulesets() {
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(
-            "/repos/owner/sandbox/branches/main",
-        ))
+        .and(path("/repos/owner/sandbox/branches/main"))
         .respond_with(ResponseTemplate::new(404))
         .expect(1)
         .mount(&server)
@@ -1202,9 +1203,9 @@ async fn required_status_checks_classic_404_preserves_rulesets() {
         .required_status_checks("owner/sandbox", "main")
         .await
         .unwrap();
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0].context, "ruleset");
-    assert_eq!(required[0].integration_id, Some(42));
+    assert_eq!(required.checks.len(), 1);
+    assert_eq!(required.checks[0].context, "ruleset");
+    assert_eq!(required.checks[0].integration_id, Some(42));
 }
 
 #[tokio::test]
@@ -1218,9 +1219,7 @@ async fn required_status_checks_unprotected_branch_has_none() {
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(
-            "/repos/owner/sandbox/branches/main",
-        ))
+        .and(path("/repos/owner/sandbox/branches/main"))
         .respond_with(ResponseTemplate::new(404))
         .expect(1)
         .mount(&server)
@@ -1230,6 +1229,7 @@ async fn required_status_checks_unprotected_branch_has_none() {
             .required_status_checks("owner/sandbox", "main")
             .await
             .unwrap()
+            .checks
             .is_empty()
     );
 }

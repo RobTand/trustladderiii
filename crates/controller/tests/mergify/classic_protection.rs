@@ -237,7 +237,13 @@ fn restricted(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = publishing(settings, &api, root.path());
-    let read = if mode.starts_with("branch") { "branch" } else if mode.starts_with("rules") { "rules" } else { "status" };
+    let read = if mode.starts_with("branch") {
+        "branch"
+    } else if mode.starts_with("rules") {
+        "rules"
+    } else {
+        "status"
+    };
     let status = if mode.ends_with("403") { 403 } else { 404 };
     {
         let mut state = api.state.lock().unwrap();
@@ -258,26 +264,69 @@ fn restricted(settings: &tl3_config::Store, mode: &str) {
     } else {
         drain(&mut controller);
     }
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued,
-        "an unavailable optional read must not block Publishing");
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Queued,
+        "an unavailable optional read must not block Publishing"
+    );
     assert_eq!(api.state.lock().unwrap().posts, 1);
     assert_eq!(controller.world().unwrap().nodes[0].round, 0);
     let snapshot = controller.snapshot().unwrap();
-    let incidents: Vec<_> = snapshot.rows.iter().filter(|row| row.table == "incidents").collect();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "incidents")
+        .collect();
     assert_eq!(incidents.len(), 1, "one deduplicated setup incident");
     assert_eq!(incidents[0].value["blocking"], false);
     assert_eq!(incidents[0].value["signature"]["class"], "setup");
-    let permission = if read == "branch" { "Contents: read" } else if read == "rules" { "Metadata: read" } else { "Commit statuses: read" };
-    assert!(incidents[0].value["summary"].as_str().unwrap().contains(permission));
+    let permission = if read == "branch" {
+        "Contents: read"
+    } else if read == "rules" {
+        "Metadata: read"
+    } else {
+        "Commit statuses: read"
+    };
+    assert!(
+        incidents[0].value["summary"]
+            .as_str()
+            .unwrap()
+            .contains(permission)
+    );
     api.state.lock().unwrap().checks = fixture("failed", "checks");
-    let key = snapshot.rows.iter().find(|row| row.table == "allowances" && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue").unwrap().id.clone();
+    let key = snapshot
+        .rows
+        .iter()
+        .find(|row| {
+            row.table == "allowances"
+                && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
+        })
+        .unwrap()
+        .id
+        .clone();
     controller.look_key(&key).unwrap();
     for _ in 0..30 {
-        if controller.world().unwrap().nodes[0].phase == Phase::Making { break; }
-        if !controller.drive_once().unwrap() { break; }
+        if controller.world().unwrap().nodes[0].phase == Phase::Making {
+            break;
+        }
+        if !controller.drive_once().unwrap() {
+            break;
+        }
     }
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making,
-        "restricted reads must not discard queued CI failures");
-    assert_eq!(controller.snapshot().unwrap().rows.iter().filter(|row| row.table == "incidents").count(), 1);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Making,
+        "restricted reads must not discard queued CI failures"
+    );
+    assert_eq!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|row| row.table == "incidents")
+            .count(),
+        1
+    );
     println!("test restricted_head_{mode} ... ok");
 }

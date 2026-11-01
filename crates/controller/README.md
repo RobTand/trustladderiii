@@ -1403,5 +1403,9 @@ failures cancel the pending enqueue and enter the existing fix round. Cancellati
 removes `tl3-queue` if present. Infrastructure failures use the same retry bound
 as Queued. Check events wake only a pending enqueue on the approved head; the
 existing looks recover missed events. Legacy commit statuses satisfy requirements
-without an App binding. Permission errors retain the wait instead of treating the
-repository as unprotected.
+without an App binding when status reads are available. Classic protection uses
+the branch summary and existing Contents read access. No new App permission is
+needed. A 403 or 404 on protection or status reads raises one nonblocking setup
+incident naming the permission. Available requirements and queued CI failure
+observations are retained; unavailable status-only contexts are skipped. Status
+changes rely on existing looks, with no `status` webhook subscription.

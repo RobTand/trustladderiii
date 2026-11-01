@@ -260,7 +260,8 @@ impl Respond for Api {
         {
             return response;
         }
-        if method == "GET" && let Some((read, status)) = &state.restricted
+        if method == "GET"
+            && let Some((read, status)) = &state.restricted
             && (read == "branch" && path.contains("/branches/main") && !path.contains("/rules/")
                 || read == "rules" && path.contains("/rules/branches/")
                 || read == "status" && path.ends_with("/statuses"))
@@ -274,12 +275,6 @@ impl Respond for Api {
                 else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
-            ("GET", "/repos/owner/sandbox/branches/main/protection/required_status_checks") => {
-                if state.classic {
-                    ResponseTemplate::new(200).set_body_json(json!({"contexts":["Sandbox tests"],
-                        "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}))
-                } else { ResponseTemplate::new(404) }
-            }
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
                 assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
