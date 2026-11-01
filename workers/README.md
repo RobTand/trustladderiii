@@ -86,6 +86,15 @@ call/result groups retain their IDs. Large result text is clipped within that
 limit. Older groups leave the prompt, while the original request remains intact.
 An original input larger than the entire allowance fails with a fixed diagnostic.
 
+Maker uses the same runtime retention policy with a 64 KiB exploration-history
+window. Recent call/result groups remain whole when they fit; older text is
+removed or clipped with a notice. Human requests and repair feedback stay in
+order, including across resumed visits. Edits remain in the worktree and can be
+read again. Maker can continue long sessions without an intake turn ceiling or
+cumulative token allowance. Its existing context exhaustion check, self-check,
+reply validation, and code-owned commit still apply. Planner and reviewer can
+select a policy through the same role field.
+
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C
 extensions and child processes can't write to the protocol stream. A reply

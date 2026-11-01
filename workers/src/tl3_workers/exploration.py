@@ -10,8 +10,8 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 @dataclass(frozen=True)
 class ExplorationBudget:
-    tool_turns: int = 4
-    input_tokens: int = 300_000
+    tool_turns: int | None = 4
+    input_tokens: int | None = 300_000
     history_bytes: int = 32_768
 
 
@@ -35,13 +35,16 @@ def retained(messages, limit):
     first = next(i for i, message in enumerate(messages) if isinstance(message, HumanMessage))
     prefix = messages[:first + 1]
     groups = []
-    for message in messages[first + 1:]:
+    for index, message in enumerate(messages[first + 1:], first + 1):
+        if isinstance(message, HumanMessage):
+            continue
         if isinstance(message, AIMessage):
-            groups.append([message])
+            groups.append([(index, message)])
         elif groups:
-            groups[-1].append(message)
-    kept, used, clipped = [], 0, False
+            groups[-1].append((index, message))
+    kept, used, clipped = {}, 0, False
     for group in reversed(groups):
+        indexes, group = zip(*group)
         available = limit - used
         overhead = sum(len(json.dumps(m.model_copy(update={"content": ""}).model_dump(),
                                       ensure_ascii=False).encode()) for m in group)
@@ -57,12 +60,15 @@ def retained(messages, limit):
                          for m in original]
                 size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
                 each //= 2
-        kept = group + kept
+        kept.update(zip(indexes, group))
         used += size
-    if clipped or len(kept) < len(messages) - len(prefix):
+    if clipped or len(kept) < sum(len(group) for group in groups):
         prefix = prefix + [HumanMessage(content="Earlier exploration text was removed or clipped to bound context. "
                                        "Use the retained evidence.")]
-    return prefix + kept
+    # Resumed session inputs and no-change feedback are instructions, not stale evidence.
+    return prefix + [kept.get(index, message)
+                     for index, message in enumerate(messages[first + 1:], first + 1)
+                     if index in kept or isinstance(message, HumanMessage)]
 
 
 class ExplorationMiddleware(AgentMiddleware):
@@ -77,11 +83,12 @@ class ExplorationMiddleware(AgentMiddleware):
         request = request.override(messages=messages)
         bound = input_bound(request)
         # Reserve the original input plus maximum retained evidence before exploring.
-        original = messages[:next(i for i, m in enumerate(messages) if isinstance(m, HumanMessage)) + 1]
+        original = [m for m in messages if isinstance(m, HumanMessage)]
         final_reserve = input_bound(request.override(messages=original, tools=[]))
         final_reserve += self.budget.history_bytes * 2 + len(FINISH) + 1024
-        final = (self.turns >= self.budget.tool_turns
-                 or self.spent + bound + final_reserve > self.budget.input_tokens)
+        final = ((self.budget.tool_turns is not None and self.turns >= self.budget.tool_turns)
+                 or (self.budget.input_tokens is not None
+                     and self.spent + bound + final_reserve > self.budget.input_tokens))
         if self.final:
             raise ValueError("missing final model reply")
         if final:
@@ -89,7 +96,7 @@ class ExplorationMiddleware(AgentMiddleware):
             request = request.override(tools=[], tool_choice=None,
                                        messages=messages + [HumanMessage(content=FINISH)])
             bound = input_bound(request)
-        if self.spent + bound > self.budget.input_tokens:
+        if self.budget.input_tokens is not None and self.spent + bound > self.budget.input_tokens:
             raise ValueError("intake input exceeds exploration budget")
         response = handler(request)
         reported = sum((m.usage_metadata or {}).get("input_tokens", 0)

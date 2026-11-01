@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
 
 from tl3_workers.contracts import read_json, schema
+from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
@@ -273,6 +274,7 @@ ROLE = Role(
     prompt="maker.md",
     input_schema="maker-input",
     reply_schema="maker-reply",
+    exploration_budget=ExplorationBudget(tool_turns=None, input_tokens=None, history_bytes=65_536),
     tools={
         "list": "List worktree files needed to implement the declared plan.",
         "read": "Read worktree text to implement or self-check a goal.",
