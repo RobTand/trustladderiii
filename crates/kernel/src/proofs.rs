@@ -199,6 +199,12 @@ fn check_effect(
     }
 }
 
+fn rebase_progress_applies(node: &Node, generation: u64) -> bool {
+    node.phase == Phase::Rebasing
+        && node.current() == Some(Item::Await)
+        && node.run == Some(generation)
+}
+
 /// Applying one event keeps the world consistent and keeps every rule.
 fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
@@ -295,7 +301,7 @@ fn check_apply(event: Event) -> World {
     {
         let b = &before.nodes[0];
         let n = &after.nodes[0];
-        if b.phase == Phase::Rebasing && b.run == Some(generation) {
+        if rebase_progress_applies(b, generation) {
             // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
             let fuel =
                 |n: &Node| n.credit.balance() + i64::from(FREE_RECHECKS.saturating_sub(n.rechecks));
@@ -515,14 +521,40 @@ proof!(
     apply_changes_requested,
     check_apply(reply(Reply::ChangesRequested))
 );
-proof!(
-    apply_rebase_clean,
-    check_apply(reply(Reply::RebaseClean { head: kani::any() }))
-);
-proof!(
-    apply_rebase_needs_changes,
-    check_apply(reply(Reply::RebaseNeedsChanges))
-);
+proof!(apply_rebase_clean, {
+    let event = reply(Reply::RebaseClean { head: kani::any() });
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = rebase_progress_applies(b, generation);
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let funded = b.credit.can_spend(1);
+    kani::cover!(accepted && free, "clean rebase uses the free allowance");
+    kani::cover!(accepted && !free && funded, "clean rebase spends credit");
+    kani::cover!(accepted && !free && !funded, "clean rebase needs credit");
+});
+proof!(apply_rebase_needs_changes, {
+    let event = reply(Reply::RebaseNeedsChanges);
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = rebase_progress_applies(b, generation);
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let funded = b.credit.can_spend(1);
+    kani::cover!(
+        accepted && free && funded,
+        "conflict fix pays despite free allowance"
+    );
+    kani::cover!(
+        accepted && !free && funded,
+        "conflict fix spends credit after allowance"
+    );
+    kani::cover!(accepted && !funded, "conflict fix needs credit");
+});
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
@@ -1137,3 +1169,15 @@ proof!(gate_merge_progress_w2, check_gate_merge_progress(2));
 proof!(gate_merge_progress_w3, check_gate_merge_progress(3));
 proof!(gate_resume_progress_w2, check_gate_resume_progress(2));
 proof!(gate_resume_progress_w3, check_gate_resume_progress(3));
+
+proof!(apply_rebase_progress_gate, {
+    let mut node = Node::new(RepoId(0));
+    node.phase = Phase::Rebasing;
+    node.run = Some(node.generation);
+    node.pos = kani::any();
+    kani::assume(node.pos < 2);
+    let awaiting = node.current() == Some(Item::Await);
+    kani::cover!(!awaiting, "the rebase has not reached Await");
+    kani::cover!(awaiting, "the rebase is awaiting its reply");
+    assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
+});

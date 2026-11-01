@@ -61,6 +61,7 @@ pub struct Real {
     root: PathBuf,
     epoch: i64,
     repositories: Vec<Served>,
+    branches: crate::branches::Branches,
 }
 
 struct Served {
@@ -111,12 +112,22 @@ fn adapter(error: impl Into<Error>) -> Error {
 }
 
 impl Real {
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
+        self.branches = crate::branches::Branches::new(repos)?;
+        for repo in &mut self.repositories {
+            repo.git
+                .set_base_branch(self.branches.base(&repo.identity)?)?;
+        }
+        Ok(self)
+    }
+
     pub fn new(root: impl AsRef<Path>, epoch: i64) -> Result<Self> {
         fs::create_dir_all(root.as_ref())?;
         Ok(Self {
             root: fs::canonicalize(root)?,
             epoch,
             repositories: vec![],
+            branches: crate::branches::Branches::new(&[])?,
         })
     }
 
@@ -166,6 +177,7 @@ impl Real {
         {
             return Err(Error::Invalid("duplicate worktree repository"));
         }
+        let base = self.branches.base(&identity)?;
         let github = github
             .map(|client| {
                 tokio::runtime::Builder::new_current_thread()
@@ -175,7 +187,8 @@ impl Real {
                     .map(|runtime| (client, runtime))
             })
             .transpose()?;
-        let git = Worktrees::open(repository, &self.root).map_err(adapter)?;
+        let mut git = Worktrees::open(repository, &self.root).map_err(adapter)?;
+        git.set_base_branch(base)?;
         let journal = git.common_directory().join("tl3-controller");
         fs::create_dir_all(&journal)?;
         File::open(git.common_directory())?.sync_all()?;
@@ -238,7 +251,7 @@ impl Real {
         write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
         repo.git
             .trim_scope(
-                &Self::branch(delivery)?,
+                &self.branch_for(delivery)?,
                 &self.checkout(delivery),
                 &delivery.paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
                 protected,
@@ -246,13 +259,8 @@ impl Real {
             .map_err(adapter)
     }
 
-    pub fn branch(delivery: &Delivery) -> Result<BranchName> {
-        BranchName::new(format!(
-            "tl3/issue-{}-node-{}",
-            delivery.issue,
-            delivery.node().0
-        ))
-        .map_err(adapter)
+    pub fn branch_for(&self, delivery: &Delivery) -> Result<BranchName> {
+        self.branches.branch(delivery)
     }
 
     pub fn checkout(&self, delivery: &Delivery) -> PathBuf {
@@ -333,7 +341,7 @@ impl Served {
             } => {
                 let base = self
                     .git
-                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .fetch_base(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
                 let start = delivery
                     .proposed
@@ -378,7 +386,7 @@ impl Served {
             } => {
                 let target = self
                     .git
-                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .fetch_base(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
                 let mut pin_failed = false;
                 if let Some(run) = &delivery.checks
@@ -474,7 +482,7 @@ impl Served {
                 let head = CommitId::new(head).map_err(adapter)?;
                 let main = self
                     .git
-                    .fetch_main(&self.remote, self.token()?.as_ref())
+                    .fetch_base(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
                 if !self.git.merges_cleanly(&main, &head).map_err(adapter)? {
                     let completion =
@@ -721,7 +729,7 @@ impl Real {
             )));
         }
         write(&repo.journal.join("epoch.json"), &delivery.epoch)?;
-        let branch = Self::branch(delivery)?;
+        let branch = self.branch_for(delivery)?;
         let mut record = match repo.load(delivery)? {
             Some(record) => record,
             None => {
@@ -792,7 +800,7 @@ impl Executor for Real {
         Ok(
             match repo.finish(
                 &mut record,
-                &Self::branch(delivery)?,
+                &self.branch_for(delivery)?,
                 &self.checkout(delivery),
                 writable,
                 &mut |_| {},

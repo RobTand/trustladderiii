@@ -88,6 +88,18 @@ fn main() {
         ("stale_epoch_effects", stale_epoch_effects),
         ("invalid_footprints", invalid_footprints),
         ("status_is_read_only", status_is_read_only),
+        ("status_cli_incident_commands", |settings| {
+            status_incident_commands(settings, false, false)
+        }),
+        ("status_page_incident_commands", |settings| {
+            status_incident_commands(settings, true, false)
+        }),
+        ("status_cli_unposted_incident_commands", |settings| {
+            status_incident_commands(settings, false, true)
+        }),
+        ("status_page_unposted_incident_commands", |settings| {
+            status_incident_commands(settings, true, true)
+        }),
         ("config_permissions_and_pool", config_permissions_and_pool),
         (
             "fix_round_preserves_uncommitted_work",
@@ -798,6 +810,93 @@ fn try_http(
         .split_once("\r\n\r\n")
         .ok_or_else(|| std::io::Error::other("incomplete HTTP response"))?;
     Ok((headers.to_ascii_lowercase(), body.into()))
+}
+
+fn status_incident_commands(settings: &tl3_config::Store, page: bool, unposted: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = open(settings, root.path());
+    controller.intake(labelled()).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let before = store.load().unwrap();
+    let mut change = Commit::new("status-incidents", json!({}), &before);
+    let suffix = if unposted {
+        " The incident post failed, with class message_rejected."
+    } else {
+        ""
+    };
+    for (id, summary, open) in [
+        ("3283.0", "The request needs Rob's help.", true),
+        ("3284.0", "A second operation needs attention.", true),
+        ("3285.0", "This incident is already closed.", false),
+    ] {
+        change.rows.push(RowChange::Put {
+            table: "incidents".into(),
+            id: id.into(),
+            value: json!({
+                "id": id, "node": 0, "open": open, "needs_rob": true,
+                "blocking": false, "summary": format!("{summary}{suffix}"),
+                "signature": {"upstream": "GitHub", "class": "message_rejected"},
+                "post_key": format!("incident:{id}")
+            }),
+        });
+    }
+    store.commit(&change).unwrap();
+    let before = controller.snapshot().unwrap();
+    let config = config_file(settings, root.path());
+    let mut server = None;
+    let output = if page {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let contents = fs::read_to_string(&config)
+            .unwrap()
+            .replace("127.0.0.1:8033", &address.to_string());
+        fs::write(&config, contents).unwrap();
+        drop(listener);
+        server = Some(StatusServer(
+            Command::new(env!("CARGO_BIN_EXE_tl3"))
+                .args(["status-serve", "--config"])
+                .arg(&config)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        ));
+        let mut ready = String::new();
+        BufReader::new(server.as_mut().unwrap().0.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert!(ready.contains(&address.to_string()), "{ready}");
+        let (headers, body) = http(address, "GET", "/");
+        assert!(headers.starts_with("http/1.1 200"), "{headers}");
+        body
+    } else {
+        cli_status(&config)
+    };
+    for (id, summary) in [
+        ("3283.0", "The request needs Rob's help."),
+        ("3284.0", "A second operation needs attention."),
+    ] {
+        assert!(output.contains(&format!("clear incident {id}")), "{output}");
+        let escaped = if page { "Rob&#39;s" } else { "Rob's" };
+        assert!(
+            output.contains(&summary.replace("Rob's", escaped)),
+            "{output}"
+        );
+    }
+    assert!(!output.contains("3285.0"), "{output}");
+    assert!(
+        !output.contains("This incident is already closed."),
+        "{output}"
+    );
+    if unposted {
+        assert!(output.contains(suffix), "{output}");
+    }
+    assert_eq!(
+        controller.snapshot().unwrap(),
+        before,
+        "status must write nothing"
+    );
+    drop(server);
 }
 
 fn status_page_and_command(settings: &tl3_config::Store, database: &mut Database) {
@@ -2071,7 +2170,6 @@ fn publication_main_advance(settings: &tl3_config::Store, conflict: bool) {
 }
 
 fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
-    use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
     let root = tempfile::tempdir().unwrap();
     let fixture = Fixture::create(root.path());
@@ -2101,7 +2199,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     controller.intake(labelled()).unwrap();
     let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = fixture.adapter().checkout(&prepare);
-    let branch = Real::branch(&prepare).unwrap();
+    let branch = fixture.branch(&prepare);
     let mut created = false;
     let mut pushed = false;
     let mut rebased = false;

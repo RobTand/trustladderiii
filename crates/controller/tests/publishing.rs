@@ -25,7 +25,6 @@ use tl3_controller::{
             Supervisor, WorkerOutputSource,
             writer::{FakeWriter, TextDraft, WriteRequest, Writer, WriterReply},
         },
-        worktrees::Real,
     },
     cli::Input,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
@@ -75,7 +74,7 @@ fn base(f: &Fixture, d: &Delivery) -> String {
         &f.repo,
         &[
             "rev-parse",
-            &format!("refs/tl3/bases/{}", Real::branch(d).unwrap().as_str()),
+            &format!("refs/tl3/bases/{}", f.branch(d).as_str()),
         ],
     )
 }
@@ -356,18 +355,21 @@ impl Respond for Api {
                         &self.fixture.remote,
                         &["rev-parse", body["head"].as_str().unwrap()],
                     );
-                    let base = git(&self.fixture.remote, &["rev-parse", "main"]);
+                    let base = git(
+                        &self.fixture.remote,
+                        &["rev-parse", body["base"].as_str().unwrap()],
+                    );
                     s.pull = Some(
                         json!({"body":body["body"],"number":100,"user":{"id":99,"login":"factory[bot]"},"state":"open","merged_at":null,"merge_commit_sha":null,
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
-                    "base":{"ref":"main","sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
+                    "base":{"ref":body["base"],"sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
                     );
                     let merge = Command::new("git")
                         .current_dir(&self.fixture.remote)
                         .args([
                             "merge-tree",
                             "--write-tree",
-                            "main",
+                            s.pull.as_ref().unwrap()["base"]["ref"].as_str().unwrap(),
                             s.pull.as_ref().unwrap()["head"]["sha"].as_str().unwrap(),
                         ])
                         .output()
@@ -391,7 +393,7 @@ impl Respond for Api {
                             .args([
                                 "merge-tree",
                                 "--write-tree",
-                                "main",
+                                pull["base"]["ref"].as_str().unwrap(),
                                 pull["head"]["sha"].as_str().unwrap(),
                             ])
                             .output()
@@ -520,6 +522,8 @@ impl Server {
             Some(operations()),
         )
         .unwrap()
+        .with_repositories(&self.api.fixture.repositories)
+        .unwrap()
     }
 }
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
@@ -645,7 +649,14 @@ fn patch_lines(diff: &Value) -> Vec<&str> {
 }
 fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let root = tempfile::tempdir().unwrap();
-    let f = Arc::new(Fixture::create(root.path()));
+    let mut fixture = Fixture::create(root.path());
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    if mode == "repo-conventions" {
+        config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
+        config.github.repos[0].base_branch = "master".into();
+        fixture.repositories = config.github.repos.clone();
+    }
+    let f = Arc::new(fixture);
     commit(&f.source, "value.py", "def value(): return 1\n");
     commit(
         &f.source,
@@ -658,8 +669,13 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         "from value import value\ndef test_value(): assert value() == 2\n",
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+    if mode == "repo-conventions" {
+        for path in [&f.source, &f.remote, &f.repo] {
+            git(path, &["branch", "-m", "main", "master"]);
+        }
+    }
     let server = Server::new(f.clone());
-    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+
     config.store = settings.clone();
     if mode.starts_with("out-of-room") || mode.starts_with("review-reset") {
         let mut primary = config.models.maker[2].clone();
@@ -685,6 +701,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     ];
     config.models.key_file = root.path().join("fixture-key");
     fs::write(&config.models.key_file, "fixture").unwrap();
+    if mode == "repo-conventions" {
+        let mut adapter = f.adapter().with_repositories(&config.github.repos).unwrap();
+        let mut preparation = f.delivery(EffectKind::PrepareWorktree, 999);
+        preparation.epoch = 0;
+        adapter
+            .execute(&preparation)
+            .expect("configured master base must prepare without a main branch");
+    }
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
     let mut source = supervisor.source();
     let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
@@ -697,10 +721,16 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             mode.into(),
         ),
     );
-    registry.register(Upstream::Worktrees, f.adapter());
+    registry.register(
+        Upstream::Worktrees,
+        f.adapter().with_repositories(&config.github.repos).unwrap(),
+    );
     registry.register(
         Upstream::GitHub,
-        server.adapter(&root.path().join("github"), 0),
+        server
+            .adapter(&root.path().join("github"), 0)
+            .with_repositories(&config.github.repos)
+            .unwrap(),
     );
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
@@ -799,7 +829,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &[
                 "push",
                 f.remote.to_str().unwrap(),
-                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+                &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
         while c.drive_once().unwrap() {}
@@ -858,6 +888,26 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    if mode == "repo-conventions" {
+        let state = server.api.state.lock().unwrap();
+        let pull = state.pull.as_ref().unwrap();
+        assert_eq!(pull["head"]["ref"], "prismabuild-42-tl3-0");
+        assert_eq!(pull["base"]["ref"], "master");
+        assert!(
+            pull["body"].as_str().unwrap().contains("Refs #42"),
+            "publication must reference the request without closing it before TL3 finishes all leaves"
+        );
+        if let Some(path) = env::var_os("TL3_REPO_CONVENTIONS_PULL") {
+            let mut pull = pull.clone();
+            pull["created_at"] = json!("2026-11-01T00:00:00Z");
+            fs::write(path, serde_json::to_vec_pretty(&pull).unwrap()).unwrap();
+        }
+        let base = git(&f.remote, &["rev-parse", "master"]);
+        assert_eq!(
+            git(&f.remote, &["merge-base", &base, "prismabuild-42-tl3-0"]),
+            base
+        );
+    }
     let first_head = server.api.state.lock().unwrap().pull.as_ref().unwrap()["head"]["sha"]
         .as_str()
         .unwrap()
@@ -894,7 +944,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             &[
                 "push",
                 f.remote.to_str().unwrap(),
-                &format!("HEAD:refs/heads/{}", Real::branch(&d).unwrap().as_str()),
+                &format!("HEAD:refs/heads/{}", f.branch(&d).as_str()),
             ],
         );
 
@@ -960,10 +1010,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable_state"] = json!("clean");
         }
         drain(&mut c, &mut source, &mut store, Phase::Queued);
-        let published = git(
-            &f.remote,
-            &["rev-parse", Real::branch(&d).unwrap().as_str()],
-        );
+        let published = git(&f.remote, &["rev-parse", f.branch(&d).as_str()]);
         assert_eq!(published, head);
         assert_eq!(
             git(&checkout, &["merge-base", &published, &target]),
@@ -1066,10 +1113,16 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 .iter()
                 .all(|row| !matches!(row.table.as_str(), "incidents" | "questions"))
         );
-    } else if matches!(mode, "rebase" | "round-one-rebase" | "review-reset-rebase") {
+    } else if matches!(
+        mode,
+        "rebase" | "round-one-rebase" | "review-reset-rebase" | "repo-conventions"
+    ) {
         f.advance_main(false);
         server.api.state.lock().unwrap().queue_fixture = "conflict";
-        let new_target = git(&f.remote, &["rev-parse", "main"]);
+        let new_target = git(
+            &f.remote,
+            &["rev-parse", &config.github.repos[0].base_branch],
+        );
         loop {
             c.drive_once().unwrap();
             let n = c.world().unwrap().nodes[0];
@@ -1079,6 +1132,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 }
                 let head = f.head(&d);
                 assert_ne!(head, first_head);
+                assert_eq!(
+                    git(&f.repo, &["merge-base", &head, &new_target]),
+                    new_target
+                );
                 let plan = c
                     .snapshot()
                     .unwrap()
@@ -1129,6 +1186,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         } else if matches!(
             mode,
             "push"
+                | "repo-conventions"
                 | "rebase"
                 | "changes"
                 | "before-enqueue"
@@ -1288,6 +1346,15 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     );
     assert!(!f.adapter().checkout(&d).exists());
     assert!(git(&f.remote, &["for-each-ref", "refs/heads/tl3"]).is_empty());
+    if mode == "repo-conventions" {
+        assert!(
+            git(
+                &f.remote,
+                &["for-each-ref", "refs/heads/prismabuild-42-tl3-0"]
+            )
+            .is_empty()
+        );
+    }
     assert!(!root.path().join("pb-records/0").exists());
     assert!(store.worker_progress(None).unwrap().is_empty());
     let state = server.api.state.lock().unwrap();
@@ -1410,6 +1477,37 @@ fn publication_open_conflict() {
         if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
     );
     assert!(!server.api.state.lock().unwrap().labels);
+}
+fn publication_requires_conventions() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = Arc::new(Fixture::create(root.path()));
+    let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
+    fixture.adapter().execute(&prepare).unwrap();
+    let mut push = fixture.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(fixture.head(&prepare));
+    fixture.adapter().execute(&push).unwrap();
+    let server = Server::new(fixture.clone());
+    let mut adapter = server
+        .adapter(&root.path().join("github"), 1)
+        .with_repositories(&[])
+        .unwrap();
+    let result = adapter.execute(&fixture.delivery(EffectKind::OpenPr, 3));
+    assert!(
+        matches!(
+            result,
+            Err(tl3_controller::Error::Invalid(
+                "repository branch conventions are not configured"
+            ))
+        ),
+        "an unconfigured publisher must reject publication, got {result:?}"
+    );
+    assert!(
+        server
+            .runtime
+            .block_on(server.server.received_requests())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 fn publication_recovery() {
@@ -1630,12 +1728,16 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
-    if env::args().nth(1).as_deref() == Some("--q46-open") {
+    if env::args().nth(1).as_deref() == Some("q46-open") {
         publication_open_conflict();
         println!("test publication_open_conflict ... ok");
         return;
     }
-    publication_open_conflict();
+    if env::args().nth(1).as_deref() == Some("--require-conventions") {
+        publication_requires_conventions();
+        println!("test publication_requires_conventions ... ok");
+        return;
+    }
     if let Some(case) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
@@ -1671,6 +1773,10 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    publication_open_conflict();
+    println!("test publication_open_conflict ... ok");
+    publication_requires_conventions();
+    println!("test publication_requires_conventions ... ok");
     publication_recovery();
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
@@ -1679,6 +1785,7 @@ fn main() {
         publication_404_look(&database.create(&format!("publication_404_{case}")), case);
     }
     for mode in [
+        "repo-conventions",
         "merged",
         "push",
         "rebase",

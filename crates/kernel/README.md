@@ -154,7 +154,7 @@ Earlier runs:
 Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
 Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
 
-From the repo root, generate and submit all 100 proofs and the tests:
+From the repo root, generate and submit all 101 proofs and the tests:
 
 ```bash
 python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json

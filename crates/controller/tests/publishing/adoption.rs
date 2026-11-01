@@ -314,11 +314,11 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .unwrap()
             .contains("pull/17")
     );
+    let body = state.pull.as_ref().unwrap()["body"].as_str().unwrap();
+    assert!(body.starts_with("Refs #42."));
     assert!(
-        !state.pull.as_ref().unwrap()["body"]
-            .as_str()
-            .unwrap()
-            .contains('#')
+        !body.contains("Closes #42"),
+        "adoption must not copy the proposed PR's closing keyword"
     );
     state.pull.as_mut().unwrap()["state"] = json!("closed");
     state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-31T01:00:00Z");

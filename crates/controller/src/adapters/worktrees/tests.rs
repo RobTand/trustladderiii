@@ -55,7 +55,14 @@ fn github_installation_and_synchronous_token_bridge() {
         name: "repo".into(),
         installation: 1,
     };
-    let mut adapter = Real::new(scratch.path().join("worktrees"), 1).unwrap();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.github.repos[0].owner = identity.owner.clone();
+    config.github.repos[0].name = identity.name.clone();
+    let mut adapter = Real::new(scratch.path().join("worktrees"), 1)
+        .unwrap()
+        .with_repositories(&config.github.repos)
+        .unwrap();
     let mut mismatch = identity.clone();
     mismatch.installation = 2;
     assert!(matches!(
@@ -140,4 +147,26 @@ fn worktree_error_classes_distinguish_permanent_failures() {
         assert!(matches!(error, Error::Adapter(_)));
         assert_eq!(crate::looks::failure_class(&error), "transport");
     }
+}
+
+#[test]
+fn repo_conventions_unconfigured_worktrees_refuse_branch() {
+    let fixture = crate::git_tests::Repo::new();
+    let adapter = Real::new(fixture.root.path().join("worktrees"), 1).unwrap();
+    assert!(
+        adapter.branch_for(&fixture.delivery()).is_err(),
+        "an unconfigured worktree adapter must reject branch lookup"
+    );
+}
+
+#[test]
+fn repo_conventions_unconfigured_worktrees_refuse_base() {
+    let fixture = crate::git_tests::Repo::new();
+    let mut adapter = Real::new(fixture.root.path().join("worktrees"), 1).unwrap();
+    assert!(
+        adapter
+            .serve_local(fixture.delivery().repository, &fixture.path, &fixture.path)
+            .is_err(),
+        "an unconfigured worktree adapter must reject repository registration"
+    );
 }

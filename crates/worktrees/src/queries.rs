@@ -39,12 +39,12 @@ impl Worktrees {
         }
     }
 
-    /// Check publication against current main without rewriting the approved head.
-    pub fn merges_cleanly(&self, main: &CommitId, head: &CommitId) -> Result<bool, Error> {
+    /// Check publication against the current base without rewriting the approved head.
+    pub fn merges_cleanly(&self, base: &CommitId, head: &CommitId) -> Result<bool, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let output = self.execute(
             &self.repo,
-            ["merge-tree", "--write-tree", main.as_str(), head.as_str()],
+            ["merge-tree", "--write-tree", base.as_str(), head.as_str()],
             None,
             None,
         )?;

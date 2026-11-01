@@ -63,6 +63,8 @@ pub(super) fn run(mode: &str) {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     let question = matches!(mode, "wrong-quote" | "no-draft" | "recommendation");
     let mut effect = delivery(Notice::Ask { question: 9 });

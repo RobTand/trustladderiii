@@ -218,6 +218,7 @@ impl From<&tl3_mergify::Observation> for Progress {
 enum Requeue {
     Ready,
     Sending,
+    Refused,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -338,13 +339,47 @@ impl Adapter {
         Ok(!fresh)
     }
     fn completion(&self, delivery: &Delivery) -> Result<Reconciliation> {
+        let mut baseline = self.baseline(delivery)?;
+        if baseline
+            .as_ref()
+            .is_some_and(|attempt| matches!(attempt.requeue, Some(Requeue::Refused)))
+        {
+            return Ok(Reconciliation::Found(Completion::permanent(
+                "queue_command_refused",
+            )));
+        }
         let (state, mut observations) = self.read(delivery)?;
         let previously_confirmed =
             matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_));
+        if !previously_confirmed
+            && state.state != QueueState::Merged
+            && let Some(attempt) = baseline.as_mut()
+            && matches!(attempt.requeue, Some(Requeue::Sending))
+        {
+            let github = self.clients[&delivery.repository.installation].clone();
+            if self
+                .runtime
+                .block_on(Mergify::new(github).command_refusal(
+                    &full_name(&delivery.repository),
+                    enqueue(delivery)?.0,
+                    &delivery.key,
+                ))
+                .map_err(adapter_error)?
+                .is_some()
+            {
+                attempt.requeue = Some(Requeue::Refused);
+                self.records.write(
+                    &self.records.path(&delivery.key).with_extension("intent"),
+                    &serde_json::to_vec(attempt)?,
+                )?;
+                return Ok(Reconciliation::Found(Completion::permanent(
+                    "queue_command_refused",
+                )));
+            }
+        }
         if !previously_confirmed && self.reruns_pending(delivery)? {
             return Ok(Reconciliation::Pending);
         }
-        let baseline = self.baseline(delivery)?;
         let current_head = state.pull_request.head.sha == enqueue(delivery)?.1;
         if !current_head && state.state != QueueState::Merged && !previously_confirmed {
             return Ok(Reconciliation::Found(Completion {
@@ -450,6 +485,27 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn app_login(&self, installation: u64) -> Option<String> {
+        self.clients
+            .get(&installation)
+            .map(|github| format!("{}[bot]", github.app_slug()))
+    }
+    fn probe(&mut self, delivery: &Delivery) -> Result<bool> {
+        let (number, _) = enqueue(delivery)?;
+        let github = self
+            .clients
+            .get(&delivery.repository.installation)
+            .ok_or(Error::Invalid("missing Mergify installation client"))?;
+        self.runtime
+            .block_on(github.issue(&full_name(&delivery.repository), number))?;
+        Ok(true)
+    }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        enqueue(delivery)?;
+        // Dispatch is synchronous and has ended. Stop the admission watch;
+        // ClosePr removes the label and closes the PR even if a write succeeded.
+        Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+    }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
         for extension in ["intent", "applied", "reruns", "json", "tmp"] {
             match std::fs::remove_file(self.records.path(&delivery.key).with_extension(extension)) {
@@ -890,22 +946,26 @@ impl Translator {
                 actor,
                 ..
             } => {
-                if is_merge_queue_pr(pull_request)
-                    || !open.iter().any(|item| item.number == pull_request.number)
-                {
+                if is_merge_queue_pr(pull_request) {
                     return Ok(vec![]);
                 }
+                let Some(item) = open.iter().find(|item| item.number == pull_request.number) else {
+                    return Ok(vec![]);
+                };
                 let evidence = match event {
                     Event::PullRequestClosed { .. } | Event::PullRequestUnlabeled { .. } => {
                         let events = self
                             .runtime
                             .block_on(github.issue_events(&full_name(repo), pull_request.number))?;
-                        facts.extend(person_facts(
-                            repo,
-                            pull_request.number,
-                            &events,
-                            pull_request.merged_at.is_some(),
-                        ));
+                        // A delayed webhook can predate the close in these fresh events.
+                        let current = self
+                            .runtime
+                            .block_on(github.pull_request(&full_name(repo), pull_request.number))?;
+                        if current.merged_at.is_some() {
+                            facts.extend(self.look(github, repo, item)?);
+                        } else {
+                            facts.extend(person_facts(repo, pull_request.number, &events, false));
+                        }
                         None
                     }
                     Event::PullRequestSynchronized { after, .. }
@@ -1009,10 +1069,10 @@ impl Translator {
             let pull = self
                 .runtime
                 .block_on(github.pull_request(&full_name(repo), item.number))?;
-            if is_merge_queue_pr(&pull) {
+            if is_merge_queue_pr(&pull) || pull.merged_at.is_some() {
                 continue;
             }
-            if pull.merged_at.is_none() && !item.known_heads.contains(&pull.head.sha) {
+            if !item.known_heads.contains(&pull.head.sha) {
                 facts.push(QueueFact {
                     repository: repo.clone(),
                     number: item.number,
@@ -1035,10 +1095,7 @@ impl Translator {
                 }
             }
             for (number, event) in &changes.closed {
-                if *number == item.number
-                    && pull.merged_at.is_none()
-                    && event.actor.as_ref().is_some_and(person)
-                {
+                if *number == item.number && event.actor.as_ref().is_some_and(person) {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
@@ -1060,6 +1117,9 @@ fn person_facts(
     events: &[tl3_github::IssueActivity],
     merged: bool,
 ) -> Vec<QueueFact> {
+    if merged || events.iter().any(|event| event.event == "merged") {
+        return vec![];
+    }
     events
         .iter()
         .filter(|event| event.actor.as_ref().is_some_and(person))
@@ -1073,7 +1133,7 @@ fn person_facts(
                 {
                     Evidence::DequeuedByPerson { event: event.id }
                 }
-                "closed" if !merged => Evidence::ClosedByPerson { event: event.id },
+                "closed" => Evidence::ClosedByPerson { event: event.id },
                 _ => return None,
             };
             Some(QueueFact {

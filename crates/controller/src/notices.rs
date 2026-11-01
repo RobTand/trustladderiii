@@ -87,7 +87,7 @@ impl Controller {
             .push(put("notice_incidents", marker.into(), json!(incidents)));
         let summary = format!(
             "{} The {} could not be posted. Failure class {}.",
-            crate::looks::incident_summary(&request.title, &signature, needs_rob),
+            crate::looks::incident_summary(&request.title, &signature, needs_rob, None),
             kind(delivery),
             class.replace('_', " ")
         );

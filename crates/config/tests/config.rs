@@ -840,3 +840,53 @@ fn gate_width_accepts_positive_multi_slot_limits() {
         assert_eq!(i64::from(config.limits.w), w);
     }
 }
+
+#[test]
+fn repo_conventions_default_and_accept_explicit_values() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(
+        config.github.repos[0].branch_template,
+        "tl3/issue-{issue}-node-{node}"
+    );
+    assert_eq!(config.github.repos[0].base_branch, "main");
+    let source = EXAMPLE.replace("installation_id = 1", "installation_id = 1\nbranch_template = 'prismabuild-{issue}-tl3-{node}'\nbase_branch = 'master'");
+    let config = Config::parse(&source).unwrap();
+    assert_eq!(
+        config.github.repos[0].branch_template,
+        "prismabuild-{issue}-tl3-{node}"
+    );
+    assert_eq!(config.github.repos[0].base_branch, "master");
+}
+
+#[test]
+fn repo_conventions_reject_ambiguous_templates_and_invalid_refs() {
+    for template in [
+        "topic-{issue}",
+        "topic-{node}",
+        "topic-{issue}{node}",
+        "topic-{issue}0{node}",
+        "topic-{issue}-{node}-{issue}",
+        "topic-{issue}-{node}-{unknown}",
+        "bad..{issue}-{node}",
+        "{issue}-{node}.lock",
+    ] {
+        let source = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\nbranch_template = '{template}'"),
+        );
+        let error = Config::parse(&source).expect_err(template).to_string();
+        assert!(error.contains("branch_template"), "{error}");
+    }
+    for base in ["", "-master", "bad..base", "refs/heads/", "HEAD"] {
+        let source = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\nbase_branch = '{base}'"),
+        );
+        assert!(
+            Config::parse(&source)
+                .unwrap_err()
+                .to_string()
+                .contains("base_branch")
+        );
+    }
+}
