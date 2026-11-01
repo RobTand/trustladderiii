@@ -76,6 +76,9 @@ pub struct QueueFact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
+    ChecksUnavailable {
+        permissions: Vec<String>,
+    },
     Merged {
         head: String,
         checks_passed: bool,
@@ -86,6 +89,8 @@ pub enum Evidence {
         completed_at: Option<String>,
         head: String,
         infra: bool,
+        #[serde(default)]
+        head_check: bool,
     },
     Conflict {
         check: u64,
@@ -128,16 +133,23 @@ impl QueueFact {
     pub(crate) fn needs_queue_ack(&self) -> bool {
         matches!(
             self.evidence,
-            Evidence::CiFailed { .. }
-                | Evidence::Conflict { .. }
+            Evidence::CiFailed {
+                head_check: false,
+                ..
+            } | Evidence::Conflict { .. }
                 | Evidence::DequeuedByPerson { .. }
                 | Evidence::DequeuedByCommand { .. }
         )
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::ChecksUnavailable { .. } => "required-checks-setup".into(),
             Evidence::Merged { head, .. } => format!("merged:{head}"),
-            Evidence::CiFailed { check, .. } => format!("ci:{check}"),
+            Evidence::CiFailed {
+                check, head_check, ..
+            } => {
+                format!("{}:{check}", if *head_check { "head-ci" } else { "ci" })
+            }
             Evidence::Conflict { check, .. } => format!("conflict:{check}"),
             Evidence::DequeuedByCommand { check, .. } => format!("command-dequeued:{check}"),
             Evidence::DequeuedByPerson { event } => format!("dequeued:{event}"),
@@ -500,10 +512,33 @@ impl Executor for Adapter {
             .block_on(github.issue(&full_name(&delivery.repository), number))?;
         Ok(true)
     }
+    fn observations(&mut self, delivery: &Delivery) -> Result<Vec<Observation>> {
+        let (_, observations) = self.read(delivery)?;
+        Ok(observations
+            .into_iter()
+            .filter(|observation| {
+                matches!(
+                    observation,
+                    Observation::Queue(QueueFact {
+                        evidence: Evidence::CiFailed {
+                            head_check: true,
+                            ..
+                        } | Evidence::ChecksUnavailable { .. },
+                        ..
+                    })
+                )
+            })
+            .collect())
+    }
     fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        enqueue(delivery)?;
-        // Dispatch is synchronous and has ended. Stop the admission watch;
-        // ClosePr removes the label and closes the PR even if a write succeeded.
+        let (number, _) = enqueue(delivery)?;
+        let github = &self.clients[&delivery.repository.installation];
+        let repo = full_name(&delivery.repository);
+        let issue = self.runtime.block_on(github.issue(&repo, number))?;
+        if issue.labels.iter().any(|label| label.name == QUEUE_LABEL) {
+            self.runtime
+                .block_on(github.remove_label(&repo, number, QUEUE_LABEL))?;
+        }
         Ok(Reconciliation::Found(Completion::confirmed(vec![])))
     }
     fn retire_delivery(&mut self, delivery: &Delivery) -> Result<()> {
@@ -543,6 +578,13 @@ impl Executor for Adapter {
             return Err(Error::Invalid("Mergify dequeue is still finishing"));
         }
         self.rerun_head_checks(delivery, &state)?;
+        if !self
+            .runtime
+            .block_on(head_checks::read(&github, &repo, &state.pull_request))?
+            .ready
+        {
+            return Err(Error::Invalid("required head checks are still pending"));
+        }
         let mut attempt = match self.baseline(delivery)? {
             Some(attempt) => attempt,
             None => Attempt {
@@ -705,12 +747,34 @@ async fn queue_facts(
             },
         }]);
     }
-    let head_infrastructure = if matches!(state.state, QueueState::FailedCi | QueueState::Dequeued)
+    let mut facts = Vec::new();
+    let mut head_infrastructure = None;
+    if pull.state == "open"
+        && matches!(
+            state.state,
+            QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
+        )
     {
-        head_checks::infrastructure(github, &full_name(repo), pull).await?
-    } else {
-        None
-    };
+        let checks = head_checks::read(github, &full_name(repo), pull).await?;
+        head_infrastructure = checks.infrastructure();
+        if !checks.unavailable.is_empty() {
+            facts.push(QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence: Evidence::ChecksUnavailable {
+                    permissions: checks.unavailable.clone(),
+                },
+            });
+        }
+        if let Some(evidence) = checks.evidence(pull) {
+            facts.push(QueueFact {
+                repository: repo.clone(),
+                number: pull.number,
+                evidence,
+            });
+            return Ok(facts);
+        }
+    }
     let evidence = match state.state {
         QueueState::Merged => {
             // Mergify publishes its final queue result after GitHub records the merge.
@@ -743,6 +807,7 @@ async fn queue_facts(
             check: check.id,
             completed_at: check.completed_at.map(|time| time.to_rfc3339()),
             head: pull.head.sha.clone(),
+            head_check: false,
             infra: head_infrastructure.unwrap_or_else(|| tl3_mergify::ci_is_infrastructure(check)),
         }),
         QueueState::DequeuedByPerson => {
@@ -760,6 +825,7 @@ async fn queue_facts(
             completed_at: check.completed_at.map(|time| time.to_rfc3339()),
             head: pull.head.sha.clone(),
             infra: head_infrastructure.unwrap_or(true),
+            head_check: false,
         }),
         QueueState::Conflict => state.check.as_ref().map(|check| Evidence::Conflict {
             check: check.id,
@@ -768,14 +834,12 @@ async fn queue_facts(
         }),
         _ => None,
     };
-    Ok(evidence
-        .into_iter()
-        .map(|evidence| QueueFact {
-            repository: repo.clone(),
-            number: pull.number,
-            evidence,
-        })
-        .collect())
+    facts.extend(evidence.into_iter().map(|evidence| QueueFact {
+        repository: repo.clone(),
+        number: pull.number,
+        evidence,
+    }));
+    Ok(facts)
 }
 fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
     let mut latest = BTreeMap::new();
@@ -906,6 +970,7 @@ impl Translator {
         let open = tracked(snapshot, repo, false)?;
         let world: World = crate::snapshot::decode(snapshot)?;
         let mut facts = Vec::new();
+        let mut wake = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
                 let binding = QueueFact {
@@ -986,11 +1051,11 @@ impl Translator {
             }
             Event::CheckRunCompleted { check_run, .. }
             | Event::CheckRunUpdated { check_run, .. } => {
-                if check_run.name != tl3_mergify::QUEUE_CHECK
-                    || !check_run.app.as_ref().is_some_and(|app| {
+                let queue_event = check_run.name == tl3_mergify::QUEUE_CHECK
+                    && check_run.app.as_ref().is_some_and(|app| {
                         app.id == tl3_mergify::MERGIFY_APP_ID && app.slug == "mergify"
-                    })
-                {
+                    });
+                if check_run.name == tl3_mergify::QUEUE_CHECK && !queue_event {
                     return Ok(vec![]);
                 }
                 for item in tracked(snapshot, repo, true)?.iter().filter(|item| {
@@ -1001,7 +1066,30 @@ impl Translator {
                                 .iter()
                                 .any(|pull| pull.number == item.number))
                 }) {
-                    facts.extend(self.look(github, repo, item)?);
+                    let mut pending = Vec::new();
+                    for effect in &snapshot.pending_effects {
+                        let delivery = crate::hydrate(effect, snapshot)?;
+                        if delivery.repository == *repo
+                            && delivery.pull_request == Some(item.number)
+                            && matches!(
+                                delivery.output,
+                                Out::Effect {
+                                    kind: EffectKind::Enqueue,
+                                    ..
+                                }
+                            )
+                        {
+                            pending.push(Input::Look {
+                                key: effect.key.clone(),
+                            });
+                        }
+                    }
+                    if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
+                        facts.extend(self.look(github, repo, item)?);
+                        if !queue_event {
+                            wake.extend(pending);
+                        }
+                    }
                 }
             }
             Event::MergeGroup { .. } => {
@@ -1011,7 +1099,8 @@ impl Translator {
             }
             _ => {}
         }
-        Ok(facts.into_iter().map(QueueFact::input).collect())
+        wake.extend(facts.into_iter().map(QueueFact::input));
+        Ok(wake)
     }
     fn look(&self, github: &GitHub, repo: &Repository, item: &Tracked) -> Result<Vec<QueueFact>> {
         let state = self.runtime.block_on(read_queue(
