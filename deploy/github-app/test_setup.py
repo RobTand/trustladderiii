@@ -136,7 +136,7 @@ class WizardTests(unittest.TestCase):
                          manifest["hook_attributes"])
         self.assertEqual({"issues": "write", "pull_requests": "write", "checks": "write",
                           "contents": "write", "metadata": "read", "merge_queues": "read",
-                          "actions": "write"},
+                          "actions": "write", "administration": "read"},
                          manifest["default_permissions"])
         self.assertEqual({"issues", "issue_comment", "pull_request", "check_run",
                           "check_suite", "merge_group"}, set(manifest["default_events"]))
