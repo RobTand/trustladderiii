@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
@@ -48,10 +49,18 @@ def run_current(tree, container, tests):
         return summary.result
     progress = Progress()
     command = container_command(tree, container, tests) + ["--summary"]
+    with tempfile.TemporaryFile() as selection:
+        selection.write(json.dumps(tests).encode())
+        selection.seek(0)
+        return _read(command, selection, summary, progress, tests)
+
+
+def _read(command, selection, summary, progress, tests):
     started = finished = False
     seen = set()
     collection_error = False
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
+    with subprocess.Popen(command, stdin=selection, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL) as child:
         try:
             while line := child.stdout.readline(65_537):
                 if len(line) > 65_536:

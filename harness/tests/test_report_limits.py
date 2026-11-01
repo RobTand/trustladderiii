@@ -38,7 +38,7 @@ def test_large_selection_does_not_become_one_large_exec_argument(tmp_path):
 
 
 def test_plan_above_report_budget_is_rejected():
-    from tl3_harness.model import validate_plan_size
+    from tl3_harness.limits import validate_plan_size
     with pytest.raises(ValueError, match='4194304.*reduce'):
         validate_plan_size(('test_many.py::test_' + 'x' * (4 * 1024 * 1024),))
 

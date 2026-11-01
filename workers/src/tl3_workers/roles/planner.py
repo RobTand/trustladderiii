@@ -5,6 +5,7 @@ from pathlib import PurePosixPath
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, MAX_FILE_BYTES
 from tl3_harness import Check, Kind
+from tl3_harness.limits import validate_plan_size
 from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
 
@@ -25,6 +26,10 @@ def check_reply(inputs, reply):
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
         covered = set()
+        try:
+            validate_plan_size(node for check in reply["checks"] for node in check["node_ids"])
+        except ValueError as error:
+            violations.append(str(error))
         for check in reply["checks"]:
             if not check["node_ids"]:
                 violations.append("Every check must name at least one test.")

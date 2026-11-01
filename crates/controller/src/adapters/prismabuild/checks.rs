@@ -1,6 +1,7 @@
 use crate::{Error, Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -33,6 +34,25 @@ pub enum Kind {
     Reproducing,
 }
 
+const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+
+fn validate_plan_size(plan: &[Check]) -> Result<()> {
+    let tests: BTreeSet<_> = plan.iter().flat_map(|check| &check.tests).collect();
+    let collection = serde_json::to_vec(&serde_json::json!({"event":"collection", "tests":tests}))?;
+    // Python's event encoding adds three object spaces, list separators and a newline.
+    let collection_bytes = collection.len() + 4 + tests.len().saturating_sub(1);
+    let oversized_phase = tests.iter().try_fold(false, |oversized, test| {
+        serde_json::to_vec(test)
+            .map(|bytes| oversized || bytes.len() + 4096 > MAX_REPORT_LINE_BYTES)
+    })?;
+    if collection_bytes > MAX_REPORT_LINE_BYTES || oversized_phase {
+        return Err(Error::Invalid(
+            "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases.",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn stage(
     root: &Path,
     harness: &Path,
@@ -43,6 +63,7 @@ pub(super) fn stage(
         .checks
         .as_ref()
         .ok_or(Error::Invalid("missing recorded check plan and base"))?;
+    validate_plan_size(&run.plan)?;
     let head = delivery
         .head_sha
         .as_deref()
