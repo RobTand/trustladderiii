@@ -92,6 +92,18 @@ A gate decrease refuses startup while any request in that repo is open. A pool
 decrease refuses startup while any request is open. Idle decreases are recorded
 in the event journal. Startup also retires ended looks when capacity changes.
 
+At open, configured repositories are matched to stored identities by owner,
+name and installation. Owner and name ignore case. Missing repositories append
+new stored indices and gates; reordering the config never remaps an existing
+request. Repository rows, gates, capacity changes and admitted effects commit
+together. Interning is idempotent, so a crash before the world commit can leave
+an unused dictionary entry that the next open reuses.
+
+Removing a repository refuses startup while it has open requests. Once drained,
+its row and gate stay stored, but its labelled issues are ignored. Branch
+templates, base branches and container images are loaded from the current
+configuration by the adapters at startup; they are not frozen in the snapshot.
+
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.
 
