@@ -53,6 +53,9 @@ def main():
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
     receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner}))
+    if os.environ.get('TL3_BUDGETS') == 'record':
+        # Uncalibrated executors (arm64) keep the seconds in the receipt only.
+        return
     config = json.loads(Path('tools/ci/rust-test-budget.json').read_text())
     rust_gate.check_budget(results, config, config, runner_class=runner)
 

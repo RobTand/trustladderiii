@@ -46,6 +46,8 @@ build:remote-arm64 --host_platform=//tools/bazel:linux_arm64
 build:remote-arm64 --remote_timeout=600
 build:remote-arm64 --remote_local_fallback=false
 test:remote-arm64 --test_env=TL3_RUNNER_CLASS=buildbuddy-arm64
+# No complete arm64 calibration yet: record per-test seconds, enforce results.
+test:remote-arm64 --test_env=TL3_BUDGETS=record
 
 # Commit and branch metadata are supplied by the CI entrypoint.
 build:ci --remote_grpc_log=bazel-remote-grpc.log
