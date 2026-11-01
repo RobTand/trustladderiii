@@ -19,6 +19,43 @@ import httpx
 from tl3_workers import runtime
 
 
+def synthetic_trace(tracking_uri, request_id):
+    """A maker-sized history with 120 child spans, without loading credentials."""
+    import mlflow
+    from tl3_workers.tracing import observe, record_chunk_usage, record_reply
+
+    request = {
+        'role': 'maker', 'model': {'name': 'synthetic-maker', 'effort': 'high'},
+        'operation': {'node': 296, 'generation': 0},
+        'inputs': {'brief': 'Synthetic maker trace for payload bounds and redaction.'},
+        'mlflow': {'tracking_uri': tracking_uri, 'experiment': 'tl3-dev-296'},
+        'trace': {'repo': 'synthetic-296', 'issue': 296, 'request': request_id,
+                  'attempt': 1, 'round': 0},
+    }
+    planted = 'GITHUB_WEBHOOK_SECRET=synthetic-secret-296'
+    history = [{'role': 'system', 'content': 'repository-line\n' * 10000 + '\nsystem-tail'}]
+    with observe(request):
+        for index in range(40):
+            history.append({'role': 'user', 'content': 'history-line\n' * 10000 +
+                            f'\n{planted}\nnewest-turn-{index}'})
+            with mlflow.start_span(name='maker-step', span_type='CHAIN'):
+                with mlflow.start_span(name='model', span_type='CHAT_MODEL') as model:
+                    model.set_inputs({'messages': list(history)})
+                    model.set_outputs({'content': f'reply-{index}', 'tool_calls': [
+                        {'name': 'read', 'args': {'path': 'synthetic.py'}}]})
+                    model.set_attribute('mlflow.chat.tokenUsage', {
+                        'input_tokens': 11, 'output_tokens': 7, 'total_tokens': 18,
+                        'cache_read_input_tokens': 8, 'cache_creation_input_tokens': 2})
+                    record_chunk_usage({'usage': {'prompt_tokens': 11, 'completion_tokens': 7,
+                        'total_tokens': 18, 'prompt_tokens_details': {'cached_tokens': 8},
+                        'cache_write_tokens': 2, 'unexpected_secret': planted}})
+                with mlflow.start_span(name='read', span_type='TOOL') as tool:
+                    tool.set_inputs({'path': 'synthetic.py', 'argument': 'old\n' * 50000 + '\nargument-tail'})
+                    tool.set_outputs({'result': 'source-line\n' * 10000 +
+                                      f'\n{planted}\nresult-tail-{index}'})
+        record_reply({'brief': 'Synthetic maker completed 40 steps.'})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tracking-uri', default='http://192.168.1.107:5033')
@@ -26,6 +63,7 @@ def main():
     parser.add_argument('--model', default='claude-sonnet-5-5')
     parser.add_argument('--key-file', default='/home/rob/.config/tl3/secrets/model-key')
     parser.add_argument('--recorded', action='store_true')
+    parser.add_argument('--synthetic', action='store_true', help='export a 121-span maker-sized trace')
     parser.add_argument('--read-latest', action='store_true', help='read back the last scratch trial without another model call')
     args = parser.parse_args()
     assert os.environ.get('PRISMABUILD_ACTION_KEY'), 'submit through PrismaBuild'
@@ -40,7 +78,12 @@ def main():
         children.append(child)
         return child
 
-    if not args.read_latest:
+    if args.synthetic:
+        with patch.object(subprocess, 'Popen', launch):
+            synthetic_trace(args.tracking_uri, request_id)
+        for child in children:
+            assert child.wait(timeout=15) == 0, 'export child failed'
+    elif not args.read_latest:
         with tempfile.TemporaryDirectory(prefix='tl3-trace-trial-') as directory:
             root = Path(directory)
             checkout = root / 'sandbox'
@@ -123,6 +166,26 @@ def main():
     for span in models:
         usage = span.get_attribute('mlflow.chat.tokenUsage')
         assert all(key in usage for key in ['input_tokens', 'output_tokens', 'total_tokens'])
+    if args.synthetic:
+        assert len(spans) == 121
+        assert root.get_attribute('tl3.trace.truncated') is True
+        contents = json.dumps([{'inputs': span.inputs, 'outputs': span.outputs} for span in spans])
+        assert 'synthetic-secret-296' not in contents
+        assert 'newest-turn-0' in contents and 'argument-tail' in contents and 'result-tail-0' in contents
+        assert len(contents.encode()) < 1024 * 1024
+        print(json.dumps({
+            'mode': 'synthetic_maker', 'trace_id': trace_id, 'experiment': experiment,
+            'span_count': len(spans), 'content_bytes_read_back': len(contents.encode()),
+            'trace_truncated': True, 'request_preview': trace.info.request_preview,
+            'response_preview': trace.info.response_preview,
+            'model_input_tail': json.dumps(models[0].inputs)[-512:],
+            'model_output': models[0].outputs,
+            'tool_input_tail': json.dumps(tools[0].inputs)[-512:],
+            'tool_output_tail': json.dumps(tools[0].outputs)[-512:],
+            'usage': models[0].get_attribute('mlflow.chat.tokenUsage'),
+            'raw_usage_chunks': models[0].get_attribute('tl3.proxy.usage_chunks'),
+        }), flush=True)
+        return
     print(json.dumps({
         'mode': ('recorded' if trace.info.tags['model'] == 'recorded-langchain' else
                  'read_back' if args.read_latest else 'real_proxy'), 'trace_id': trace_id,

@@ -14,20 +14,26 @@ import tomllib
 
 active = ContextVar('tl3_trace_capture', default=None)
 PAYLOAD_BYTES = 65536
+TRACE_BYTES = 1024 * 1024
+STRING_CHARS = 8192
+ITEM_BYTES = 16384
 TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'total_tokens',
                 'cache_read_input_tokens', 'cache_creation_input_tokens')
 SENSITIVE_KEY = re.compile(
-    r'(?i)(?:api[_-]?key|authorization|password|passwd|access[_-]?token|refresh[_-]?token|'
-    r'client[_-]?secret|private[_-]?key|model[_-]?key|key[_-]?file|credentials?)')
+    r'(?i)(?:secret|token|password|passwd|api[_-]?key|authorization|credential|private[_-]?key|'
+    r'model[_-]?key|key[_-]?file)')
 SECRET_PATTERNS = [
     re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?'
                r'(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)', re.DOTALL),
-    re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+'),
+    re.compile(r'(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+'),
+    re.compile(r'\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'),
     re.compile(r'\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|'
-               r'AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+)\b'),
-    re.compile(r'(?i)https?://[^/\s:@]+:[^@\s/]+@'),
-    re.compile(r'(?i)["\']?(?:api[_-]?key|password|passwd|access[_-]?token|client[_-]?secret)'
-               r'["\']?\s*[:=]\s*["\']?[^\s"\',;}&]+'),
+               r'(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+|'
+               r'xapp-[A-Za-z0-9-]+|pypi-[A-Za-z0-9_-]+)\b'),
+    re.compile(r'(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]*:[^@\s/]+@'),
+    re.compile(r'''(?ix)\b[\w-]*(?:secret|token|password|passwd|key|credential)[\w-]*
+                   (?:\\*["'])?\s*[:=]\s*
+                   (?:\\*"[^"\r\n]*"|\\*'[^'\r\n]*'|[^\s"'\\,;}&]+)'''),
 ]
 
 
@@ -37,31 +43,76 @@ class Redactor:
         self.secrets = {key_path} if key_path else set()
 
     def text(self, value):
+        value = self.tail(value, STRING_CHARS)
         for secret in sorted(self.secrets, key=len, reverse=True):
             value = value.replace(secret, '[REDACTED]')
         for pattern in SECRET_PATTERNS:
             value = pattern.sub('[REDACTED]', value)
         return value
 
-    def clean(self, value):
+    def tail(self, value, limit):
+        if len(value) <= limit:
+            return value
+        # Discard the entire line crossing the cut, including any credential
+        # prefix. A single oversized line is omitted rather than leaking a suffix.
+        cut = value.find('\n', len(value) - limit)
+        if cut == -1:
+            return '[truncated: oversized line omitted]'
+        cut += 1
+        # PEM bodies and the already-loaded model key can span multiple lines.
+        # These literal scans avoid running regexes over the discarded content.
+        begin = value.rfind('-----BEGIN ', 0, cut)
+        end = value.rfind('-----END ', 0, cut)
+        if begin > end and 'PRIVATE KEY-----' in value[begin:begin + 100]:
+            end = value.find('-----END ', cut)
+            cut = value.find('\n', end) + 1 if end != -1 else len(value)
+            if not cut:
+                cut = len(value)
+        for secret in self.secrets:
+            if not secret:
+                continue
+            start = value.find(secret, max(0, cut - len(secret)), cut + len(secret))
+            if start != -1 and start < cut < start + len(secret):
+                cut = start + len(secret)
+        return '[truncated: earlier text omitted]\n' + value[cut:]
+
+    def clean(self, value, limit=PAYLOAD_BYTES, depth=0):
+        if limit < 256 or depth > 20:
+            return '[truncated: content budget]'
         if isinstance(value, str):
-            return self.text(value)
+            # Six bytes covers JSON's worst-case escaping of a character. Each
+            # message/argument/result is bounded before pattern matching.
+            return self.text(self.tail(value, min(STRING_CHARS, limit // 6 - 64)))
         if isinstance(value, dict):
-            return {self.text(str(key)): '[REDACTED]' if SENSITIVE_KEY.fullmatch(str(key))
-                    else self.clean(item) for key, item in value.items()
-                    if key not in {'response_metadata', 'additional_kwargs', 'headers'}}
+            result = {}
+            remaining = limit - 256
+            for key in reversed(value):
+                if key in {'response_metadata', 'additional_kwargs', 'headers'}:
+                    continue
+                if remaining < 512:
+                    result['tl3.truncated'] = 'earlier fields omitted'
+                    break
+                safe_key = self.text(self.tail(str(key), 128))
+                item = ('[REDACTED]' if SENSITIVE_KEY.search(str(key)) else
+                        self.clean(value[key], min(ITEM_BYTES, remaining - 256), depth + 1))
+                remaining -= len(json.dumps({safe_key: item}, ensure_ascii=False).encode()) + 2
+                result[safe_key] = item
+            return dict(reversed(list(result.items())))
         if isinstance(value, list):
-            return [self.clean(item) for item in value]
+            result = []
+            remaining = limit - 256
+            for item in reversed(value):
+                if remaining < 512:
+                    result.append({'truncated': True, 'note': 'earlier items omitted'})
+                    break
+                item = self.clean(item, min(ITEM_BYTES, remaining), depth + 1)
+                remaining -= len(json.dumps(item, ensure_ascii=False).encode()) + 2
+                result.append(item)
+            return list(reversed(result))
         return value
 
-    def payload(self, value):
-        value = self.clean(value)
-        encoded = json.dumps(value, ensure_ascii=False).encode()
-        if len(encoded) > PAYLOAD_BYTES:
-            # JSON-escaping this prefix can at most double its size.
-            value = {'preview': encoded[:PAYLOAD_BYTES // 4].decode(errors='ignore'),
-                     'truncated': True, 'original_bytes': len(encoded)}
-        return value
+    def payload(self, value, limit=PAYLOAD_BYTES):
+        return self.clean(value, min(PAYLOAD_BYTES, limit))
 
 
 def record_model_key(key):
@@ -69,23 +120,29 @@ def record_model_key(key):
         capture.redactor.secrets.add(key)
 
 
+def chunk_counts(usage):
+    if not isinstance(usage, dict):
+        return {}
+    counts = {key: value for key in ('prompt_tokens', 'completion_tokens', 'total_tokens',
+                                     'cache_write_tokens')
+              if type(value := usage.get(key)) is int and value >= 0}
+    for key, fields in [('prompt_tokens_details', ('cached_tokens', 'cache_write_tokens')),
+                        ('completion_tokens_details', ('reasoning_tokens',))]:
+        if isinstance(details := usage.get(key), dict):
+            counts[key] = {field: value for field in fields
+                           if type(value := details.get(field)) is int and value >= 0}
+    return counts
+
+
 def record_chunk_usage(chunk):
-    if active.get() is None or not chunk.get('usage'):
-        return
     try:
+        if active.get() is None or not chunk.get('usage'):
+            return
         import mlflow
         span = mlflow.get_current_active_span()
         if span is None or span.span_type not in {'LLM', 'CHAT_MODEL'}:
             return
-        usage = chunk['usage']
-        counts = {key: value for key in ('prompt_tokens', 'completion_tokens', 'total_tokens',
-                                         'cache_write_tokens')
-                  if type(value := usage.get(key)) is int and value >= 0}
-        for key, fields in [('prompt_tokens_details', ('cached_tokens', 'cache_write_tokens')),
-                            ('completion_tokens_details', ('reasoning_tokens',))]:
-            if isinstance(details := usage.get(key), dict):
-                counts[key] = {field: value for field in fields
-                               if type(value := details.get(field)) is int and value >= 0}
+        counts = chunk_counts(chunk['usage'])
         chunks = span.get_attribute('tl3.proxy.usage_chunks') or []
         if len(chunks) < 32:
             span.set_attribute('tl3.proxy.usage_chunks', [*chunks, counts])
@@ -121,6 +178,10 @@ class Capture:
         self.role = request['role']
         self.model = request['model']['name']
         self.spans = []
+        # Reserve space for root content, tags and protobuf framing. Child
+        # content stops consuming redaction work once this shared budget is full.
+        self.remaining = TRACE_BYTES - 32768
+        self.truncated = False
         self.dropped = False
         capture = self
         logger = logging.getLogger('mlflow')
@@ -133,7 +194,16 @@ class Capture:
                     if len(capture.spans) >= 4096:
                         capture.dropped = True
                         break
-                    capture.spans.append(safe_span(span, capture.redactor, capture.role, capture.model))
+                    reserve = 2 * PAYLOAD_BYTES if span.parent else 0
+                    available = max(0, capture.remaining - reserve)
+                    safe = safe_span(span, capture.redactor, capture.role, capture.model,
+                                     payload_limit=max(0, (available - 2048) // 4))
+                    if safe.ByteSize() > available:
+                        capture.truncated = True
+                        continue
+                    capture.remaining -= safe.ByteSize()
+                    capture.truncated |= available < 4 * PAYLOAD_BYTES + 2048
+                    capture.spans.append(safe)
                 return SpanExportResult.SUCCESS
 
         # MLflow 3.17.2 has no public in-memory destination. Pin this adapter to
@@ -175,6 +245,8 @@ class Capture:
         self.tags.update(outcome=outcome, **{key: str(value) for key, value in usage.items()})
         root = next(span for span in self.spans if not span.parent_span_id)
         root.status.code = 1 if outcome == 'succeeded' else 2
+        if self.truncated:
+            root.attributes.add(key='tl3.trace.truncated').value.bool_value = True
         for key, value in self.tags.items():
             root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = self.redactor.text(value)[:512]
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
@@ -190,7 +262,7 @@ class Capture:
                              stdout=subprocess.DEVNULL, stderr=sys.stderr, close_fds=True)
 
 
-def safe_span(span, redactor=None, role="unknown", model="unknown"):
+def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limit=PAYLOAD_BYTES):
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
     from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
 
@@ -211,11 +283,18 @@ def safe_span(span, redactor=None, role="unknown", model="unknown"):
     if kind in {'LLM', 'CHAT_MODEL'}:
         result.attributes.add(key='mlflow.llm.model').value.string_value = redactor.text(model)[:256]
     # Retain only content and usage. Headers, provider metadata, resources and
-    # raw exceptions stay local. Apply redaction before truncating or serializing.
+    # raw exceptions stay local. Bound work before redaction and redact before
+    # export. Budget-exhausted spans keep metadata and numeric token counts.
     for key in ('mlflow.spanInputs', 'mlflow.spanOutputs',
                 'tl3.proxy.usage_chunks', 'tl3.proxy.usage_chunks_truncated'):
         if (raw := span.attributes.get(key)) is not None:
-            value = redactor.payload(json.loads(raw))
+            if key == 'tl3.proxy.usage_chunks':
+                # Numeric-only usage has its own boundary; names such as
+                # prompt_tokens must survive the general sensitive-key filter.
+                value = [chunk_counts(chunk) for chunk in json.loads(raw)[:32]]
+            else:
+                value = (redactor.payload(json.loads(raw), payload_limit) if payload_limit >= 512
+                         else {'truncated': True, 'note': 'trace content budget exhausted'})
             _set_otel_proto_anyvalue(result.attributes.add(key=key).value, value)
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
         usage = json.loads(raw)
@@ -326,10 +405,12 @@ def export():
             response.raise_for_status()
             data = response.json()
             experiment = data.get('experiment', data)['experiment_id']
-            response = client.post('/api/2.0/mlflow/experiments/set-experiment-tag',
-                                   json={'experiment_id': experiment, 'key': 'mlflow.experimentKind',
-                                         'value': 'genai_development'})
-            response.raise_for_status()
+            try:
+                client.post('/api/2.0/mlflow/experiments/set-experiment-tag',
+                            json={'experiment_id': experiment, 'key': 'mlflow.experimentKind',
+                                  'value': 'genai_development'})
+            except httpx.HTTPError:
+                pass  # Cosmetic UI tag must not discard a trace.
             response = client.post('/v1/traces', content=packet,
                                    headers={'Content-Type': 'application/x-protobuf',
                                             'x-mlflow-experiment-id': experiment})

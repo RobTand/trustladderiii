@@ -265,7 +265,7 @@ def test_tool_arguments_results_and_model_tool_calls_are_bounded(request_doc, tm
                                                                monkeypatch, exporters, receiver):
     uri, packets = receiver
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
-    body = 'tool-result-marker ' + '文' * 40000
+    body = '文' * 40000 + '\ntool-result-marker'
     (tmp_path / 'large.txt').write_text(body)
     model = FakeMessagesListChatModel(responses=[
         AIMessage(content='', tool_calls=[{'name': 'read', 'args': {'path': 'large.txt'}, 'id': 'read1'}]),

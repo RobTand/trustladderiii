@@ -510,10 +510,24 @@ remains private because it can contain credentials and request content.
 
 MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
 A pinned SDK adapter replaces its network exporter with in-memory capture.
-Only span IDs, parent IDs, times, types, status codes, numeric token counts and
-explicit correlation tags reach the export child. Prompts, model replies,
-tool inputs and outputs, arbitrary exception messages, resource attributes and provider
-metadata are omitted. This also excludes echoed secrets and request headers.
+Traces contain repository text, prompts, model replies, tool arguments and
+results, plus role/model names, numeric token counts and correlation tags.
+Cached-read and cache-creation counts are retained when reported. Numeric raw
+proxy usage chunks sit beside LangChain totals so accounting differences are visible.
+Redaction is pattern-based best effort, not a guarantee that arbitrary secrets
+will be recognized. It covers sensitive field names and credential patterns,
+and the runtime supplies the already-loaded model key without tracing opening
+credential files. Headers, provider metadata and raw exceptions are omitted.
+
+Each message, tool argument and result is bounded separately. Oversized text
+keeps complete trailing lines with a truncation note; an oversized single line
+is omitted to avoid exposing part of a credential. Message lists keep their
+newest items. Each span input/output is at most 64 KiB, and the trace has a
+1 MiB export budget. After that budget fills, spans keep metadata and token
+counts, with content-budget notices. The root retains space for readable inputs
+and the final reply. The root marks budget truncation with `tl3.trace.truncated`.
+The MLflow server is LAN-only with no login; anyone on the LAN can read these
+prompts and repository contents. See the deployment README for access limits.
 
 One child exports the sanitized protobuf to the configured experiment. It uses
 no retries, one-second HTTP timeouts and a five-second process alarm. The worker

@@ -192,8 +192,12 @@ The UI and write API bind to `192.168.1.107:5033`, reachable from the LAN at
 `http://192.168.1.107:5033`. Rob asked for a UI he can open from the LAN
 (#101). This HTTP endpoint has no authentication. Any host on the LAN can read,
 write or delete traces and experiments through its API. It has no public
-tunnel. The unit restricts allowed Host and browser origin values to this
-address and local health clients. Those restrictions are not authentication.
+tunnel. The launcher allows this address, loopback, the machine hostname and
+its `.local` name in both Host and browser CORS origins. The UI and API accept
+`dl380g10:5033` and `dl380g10.local:5033` after installing the launcher update.
+These restrictions are not authentication. The server is LAN-only with no login.
+Traces now contain repository text, prompts, model replies and tool I/O.
+Redaction is pattern-based best effort; it cannot recognize every possible secret.
 
 The backend is database `tl3_mlflow` in TL3's user-level Postgres. Connections
 use `~/.local/share/tl3/postgres/socket`, port 5543. TCP stays disabled on
@@ -221,8 +225,10 @@ observability installation, because that command also starts the controller.
 
 **Retention.** Nothing prunes traces yet. Every agent run adds one trace of
 up to 4,096 spans to `tl3_mlflow` and keeps it, so the database grows with the
-number of runs. Spans keep only types, ids, times and token counts, not
-prompts or replies. To reclaim space, delete old traces in the UI or through
+number of runs. Spans include bounded prompts, replies, repository text and
+tool arguments/results, plus names and token counts. Each export has a 1 MiB
+trace budget; truncation retains recent content and reserves root content.
+To reclaim space, delete old traces in the UI or through
 MLflow's API, then run `mlflow gc` with the same backend store to remove the
 deleted rows and their artifacts. A retention window is an open decision in
 the slice-one PRD (#1).
