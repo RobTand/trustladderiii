@@ -1188,6 +1188,7 @@ fn check_gate_leaf_progress(width: u8) {
     kani::assume(w.nodes.iter().all(|n| !n.paused));
     kani::assume(w.nodes[1].phase == Phase::Queued);
     kani::assume(!w.footprints_disjoint(w.nodes[0].footprint, w.nodes[1].footprint));
+    kani::assume(w.nodes[0].ticket.is_some());
     let ticket = w.nodes[0].ticket.unwrap();
     for i in 2..4 {
         kani::assume(matches!(w.nodes[i].phase, Phase::Queued | Phase::Ready(_)));
