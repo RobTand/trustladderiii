@@ -107,7 +107,7 @@ class BazelDiffCommandTests(unittest.TestCase):
                                                       '/t/base.json', '/t/head.json', '/t/out.txt')
         self.assertEqual(generate('/t/base.json')[3:], ['generate-hashes', '--workspacePath', '/repo',
                                                         '--bazelPath', 'bazel', '--excludeExternalTargets',
-                                                        '/t/base.json'])
+                                                        '--includeTargetType', '/t/base.json'])
         self.assertIn('get-impacted-targets', impacted)
         for flag, value in [('--workspacePath', '/repo'), ('--bazelPath', 'bazel'),
                             ('--targetType', 'Rule'), ('--startingHashes', '/t/base.json'),
