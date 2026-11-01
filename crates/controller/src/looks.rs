@@ -1636,17 +1636,15 @@ mod git_failure_tests {
     #[test]
     fn ambiguous_git_failures_remain_transport() {
         use tl3_worktrees::Error as W;
-        for error in [
-            W::Io,
-            W::Spawn,
-            W::Poisoned,
-            W::Git {
-                operation: "fetch",
-                code: Some(128),
-            },
-        ] {
+        for error in [W::Io, W::Spawn, W::Poisoned] {
             assert_eq!(failure_class(&error.into()), "transport");
         }
+        // Still retryable; Q51 attributes a failed remote operation upstream.
+        let fetch = W::Git {
+            operation: "fetch",
+            code: Some(128),
+        };
+        assert_eq!(failure_class(&fetch.into()), "git_remote");
     }
 }
 
