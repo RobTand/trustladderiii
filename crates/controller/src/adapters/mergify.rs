@@ -743,17 +743,20 @@ async fn queue_facts(
             },
         }]);
     }
-    if pull.state == "open" && matches!(state.state, QueueState::Waiting | QueueState::Unknown) {
-        return Ok(head_checks::read(github, &full_name(repo), pull)
+    if pull.state == "open"
+        && matches!(
+            state.state,
+            QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
+        )
+        && let Some(evidence) = head_checks::read(github, &full_name(repo), pull)
             .await?
             .evidence(pull)
-            .into_iter()
-            .map(|evidence| QueueFact {
-                repository: repo.clone(),
-                number: pull.number,
-                evidence,
-            })
-            .collect());
+    {
+        return Ok(vec![QueueFact {
+            repository: repo.clone(),
+            number: pull.number,
+            evidence,
+        }]);
     }
     let head_infrastructure = if matches!(state.state, QueueState::FailedCi | QueueState::Dequeued)
     {

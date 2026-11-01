@@ -120,6 +120,18 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         );
         assert_eq!(api.state.lock().unwrap().reruns, 0);
         if mode == "stale-failure" {
+            for _ in 0..20 {
+                if !controller
+                    .snapshot()
+                    .unwrap()
+                    .pending_effects
+                    .iter()
+                    .any(|effect| effect.payload["output"]["Effect"]["kind"] == "Enqueue")
+                {
+                    break;
+                }
+                assert!(controller.drive_once().unwrap());
+            }
             let state = api.state.lock().unwrap();
             assert!(
                 !state.label,
