@@ -795,9 +795,13 @@ proof!(
 // Four-node gate worlds cover a full W=3 gate and a waiter. The general
 // event/phase proofs retain their two-node bounds.
 fn gate_world(width: u8) -> World {
+    gate_world_in_phase(width, None)
+}
+
+fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
     let mut w = World::new(&[width], 4);
     w.next_ticket = 8;
-    for _ in 0..4 {
+    for i in 0..4 {
         let mut n = Node::new(RepoId(0));
         n.credit.ready = true;
         n.credit.start = 4;
@@ -814,6 +818,11 @@ fn gate_world(width: u8) -> World {
             2 => Phase::Making,
             _ => Phase::Unplanned,
         };
+        if i == 0 {
+            if let Some(first) = first {
+                n.phase = first;
+            }
+        }
         if n.phase == Phase::Queued {
             n.holds = true;
             n.head = Some(HeadId(1));
@@ -981,24 +990,17 @@ fn check_gate_progress(width: u8) {
     }
     require_consistent(&before);
     assert_eq!(before.measure(), measure);
-    let mut after = before.clone();
-    let mut out = Outbox::new();
-    // Keep the payload variant concrete too. Passing the symbolic witness
-    // through apply expands every reply, fact and command transition.
     match event {
         Event::Reply {
             generation,
             reply: Reply::MakerDone { head },
             ..
-        } => apply(
-            &mut after,
-            Event::Reply {
-                node: NodeId(0),
-                generation,
-                reply: Reply::MakerDone { head },
-            },
-            &mut out,
-        ),
+        } => {
+            let n = before.nodes[0];
+            assert!(n.phase == Phase::Making && !n.paused);
+            assert_eq!(n.run, Some(generation));
+            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
+        }
         Event::Fact {
             fact:
                 Fact::PrMerged {
@@ -1006,34 +1008,86 @@ fn check_gate_progress(width: u8) {
                     checks_passed,
                 },
             ..
-        } => apply(
-            &mut after,
-            Event::Fact {
-                node: NodeId(0),
-                fact: Fact::PrMerged {
-                    head,
-                    checks_passed,
-                },
-            },
-            &mut out,
-        ),
+        } => {
+            let n = before.nodes[0];
+            assert!(n.phase == Phase::Queued && !n.paused && checks_passed);
+            assert_eq!(head, n.head.unwrap_or(HeadId(0)));
+        }
         Event::Command {
             id,
             command: Command::Resume,
             ..
-        } => apply(
-            &mut after,
-            Event::Command {
-                node: NodeId(0),
-                id,
-                command: Command::Resume,
-            },
-            &mut out,
-        ),
+        } => {
+            assert!(before.nodes[0].paused);
+            assert_eq!(id, before.nodes[0].last_cmd + 1);
+        }
         _ => unreachable!("gate worlds have only maker, merge or resume witnesses"),
     }
+}
+
+// The witness proof above establishes these three preconditions for every
+// settled gate world. Prove each application separately to keep the event
+// payload and actor concrete, as in the general per-event proofs.
+fn check_gate_maker_progress(width: u8) {
+    let before = gate_world_in_phase(width, Some(Phase::Making));
+    kani::assume(!before.nodes[0].paused);
+    let n = before.nodes[0];
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(
+        &mut after,
+        Event::Reply {
+            node: NodeId(0),
+            generation: n.generation,
+            reply: Reply::MakerDone {
+                head: n.head.unwrap_or(HeadId(0)),
+            },
+        },
+        &mut out,
+    );
     require_consistent(&after);
     assert!(after.measure() < before.measure());
+    kani::cover!(true, "maker completion lowers the gate world's measure");
+}
+
+fn check_gate_merge_progress(width: u8) {
+    let before = gate_world_in_phase(width, Some(Phase::Queued));
+    kani::assume(!before.nodes[0].paused);
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(
+        &mut after,
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrMerged {
+                head: before.nodes[0].head.unwrap_or(HeadId(0)),
+                checks_passed: true,
+            },
+        },
+        &mut out,
+    );
+    require_consistent(&after);
+    assert!(after.measure() < before.measure());
+    kani::cover!(true, "a merge lowers the gate world's measure");
+}
+
+fn check_gate_resume_progress(width: u8) {
+    let before = gate_world(width);
+    kani::assume(before.nodes[0].paused);
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(
+        &mut after,
+        Event::Command {
+            node: NodeId(0),
+            id: before.nodes[0].last_cmd + 1,
+            command: Command::Resume,
+        },
+        &mut out,
+    );
+    require_consistent(&after);
+    assert!(after.measure() < before.measure());
+    kani::cover!(true, "resuming lowers the gate world's measure");
 }
 
 proof!(gate_grant_w2, check_gate_grant(2));
@@ -1042,3 +1096,10 @@ proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 proof!(gate_progress_w2, check_gate_progress(2));
 proof!(gate_progress_w3, check_gate_progress(3));
+
+proof!(gate_maker_progress_w2, check_gate_maker_progress(2));
+proof!(gate_maker_progress_w3, check_gate_maker_progress(3));
+proof!(gate_merge_progress_w2, check_gate_merge_progress(2));
+proof!(gate_merge_progress_w3, check_gate_merge_progress(3));
+proof!(gate_resume_progress_w2, check_gate_resume_progress(2));
+proof!(gate_resume_progress_w3, check_gate_resume_progress(3));

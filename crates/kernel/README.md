@@ -113,7 +113,7 @@ The bounds are:
 - two requests, or three after a new one arrives;
 - two repos of four files each;
 - W at most 3 and the agent pool at most 2 in the general proofs;
-- four requests in six focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
+- four requests in twelve focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
 - counters below 2^40.
 
 These are simplifications against the state table, all deliberate:

@@ -12,6 +12,12 @@ const GATE_PROOFS: &[&str] = &[
     "gate_planning_w3",
     "gate_progress_w2",
     "gate_progress_w3",
+    "gate_maker_progress_w2",
+    "gate_maker_progress_w3",
+    "gate_merge_progress_w2",
+    "gate_merge_progress_w3",
+    "gate_resume_progress_w2",
+    "gate_resume_progress_w3",
 ];
 
 const LIB: &str = include_str!("../src/lib.rs");

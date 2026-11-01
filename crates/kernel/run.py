@@ -46,6 +46,10 @@ if mode == "manifest":
     for name in selected:
         if name.startswith("gate_progress_") or name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
             memory = 44
+        elif name.startswith("gate_maker_progress_"):
+            memory = 44
+        elif name.startswith(("gate_merge_progress_", "gate_resume_progress_")):
+            memory = 32
         elif name.startswith("progress_from_"):
             memory = 24
         elif name in replies:
