@@ -936,22 +936,26 @@ impl Translator {
                 actor,
                 ..
             } => {
-                if is_merge_queue_pr(pull_request)
-                    || !open.iter().any(|item| item.number == pull_request.number)
-                {
+                if is_merge_queue_pr(pull_request) {
                     return Ok(vec![]);
                 }
+                let Some(item) = open.iter().find(|item| item.number == pull_request.number) else {
+                    return Ok(vec![]);
+                };
                 let evidence = match event {
                     Event::PullRequestClosed { .. } | Event::PullRequestUnlabeled { .. } => {
                         let events = self
                             .runtime
                             .block_on(github.issue_events(&full_name(repo), pull_request.number))?;
-                        facts.extend(person_facts(
-                            repo,
-                            pull_request.number,
-                            &events,
-                            pull_request.merged_at.is_some(),
-                        ));
+                        // A delayed webhook can predate the close in these fresh events.
+                        let current = self
+                            .runtime
+                            .block_on(github.pull_request(&full_name(repo), pull_request.number))?;
+                        if current.merged_at.is_some() {
+                            facts.extend(self.look(github, repo, item)?);
+                        } else {
+                            facts.extend(person_facts(repo, pull_request.number, &events, false));
+                        }
                         None
                     }
                     Event::PullRequestSynchronized { after, .. }
@@ -1055,10 +1059,10 @@ impl Translator {
             let pull = self
                 .runtime
                 .block_on(github.pull_request(&full_name(repo), item.number))?;
-            if is_merge_queue_pr(&pull) {
+            if is_merge_queue_pr(&pull) || pull.merged_at.is_some() {
                 continue;
             }
-            if pull.merged_at.is_none() && !item.known_heads.contains(&pull.head.sha) {
+            if !item.known_heads.contains(&pull.head.sha) {
                 facts.push(QueueFact {
                     repository: repo.clone(),
                     number: item.number,
@@ -1081,10 +1085,7 @@ impl Translator {
                 }
             }
             for (number, event) in &changes.closed {
-                if *number == item.number
-                    && pull.merged_at.is_none()
-                    && event.actor.as_ref().is_some_and(person)
-                {
+                if *number == item.number && event.actor.as_ref().is_some_and(person) {
                     facts.push(QueueFact {
                         repository: repo.clone(),
                         number: item.number,
@@ -1106,6 +1107,9 @@ fn person_facts(
     events: &[tl3_github::IssueActivity],
     merged: bool,
 ) -> Vec<QueueFact> {
+    if merged || events.iter().any(|event| event.event == "merged") {
+        return vec![];
+    }
     events
         .iter()
         .filter(|event| event.actor.as_ref().is_some_and(person))
@@ -1119,7 +1123,7 @@ fn person_facts(
                 {
                     Evidence::DequeuedByPerson { event: event.id }
                 }
-                "closed" if !merged => Evidence::ClosedByPerson { event: event.id },
+                "closed" => Evidence::ClosedByPerson { event: event.id },
                 _ => return None,
             };
             Some(QueueFact {

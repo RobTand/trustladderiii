@@ -4,6 +4,8 @@ mod dequeue_followups;
 mod head_checks;
 #[path = "mergify/held.rs"]
 mod held;
+#[path = "mergify/merge_closure.rs"]
+mod merge_closure;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -2441,6 +2443,16 @@ fn main() {
     }
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--merge-closure-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        merge_closure::scenario(&database.create("merge_closure"), &mode);
+        database.stop();
+        return;
+    }
+
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--requeue-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2770,6 +2782,9 @@ fn main() {
     ] {
         held::scenario(&database.create(&format!("held_{mode}")), mode);
     }
+    for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
+        merge_closure::scenario(&database.create(&format!("merge_closure_{mode}")), mode);
+    }
     database.stop();
-    println!("103 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("108 Mergify scenarios passed; no skips; no live upstream calls");
 }
