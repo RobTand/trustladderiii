@@ -31,7 +31,7 @@ class ParityTests(unittest.TestCase):
 
     def test_python_discovery_uses_the_existing_gate(self):
         files = ['harness/pyproject.toml', 'harness/tests/test_harness.py',
-                 'harness/tests/fixtures/test_broken.py', 'deploy/github-app/test_setup.py',
+                 'harness/tests/fixtures/test_broken.py', 'harness/src/tl3_harness/test_tool.py', 'deploy/github-app/test_setup.py',
                  'tools/ci/test_bazel_parity.py']
         self.assertEqual(bazel_parity.python_modules(files), [
             'deploy/github-app/test_setup.py', 'harness/tests/test_harness.py',
