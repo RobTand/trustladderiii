@@ -1973,3 +1973,4 @@ fn recovery_error(error: Error) -> Error {
 
 #[cfg(test)]
 mod tests;
+pub fn synthetic_timing_marker() -> u32 { 1 }
