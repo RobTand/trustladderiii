@@ -184,6 +184,21 @@ impl Controller {
             Ok(matches!(delivery.output, Out::Effect { .. }))
         })
     }
+    pub(crate) fn cleanup_ended_looks(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let world = snapshot::decode(&snapshot)?;
+        let mut commit = Commit::new(
+            format!("ended-look-retire:{}", snapshot.revision.get()),
+            json!({"retire_ended_looks":true}),
+            &snapshot,
+        );
+        self.retire_ended_effect_looks(&snapshot, &world, &mut commit)?;
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn retire_ended_effect_looks(
         &mut self,
         snapshot: &Snapshot,
@@ -353,8 +368,7 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
-        let snapshot = self.store.load()?;
-        self.prune_allowances(&snapshot)?;
+        self.cleanup_ended_looks()?;
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows

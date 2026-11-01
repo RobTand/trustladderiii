@@ -267,8 +267,7 @@ impl Controller {
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
         };
-        let snapshot = controller.store.load()?;
-        controller.prune_allowances(&snapshot)?;
+        controller.cleanup_ended_looks()?;
         Ok(controller)
     }
 
