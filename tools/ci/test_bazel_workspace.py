@@ -38,3 +38,15 @@ class RuntimeInputsTests(unittest.TestCase):
         runner = (ROOT / 'tools/bazel/rust_runner.py').read_text()
         self.assertIn('TL3_TEST_UV', runner)
         self.assertIn('worker_python', runner)
+
+
+class AutomaticTestDiscoveryTests(unittest.TestCase):
+    def test_rust_integration_tests_are_discovered_by_bazel_not_enumerated(self):
+        macro = (ROOT / 'tools/bazel/rust.bzl').read_text()
+        self.assertIn('def tl3_integration_tests(', macro)
+        self.assertIn('native.glob(["tests/*.rs"])', macro)
+        for build in sorted((ROOT / 'crates').glob('*/BUILD.bazel')):
+            with self.subTest(file=str(build)):
+                text = build.read_text()
+                self.assertIn('tl3_integration_tests(', text)
+                self.assertNotRegex(text, r'name = "test_test_')
