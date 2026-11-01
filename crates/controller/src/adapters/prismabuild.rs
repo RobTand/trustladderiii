@@ -90,6 +90,7 @@ struct Job {
 pub struct Adapter {
     client: PrismaBuild,
     settings: Settings,
+    images: BTreeMap<(String, String, u64), String>,
     runtime: tokio::runtime::Runtime,
     keys: tokio::sync::broadcast::Sender<NodeId>,
     records_lock: Arc<Mutex<()>>,
@@ -269,7 +270,22 @@ fn clean_inputs(root: &Path) -> Result<()> {
 }
 
 impl Adapter {
-    pub fn with_repositories(self, _repos: &[tl3_config::Repository]) -> Self {
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Self {
+        self.images = repos
+            .iter()
+            .filter_map(|repo| {
+                repo.container_image.as_ref().map(|image| {
+                    (
+                        (
+                            repo.owner.to_ascii_lowercase(),
+                            repo.name.to_ascii_lowercase(),
+                            repo.installation_id,
+                        ),
+                        image.clone(),
+                    )
+                })
+            })
+            .collect();
         self
     }
 
@@ -314,6 +330,7 @@ impl Adapter {
         Ok(Self {
             client,
             settings,
+            images: BTreeMap::new(),
             records_lock: Arc::new(Mutex::new(())),
             keys: tokio::sync::broadcast::channel(64).0,
             // Tool spawning stays on the daemon's controller owner thread. That thread
@@ -407,19 +424,23 @@ impl Adapter {
         fs::create_dir_all(&root)?;
         File::open(&self.settings.records)?.sync_all()?;
         let input = record_path(&self.settings.records, delivery, "input");
-        let changed_paths = checks::stage(
-            &input,
-            &self.settings.harness,
-            delivery,
-            &self.settings.image,
-        )?;
+        let repo = &delivery.repository;
+        let image = self
+            .images
+            .get(&(
+                repo.owner.to_ascii_lowercase(),
+                repo.name.to_ascii_lowercase(),
+                repo.installation,
+            ))
+            .unwrap_or(&self.settings.image);
+        let changed_paths = checks::stage(&input, &self.settings.harness, delivery, image)?;
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
         let action = SubmitAction {
             checkout: input,
             command,
             demand: self.settings.demand.clone(),
-            container_image: self.settings.image.clone(),
+            container_image: image.clone(),
             progress: vec![ProgressPhase {
                 name: "tests".into(),
                 stall_allowance: self.settings.quiet,
