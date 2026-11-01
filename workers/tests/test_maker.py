@@ -1227,10 +1227,13 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     assert len(observed) == 51, 'a long maker session can finish its planned edits'
     assert max(sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode())
                    for m in messages if isinstance(m, (AIMessage, ToolMessage)))
-               for messages in observed) <= 65_536, 'maker exploration history is bounded'
+               for messages in observed) > 65_536, 'history grows beyond the former rolling window'
+    for previous, following in zip(observed, observed[1:]):
+        assert [m.model_dump() for m in following[:len(previous)]] == [m.model_dump() for m in previous], \
+            'history below the context threshold preserves its exact prefix'
     request_text = json.dumps(maker_request['inputs'], ensure_ascii=False)
     assert all(any(m.content == request_text for m in messages if isinstance(m, HumanMessage))
-               for messages in observed), 'the current request survives trimming across resumed visits'
+               for messages in observed), 'the current request survives across resumed visits'
     assert observed[-1][-1].text == "def greet(): return 'hello'\n", 'the newest read stays whole'
     reply = events[-1]['reply']
     assert reply == {**DONE, 'head': git(root, 'rev-parse', 'HEAD')}

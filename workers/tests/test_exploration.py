@@ -53,9 +53,9 @@ def test_exploration_finishes_within_turn_and_input_budgets(tmp_path, monkeypatc
     assert len(seen) * (120_000 if large_input else 1000) <= 300_000
     assert events[-1]["reply"] == reply
     validate(role + "-reply", events[-1]["reply"])
-    # Retained tool results must stay bounded as the model keeps exploring.
+    # Before compaction, complete evidence accumulates inside the context allowance.
     assert max(sum(len(m.text.encode()) for m in messages if isinstance(m, ToolMessage))
-               for messages in seen) <= 32_768
+               for messages in seen) <= 150_000 * 3 * 0.7
 
 
 def test_failed_run_summary_keeps_safe_diagnostic(tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ def test_parallel_results_are_bounded_and_marked_as_clipped(tmp_path, monkeypatc
     monkeypatch.setattr(runtime, "create_model", lambda _: InspectModel(responses=[
         AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(reply))]))
     events = []
-    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {}}, events.append)
+    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {"context_size": 20_000}}, events.append)
     for messages in observed:
         assert_tool_pairs(messages)
     results = [m for m in observed[-1] if isinstance(m, ToolMessage)]
