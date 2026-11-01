@@ -17,7 +17,11 @@ POLICY = Path('tools/ci/rust-test-budget.json')
 MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
 
 
-def check_budget(results, config, baseline):
+def runner_class():
+    return 'baseline'
+
+
+def check_budget(results, config, baseline, runner_class='baseline'):
     seconds, slow = config['seconds'], config['slow']
     if (not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds <= 0
             or seconds > baseline['seconds'] or not slow.keys() <= baseline['slow'].keys()
