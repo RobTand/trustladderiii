@@ -102,7 +102,7 @@ class BuildBuddySuggestionsTests(unittest.TestCase):
         for flag in ['--noslim_profile', '--experimental_profile_include_target_label',
                      '--experimental_profile_include_primary_output']:
             self.assertIn(f'build {flag}', config)
-        for flag in ['--remote_download_regex=.*/test\\.outputs/outputs\\.zip$',
+        for flag in ['--remote_download_regex=.*/test\\.outputs/.*',
                      '--remote_grpc_log=bazel-remote-grpc.log',
                      '--execution_log_compact_file=execution_log.binpb.zst',
                      '--build_metadata=ROLE=CI',

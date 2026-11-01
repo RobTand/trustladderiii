@@ -72,6 +72,24 @@ class ParityTests(unittest.TestCase):
 
 
 
+class ReceiptTests(unittest.TestCase):
+    def test_unzipped_and_zipped_receipts_are_both_read(self):
+        import io
+        import zipfile
+        with tempfile.TemporaryDirectory() as root:
+            plain = Path(root, 'crates/k/test_test_a/test.outputs')
+            plain.mkdir(parents=True)
+            (plain / 'inventory.json').write_text(json.dumps({'rust': {'k/a': ['one']}}))
+            zipped = Path(root, 'workers/tests/test_b/test.outputs')
+            zipped.mkdir(parents=True)
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, 'w') as archive:
+                archive.writestr('inventory.json', json.dumps({'python': ['workers/tests/test_b.py']}))
+            (zipped / 'outputs.zip').write_bytes(data.getvalue())
+            self.assertEqual(bazel_parity.bazel_receipts(Path(root)),
+                             {'rust': {'k/a': ['one']}, 'python': ['workers/tests/test_b.py']})
+
+
 class StaticParityTests(unittest.TestCase):
     def cargo(self, root):
         return bazel_parity.cargo_binaries({'packages': [
