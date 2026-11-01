@@ -26,11 +26,6 @@ def check_reply(inputs, reply):
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
         covered = set()
-        try:
-            validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
-                                      for i, check in enumerate(reply['checks']) if check['node_ids']))
-        except ValueError as error:
-            violations.append(str(error))
         for check in reply["checks"]:
             if not check["node_ids"]:
                 violations.append("Every check must name at least one test.")
@@ -56,6 +51,12 @@ def check_reply(inputs, reply):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        if "Checks must name exact pytest node IDs." not in violations:
+            try:
+                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
+                                          for i, check in enumerate(reply['checks']) if check['node_ids']))
+            except ValueError as error:
+                violations.append(str(error))
         if covered != goals:
             violations.append("Every goal must have a check.")
         paths.update(reply["files"])

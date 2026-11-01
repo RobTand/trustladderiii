@@ -213,7 +213,7 @@ def result_json(results: tuple[Result, ...]) -> str:
     for report in reports:
         for test in report['tests']:
             if not test['passed'] and detailed < MAX_DETAILED_FAILURES:
-                test['message'] = test['message'][:MAX_MESSAGE_CHARS]
+                test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
                 detailed += 1
             else:
                 test['message'] = ''
