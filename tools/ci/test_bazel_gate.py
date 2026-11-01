@@ -101,6 +101,28 @@ class PlanTests(unittest.TestCase):
             plan([])
 
 
+class BazelDiffCommandTests(unittest.TestCase):
+    def test_v42_commands_name_the_workspace_and_rule_targets(self):
+        generate, impacted = bazel_gate.diff_commands('java', 'diff.jar', '/repo', 'bazel',
+                                                      '/t/base.json', '/t/head.json', '/t/out.txt')
+        self.assertEqual(generate('/t/base.json')[3:], ['generate-hashes', '--workspacePath', '/repo',
+                                                        '--bazelPath', 'bazel', '--excludeExternalTargets',
+                                                        '/t/base.json'])
+        self.assertIn('get-impacted-targets', impacted)
+        for flag, value in [('--workspacePath', '/repo'), ('--bazelPath', 'bazel'),
+                            ('--targetType', 'Rule'), ('--startingHashes', '/t/base.json'),
+                            ('--finalHashes', '/t/head.json'), ('--output', '/t/out.txt')]:
+            self.assertEqual(impacted[impacted.index(flag) + 1], value)
+
+
+class SkipDiffTests(unittest.TestCase):
+    def test_only_unread_irrelevant_files_skip_bazel_diff(self):
+        self.assertTrue(bazel_gate.needs_no_diff({'docs/a.md', 'README.md'}, set(), USED))
+        self.assertFalse(bazel_gate.needs_no_diff({'crates/kernel/README.md'}, set(), USED))
+        self.assertFalse(bazel_gate.needs_no_diff({'docs/a.md'}, {'docs/b.md'}, USED))
+        self.assertFalse(bazel_gate.needs_no_diff({'crates/kernel/src/lib.rs'}, set(), USED))
+
+
 class ClassifyTests(unittest.TestCase):
     RUST = {'//crates/kernel:lib_test_tl3_kernel'}
 
