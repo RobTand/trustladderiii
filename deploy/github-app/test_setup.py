@@ -41,6 +41,16 @@ class FormParser(HTMLParser):
             self.manifest = json.loads(attrs["value"])
 
 
+class ManifestRequirements(unittest.TestCase):
+    def test_legacy_statuses_are_readable(self):
+        manifest = json.loads((ROOT / "manifest.json").read_text())
+        self.assertEqual("read", manifest["default_permissions"].get("statuses"))
+
+    def test_legacy_status_changes_wake_pending_enqueue(self):
+        manifest = json.loads((ROOT / "manifest.json").read_text())
+        self.assertIn("status", manifest["default_events"])
+
+
 class WizardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -136,10 +146,10 @@ class WizardTests(unittest.TestCase):
                          manifest["hook_attributes"])
         self.assertEqual({"issues": "write", "pull_requests": "write", "checks": "write",
                           "contents": "write", "metadata": "read", "merge_queues": "read",
-                          "actions": "write", "administration": "read"},
+                          "actions": "write", "administration": "read", "statuses": "read"},
                          manifest["default_permissions"])
         self.assertEqual({"issues", "issue_comment", "pull_request", "check_run",
-                          "check_suite", "merge_group"}, set(manifest["default_events"]))
+                          "check_suite", "merge_group", "status"}, set(manifest["default_events"]))
         self.assertEqual([], self.requests)
         self.assertFalse((self.config / "github-app.json").exists())
 
