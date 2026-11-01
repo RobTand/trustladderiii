@@ -521,8 +521,8 @@ proof!(
     apply_changes_requested,
     check_apply(reply(Reply::ChangesRequested))
 );
-fn check_rebase_reply(value: Reply) {
-    let event = reply(value);
+proof!(apply_rebase_clean, {
+    let event = reply(Reply::RebaseClean { head: kani::any() });
     let Event::Reply { generation, .. } = event else {
         unreachable!()
     };
@@ -531,34 +531,30 @@ fn check_rebase_reply(value: Reply) {
     let accepted = rebase_progress_applies(b, generation);
     let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
     let funded = b.credit.can_spend(1);
-    match value {
-        Reply::RebaseClean { .. } => {
-            kani::cover!(accepted && free, "clean rebase uses the free allowance");
-            kani::cover!(accepted && !free && funded, "clean rebase spends credit");
-            kani::cover!(accepted && !free && !funded, "clean rebase needs credit");
-        }
-        Reply::RebaseNeedsChanges => {
-            kani::cover!(
-                accepted && free && funded,
-                "conflict fix pays despite free allowance"
-            );
-            kani::cover!(
-                accepted && !free && funded,
-                "conflict fix spends credit after allowance"
-            );
-            kani::cover!(accepted && !funded, "conflict fix needs credit");
-        }
-        _ => unreachable!(),
-    }
-}
-proof!(
-    apply_rebase_clean,
-    check_rebase_reply(Reply::RebaseClean { head: kani::any() })
-);
-proof!(
-    apply_rebase_needs_changes,
-    check_rebase_reply(Reply::RebaseNeedsChanges)
-);
+    kani::cover!(accepted && free, "clean rebase uses the free allowance");
+    kani::cover!(accepted && !free && funded, "clean rebase spends credit");
+    kani::cover!(accepted && !free && !funded, "clean rebase needs credit");
+});
+proof!(apply_rebase_needs_changes, {
+    let event = reply(Reply::RebaseNeedsChanges);
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = rebase_progress_applies(b, generation);
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let funded = b.credit.can_spend(1);
+    kani::cover!(
+        accepted && free && funded,
+        "conflict fix pays despite free allowance"
+    );
+    kani::cover!(
+        accepted && !free && funded,
+        "conflict fix spends credit after allowance"
+    );
+    kani::cover!(accepted && !funded, "conflict fix needs credit");
+});
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
