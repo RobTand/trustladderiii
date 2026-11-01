@@ -74,6 +74,9 @@ impl Fixture {
         drive(&mut self.controller, &mut self.source, &mut self.store);
     }
     fn planner_models(&self) -> Vec<String> {
+        if !self.root.path().join("entered.requests").exists() {
+            return vec![];
+        }
         recorded_runs(self.root.path())
             .into_iter()
             .filter(|r| r["request"]["role"] == "planner")
