@@ -563,7 +563,7 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
         {"kind": "failed_check", "report": "test_hello failed.", "goal_ids": ["greeting"]},
         {"kind": "review_finding", "report": "Keep greet's signature.", "goal_ids": ["interface"]},
     ]})
-    inputs["tests"].update(cpus=2, mem_gb=3, quiet_seconds=60)
+    inputs["tests"].update(cpus=2, mem_gb=3, quiet_seconds=60, exec_scratch=True)
 
     def factory(worktree):
         settings.append(asdict(worktree.test_settings))

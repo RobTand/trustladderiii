@@ -261,3 +261,17 @@ def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_pa
     with Worktree(submission[0]) as tree:
         pb_tests._stage(tree, staged)
     assert policies and all(policy == b"never" for policy in policies), policies
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_scratch_setting_reaches_the_trusted_action(submission, enabled):
+    from dataclasses import fields
+    assert 'exec_scratch' in {field.name for field in fields(TestSettings)}, 'maker settings must carry the opt-in'
+    root, scripts = submission
+    (scripts / 'response.json').write_text(json.dumps(Summary().result))
+    with Worktree(root) as tree:
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts, exec_scratch=enabled))()
+    assert result['status'] == 'completed'
+    args = json.loads((scripts / 'submitted.json').read_text())
+    action = args[args.index('--') + 1:]
+    assert ('--exec-scratch' in action) is enabled
