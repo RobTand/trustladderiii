@@ -487,6 +487,9 @@ PLANTED_LINES = [
     ('https://discord.com/api/webhooks/123/discordtok296', 'discordtok296'),
     (json.dumps({'k': 'secret:\tjson-tab-296'}), 'json-tab-296'),
     (json.dumps({'k': 'password:\n  json-newline-296'}), 'json-newline-296'),
+    # Valid JSON is judged by its field names, however deeply it is quoted.
+    (json.dumps({'k': json.dumps({'password': 'ab"cd-nested-296'})}), 'cd-nested-296'),
+    ('{"token": ["list-secret-296", "other"], "note": "kept"}', 'list-secret-296'),
 ]
 
 
