@@ -1114,6 +1114,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 | "add-add"
                 | "d5-clean"
                 | "d5-conflict"
+                | "q46-checking"
+                | "q46-reviewing"
+                | "q46-enqueue"
         ) {
             2
         } else {
