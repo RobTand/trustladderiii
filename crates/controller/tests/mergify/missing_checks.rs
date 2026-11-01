@@ -137,15 +137,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             assert_enqueued(&mut controller, &api, &before);
         }
         "head-replaced" => {
+            let old = only_incident(&mut controller).id;
             let mut body = pull_event(&api, "synchronize");
             body["before"] = json!(head);
             body["after"] = json!("cccccccccccccccccccccccccccccccccccccccc");
             body["pull_request"]["head"]["sha"] = body["after"].clone();
             api.state.lock().unwrap().pull = body["pull_request"].clone();
             apply_webhook(&mut controller, &api, "pull_request", body);
+            // The simulated pipeline may republish the new head and raise its own incident.
+            let replaced = incidents(&mut controller)
+                .into_iter()
+                .find(|row| row.id == old)
+                .unwrap();
             assert_eq!(
-                only_incident(&mut controller).value["open"],
-                false,
+                replaced.value["open"], false,
                 "a replaced head's missing-check incident clears on that evidence"
             );
         }
