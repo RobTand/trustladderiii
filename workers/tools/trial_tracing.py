@@ -181,11 +181,23 @@ def main():
         assert 'synthetic-secret-296' not in contents and 'synthetic-header-296' not in contents
         assert 'newest-turn-0' in contents and 'argument-tail' in contents and 'result-tail-0' in contents
         assert len(contents.encode()) < 1024 * 1024
+        # The newest turn keeps the most content; older spans shrink to a floor.
+        models.sort(key=lambda span: span.start_time_ns)
+        tools.sort(key=lambda span: span.start_time_ns)
+        newest_model = json.dumps([models[-1].inputs, models[-1].outputs])
+        assert 'newest-turn-39' in newest_model and 'reply-39' in newest_model
+        assert 'result-tail-39' in json.dumps(tools[-1].outputs)
+        model_bytes = [len(json.dumps(span.inputs).encode()) for span in models]
+        tool_bytes = [len(json.dumps(span.outputs).encode()) for span in tools]
+        assert model_bytes[-1] > model_bytes[0] and tool_bytes[-1] > tool_bytes[0]
         print(json.dumps({
             'mode': 'synthetic_maker', 'trace_id': trace_id, 'experiment': experiment,
             'span_count': len(spans), 'content_bytes_read_back': len(contents.encode()),
             'worker_seconds': round(worker_seconds, 2),
             'trace_truncated': True, 'request_preview': trace.info.request_preview,
+            'model_input_bytes': {'oldest': model_bytes[0], 'newest': model_bytes[-1]},
+            'tool_output_bytes': {'oldest': tool_bytes[0], 'newest': tool_bytes[-1]},
+            'newest_model_input_tail': json.dumps(models[-1].inputs)[-256:],
             'response_preview': trace.info.response_preview,
             'model_input_tail': json.dumps(models[0].inputs)[-512:],
             'model_output': models[0].outputs,

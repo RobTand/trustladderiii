@@ -197,7 +197,8 @@ its `.local` name in both Host and browser CORS origins. The UI and API accept
 `dl380g10:5033` and `dl380g10.local:5033` after installing the launcher update.
 These restrictions are not authentication. The server is LAN-only with no login.
 Traces now contain repository text, prompts, model replies and tool I/O.
-Redaction is pattern-based best effort; it cannot recognize every possible secret.
+Redaction is best effort; it cannot recognize every possible secret.
+`workers/README.md` lists what it covers and what it misses.
 
 The backend is database `tl3_mlflow` in TL3's user-level Postgres. Connections
 use `~/.local/share/tl3/postgres/socket`, port 5543. TCP stays disabled on
@@ -227,7 +228,8 @@ observability installation, because that command also starts the controller.
 up to 4,096 spans to `tl3_mlflow` and keeps it, so the database grows with the
 number of runs. Spans include bounded prompts, replies, repository text and
 tool arguments/results, plus names and token counts. Each export has a 1 MiB
-trace budget; truncation retains recent content and reserves root content.
+trace budget. The root keeps its inputs and final reply, the newest model and
+tool spans keep the most content, and older spans shrink to a floor.
 To reclaim space, delete old traces in the UI or through
 MLflow's API, then run `mlflow gc` with the same backend store to remove the
 deleted rows and their artifacts. A retention window is an open decision in

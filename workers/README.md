@@ -514,27 +514,75 @@ Traces contain repository text, prompts, model replies, tool arguments and
 results, plus role/model names, numeric token counts and correlation tags.
 Cached-read and cache-creation counts are retained when reported. Numeric raw
 proxy usage chunks sit beside LangChain totals so accounting differences are visible.
-Redaction is pattern-based best effort, not a guarantee that arbitrary secrets
-will be recognized. It covers sensitive field names and credential patterns,
-and the runtime supplies the already-loaded model key without tracing opening
+Redaction is best effort, not a guarantee that every secret is recognized.
+It has three layers, and runs before export:
+
+- **Patterns.** Credential formats (private key blocks, JWTs, vendor
+  token prefixes such as `ghp_`, `glrt-`, `whsec_`, `ya29.` and `hvs.`,
+  webhook URLs), passwords in URLs, authorization headers,
+  command-line flags such as `--password`, `curl --user`, `sshpass -p` and
+  `mysql -pPW`, and values after a secret label in env, YAML, TOML, INI, JSON,
+  netrc and markdown forms. A label is judged by its words: `DB_PASS=` and
+  `_authToken=` are secret labels, `input_tokens` and `TokenBucket` are not.
+  Values that are code, types, numbers, templates or prose stay.
+- **Structure.** A string that is wholly JSON is parsed and judged by field
+  name. A tool result from a sensitive file becomes
+  `[omitted: content of sensitive file PATH]`: `.env*`, `*.pem`, `*.key`, SSH
+  `id_*` keys, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `*credentials*`,
+  `*secret*`, `*.ppk`, `*.p12`, `*.pfx`, docker `config.json` and kube configs.
+  This covers the tool span, the tool message in later model inputs, grep
+  matches, and write or edit arguments.
+- **Entropy.** A token of 24 or more characters that mixes upper case, lower
+  case and digits like a random string is redacted without a label. Exact 40-
+  and 64-character hex digests (git SHAs, sha256), UUIDs, MLflow trace IDs and
+  `sha512-` integrity strings stay.
+
+The runtime supplies the already-loaded model key, so tracing never opens
 credential files. Headers, provider metadata and raw exceptions are omitted.
+Integer usage counts always survive.
 
-What redaction does not catch: a secret with no recognizable prefix or label,
-such as a bare hex or base64 string; an unquoted value with spaces after a label
-(`password=two words` keeps `words`); credentials in `user:pw@host` without a
-scheme; secrets that a tool or the model rewrote, split or encoded (base64,
-URL-encoding, string concatenation); and personal or business data in
-repository text. Treat every trace as readable by anyone on the LAN.
+What redaction does not catch:
 
+- Unlabeled secrets with low entropy: a short or word-like password, a value
+  with one character class (upper case and digits only), a 40- or
+  64-character hex secret, which looks like a digest, or a secret shaped like a
+  UUID.
+- Weakly labeled values that don't look random. `key`, `pass`, `auth`, `pwd`,
+  `pw`, `sig` and `session` also name ordinary things, so `pass=hunter` stays.
+  A bare lowercase name in a code-style assignment (`token = runtime`) is
+  treated as a variable. A value made only of words, one of which is `fake`,
+  `fixture`, `test`, `example` or a similar word, is treated as a fixture.
+- An unquoted value with spaces after a label: `password=two words` keeps
+  `words`. Credentials in `user:pw@host` without a scheme.
+- Re-encoded secrets: base64 of a short secret, URL-encoding, string
+  concatenation, or values a tool or the model split or rewrote.
+- New token prefixes, unless the token itself looks random.
+- Multi-line forms (YAML block scalars, Kubernetes name and value pairs, TOML
+  sections, markdown tables) inside JSON that is embedded in other text, where
+  newlines are escaped.
+- Sensitive files read without a path argument, and personal or business data
+  in repository text.
+
+Treat every trace as readable by anyone on the LAN.
+
+Content is bounded when each span ends, and redacted once when the run ends.
 Each message, tool argument and result is bounded separately. Oversized text
-keeps complete trailing lines with a truncation note; an oversized single line
-is omitted to avoid exposing part of a credential. Serialized JSON is bounded
-by field first, so model replies and tool arguments remain readable. Message lists keep their
-newest items. Each span input/output is at most 64 KiB, and the trace has a
-1 MiB export budget. After that budget fills, spans keep metadata and token
-counts, with content-budget notices. The root retains space for readable inputs
-and the final reply. If metadata also fills the export budget, the root counts
-omitted spans in `tl3.trace.omitted_spans`. The root marks budget truncation with `tl3.trace.truncated`.
+keeps complete trailing lines with a truncation note. An oversized single line
+keeps its head and tail, with a note giving how many characters were cut from
+the middle. A cut never starts inside a private key block or a token, and
+redaction sees 1 KiB of text beyond each cut, so a cut cannot separate a label
+from its value. Serialized JSON is bounded by field first, so model replies and
+tool arguments remain readable. Message lists keep their newest items.
+
+Each span input and output is at most 64 KiB, and the trace has a 1 MiB export
+budget. The root keeps its inputs and the final reply. Model and tool spans
+come next, newest first, so the latest turns keep the most content. Chain
+spans, which repeat the graph state, come last. Every span keeps a floor of up
+to 4 KiB, less when a trace has many spans, so older spans shrink before
+anything else. Spans keep metadata and token counts regardless. The root marks
+truncation with `tl3.trace.truncated`. A run with more than 4,096 spans keeps
+its first 1,024 and last 3,072; the root counts the rest in
+`tl3.trace.omitted_spans`, and children of omitted spans attach to the root.
 The MLflow server is LAN-only with no login; anyone on the LAN can read these
 prompts and repository contents. See the deployment README for access limits.
 
@@ -543,7 +591,6 @@ no retries, one-second HTTP timeouts and a five-second process alarm. The worker
 never waits for that child. Export failures and initialization failures log a
 fixed diagnostic to stderr, without exception details, and preserve the role's
 result. Traces can be lost during an outage or if the supervisor kills a run.
-There is no retry backlog. Runs exceeding 4,096 spans drop their trace and log
-that same diagnostic. Deep Agents remains the engine. Stored traces aren't
+There is no retry backlog. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
 space.
