@@ -28,3 +28,24 @@ filegroup(
     srcs = glob(["*.py"]),
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "replay_exploration",
+    srcs = ["replay_exploration.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//workers/tests:worker_process"],
+)
+
+py_binary(
+    name = "replay_maker_context",
+    srcs = ["replay_maker_context.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//workers/tests:worker_process"],
+)
+
+py_library(
+    name = "replay_usage",
+    srcs = ["replay_usage.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//workers/src"],
+)

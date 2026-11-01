@@ -55,6 +55,7 @@ tl3_py_test(
     srcs = ["test_maker.py"],
     deps = [
         ":conftest",
+        ":message_invariants",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//httpx",
@@ -165,6 +166,7 @@ tl3_py_test(
         ":conftest",
         ":test_workers",
         "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
         "@tl3_pip//mlflow_tracing",
         "@tl3_pip//opentelemetry_proto",
@@ -210,6 +212,41 @@ tl3_py_test(
     srcs = ["test_prompt_capabilities.py"],
     deps = [
         ":conftest",
+        "@tl3_pip//pytest",
+    ],
+)
+
+py_library(
+    name = "message_invariants",
+    srcs = ["message_invariants.py"],
+    visibility = ["//visibility:public"],
+    deps = ["@tl3_pip//langchain_core"],
+)
+
+tl3_py_test(
+    name = "test_exploration",
+    srcs = ["test_exploration.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":test_workers",
+        "//workers/src",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_prompt_cache",
+    srcs = ["test_prompt_cache.py"],
+    deps = [
+        ":conftest",
+        ":message_invariants",
+        ":test_maker",
+        ":test_workers",
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )

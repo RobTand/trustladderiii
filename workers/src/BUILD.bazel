@@ -44,6 +44,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         "@tl3_pip//httpx",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//mlflow_tracing",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
@@ -58,6 +59,7 @@ py_library(
         "tl3_workers/__main__.py",
         "tl3_workers/classifier_eval.py",
         "tl3_workers/contracts.py",
+        "tl3_workers/exploration.py",
         "tl3_workers/forecast.py",
         "tl3_workers/memory.py",
         "tl3_workers/pb_tests.py",
@@ -83,6 +85,7 @@ py_library(
         "@tl3_pip//deepagents",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain",
         "@tl3_pip//langchain_core",
         "@tl3_pip//langchain_openai",
         "@tl3_pip//langgraph",
