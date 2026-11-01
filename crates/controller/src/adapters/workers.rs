@@ -916,7 +916,31 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
         return Ok(Reconciliation::Absent);
     };
     if exit["code"] != 0 {
-        return Ok(Reconciliation::Found(failed(delivery)));
+        let mut completion = failed(delivery);
+        if !delivery.is_classifier()
+            && let Some(summary) = read(&attempt.join("memory.json")).ok().flatten()
+            && let Some(reason) = summary.get("reason")
+            && let (Some(class), Some(message)) = (
+                reason["failure_class"].as_str(),
+                reason["failure_message"].as_str(),
+            )
+            && !class.is_empty()
+            && class.len() <= 64
+            && class
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && !message.is_empty()
+            && message.len() <= 512
+            && !message.chars().any(char::is_control)
+        {
+            completion.observations = vec![Observation::WorkerFailed {
+                node: delivery.node(),
+                generation: delivery.generation,
+                failure_class: class.into(),
+                failure_message: message.into(),
+            }];
+        }
+        return Ok(Reconciliation::Found(completion));
     }
     let observation = match fs::read(attempt.join("stdout.jsonl")) {
         Ok(bytes) => read(&attempt.join("request.json"))?

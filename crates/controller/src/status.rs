@@ -102,6 +102,17 @@ pub fn load_request_details(
             },
         );
     }
+    for row in tx.query("SELECT row_id, value FROM tl3_world WHERE table_name = 'worker_failures' AND row_id = ANY($1)", &[&ids]).map_err(tl3_store::Error::from)? {
+        let id: String = row.get(0);
+        let failure: serde_json::Value = row.get(1);
+        if let Ok(id) = id.parse::<u64>() {
+            let details = details.entry(NodeId(id)).or_default();
+            let progress = details.last_progress.get_or_insert_with(|| NONE_RECORDED.into());
+            write!(progress, "; last worker failure: {}: {}",
+                failure["failure_class"].as_str().unwrap_or("unknown"),
+                failure["failure_message"].as_str().unwrap_or("worker run failed")).expect("write to string");
+        }
+    }
     for row in tx.query("SELECT row_id, value FROM tl3_world WHERE table_name = 'incidents' AND value->>'node' = ANY($1) AND value->>'open' = 'true' ORDER BY row_id", &[&ids]).map_err(tl3_store::Error::from)? {
         let id: String = row.get(0);
         let incident: crate::looks::Incident = crate::decode_stored(row.get(1))?;

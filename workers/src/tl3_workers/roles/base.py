@@ -3,6 +3,8 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from tl3_workers.exploration import ExplorationBudget
+
 
 @dataclass(frozen=True)
 class Role:
@@ -16,3 +18,5 @@ class Role:
     code_only_fields: tuple[str, ...] = ()
     # Session runners validate before saving a completed reply.
     validates_reply: bool = False
+    exploration_budget: ExplorationBudget | None = None
+

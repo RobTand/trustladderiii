@@ -1568,6 +1568,38 @@ impl Controller {
                     summary.push(' ');
                     summary.push_str(&detail);
                 }
+                if source == executor::Upstream::Workers {
+                    let failure = commit
+                        .rows
+                        .iter()
+                        .rev()
+                        .find_map(|row| match row {
+                            RowChange::Put { table, id, value }
+                                if table == "worker_failures" && id == &node.0.to_string() =>
+                            {
+                                Some(value)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            snapshot
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "worker_failures" && row.id == node.0.to_string()
+                                })
+                                .map(|row| &row.value)
+                        });
+                    if let Some(failure) = failure {
+                        summary.push_str(&format!(
+                            " Last worker failure: {}: {}.",
+                            failure["failure_class"].as_str().unwrap_or("unknown"),
+                            failure["failure_message"]
+                                .as_str()
+                                .unwrap_or("worker run failed")
+                        ));
+                    }
+                }
                 commit.rows.push(put(
                     "incidents",
                     id.clone(),
@@ -2132,6 +2164,33 @@ impl Controller {
                         pass: pass && exact_head,
                         in_footprint,
                     },
+                }
+            }
+            Observation::WorkerFailed {
+                node,
+                generation,
+                failure_class,
+                failure_message,
+            } => {
+                let n = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("worker node missing"))?;
+                if n.run != Some(generation) || n.generation != generation {
+                    return Ok(());
+                }
+                commit.rows.push(put(
+                    "worker_failures",
+                    node.0.to_string(),
+                    json!({
+                        "node": node, "generation": generation,
+                        "failure_class": failure_class, "failure_message": failure_message,
+                    }),
+                ));
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RunFailed,
                 }
             }
             Observation::WorkerReply {
@@ -2788,6 +2847,7 @@ fn observation_upstream(
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),
         Observation::Classified { .. }
         | Observation::WorkerReply { .. }
+        | Observation::WorkerFailed { .. }
         | Observation::Plan { .. }
         | Observation::Made { .. }
         | Observation::Reviewed { .. } => Some(Upstream::Workers),

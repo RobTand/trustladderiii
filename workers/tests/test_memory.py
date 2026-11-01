@@ -49,7 +49,7 @@ def test_failure_reports_safe_reason_before_propagating(tmp_path, monkeypatch):
     assert summary.exists(), "failed runs must also leave a summary"
     record = json.loads(summary.read_text())
     assert record["outcome"] == "failed"
-    assert record["reason"] == "RuntimeError"
+    assert record["reason"] == {"failure_class": "RuntimeError", "failure_message": "worker run failed"}
     assert "fixture-secret" not in summary.read_text()
 
 

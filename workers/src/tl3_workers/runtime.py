@@ -22,6 +22,7 @@ from tl3_workers.contracts import read_json, schema, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
+from tl3_workers.exploration import ExplorationMiddleware
 
 
 BUILTIN_TOOL_DESCRIPTIONS = {
@@ -100,9 +101,12 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
         human_message_token_limit_before_evict=None,
         tool_token_limit_before_evict=None,
     )
+    middleware = [filesystem]
+    if role.exploration_budget is not None:
+        middleware.append(ExplorationMiddleware(role.exploration_budget))
     return create_deep_agent(
         model=model, tools=build_tools(worktree, role.tools), subagents=[], system_prompt=prompt,
-        middleware=[filesystem], name="tl3_" + role.name,
+        middleware=middleware, name="tl3_" + role.name,
     )
 
 

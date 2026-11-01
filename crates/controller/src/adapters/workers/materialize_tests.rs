@@ -154,5 +154,8 @@ fn failed_attempt_preserves_diagnostic_before_retirement() {
     };
     let value = json!(completion.observations);
     assert_eq!(value[0]["WorkerFailed"]["failure_class"], "ValueError");
-    assert_eq!(value[0]["WorkerFailed"]["failure_message"], "reply cites a memory it was not given");
+    assert_eq!(
+        value[0]["WorkerFailed"]["failure_message"],
+        "reply cites a memory it was not given"
+    );
 }
