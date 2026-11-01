@@ -74,7 +74,8 @@ def replay(inputs, checkout, issue, role, baseline, omit_files=False):
         request = {
             "protocol": 1, "operation": {"node": 0, "generation": 0, "kind": role},
             "role": role, "worktree": str(checkout), "inputs": json.loads(json.dumps(inputs)),
-            "memory": {"summary_file": str(root / "memory.json")},
+            "memory": {"summary_file": str(root / "memory.json"), "repo": "RobTand/prismabuild",
+                       "issue": issue, "request": "offline-replay", "epoch": 0},
             "model": {"base_url": "http://model.invalid/v1", "name": "scripted-offline",
                       "effort": "high", "budget_tokens": 32000},
             "key_file": str(root / "never-read-key"),
@@ -86,7 +87,9 @@ def replay(inputs, checkout, issue, role, baseline, omit_files=False):
                                               "overhead_tokens": {"prompt": 0}}
         result = worker_process.start_worker(root, request, turns)
         assert not Path(request["key_file"]).exists()
-        metrics = json.loads((root / "scripted-model.metrics.json").read_text())
+        metrics_path = root / "scripted-model.metrics.json"
+        assert metrics_path.exists(), result.stderr
+        metrics = json.loads(metrics_path.read_text())
         failure = json.loads((root / "memory.json").read_text())["reason"]
         if omit_files:
             assert result.exit_code == 1
