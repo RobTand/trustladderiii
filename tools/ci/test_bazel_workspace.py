@@ -50,3 +50,27 @@ class AutomaticTestDiscoveryTests(unittest.TestCase):
                 text = build.read_text()
                 self.assertIn('tl3_integration_tests(', text)
                 self.assertNotRegex(text, r'name = "test_test_')
+
+
+class BuildBuddySuggestionsTests(unittest.TestCase):
+    def test_remote_and_cache_only_use_compression_and_chunking(self):
+        config = (ROOT / '.bazelrc').read_text().splitlines()
+        for mode in ['remote', 'cache-only']:
+            for flag in ['--remote_cache_compression', '--experimental_remote_cache_chunking']:
+                self.assertIn(f'build:{mode} {flag}', config)
+        self.assertIn('build:remote --jobs=80', config)
+        self.assertNotIn('build --jobs=80', config)
+
+    def test_profiles_and_ci_diagnostics_are_preserved(self):
+        config = (ROOT / '.bazelrc').read_text().splitlines()
+        for flag in ['--noslim_profile', '--experimental_profile_include_target_label',
+                     '--experimental_profile_include_primary_output']:
+            self.assertIn(f'build {flag}', config)
+        for flag in ['--remote_grpc_log=bazel-remote-grpc.log',
+                     '--execution_log_compact_file=execution_log.binpb.zst',
+                     '--build_metadata=ROLE=CI',
+                     '--build_metadata=REPO_URL=https://github.com/RobTand/trustladderiii']:
+            self.assertIn(f'build:ci {flag}', config)
+        ignored = (ROOT / '.gitignore').read_text().splitlines()
+        self.assertIn('/bazel-remote-grpc.log', ignored)
+        self.assertIn('/execution_log.binpb.zst', ignored)
