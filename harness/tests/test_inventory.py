@@ -58,3 +58,18 @@ def test_inventory_batches_selected_node_ids(tmp_path, monkeypatch, per_file):
     first, second = ('test_first.py::test_ok',), ('test_second.py::test_ok',)
     expected = [(first,), (second,)] if per_file else [(first, second)]
     assert calls == expected
+
+
+def test_node_ids_include_unittest_cases_without_a_test_prefix(tmp_path):
+    (tmp_path / 'test_policy.py').write_text('''import unittest
+from unittest import TestCase as Case
+class PerformantPolicy(unittest.TestCase):
+    def test_admission(self): pass
+class OtherPolicy(Case):
+    def test_refusal(self): pass
+class Helper:
+    def test_hidden(self): pass
+''')
+    assert inventory.node_ids(tmp_path, ['test_policy.py']) == [
+        'test_policy.py::PerformantPolicy::test_admission',
+        'test_policy.py::OtherPolicy::test_refusal']
