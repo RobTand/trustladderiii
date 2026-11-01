@@ -3,6 +3,8 @@ use tl3_controller::executor::Output as Out;
 mod catchup_heads;
 #[path = "github/notice_incidents.rs"]
 mod notice_incidents;
+#[path = "github/intake_errors.rs"]
+mod intake_errors;
 #[path = "github/real_writer.rs"]
 mod real_writer;
 #[path = "github/request_vocabulary.rs"]
@@ -487,6 +489,10 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--intake-errors") {
+        intake_errors::run();
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("--real-worker-contracts") {
         real_writer::run("multiline");
         real_writer::classifier_contract();
