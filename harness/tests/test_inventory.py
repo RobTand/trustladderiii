@@ -1,7 +1,6 @@
-import argparse
 import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -44,8 +43,8 @@ def test_inventory_batches_selected_node_ids(tmp_path, monkeypatch, per_file):
     bundle = tmp_path / 'served.bundle'
     git(repo, 'bundle', 'create', str(bundle), 'HEAD')
     image = 'sha256:' + '1' * 64
-    monkeypatch.setattr(argparse.ArgumentParser, 'parse_args', lambda _: SimpleNamespace(
-        bundle=bundle, image=image, files=['test_second.py', 'test_first.py'], per_file=per_file))
+    monkeypatch.setattr(sys, 'argv', ['inventory.py', *(['--per-file'] if per_file else []),
+                                    str(bundle), image, 'test_second.py', 'test_first.py'])
     calls = []
 
     def run_checks(repo, base, head, checks, *, container):
@@ -57,4 +56,5 @@ def test_inventory_batches_selected_node_ids(tmp_path, monkeypatch, per_file):
     monkeypatch.setattr(inventory, 'run_checks', run_checks)
     assert inventory.main() == 0
     first, second = ('test_first.py::test_ok',), ('test_second.py::test_ok',)
-    assert calls == [(first,), (second,)] if per_file else calls == [(first, second)]
+    expected = [(first,), (second,)] if per_file else [(first, second)]
+    assert calls == expected

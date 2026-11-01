@@ -229,13 +229,14 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     --container-image "$IMAGE_ID" --progress-phase tests=300 \
     --env PYTHONPATH=trusted --env OMP_NUM_THREADS=1 \
     --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
-    /usr/bin/python3.14 inventory.py served.bundle "$IMAGE_ID" \
-    tests/test_example.py
+    /usr/bin/python3.14 inventory.py --per-file served.bundle "$IMAGE_ID" \
+    tests/test_example.py tests/test_other.py
 ```
 
 The runner bounds each report record to 64 KiB. For a large expanded suite,
-call the inventory once per file from a loop inside one admitted action.
-Each invocation continues the action's cumulative progress count.
+use `--per-file` to call `run_checks` separately for each selected file inside
+one admitted action. Results are combined in one JSON inventory, and each call
+continues the action's cumulative progress count.
 
 An inventory action exits nonzero if any selected node does not pass. Its
 JSON retains every node's outcome and failure message. Record skips and

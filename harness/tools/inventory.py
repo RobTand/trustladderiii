@@ -35,6 +35,8 @@ def node_ids(repo, files):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--per-file", action="store_true",
+                        help="call run_checks separately for each selected test file")
     parser.add_argument("bundle", type=Path)
     parser.add_argument("image")
     parser.add_argument("files", nargs="+")
@@ -47,7 +49,10 @@ def main():
         checks = tuple(Check(name, Kind.BEHAVIOR_PRESERVING,
                              tuple(node for node in nodes if node.split("::")[0] == name))
                        for name in sorted({node.split("::")[0] for node in nodes}))
-        results = run_checks(repo, revision, revision, checks, container=Container(args.image))
+        batches = ((check,) for check in checks) if args.per_file else (checks,)
+        results = tuple(result for batch in batches
+                        for result in run_checks(repo, revision, revision, batch,
+                                                 container=Container(args.image)))
         print(json.dumps({"commit": revision, "image": args.image,
                           "counts": dict(Counter(test.head for result in results for test in result.tests)),
                           "results": json.loads(result_json(results))}), flush=True)
