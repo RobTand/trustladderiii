@@ -3,6 +3,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -94,31 +95,23 @@ class Reporter:
         self.collection_errors = []
 
     @pytest.fixture(autouse=True)
-    def _tl3_scratch(self, tmp_path_factory):
-        # A lazily used session factory must not live inside function scratch.
-        tmp_path_factory.getbasetemp()
-        # Function fixtures finish before this directory is released; wider
-        # scoped fixtures keep their own session-owned temporary directories.
-        with tempfile.TemporaryDirectory(prefix='tl3-test-') as directory:
-            previous = tempfile.tempdir
-            environment = {name: os.environ.get(name) for name in ('TMPDIR', 'TEMP', 'TMP')}
-            tempfile.tempdir = directory
-            os.environ.update(dict.fromkeys(environment, directory))
-            try:
-                yield Path(directory)
-            finally:
-                tempfile.tempdir = previous
-                for name, value in environment.items():
-                    if value is None:
-                        os.environ.pop(name, None)
-                    else:
-                        os.environ[name] = value
-
-    @pytest.fixture
-    def tmp_path(self, _tl3_scratch):
-        path = _tl3_scratch / 'pytest'
-        path.mkdir()
-        return path
+    def _tl3_scratch(self, tmp_path):
+        previous = tempfile.tempdir
+        environment = {name: os.environ.get(name) for name in ('TMPDIR', 'TEMP', 'TMP')}
+        tempfile.tempdir = str(tmp_path)
+        os.environ.update(dict.fromkeys(environment, str(tmp_path)))
+        try:
+            yield
+        finally:
+            tempfile.tempdir = previous
+            for name, value in environment.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+            # A writer can race removal. Preserve the test's outcome; the
+            # container's fixed tmpfs still bounds and discards any residue.
+            shutil.rmtree(tmp_path, ignore_errors=True)
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
