@@ -478,6 +478,8 @@ pub(super) fn gone_issue(settings: &tl3_config::Store) {
 
 pub(super) fn duplicate_request(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
+    // Keep the restarted request open, so its merge doesn't close the issue again.
+    fs::write(root.path().join("hold-merges"), "hold").unwrap();
     let api = Server::new();
     api.state.lock().unwrap().closed_by = Some("factory[bot]".into());
     let mut controller = operations_controller(
