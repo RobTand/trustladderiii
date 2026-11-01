@@ -94,15 +94,19 @@ class Redactor:
         if limit < 256 or depth > 20:
             return '[truncated: content budget]'
         if isinstance(value, str):
-            if len(value) > limit // 6 - 64 and value[:128].lstrip().startswith(('{', '[')):
+            if value[:128].lstrip().startswith(('{', '[', '"')):
                 # Model replies and tool arguments often contain JSON on one
-                # physical line. Bound its fields without discarding the reply.
+                # physical line. Bound oversized fields without discarding the
+                # reply, and judge any JSON by its field names, however deeply
+                # quoted. Unchanged short JSON keeps its original layout.
                 try:
                     decoded = json.loads(value)
                 except (ValueError, RecursionError):
                     pass
                 else:
-                    return json.dumps(self.clean(decoded, limit // 2, depth + 1), ensure_ascii=False)
+                    cleaned = self.clean(decoded, limit // 2, depth + 1)
+                    if len(value) > limit // 6 - 64 or cleaned != decoded:
+                        return json.dumps(cleaned, ensure_ascii=False)
             # Six bytes covers JSON's worst-case escaping of a character. Each
             # message/argument/result is bounded before pattern matching.
             return self.text(self.tail(value, min(STRING_CHARS, limit // 6 - 64)))
