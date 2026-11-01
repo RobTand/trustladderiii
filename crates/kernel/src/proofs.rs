@@ -799,6 +799,10 @@ fn gate_world(width: u8) -> World {
 }
 
 fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
+    gate_world_with_waiters(width, first, false)
+}
+
+fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) -> World {
     let mut w = World::new(&[width], 4);
     w.next_ticket = 8;
     for i in 0..4 {
@@ -809,11 +813,12 @@ fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
         let files: u64 = kani::any();
         kani::assume(files > 0 && files < 16);
         n.footprint = Footprint::inline(files);
-        n.paused = kani::any();
+        n.paused = !waiting_only && kani::any();
         let phase: u8 = kani::any();
-        kani::assume(phase < 4);
+        kani::assume(phase < if waiting_only { 2 } else { 4 });
         n.phase = match phase {
             0 => Phase::Ready(Resume::Making),
+            1 if waiting_only => Phase::Unplanned,
             1 => Phase::Queued,
             2 => Phase::Making,
             _ => Phase::Unplanned,
@@ -932,8 +937,16 @@ fn check_gate_planning(width: u8) {
 
 fn check_gate_progress(width: u8) {
     let mut before = gate_world(width);
-    kani::assume(before.is_settled());
-    let event = before.witness().unwrap();
+    // Every mixed gate world either has a witness or is waiting-only. The
+    // separate waiting proof establishes that the latter cannot be settled.
+    let Some(event) = before.witness() else {
+        for n in &before.nodes {
+            assert!(!n.paused && !n.holds && !n.pool && n.run.is_none());
+            assert!(matches!(n.phase, Phase::Ready(_) | Phase::Unplanned));
+        }
+        kani::cover!(true, "without a witness every leaf is an unpaused waiter");
+        return;
+    };
     kani::cover!(
         before.nodes.iter().filter(|n| n.holds).count() == usize::from(width),
         "a full gate has a progress event"
@@ -1025,8 +1038,22 @@ fn check_gate_progress(width: u8) {
     }
 }
 
-// The witness proof above establishes these three preconditions for every
-// settled gate world. Prove each application separately to keep the event
+fn check_gate_waiting_progress(width: u8) {
+    let before = gate_world_with_waiters(width, None, true);
+    assert!(before.witness().is_none());
+    assert!(!before.is_settled());
+    kani::cover!(
+        before.nodes.iter().all(|n| matches!(n.phase, Phase::Ready(_))),
+        "a world with only ready leaves can advance"
+    );
+    kani::cover!(
+        before.nodes.iter().all(|n| n.phase == Phase::Unplanned),
+        "a world with only unplanned leaves can advance"
+    );
+}
+
+// Together the witness and waiting proofs establish these preconditions for
+// every settled gate world. Prove each application separately to keep the event
 // payload and actor concrete, as in the general per-event proofs.
 fn check_gate_maker_progress(width: u8) {
     let before = gate_world_in_phase(width, Some(Phase::Making));
@@ -1096,6 +1123,8 @@ proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 proof!(gate_progress_w2, check_gate_progress(2));
 proof!(gate_progress_w3, check_gate_progress(3));
+proof!(gate_waiting_progress_w2, check_gate_waiting_progress(2));
+proof!(gate_waiting_progress_w3, check_gate_waiting_progress(3));
 
 proof!(gate_maker_progress_w2, check_gate_maker_progress(2));
 proof!(gate_maker_progress_w3, check_gate_maker_progress(3));
