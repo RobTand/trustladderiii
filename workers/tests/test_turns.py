@@ -52,7 +52,9 @@ class Scripted(FakeMessagesListChatModel):
         self.calls.append((copy.deepcopy(messages), self.offered))
         self.offered = False
         step = self.steps.pop(0)
-        if isinstance(step, Exception):
+        if callable(step):
+            step = step()
+        if isinstance(step, BaseException):
             raise step
         self.responses, self.i = [step], 0
         return super()._generate(messages, **kwargs)
@@ -242,3 +244,189 @@ def test_no_room_for_a_repair_fails_with_the_validation_message(request_doc, mon
         runtime.run(request_doc, lambda _: None)
     assert not isinstance(raised.value, InvalidReply)
     assert len(model.calls) == 1, "a repair that cannot fit the input budget is not sent"
+
+
+class Killed(BaseException):
+    """Stands in for SIGKILL: no handler in the worker can catch it."""
+
+
+def maker_visit(maker_request, tmp_path):
+    maker_request["inputs"]["context_size"] = 150_000
+    maker_request["session_file"] = str(tmp_path / "sessions/1/plan-0/attempt-1.json")
+    maker_request["resume_session"] = False
+    return Path(maker_request["session_file"]).with_suffix(".visit")
+
+
+def rerun(maker_request, monkeypatch, steps):
+    # RunFailed advances the generation; no reply was accepted.
+    maker_request["operation"]["generation"] += 1
+    model = install(monkeypatch, steps)
+    events = []
+    runtime.run(maker_request, events.append)
+    return model, events
+
+
+def interrupted(maker_request, monkeypatch, steps):
+    install(monkeypatch, steps)
+    with pytest.raises((Killed, openai.APIConnectionError)):
+        runtime.run(maker_request, lambda _: None)
+
+
+@pytest.mark.parametrize("damage", ["unversioned", "future", "not_json", "bad_messages"])
+def test_unusable_visit_checkpoint_starts_the_visit_afresh(maker_request, tmp_path, monkeypatch, capsys, damage):
+    visit = maker_visit(maker_request, tmp_path)
+    interrupted(maker_request, monkeypatch, [ROLES["maker"][1], dropped(), dropped()])
+    saved = json.loads(visit.read_text())
+    if damage == "unversioned":
+        saved.pop("version", None)
+    elif damage == "future":
+        saved["version"] = 999
+    elif damage == "bad_messages":
+        saved["messages"] = [{"type": "no-such-message"}]
+    visit.write_text("{not json" if damage == "not_json" else json.dumps(saved))
+    capsys.readouterr()
+    model, events = rerun(maker_request, monkeypatch, [ROLES["maker"][1], reply(test_maker.DONE)])
+    assert events[-1]["reply"]["kind"] == "done"
+    first = model.calls[0][0]
+    assert not tool_results(first) and sum(isinstance(m, HumanMessage) for m in first) == 1
+    assert "tl3_workers: maker: visit checkpoint unusable; starting the visit afresh" in capsys.readouterr().err
+
+
+def pb_scripts(tmp_path):
+    scripts = tmp_path / "pb-tools"
+    scripts.mkdir()
+    (scripts / "pbrun.py").write_text(
+        "import json, pathlib\n"
+        "log = pathlib.Path(__file__).with_name('submitted.log')\n"
+        "log.write_text(log.read_text() + 'x' if log.exists() else 'x')\n"
+        "print(json.dumps({'schema': 'prismabuild.submission.v1', 'action_key': 'a' * 64}))\n")
+    (scripts / "pbwait.py").write_text(
+        "import hashlib, json, pathlib, sys\n"
+        "here = pathlib.Path(__file__).parent\n"
+        "(here / 'waited.log').open('a').write(sys.argv[-1] + '\\n')\n"
+        "summary = {'status': 'completed', 'totals': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0},\n"
+        "           'tests': [{'test': 'test_greeting.py::test_hello', 'outcome': 'passed', 'message': ''}],\n"
+        "           'note': ''}\n"
+        "raw = ('TL3_TEST_SUMMARY ' + json.dumps(summary) + '\\n').encode()\n"
+        "(here / 'action.log').write_bytes(raw)\n"
+        "ending = {'action_key': 'a' * 64, 'status': 'executed', 'succeeded': True, 'exit_code': 0,\n"
+        "          'result': {'verified': True, 'receipt_sha256': 'b' * 64, 'stdout': {\n"
+        "              'path': str(here / 'action.log'), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}}}\n"
+        "print(json.dumps({'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [ending]}))\n")
+    return scripts
+
+
+def test_resume_reattaches_to_the_in_flight_test_action(maker_request, tmp_path, monkeypatch):
+    from tl3_workers import pb_tests
+
+    maker_visit(maker_request, tmp_path)
+    scripts = pb_scripts(tmp_path)
+    maker_request["inputs"]["tests"]["tools_path"] = str(scripts)
+    original = pb_tests._json_command
+    killing = True
+
+    def command(args):
+        if killing and args[1].endswith("pbwait.py"):
+            raise Killed()
+        return original(args)
+
+    monkeypatch.setattr(pb_tests, "_json_command", command)
+    tests = call("run_tests", {"tests": ["test_greeting.py::test_hello"]})
+    interrupted(maker_request, monkeypatch, [ROLES["maker"][1], tests])
+    assert (scripts / "submitted.log").read_text() == "x"
+    killing = False
+    model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE)])
+    assert events[-1]["reply"]["kind"] == "done"
+    assert (scripts / "submitted.log").read_text() == "x", "the resumed run waits; it never resubmits"
+    assert (scripts / "waited.log").read_text() == "a" * 64 + "\n"
+    results = tool_results(model.calls[0][0])
+    assert results[-1].tool_call_id == "run_tests" and '"status": "completed"' in results[-1].text
+    assert_tool_pairs(model.calls[0][0])
+
+
+def test_resume_warns_that_an_interrupted_file_tool_may_have_run(maker_request, tmp_path, monkeypatch):
+    from tl3_workers import tools
+
+    maker_visit(maker_request, tmp_path)
+    factory = tools.TOOL_FACTORIES["read"]
+
+    def crashing(worktree):
+        def read(path: str) -> str:
+            """Read a file."""
+            raise Killed()
+        return read
+
+    monkeypatch.setitem(tools.TOOL_FACTORIES, "read", crashing)
+    interrupted(maker_request, monkeypatch, [ROLES["maker"][1], call("read", {"path": "greeting.py"})])
+    monkeypatch.setitem(tools.TOOL_FACTORIES, "read", factory)
+    model, _ = rerun(maker_request, monkeypatch, [reply(test_maker.DONE)])
+    resumed = model.calls[0][0]
+    assert_tool_pairs(resumed)
+    assert isinstance(resumed[-1], HumanMessage) and "may have run" in resumed[-1].text
+
+
+def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monkeypatch):
+    maker_visit(maker_request, tmp_path)
+    maker_request["inputs"]["context_size"] = 100_000
+    Path(maker_request["worktree"], "evidence.txt").write_text(("source evidence " * 7 + "\n") * 200)
+    budgets = test_prompt_cache.capture_budget(monkeypatch)
+    read = call("read", {"path": "evidence.txt"})
+    cached = {"input_token_details": {"cache_read": 9_000}}
+
+    def usage(tokens):
+        message = copy.deepcopy(read)
+        message.usage_metadata = {"input_tokens": tokens, "output_tokens": 1, "total_tokens": tokens + 1,
+                                  **cached}
+        return message
+
+    first = install(monkeypatch, [usage(10_000), usage(71_000), usage(20_000), dropped(), dropped()])
+    with pytest.raises(openai.APIConnectionError):
+        runtime.run(maker_request, lambda _: None)
+    assert budgets[0].compacted
+    seen = []
+
+    def observe():
+        seen.append((budgets[-1].compacted, budgets[-1].cache_active))
+        return ROLES["maker"][1]
+
+    model, _ = rerun(maker_request, monkeypatch, [observe, reply(test_maker.DONE)])
+    assert payload(model.calls[0][0]) == payload(first.calls[-1][0]), "the compacted prefix is resumed as sent"
+    assert seen == [(True, True)], "resumed calls are priced warm and do not compact again"
+
+
+def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from tl3_workers.exploration import ExplorationBudget
+    from tl3_workers.roles import maker
+
+    visit = maker_visit(maker_request, tmp_path)
+    monkeypatch.setattr(maker, "ROLE", replace(maker.ROLE, exploration_budget=ExplorationBudget(
+        tool_turns=0, input_tokens=6_000_000, history_bytes=65_536)))
+
+    def killed(*args):
+        raise Killed()
+
+    monkeypatch.setattr(maker, "_commit", killed)
+    interrupted(maker_request, monkeypatch, [reply(test_maker.DONE)])
+    assert json.loads(visit.read_text())["budget_exhausted"] is True
+
+
+def test_dropped_call_retry_keeps_the_final_answer_reserve(request_doc, monkeypatch):
+    # The first exploration call leaves room for one more call plus the final answer.
+    # Its dropped attempt is charged, so a retry would eat the reserve.
+    model = install(monkeypatch, [call("read", {"path": "evidence.txt"}), dropped(), reply(test_workers.BRIEF)])
+    model.steps[0].usage_metadata = {"input_tokens": 80_000, "output_tokens": 1, "total_tokens": 80_001}
+    Path(request_doc["worktree"], "evidence.txt").write_text("source evidence\n")
+    with pytest.raises(openai.APIConnectionError):
+        runtime.run(request_doc, lambda _: None)
+    assert len(model.calls) == 2
+
+
+def test_repair_prompt_caps_an_echoed_invalid_reply(tmp_path, monkeypatch):
+    doc = classifier_request(tmp_path)
+    model = install(monkeypatch, [reply({"kind": "remark", "extra": "x" * 20_000}), reply({"kind": "remark"})])
+    runtime.run(doc, lambda _: None)
+    repair = model.calls[-1][0][-1]
+    assert isinstance(repair, HumanMessage)
+    assert len(repair.text.encode()) <= 2_048 + 512
+    assert "oneOf" in repair.text
