@@ -263,17 +263,17 @@ pub(crate) fn repository_materials(
             && fields[1] == "blob"
         {
             let bytes = repository.blob(&tl3_worktrees::BlobId::new(fields[2])?)?;
-            if !bytes.contains(&0) {
-                if let Ok(content) = String::from_utf8(bytes) {
-                    readme = content;
-                    if readme.len() > README_BYTES {
-                        let mut end = README_BYTES - TRUNCATED.len();
-                        while !readme.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        readme.truncate(end);
-                        readme.push_str(TRUNCATED);
+            if !bytes.contains(&0)
+                && let Ok(content) = String::from_utf8(bytes)
+            {
+                readme = content;
+                if readme.len() > README_BYTES {
+                    let mut end = README_BYTES - TRUNCATED.len();
+                    while !readme.is_char_boundary(end) {
+                        end -= 1;
                     }
+                    readme.truncate(end);
+                    readme.push_str(TRUNCATED);
                 }
             }
         }
