@@ -135,9 +135,18 @@ again once, at the failure, with the same history. Earlier tool calls are not
 repeated. A second failure of that turn fails the run. The dropped call is
 charged against the input allowance, and the retry is sent only if it still
 fits. When the controller reruns a maker after a worker failure, the run
-continues the same visit. The maker saves the visit's history, spent input and
-turns after every update. A rerun resumes from the last complete tool result
-and keeps the spent allowance.
+continues the same visit. After every update the maker saves a versioned
+`attempt-N.visit` checkpoint: history, the whole exploration allowance
+(spent input, turns, compaction and cache state), budget exhaustion, in-flight
+test actions and the worktree attributes named in `RESUMED_WORKTREE_STATE`.
+A rerun resumes from the last complete tool result and keeps that state. A
+checkpoint that fails to decode, has the wrong shape or has another version
+starts the visit afresh with a fixed stderr note. run_tests records each
+PrismaBuild key as soon as pbrun returns. If the visit stopped during that call, the
+rerun waits on the same action and uses its result as the tool result, so the
+model cannot submit it twice. Any other interrupted call is dropped, and the
+model is told it may have run. A dropped-call retry keeps the final-answer
+reserve. A repair prompt keeps at most 2 KB of a validation message.
 
 A reply that fails the reply schema or a role check gets one repair turn in the
 same run. The model receives the exact validation message and no tools; any tool
