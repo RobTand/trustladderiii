@@ -1,7 +1,9 @@
 use std::path::Path;
 use tl3_controller::{
-    Observation, Result,
-    executor::{Completion, Delivery, Executor, Look, Output, Reconciliation, WaitRecord},
+    Result,
+    executor::{
+        Completion, Delivery, Executor, Look, Observation, Output, Reconciliation, WaitRecord,
+    },
 };
 use tl3_kernel::{EffectKind, Role};
 use tl3_store::{ExternalWait, Store};

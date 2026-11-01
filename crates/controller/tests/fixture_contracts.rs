@@ -7,8 +7,8 @@ use std::{
 };
 use support::{executor_probe::delivery, workers::Workers};
 use tl3_controller::{
-    Observation, Result,
-    executor::{Completion, Delivery, Executor, Look, Reconciliation, WaitRecord},
+    Result,
+    executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation, WaitRecord},
 };
 use tl3_kernel::{EffectKind, Role};
 use tl3_store::{ExternalWait, Store};
