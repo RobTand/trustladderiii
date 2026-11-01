@@ -189,8 +189,9 @@ lists in `tools/images/`. They add g++, make, Python development headers,
 libgomp, CPU-only Torch 2.11.0, Triton and the repositories' Python dependencies.
 PrismaQuant uses pytest 9.1.1 and Triton 3.6.0; Tessera uses pytest 8.4.2
 and Triton 3.8.0. Build tools are bootstrapped before installing the frozen
-lists without dependency resolution or build isolation. The CPU Torch wheel
-index is available only during trusted preparation. The served repository
+lists without dependency resolution or build isolation. Only the pinned Torch
+wheel uses the PyTorch CPU index. Other indexed packages come from PyPI.
+Both indexes are available only during trusted preparation. The served repository
 is not installed into its own image; checks import the exported candidate.
 PrismaQuant's frozen Tessera dependency is a separate, pinned Git install.
 
@@ -313,3 +314,21 @@ The controller selects this option from `[[github.repos]] exec_scratch` for
 checks and maker runs. Base-result caching includes the setting. Git metadata
 and disk scratch remain unavailable. See the
 [design note](../docs/design/executable-scratch.md).
+
+The executable-scratch verifier needs an image containing gcc and C library
+development headers, such as the `prismabuild`, `prismaquant` or `tessera`
+profile. It compiles a shared library and checks both exec and noexec behavior,
+containment, maker summaries and per-test cleanup. Run it separately from the
+general verifier, which also supports images without gcc:
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+    --cwd "$CHECKOUT" --anywhere --cpus 1 --demand mem_gb=2 --priority -10 \
+    --container-image "$IMAGE" --progress-phase tests=300 \
+    --env PYTHONPATH=harness/src --env OMP_NUM_THREADS=1 \
+    --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
+    /usr/bin/python3.14 harness/tools/verify_exec_scratch.py "$IMAGE"
+```
+
+Use `pbwait.py --endings --until cleaned` and inspect the terminal status,
+verified logs and CAS receipt before accepting the result.
