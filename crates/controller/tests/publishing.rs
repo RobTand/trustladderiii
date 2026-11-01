@@ -799,7 +799,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         let pull = state.pull.as_ref().unwrap();
         assert_eq!(pull["head"]["ref"], "prismabuild-42-tl3-0");
         assert_eq!(pull["base"]["ref"], "master");
-        assert!(pull["body"].as_str().unwrap().contains("Closes #42"));
+        assert!(
+            pull["body"].as_str().unwrap().contains("Refs #42"),
+            "publication must reference the request without closing it before TL3 finishes all leaves"
+        );
         if let Some(path) = env::var_os("TL3_REPO_CONVENTIONS_PULL") {
             let mut pull = pull.clone();
             pull["created_at"] = json!("2026-11-01T00:00:00Z");
