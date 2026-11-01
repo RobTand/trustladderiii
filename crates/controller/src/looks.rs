@@ -7,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, UNIX_EPOCH};
-use tl3_kernel::{Ack, Event, Fact, NodeId};
+use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
 use tl3_store::{Commit, EffectState, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -184,6 +184,45 @@ impl Controller {
             Ok(matches!(delivery.output, Out::Effect { .. }))
         })
     }
+    pub(crate) fn retire_closed_looks(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &World,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let mut states = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "allowances")
+            .map(|row| serde_json::from_value::<AllowanceState>(row.value.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for row in &commit.rows {
+            if let RowChange::Put { table, value, .. } = row
+                && table == "allowances"
+            {
+                states.push(serde_json::from_value(value.clone())?);
+            }
+        }
+        let mut retired = std::collections::BTreeSet::new();
+        for state in states {
+            if !closed_effect(world, &state.delivery) || !retired.insert(state.delivery.key.clone())
+            {
+                continue;
+            }
+            if state.external_wait.is_some() {
+                self.adapters
+                    .get(Upstream::PrismaBuild)?
+                    .watch_wait(&state.delivery, None)?;
+            }
+            commit.rows.push(RowChange::Delete {
+                table: "allowances".into(),
+                id: state.delivery.key.clone(),
+            });
+            self.remove_hold(&state.delivery);
+        }
+        Ok(())
+    }
+
     pub(crate) fn link_allowance_incident(
         &self,
         snapshot: &Snapshot,
@@ -313,6 +352,8 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        let snapshot = self.store.load()?;
+        self.prune_allowances(&snapshot)?;
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows
@@ -999,6 +1040,9 @@ impl Controller {
 
     fn save_allowance(&mut self, state: &AllowanceState) -> Result<()> {
         let snapshot = self.store.load()?;
+        if closed_effect(&snapshot::decode(&snapshot)?, &state.delivery) {
+            return Ok(());
+        }
         let value = json!(state);
         if snapshot
             .rows
@@ -1194,8 +1238,12 @@ impl Controller {
         );
         // Repair snapshots from before closed requests retired recovery incidents.
         self.resolve_closed_effect_incidents(snapshot, &world, &mut commit)?;
+        self.retire_closed_looks(snapshot, &world, &mut commit)?;
         for row in snapshot.rows.iter().filter(|r| r.table == "allowances") {
             let state: AllowanceState = serde_json::from_value(row.value.clone())?;
+            if closed_effect(&world, &state.delivery) {
+                continue;
+            }
             let incident_open = state.incident.as_ref().is_some_and(|id| {
                 snapshot
                     .rows
@@ -1221,20 +1269,23 @@ impl Controller {
         }
         // Backfill allowances once for a snapshot written before this feature.
         for effect in &snapshot.pending_effects {
+            let delivery = hydrate(effect, snapshot)?;
+            if closed_effect(&world, &delivery) {
+                continue;
+            }
             if !snapshot
                 .rows
                 .iter()
                 .any(|r| r.table == "allowances" && r.id == effect.key)
             {
-                commit
-                    .rows
-                    .push(self.allowance_row(hydrate(effect, snapshot)?));
+                commit.rows.push(self.allowance_row(delivery));
             }
         }
         for row in snapshot.rows.iter().filter(|r| r.table == "watches") {
             let delivery: Delivery = serde_json::from_value(row.value.clone())?;
             let node = &world.nodes[delivery.node().0 as usize];
             if let Out::Effect { kind, .. } = delivery.output
+                && !closed_effect(&world, &delivery)
                 && node.operation_pending(kind, delivery.generation)
                 && !snapshot
                     .rows
@@ -1251,6 +1302,15 @@ impl Controller {
         self.store.commit(&commit)?;
         Ok(true)
     }
+}
+
+fn closed_effect(world: &World, delivery: &Delivery) -> bool {
+    // Closing summaries and correction notices still have to finish delivery.
+    matches!(delivery.output, Out::Effect { .. })
+        && matches!(
+            world.nodes[delivery.node().0 as usize].phase,
+            Phase::Closed(_)
+        )
 }
 
 pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result<bool> {
