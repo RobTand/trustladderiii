@@ -144,3 +144,4 @@ def changed_existing_tests(base: Path, head: Path, tests: tuple[str, ...]) -> se
         if before is not None and before != read(head):
             changed.add(test)
     return changed
+SYNTHETIC_TIMING_MARKER = 1
