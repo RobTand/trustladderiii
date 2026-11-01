@@ -16,9 +16,14 @@ PREFIX = "TL3_TEST_SUMMARY "
 OUTCOMES = ("passed", "failed", "error", "skipped")
 
 
-def infrastructure(message):
-    return {"status": "infrastructure_error", "message": message, "tests": [],
-            "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
+def infrastructure(message, origin=None):
+    result = {"status": "infrastructure_error", "message": message, "tests": [],
+              "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
+    if origin is not None:
+        # Q50: the tested code may have caused this, so it is not citable
+        # evidence that the environment blocked the maker.
+        result["origin"] = origin
+    return result
 
 
 class Summary:
@@ -97,8 +102,13 @@ def run_current(tree, container, tests):
                     raise ValueError("incomplete or inconsistent report")
             except (ValueError, KeyError, TypeError):
                 child.terminate()
-                child.wait()
-                return infrastructure("Container or pytest report failed; no test verdict is available.")
+                code = child.wait()
+                # Docker exits 125 to 127 when the container itself cannot run.
+                if not started and code in (125, 126, 127):
+                    return infrastructure("The test container could not start; no test verdict is available.")
+                return infrastructure("The test run ended without a complete report; the code under "
+                                      "test may have stopped pytest. No test verdict is available.",
+                                      origin="test_run")
         if code == 4:
             for test in tests:
                 summary.add(test, "error", f"Selector not found: {test}")

@@ -1629,7 +1629,7 @@ impl Controller {
             {
                 let id = looks::incident_id(snapshot, index);
                 let (mut source, mut class) = self.attach_incident(snapshot, node, &id, commit)?;
-                let blocked = blocked::evidence(snapshot, commit, node, n.generation)?;
+                let blocked = blocked::evidence(commit, node)?;
                 if blocked.is_some() {
                     source = executor::Upstream::Workers;
                     class = blocked::CLASS.into();
@@ -2522,9 +2522,6 @@ impl Controller {
                     commit
                         .rows
                         .push(put(document, node.0.to_string(), reply.clone()));
-                }
-                if role == "maker" && reply["kind"] == "blocked" {
-                    blocked::record(snapshot, commit, node, generation, &reply)?;
                 }
                 if role == "ingest" {
                     commit.rows.push(put(

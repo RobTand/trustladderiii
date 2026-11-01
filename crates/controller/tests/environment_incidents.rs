@@ -375,15 +375,16 @@ fn new_release_clears_a_tl3_side_look_incident_that_holds_an_effect() {
         Some("release-1"),
         true,
     );
+    // The running maker's look, which an unreadable run directory fails.
     let key = c
         .snapshot()
         .unwrap()
-        .pending_effects
-        .iter()
-        .find(|e| e.kind == "Workers")
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "allowances" && r.id.starts_with("effect:0:"))
+        .max_by_key(|r| r.id.rsplit(':').next().unwrap().parse::<u64>().unwrap())
         .unwrap()
-        .key
-        .clone();
+        .id;
     c.look_key(&key).unwrap();
     c.look_key(&key).unwrap();
     let incidents = open_incidents(&mut c);

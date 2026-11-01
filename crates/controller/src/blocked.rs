@@ -2,93 +2,53 @@
 //! `blocked`. The kernel counts it as a failed run; its incident cites the
 //! evidence the worker checked.
 
-use crate::{Result, findings, put};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use crate::Result;
 use tl3_kernel::NodeId;
-use tl3_store::{Commit, RowChange, Snapshot};
+use tl3_store::{Commit, RowChange};
 
 pub(crate) const CLASS: &str = "environment_blocked";
-const TABLE: &str = "blocked_evidence";
-const MAX_REPORT_CHARS: usize = 300;
 
-#[derive(Serialize, Deserialize)]
-struct Blocked {
-    generation: u64,
-    evidence: Value,
-    report: String,
-}
-
-fn entries(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Result<Vec<Blocked>> {
+/// Evidence for an incident raised by this commit's blocked reply. Only
+/// worker-recorded facts are cited: the reply schema restricts them to an
+/// action key, a tool-error id, a tool name and a fixed class. The maker's
+/// report is model text, so it stays in the controller's records and never
+/// reaches GitHub.
+pub(crate) fn evidence(commit: &Commit, node: NodeId) -> Result<Option<String>> {
     let id = node.0.to_string();
-    let value = commit
-        .rows
-        .iter()
-        .rev()
-        .find_map(|row| match row {
-            RowChange::Put {
-                table,
-                id: row,
-                value,
-            } if table == TABLE && *row == id => Some(value),
-            _ => None,
-        })
-        .or_else(|| {
-            snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == TABLE && row.id == id)
-                .map(|row| &row.value)
-        });
-    value.map_or(Ok(Vec::new()), |value| crate::decode_stored(value.clone()))
-}
-
-/// Keep the evidence of the last two blocked replies, the most one incident needs.
-pub(crate) fn record(
-    snapshot: &Snapshot,
-    commit: &mut Commit,
-    node: NodeId,
-    generation: u64,
-    reply: &Value,
-) -> Result<()> {
-    let mut entries = entries(snapshot, commit, node)?;
-    entries.push(Blocked {
-        generation,
-        evidence: reply["evidence"].clone(),
-        report: findings::clipped(reply["report"].as_str().unwrap_or(""), MAX_REPORT_CHARS),
-    });
-    let stale = entries.len().saturating_sub(2);
-    entries.drain(..stale);
-    commit
-        .rows
-        .push(put(TABLE, node.0.to_string(), json!(entries)));
-    Ok(())
-}
-
-/// The evidence of blocked replies among the two failed runs that just raised
-/// an incident. Each failed run moves the node to the next generation.
-pub(crate) fn evidence(
-    snapshot: &Snapshot,
-    commit: &Commit,
-    node: NodeId,
-    generation: u64,
-) -> Result<Option<String>> {
-    let cited = entries(snapshot, commit, node)?
-        .into_iter()
-        .filter(|entry| entry.generation.saturating_add(2) >= generation)
-        .map(|entry| {
-            let source = match (
-                entry.evidence["action_key"].as_str(),
-                entry.evidence["tool_error"].as_str(),
-            ) {
-                (Some(key), _) => {
-                    format!("PrismaBuild action {key} returned an infrastructure error")
-                }
-                (None, Some(error)) => format!("the maker's tools recorded {error}"),
-                (None, None) => "no recorded evidence".into(),
-            };
-            format!("{source} (maker's report: {})", entry.report)
-        })
-        .collect::<Vec<_>>();
-    Ok((!cited.is_empty()).then(|| format!("Evidence: {}.", cited.join("; "))))
+    let Some(reply) = commit.rows.iter().rev().find_map(|row| match row {
+        RowChange::Put {
+            table,
+            id: row,
+            value,
+        } if table == "maker_replies" && *row == id => Some(value),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    if reply["kind"] != "blocked" {
+        return Ok(None);
+    }
+    let evidence = &reply["evidence"];
+    let cited = match (
+        evidence["action_key"].as_str(),
+        evidence["tool_error"].as_str(),
+        evidence["tool"].as_str(),
+        evidence["class"].as_str(),
+    ) {
+        (Some(key), None, None, Some("test_infrastructure")) => {
+            format!("PrismaBuild action {key} ended in a test infrastructure error")
+        }
+        (None, Some(error), Some("run_tests"), Some("test_submission")) => {
+            format!("the maker's run_tests tool recorded {error}, a failed test submission")
+        }
+        (None, Some(error), Some(tool), Some(class)) => {
+            format!("the maker's {tool} tool recorded {error}, an {class} error")
+        }
+        _ => {
+            return Err(crate::Error::Invalid(
+                "blocked evidence breaks the reply schema",
+            ));
+        }
+    };
+    Ok(Some(format!("Evidence: {cited}.")))
 }

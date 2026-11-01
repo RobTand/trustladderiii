@@ -264,12 +264,14 @@ Code computes a signature for each failure from the upstream's error class, and 
 
 - A maker that TL3's environment stopped replies `blocked`. Examples are a sandbox or permission error, a tool failure, or a test run whose summary is an infrastructure error.
 - The reply cites evidence that its worker checks within the same run: a `run_tests` action key whose summary status is `infrastructure_error`, or a tool error the run recorded. Free text alone isn't evidence. A `blocked` reply that cites nothing the run recorded becomes `cant_meet`, and one without evidence breaks the reply schema.
-- A `blocked` reply is an infrastructure failure. It retries in a new generation, every second failure raises an incident, and it spends no credit. The incident text carries the cited evidence.
+- Only environment failures count. A tool error gets an id only for an environment errno, such as a permission, read-only, full-disk, I/O or descriptor error, never for a missing, overlong or looping path or a file used as a directory. A test run that the tested code could have cut short isn't evidence, and a later completed run of the same tests retires an earlier failure.
+- A `blocked` reply is an infrastructure failure. It retries in a new generation, every second failure raises an incident, and it spends no credit. When the blocked reply itself raises the incident, the incident text cites the worker-recorded evidence: the action key or tool-error id, the tool and the error class. The maker's own report never goes into the GitHub post.
 - `cant_meet` stays the reply for a change that can't meet a goal. Dropped connections and worker crashes keep their existing path.
 
 **Cause classes and releases,** as Rob approved on 2026-11-01 (Q51):
 
-- Every incident records its cause class. An upstream incident comes from an outside service: GitHub, Mergify, PrismaBuild or the model proxy. A TL3-side incident comes from TL3 itself: its code, prompts, tools or harness environment, including Q50 blockers and worker reply-validation failures.
+- Every incident records its cause class. An upstream incident comes from an outside service: GitHub, Mergify, PrismaBuild, or a Git remote a worktree reaches. A TL3-side incident comes from TL3 itself: its code, prompts, tools or harness environment, including Q50 blockers and worker reply-validation failures.
+- The model proxy is an upstream, but TL3 can't yet tell a proxy outage from a worker bug, so every failed agent run counts as TL3-side. A release retries a proxy outage once, and a proxy that is still down raises the incident again. #309 tracks precise attribution.
 - tl3d knows its release identity and records the last one it started with.
 - On its first start under a new release, each open TL3-side incident that holds an operation clears once, through the same "incident cleared" event as Rob's clear. Its operation retries.
 - If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.

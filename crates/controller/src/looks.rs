@@ -92,10 +92,17 @@ pub enum Cause {
 
 impl Cause {
     /// Workers and worktrees are TL3's own harness: agent runs, reply
-    /// validation, Q50 blockers and Git checkouts.
-    pub(crate) fn of(upstream: Upstream, _class: &str) -> Self {
+    /// validation, Q50 blockers and local Git checkouts. A worktree failure
+    /// that reaches GitHub, a Git remote or its token, is upstream. Agent runs
+    /// that fail because the model proxy is down still count as TL3-side;
+    /// the controller can't yet tell them from worker bugs.
+    pub(crate) fn of(upstream: Upstream, class: &str) -> Self {
         match upstream {
-            Upstream::Workers | Upstream::Worktrees => Cause::Tl3,
+            Upstream::Workers => Cause::Tl3,
+            Upstream::Worktrees if matches!(class, "git_remote" | "invalid_token") => {
+                Cause::Upstream
+            }
+            Upstream::Worktrees => Cause::Tl3,
             Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
@@ -1452,9 +1459,21 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-        crate::Error::Adapter(error) => error
-            .downcast_ref::<tl3_github::Error>()
-            .map_or("transport", |error| error.failure_class().as_str()),
+        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
+            // Git operations that talk to the remote over HTTPS.
+            Some(tl3_worktrees::Error::Git {
+                operation:
+                    "fetch"
+                    | "push"
+                    | "ls-remote"
+                    | "read remote branch"
+                    | "delete recorded remote branch",
+                ..
+            }) => "git_remote",
+            _ => error
+                .downcast_ref::<tl3_github::Error>()
+                .map_or("transport", |error| error.failure_class().as_str()),
+        },
         crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
@@ -1517,6 +1536,7 @@ pub(crate) fn incident_summary(
         "message_rejected" => "could not prepare a readable message",
         "setup" => "could not complete its setup",
         "environment_blocked" => "reported that TL3's environment blocked the work",
+        "git_remote" => "could not reach the Git remote",
         _ => "could not finish the operation",
     };
     let next = if needs_rob {

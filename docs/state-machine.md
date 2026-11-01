@@ -561,11 +561,14 @@ incident also needed Rob's `clear incident`, even after the fix was deployed.
 - **Q50 Environment blockers:** the maker replies `blocked` when TL3's
   environment stopped it. The reply cites an infrastructure-error `run_tests`
   action key or a tool error recorded in the same run, and worker code checks
-  it. A `blocked` reply is an infrastructure failure under Q7: a retry in a new
-  generation, an incident on every second failure, no credit spent. The
-  incident cites the evidence. Unsupported evidence makes the reply
-  `cant_meet`. Only the maker has `run_tests`, so only the maker has
-  `blocked`.
+  it. Only environment errnos get a tool-error id, a test run the tested code
+  could have cut short isn't evidence, and a later completed run of the same
+  tests retires an earlier failure. A `blocked` reply is an infrastructure
+  failure under Q7: a retry in a new generation, an incident on every second
+  failure, no credit spent. When the blocked reply raises the incident, the
+  incident cites the worker-recorded facts only, never the maker's report.
+  Unsupported evidence makes the reply `cant_meet`. Only the maker has
+  `run_tests`, so only the maker has `blocked`.
 - **Q51 Releases clear TL3-side incidents:** each incident records whether an
   upstream or TL3 caused it. tl3d records the release it last started with.
   The first start under a new release clears each open TL3-side incident that
@@ -584,13 +587,18 @@ Incidents map onto cause classes by their source:
 | Source | Cause |
 |---|---|
 | Agent runs: crashes, stalls, reply-validation failures and Q50 blockers | TL3 |
-| Git worktree operations | TL3 |
+| Local Git worktree operations | TL3 |
+| Worktree operations that reach the Git remote or its GitHub token | Upstream |
 | GitHub, Mergify and PrismaBuild operations, looks and stalls | Upstream |
 | Posting notices, reading incoming input, and required-check setup | Upstream |
 
-An agent run that crashes because the model proxy is down counts as TL3-side,
-because the controller can't yet tell it from a worker bug. A release retries
-it once; a proxy that is still down raises the incident again.
+The model proxy is an upstream, but an agent run that fails because the proxy
+is down counts as TL3-side, because the controller can't yet tell it from a
+worker bug. A release retries it once; a proxy that is still down raises the
+incident again. Worktree failures are classified by their Git operation:
+fetch, push and remote reads are upstream. A GitHub token request that fails
+in transport still counts as TL3-side. #309 tracks precise attribution of
+both.
 
 ## Q47: required checks before enqueue
 
