@@ -26,16 +26,18 @@ class WorkspaceTests(unittest.TestCase):
 
 
 class BudgetClassTests(unittest.TestCase):
-    def test_remote_configs_name_a_calibrated_budget_class(self):
+    def test_amd64_uses_a_calibrated_class_and_arm64_records_budgets(self):
         import sys
         sys.path.insert(0, str(ROOT / 'tools/ci'))
         import rust_gate
         config = (ROOT / '.bazelrc').read_text().splitlines()
-        for mode, runner in [('remote', 'buildbuddy-amd64'), ('remote-arm64', 'buildbuddy-arm64')]:
-            self.assertIn(f'test:{mode} --test_env=TL3_RUNNER_CLASS={runner}', config)
-            self.assertGreaterEqual(rust_gate.BUDGET_MULTIPLIERS[runner], 1.0)
+        self.assertIn('test:remote --test_env=TL3_RUNNER_CLASS=buildbuddy-amd64', config)
+        self.assertGreaterEqual(rust_gate.BUDGET_MULTIPLIERS['buildbuddy-amd64'], 1.0)
+        self.assertIn('test:remote-arm64 --test_env=TL3_BUDGETS=record', config)
+        self.assertNotIn('buildbuddy-arm64', rust_gate.BUDGET_MULTIPLIERS)
         runner = (ROOT / 'tools/bazel/rust_runner.py').read_text()
         self.assertIn("os.environ.get('TL3_RUNNER_CLASS', 'baseline')", runner)
+        self.assertIn("os.environ.get('TL3_BUDGETS') == 'record'", runner)
 
 
 class Arm64ToolchainTests(unittest.TestCase):
