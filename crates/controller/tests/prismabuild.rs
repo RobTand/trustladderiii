@@ -2161,11 +2161,14 @@ fn result_budget_rejects_repeated_checks() {
 fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let fakes = root.path().join("fakes");
+    let oversized_replies = std::rc::Rc::new(std::cell::Cell::new(0));
+    let replies = oversized_replies.clone();
     let mut registry = adapters::simulation(&fakes).unwrap();
     registry.register(Upstream::Workers, support::workers::Workers::new(
-        None, adapters::workers::Fake::new(&fakes), vec![], |_, completion: &mut Completion| {
+        None, adapters::workers::Fake::new(&fakes), vec![], move |_, completion: &mut Completion| {
             for observation in &mut completion.observations {
                 if let Observation::Plan {node, generation, ..} = observation {
+                    replies.set(replies.get() + 1);
                     *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply: serde_json::json!({
                         "kind":"leaf", "files":["value.py"], "checks":[{
                             "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
@@ -2229,5 +2232,10 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
             .pending_effects
             .iter()
             .any(|e| e.kind == "PrismaBuild")
+    );
+    assert_eq!(
+        oversized_replies.get(),
+        1,
+        "one oversized reply must prove refusal; the planner retry can decline with a small reply"
     );
 }
