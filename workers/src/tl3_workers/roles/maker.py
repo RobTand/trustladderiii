@@ -5,18 +5,20 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
+from langgraph.prebuilt import ToolNode
 
 from tl3_workers.contracts import read_json, read_reply, schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
-from tl3_workers.tools import _parts
+from tl3_workers.tools import _parts, build_tools
 from tl3_workers.turns import TurnControl, repaired
 
 
@@ -130,9 +132,28 @@ class _OutOfRoom(Exception):
     pass
 
 
+VISIT_VERSION = 1
+# Per-visit worktree attributes a resumed visit must keep, saved by name.
+# #308's worktree.evidence belongs here.
+RESUMED_WORKTREE_STATE = ()
+RESUME_NOTE = ("The worker restarted during your last tool call. That call may have run before "
+               "the restart. Check the worktree before repeating it.")
+
+
+def _pending_calls(history, start):
+    """Calls of the visit's last model turn that have no result yet."""
+    for index in range(len(history) - 1, start, -1):
+        if isinstance(history[index], AIMessage):
+            answered = {m.tool_call_id for m in history[index + 1:] if isinstance(m, ToolMessage)}
+            return [call for call in history[index].tool_calls if call["id"] not in answered]
+    return []
+
+
 def _resumable(history, start):
-    """Cut an unfinished turn: keep the visit's inputs and complete tool call/result groups."""
-    end = len(history)
+    """Cut an unfinished turn: keep the visit's inputs and complete tool call/result groups.
+
+    Also report whether the cut dropped a tool call that may already have run."""
+    end, interrupted = len(history), False
     while end > start + 1:
         first = end
         while first > start + 1 and isinstance(history[first - 1], ToolMessage):
@@ -141,8 +162,35 @@ def _resumable(history, start):
         if (first < end and isinstance(call, AIMessage)
                 and sorted(c["id"] for c in call.tool_calls) == sorted(m.tool_call_id for m in history[first:end])):
             break
+        if isinstance(call, AIMessage) and call.tool_calls:
+            interrupted = True
         end = first - 1 if first < end else end - 1
-    return history[:end]
+    return history[:end], interrupted
+
+
+def _load_visit(progress, visit):
+    """Return this visit's checkpoint, or None to start the visit afresh."""
+    if progress is None or not progress.exists():
+        return None
+    try:
+        saved = read_json(progress.read_text())
+        if saved.get("generation") != visit:
+            return None
+        if saved["version"] != VISIT_VERSION:
+            raise ValueError("unknown visit checkpoint version")
+        saved["messages"] = messages_from_dict(saved["messages"])
+        inflight = saved["inflight"]
+        if (type(saved["start"]) is not int or not 0 <= saved["start"] < len(saved["messages"])
+                or type(saved["budget_exhausted"]) is not bool or not isinstance(saved["worktree"], dict)
+                or not isinstance(inflight, dict)
+                or any(type(item["base"]) is not bool or type(item["key"]) is not str
+                       for items in inflight.values() for item in items)):
+            raise ValueError("invalid visit checkpoint")
+        return saved
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # A deploy can change the message or checkpoint format. Never let it wedge the visit.
+        print("tl3_workers: maker: visit checkpoint unusable; starting the visit afresh", file=sys.stderr)
+        return None
 
 
 def _commit(request, starting_head, merge_target=None, merge_files=None):
@@ -215,20 +263,69 @@ def run(model, request, worktree, emit):
     starting_head, merge_target, merge_files = _starting_state(request, session)
     progress = session.with_suffix(".visit") if session else None
     visit = read_json(session.with_suffix(".head").read_text())["generation"] if session else None
-    saved = read_json(progress.read_text()) if progress and progress.exists() else None
-    if saved is not None and saved["generation"] == visit:
+    saved = _load_visit(progress, visit)
+    if saved is not None and allowance is not None:
+        try:
+            allowance.restore(saved["allowance"])
+        except (ValueError, KeyError, TypeError):
+            print("tl3_workers: maker: visit checkpoint unusable; starting the visit afresh", file=sys.stderr)
+            saved = None
+    inflight = {}
+    budget_exhausted = False
+    if saved is not None:
         # A rerun after a worker failure continues this visit with its spent allowance.
-        start = saved["start"]
-        history = _resumable(messages_from_dict(saved["messages"]), start)
-        if allowance is not None:
-            allowance.spent, allowance.turns = saved["spent"], saved["turns"]
+        start, history = saved["start"], saved["messages"]
+        budget_exhausted = saved["budget_exhausted"]
+        for name, value in saved["worktree"].items():
+            if name in RESUMED_WORKTREE_STATE:
+                setattr(worktree, name, value)
+        pending = _pending_calls(history, start)
+        if len(pending) == 1 and pending[0]["name"] == "run_tests" and saved["inflight"].get(pending[0]["id"]):
+            # Wait on the test action the interrupted call submitted instead of submitting it again.
+            inflight = {pending[0]["id"]: saved["inflight"][pending[0]["id"]]}
+            worktree.pb_reattach = {item["base"]: item["key"] for item in inflight[pending[0]["id"]]}
+        else:
+            history, interrupted = _resumable(history, start)
+            if interrupted:
+                history.append(HumanMessage(content=RESUME_NOTE))
     else:
         history = []
         if session and session.exists() and request.get("resume_session"):
             history = messages_from_dict(read_json(session.read_text()))
         start = len(history)
         history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
-    budget_exhausted = False
+
+    def checkpoint():
+        if not progress:
+            return
+        pending = {call["id"] for call in _pending_calls(history, start)}
+        for call_id in [call_id for call_id in inflight if call_id not in pending]:
+            del inflight[call_id]
+        # The whole history is rewritten and synced after every update, which is
+        # quadratic in turns; at the 64-turn cap that is a few megabytes per visit.
+        save(progress, {
+            "version": VISIT_VERSION, "generation": visit, "start": start,
+            "messages": messages_to_dict(history), "budget_exhausted": budget_exhausted,
+            "allowance": allowance.state() if allowance else None, "inflight": inflight,
+            "worktree": {name: getattr(worktree, name) for name in RESUMED_WORKTREE_STATE
+                         if hasattr(worktree, name)}})
+
+    def submitted(key, base):
+        for call in _pending_calls(history, start):
+            if call["name"] == "run_tests":
+                inflight.setdefault(call["id"], []).append({"base": base, "key": key})
+        checkpoint()
+
+    worktree.pb_submitted = submitted
+    if getattr(worktree, "pb_reattach", None):
+        calls = _pending_calls(history, start)
+        result = ToolNode(build_tools(worktree, ROLE.tools)).invoke(
+            {"messages": [AIMessage(content="", tool_calls=calls)]})
+        for message in result["messages"]:
+            if isinstance(message, ToolMessage):
+                history.append(message)
+                emit({"event": "progress", "unit": "tool_result"})
+        checkpoint()
 
     def ask():
         nonlocal budget_exhausted
@@ -253,10 +350,7 @@ def run(model, request, worktree, emit):
                             budget_exhausted |= bool(message.response_metadata.get("tl3_budget_exhausted"))
                         elif isinstance(message, ToolMessage):
                             emit({"event": "progress", "unit": "tool_result"})
-                if progress:
-                    spent, turns = (allowance.spent, allowance.turns) if allowance else (0, 0)
-                    save(progress, {"generation": visit, "start": start, "messages": messages_to_dict(history),
-                                    "spent": spent, "turns": turns})
+                checkpoint()
         finally:
             stream.close()
         if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:

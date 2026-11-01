@@ -15,8 +15,25 @@ REPAIR = ("Your reply failed validation: {}\nTools are unavailable for this turn
           "corrected JSON object matching your reply schema and nothing else.")
 
 
+REPAIR_MESSAGE_BYTES = 2_048
+
+
 def validation_message(error):
     return error.message if isinstance(error, ValidationError) else str(error)
+
+
+def repair_message(error):
+    # A schema message echoes the whole invalid reply. Keep where and why it failed.
+    message = validation_message(error)
+    if isinstance(error, ValidationError):
+        path = "/" + "/".join(str(part) for part in error.absolute_path)
+        message = f"{error.validator} failed at {path}: {message}"
+    raw = message.encode()
+    if len(raw) <= REPAIR_MESSAGE_BYTES:
+        return message
+    # jsonschema puts the instance first and the reason last; keep both ends.
+    head, tail = raw[:REPAIR_MESSAGE_BYTES - 512], raw[-500:]
+    return head.decode(errors="ignore") + " [...] " + tail.decode(errors="ignore")
 
 
 class InvalidReply(ValueError):
@@ -42,7 +59,7 @@ class TurnControl(AgentMiddleware):
 
     @contextmanager
     def repair(self, history, error):
-        history.append(HumanMessage(content=REPAIR.format(validation_message(error))))
+        history.append(HumanMessage(content=REPAIR.format(repair_message(error))))
         self.repairing = True
         if self.allowance is not None:
             self.allowance.repairing = True

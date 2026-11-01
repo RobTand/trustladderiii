@@ -6,7 +6,7 @@ import math
 import os
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, messages_from_dict, messages_to_dict
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from tl3_workers.turns import RepairUnavailable
@@ -141,6 +141,7 @@ class ExplorationMiddleware(AgentMiddleware):
         self.turns = 0
         self.spent = 0
         self.in_flight = 0
+        self.in_flight_reserve = 0
         self.repairing = False
         self.final = False
         self.compacted = False
@@ -180,7 +181,7 @@ class ExplorationMiddleware(AgentMiddleware):
             predicted = math.ceil(cached * self.weights.read + (context - cached) * cold_weight)
         else:
             predicted = math.ceil(context * cold_weight)
-        self.in_flight = predicted
+        self.in_flight, self.in_flight_reserve = predicted, 0
         if self.repairing:
             # A repair turn spends the same allowance, without the final-answer reserve.
             if self.spent + predicted > self.budget.input_tokens:
@@ -195,6 +196,7 @@ class ExplorationMiddleware(AgentMiddleware):
                         and context >= self.context_size * 0.7)
         final = (self.turns >= self.budget.tool_turns or context_full
                  or self.spent + predicted + reserve > self.budget.input_tokens)
+        self.in_flight_reserve = 0 if final else reserve
         if self.final:
             raise ValueError("missing final model reply")
         if final:
@@ -212,9 +214,30 @@ class ExplorationMiddleware(AgentMiddleware):
         return self._account(response, bound)
 
     def charge_dropped(self):
-        """Charge a dropped call, then report whether its retry still fits."""
+        """Charge a dropped call, then report whether its retry still fits with its reserve."""
         self.spent += self.in_flight
-        return self.spent + self.in_flight <= self.budget.input_tokens
+        return self.spent + self.in_flight + self.in_flight_reserve <= self.budget.input_tokens
+
+    # A resumed visit continues with the same allowance, compaction and cache pricing.
+    # The final-answer flag is not kept: a resumed run recomputes it from this state.
+    def state(self):
+        return {"spent": self.spent, "turns": self.turns, "last_input": self.last_input,
+                "last_estimate": self.last_estimate, "cache_active": self.cache_active,
+                "compacted": self.compacted, "compacted_below": self.compacted_below,
+                "compaction_offset": self.compaction_offset,
+                "compaction_prefix": messages_to_dict(self.compaction_prefix)}
+
+    def restore(self, state):
+        prefix = messages_from_dict(state["compaction_prefix"])
+        numbers = [state[name] for name in ("spent", "turns", "last_input", "compaction_offset")]
+        flags = [state[name] for name in ("cache_active", "compacted", "compacted_below")]
+        if (any(type(n) is not int or n < 0 for n in numbers) or any(type(f) is not bool for f in flags)
+                or not (state["last_estimate"] is None or type(state["last_estimate"]) is int)):
+            raise ValueError("invalid allowance state")
+        (self.spent, self.turns, self.last_input, self.compaction_offset) = numbers
+        (self.cache_active, self.compacted, self.compacted_below) = flags
+        self.last_estimate = state["last_estimate"]
+        self.compaction_prefix = prefix
 
     def _account(self, response, bound):
         usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]

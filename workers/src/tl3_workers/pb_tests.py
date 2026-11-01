@@ -161,6 +161,33 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     regressions = tuple(test for check in getattr(worktree, "test_checks", ())
                         if check["kind"] == "regression" for test in check["tests"])
 
+    def wait(key, base, base_sha):
+        # pbwait's observation allowance is not an execution deadline.
+        # Reattach to the same action whenever that allowance expires.
+        while True:
+            emit({"event": "progress", "unit": "external_wait",
+                  "wait": {"upstream": "prismabuild", "key": key}})
+            code, waited = _json_command([
+                sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
+                "--endings", "--until", "cleaned", key,
+            ])
+            if waited.get("schema") != "prismabuild.endings.v1":
+                raise ValueError("PrismaBuild returned an invalid ending")
+            if type(waited.get("complete")) is not bool:
+                raise ValueError("PrismaBuild returned no completion flag")
+            endings = waited["endings"]
+            if len(endings) != 1 or endings[0]["action_key"] != key:
+                raise ValueError("PrismaBuild returned another action")
+            if waited["complete"]:
+                if code:
+                    raise ValueError("PrismaBuild action infrastructure failed")
+                result = _summary(endings[0], key)
+                if base:
+                    result["base_sha"] = base_sha
+                return result
+            if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
+                raise ValueError("PrismaBuild could not verify completion")
+
     def run(tests, base=False):
         selected = _selectors([] if tests is None else tests)
         key = None
@@ -172,6 +199,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                          or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)
                          or getattr(worktree, "test_checkout", None) is None):
                 return infrastructure("The role did not supply a check base and checkout.")
+            # A resumed maker visit waits on the action its interrupted call submitted.
+            key = getattr(worktree, "pb_reattach", {}).pop(base, None)
+            if key is not None:
+                return wait(key, base, base_sha)
             with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
                 root = Path(temporary)
                 _stage(worktree, root, base_sha)
@@ -193,31 +224,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                 if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
                     key = None
                     raise ValueError("PrismaBuild returned an invalid action key")
-                # pbwait's observation allowance is not an execution deadline.
-                # Reattach to the same action whenever that allowance expires.
-                while True:
-                    emit({"event": "progress", "unit": "external_wait",
-                          "wait": {"upstream": "prismabuild", "key": key}})
-                    code, waited = _json_command([
-                        sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
-                        "--endings", "--until", "cleaned", key,
-                    ])
-                    if waited.get("schema") != "prismabuild.endings.v1":
-                        raise ValueError("PrismaBuild returned an invalid ending")
-                    if type(waited.get("complete")) is not bool:
-                        raise ValueError("PrismaBuild returned no completion flag")
-                    endings = waited["endings"]
-                    if len(endings) != 1 or endings[0]["action_key"] != key:
-                        raise ValueError("PrismaBuild returned another action")
-                    if waited["complete"]:
-                        if code:
-                            raise ValueError("PrismaBuild action infrastructure failed")
-                        result = _summary(endings[0], key)
-                        if base:
-                            result["base_sha"] = base_sha
-                        return result
-                    if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
-                        raise ValueError("PrismaBuild could not verify completion")
+                getattr(worktree, "pb_submitted", lambda key, base: None)(key, base)
+                return wait(key, base, base_sha)
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             result = infrastructure("PrismaBuild submission, execution or verified result retrieval failed.")
             if key:
