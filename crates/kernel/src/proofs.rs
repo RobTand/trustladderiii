@@ -818,10 +818,10 @@ fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
             2 => Phase::Making,
             _ => Phase::Unplanned,
         };
-        if i == 0 {
-            if let Some(first) = first {
-                n.phase = first;
-            }
+        if i == 0
+            && let Some(first) = first
+        {
+            n.phase = first;
         }
         if n.phase == Phase::Queued {
             n.holds = true;
