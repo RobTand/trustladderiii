@@ -33,10 +33,12 @@ def main():
              "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", "--env", "OMP_NUM_THREADS=1",
              "--env", "MKL_NUM_THREADS=1", "--env", "OPENBLAS_NUM_THREADS=1",
              "--workdir=/source", "--entrypoint=python3", container.image,
-             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_harness.py", "tests/test_review_fixes.py", "tests/test_inventory.py", "tests/test_report_limits.py"]
+             "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_harness.py", "tests/test_review_fixes.py", "tests/test_inventory.py", "tests/test_report_limits.py", "tests/test_scratch.py"]
     subprocess.run(suite, check=True)
     from verify_reproducing import verify
     verify(container)
+    from verify_scratch import verify as verify_scratch
+    verify_scratch(container)
     fixtures = source / "tests/fixtures"
     with tempfile.TemporaryDirectory(prefix="tl3-fixture-") as directory:
         repo = Path(directory)

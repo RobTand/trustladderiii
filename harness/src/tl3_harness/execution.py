@@ -14,6 +14,9 @@ from .report import InvalidReport, decode, parse
 from .trees import added_names, changed_existing_tests, commit, configuration, export, is_test, test_edits, validate_configuration
 
 
+TMPFS_MIB = 512
+
+
 _BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
 
 
@@ -34,7 +37,7 @@ def container_command(tree: Path, container: Container, tests: tuple[str, ...]) 
         "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
         "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
         "--mount", f"type=bind,src={harness},dst=/harness,readonly",
-        "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,size={TMPFS_MIB}m,mode=1777",
         "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
         "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
         "--env", "OPENBLAS_NUM_THREADS=1", "--entrypoint=python3",

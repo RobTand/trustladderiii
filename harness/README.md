@@ -268,3 +268,19 @@ characters each. Every named test retains its outcome and pass flag.
 After collection, each event is limited to the longest collected ID plus 8 KiB.
 The trusted reader also limits the whole journal to 32 MiB and bounds its
 record count. These bounds apply independently.
+
+Each test receives a temporary directory that is removed after its function
+fixtures finish, including when setup, the test or teardown fails. `tmp_path`
+and `tmpdir` use pytest's numbered, test-named directory. Python's default
+temporary directory and the `TMPDIR`, `TEMP` and `TMP` environment variables point there during the test,
+so cooperating subprocesses use the same scratch. Module and session fixtures
+retain their separately owned temporary directories for their scope.
+Cleanup is best effort: a file recreated by a background writer must not turn a
+passing test into a teardown error. Any residue stays within the fixed tmpfs
+and is discarded with the container.
+The container has one disposable 512 MiB `/tmp` tmpfs. This is RAM charged to
+the action's memory slice, alongside Python, subprocesses and other test memory.
+The scratch verifier runs at production demand, 1 CPU and 2 GiB, including
+four consecutive tests that each write 384 MiB. Cleanup bounds cumulative
+plan use. One test must fit within that boundary; paths hardcoded outside its temporary directory and
+wider-scope fixture data still consume the shared bound.

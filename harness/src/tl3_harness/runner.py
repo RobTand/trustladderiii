@@ -3,8 +3,10 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
+import tempfile
 import types
 
 import pytest
@@ -91,6 +93,25 @@ class Reporter:
         self.summary = summary
         self.phases = {}
         self.collection_errors = []
+
+    @pytest.fixture(autouse=True)
+    def _tl3_scratch(self, tmp_path):
+        previous = tempfile.tempdir
+        environment = {name: os.environ.get(name) for name in ('TMPDIR', 'TEMP', 'TMP')}
+        tempfile.tempdir = str(tmp_path)
+        os.environ.update(dict.fromkeys(environment, str(tmp_path)))
+        try:
+            yield
+        finally:
+            tempfile.tempdir = previous
+            for name, value in environment.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+            # A writer can race removal. Preserve the test's outcome; the
+            # container's fixed tmpfs still bounds and discards any residue.
+            shutil.rmtree(tmp_path, ignore_errors=True)
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
