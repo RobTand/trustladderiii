@@ -15,6 +15,7 @@ import shards
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
 MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
+SCENARIO_COUNT = re.compile(r'^(\d+) .+ scenarios passed(?:;.*)?$')
 # Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
 BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15}
 
@@ -60,6 +61,8 @@ def execute_binary(binary, custom, arguments=()):
     suite = False
     passed = 0
     failures = []
+    scenario_counts = []
+    markers = 0
     # Diagnostics may end without a newline. Keep them off the completion stream.
     with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, env=env) as process:
         for line in process.stdout:
@@ -68,9 +71,16 @@ def execute_binary(binary, custom, arguments=()):
             if custom:
                 match = MARKER.fullmatch(line.rstrip())
                 if match:
+                    markers += 1
                     key = f'{name}::{match[1]}'
-                    results[key] = results.get(key, 0) + now - previous
+                    if key in results:
+                        failures.append(f'{name}: duplicate timing marker {match[1]}')
+                    else:
+                        results[key] = now - previous
                     previous = now
+                count = SCENARIO_COUNT.fullmatch(line.rstrip())
+                if count:
+                    scenario_counts.append(int(count[1]))
                 continue
             try:
                 event = json.loads(line)
@@ -97,6 +107,10 @@ def execute_binary(binary, custom, arguments=()):
     if returncode:
         failures.append(f'{name}: exit {returncode}')
     if custom:
+        if len(scenario_counts) != 1:
+            failures.append(f'{name}: expected one scenario count declaration; received {len(scenario_counts)}')
+        elif markers != scenario_counts[0]:
+            failures.append(f'{name}: declared {scenario_counts[0]} scenarios; received {markers} timing markers')
         # This also budgets setup-only binaries and work after the last named scenario.
         results[f'{name}::__tail__'] = time.monotonic() - previous
     elif not suite or len(results) != passed:

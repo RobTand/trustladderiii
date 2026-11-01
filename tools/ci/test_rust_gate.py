@@ -159,12 +159,44 @@ class GateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             executable = Path(temporary) / 'fixture.py'
             executable.write_text('import sys\nsys.stderr.write("partial diagnostic: ")\n'
-                                  'sys.stderr.flush()\nprint("test named_scenario ... ok")\n')
+                                  'sys.stderr.flush()\nprint("test named_scenario ... ok")\n'
+                                  'print("1 fixture scenarios passed; no skips")\n')
             binary = {'name': 'fixture', 'command': [sys.executable, str(executable)]}
             results = rust_gate.execute_binary(binary, custom=True)
             self.assertIn('fixture::named_scenario', results)
             self.assertIn('fixture::__tail__', results)
             self.assertGreaterEqual(results['fixture::named_scenario'], 0)
+
+    def test_custom_harness_refuses_fewer_or_more_markers_than_declared(self):
+        for declared, actual in [(3, 2), (1, 2), (1, 0)]:
+            with self.subTest(declared=declared, actual=actual), tempfile.TemporaryDirectory() as temporary:
+                executable = Path(temporary) / 'fixture.py'
+                executable.write_text(''.join(f'print("test scenario_{i} ... ok")\n'
+                                              for i in range(actual))
+                                      + f'print("{declared} fixture scenarios passed; no skips")\n')
+                binary = {'name': 'fixture/custom', 'command': [sys.executable, str(executable)]}
+                with self.assertRaisesRegex(RuntimeError,
+                                            f'fixture/custom:.*declared {declared}.*received {actual}'):
+                    rust_gate.execute_binary(binary, custom=True)
+
+    def test_custom_harness_requires_one_scenario_count_declaration(self):
+        for summaries in [[], ['1 fixture scenarios passed'] * 2]:
+            with self.subTest(summaries=summaries), tempfile.TemporaryDirectory() as temporary:
+                executable = Path(temporary) / 'fixture.py'
+                executable.write_text('print("test one ... ok")\n'
+                                      + ''.join(f'print({summary!r})\n' for summary in summaries))
+                with self.assertRaisesRegex(RuntimeError, 'fixture/custom:.*scenario count'):
+                    rust_gate.execute_binary({'name': 'fixture/custom',
+                                              'command': [sys.executable, str(executable)]}, custom=True)
+
+    def test_custom_harness_duplicate_markers_cannot_hide_an_unmarked_case(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / 'fixture.py'
+            executable.write_text('print("test one ... ok")\n' * 2
+                                  + 'print("2 fixture scenarios passed; no skips")\n')
+            with self.assertRaisesRegex(RuntimeError, 'fixture/custom:.*duplicate.*one'):
+                rust_gate.execute_binary({'name': 'fixture/custom',
+                                          'command': [sys.executable, str(executable)]}, custom=True)
 
     def test_different_binaries_overlap_and_worker_count_is_bounded(self):
         barrier = threading.Barrier(2, timeout=5)

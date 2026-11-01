@@ -43,10 +43,11 @@ fn main() {
         ("arrival_within_transaction", arrival_within_transaction),
         ("ingress_retirement", ingress_retirement),
     ];
-    for (name, test) in &cases {
-        if args.get(1).is_some_and(|s| s == "--r3") && !name.starts_with("wait_") {
-            continue;
-        }
+    let selected: Vec<_> = cases
+        .iter()
+        .filter(|(name, _)| !args.get(1).is_some_and(|s| s == "--r3") || name.starts_with("wait_"))
+        .collect();
+    for (name, test) in &selected {
         let settings = database.create(name);
         test(&settings);
         println!("test {name} ... ok");
@@ -62,7 +63,7 @@ fn main() {
     // reader_restart runs outside the list because it restarts Postgres.
     println!(
         "{} Postgres integration scenarios passed; no skips",
-        cases.len() + 1
+        selected.len() + 1
     );
 }
 

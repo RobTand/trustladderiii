@@ -574,6 +574,7 @@ fn main() {
     }
     if group == Some("notices") {
         database.stop();
+        println!("124 GitHub notice scenarios passed; no skips; no live GitHub calls");
         return;
     }
     if let Some(scenario) = args.get(1).and_then(|arg| arg.strip_prefix("--followup=")) {
@@ -657,7 +658,10 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    println!("GitHub integration scenarios passed; no skips; no live GitHub calls");
+    let scenario_count = if group == Some("flow") { 73 } else { 191 };
+    println!(
+        "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
+    );
 }
 fn receiver_is_durable(settings: &tl3_config::Store) {
     let api = Server::new();

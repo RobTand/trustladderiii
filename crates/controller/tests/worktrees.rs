@@ -210,7 +210,7 @@ fn crashes() {
                 }
                 _ => unreachable!(),
             }
-            println!("SIGKILL {kind:?} {boundary}: original key converges once");
+            println!("test SIGKILL_{kind:?}_{boundary} ... ok; original key converges once");
         }
     }
 }
@@ -1270,23 +1270,39 @@ fn main() {
     scratch_removal_crashes();
     crashes();
     conflicts();
+    println!("test conflicts ... ok");
     fences_and_unknowns();
+    println!("test fences_and_unknowns ... ok");
     leases_and_exact_heads();
+    println!("test leases_and_exact_heads ... ok");
     old_epoch_partial_attempts();
+    println!("test old_epoch_partial_attempts ... ok");
     fenced_rebase_before_checkout_restoration();
+    println!("test fenced_rebase_before_checkout_restoration ... ok");
     repeated_prepare_preserves_maker_work();
+    println!("test repeated_prepare_preserves_maker_work ... ok");
     preexisting_half_add_is_repaired_from_git_lock();
+    println!("test preexisting_half_add_is_repaired_from_git_lock ... ok");
     prepare_repairs_at_durable_base_after_main_moves();
+    println!("test prepare_repairs_at_durable_base_after_main_moves ... ok");
     removal_of_unpopulated_prepare();
+    println!("test removal_of_unpopulated_prepare ... ok");
     incomplete_prepare();
+    println!("test incomplete_prepare ... ok");
     populated_prepare_with_initialization_lock();
+    println!("test populated_prepare_with_initialization_lock ... ok");
     incomplete_remove();
+    println!("test incomplete_remove ... ok");
     removal_without_gitlink();
+    println!("test removal_without_gitlink ... ok");
     killed_git_add();
+    println!("test killed_git_add ... ok");
     half_registered_add_requires_operator_recovery();
+    println!("test half_registered_add_requires_operator_recovery ... ok");
     remove_ignores_unrelated_journal_records();
+    println!("test remove_ignores_unrelated_journal_records ... ok");
     println!(
-        "worktree lifecycle, {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
+        "28 worktree lifecycle scenarios passed; {} verified SIGKILL boundaries, fencing, unknown outcomes and leases passed; no skips",
         VERIFIED_KILLS.load(Ordering::Relaxed)
     );
 }

@@ -45,10 +45,12 @@ fn main() {
         println!("fixture {case}: {status}");
         if !status.success() {
             failed.push(case);
+        } else {
+            println!("test fixture_{case} ... ok");
         }
     }
     assert!(failed.is_empty(), "fixture regressions failed: {failed:?}");
-    println!("3 fixture regression scenarios passed; no skips");
+    println!("4 fixture regression scenarios passed; no skips");
 }
 
 fn fixture() -> (Database, PathBuf) {
@@ -205,6 +207,7 @@ fn concurrent() {
         "expected exactly one complete install"
     );
     assert!(cache.join("17.4.0/bin/postgres").is_file());
+    println!("test fixture_concurrent_install ... ok");
     let (database, root) = fixture();
     drop(database);
     assert!(!root.exists());
