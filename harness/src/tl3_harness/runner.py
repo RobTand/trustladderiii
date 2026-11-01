@@ -93,7 +93,7 @@ class Reporter:
         self.collection_errors = []
 
     def emit(self, **record):
-        data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode()
+        data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
         while data:
             data = data[os.write(self.descriptor, data):]
 

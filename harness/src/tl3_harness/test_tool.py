@@ -7,6 +7,7 @@ import tempfile
 
 from .execution import Container, Progress, container_command, require_admission
 from .report import decode
+from .limits import MAX_REPORT_LINE_BYTES
 
 
 SUMMARY_BYTES = 16_384
@@ -58,8 +59,8 @@ def run_current(tree, container, tests):
         with subprocess.Popen(command, stdin=selection, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL) as child:
             try:
-                while line := child.stdout.readline(65_537):
-                    if len(line) > 65_536:
+                while line := child.stdout.readline(MAX_REPORT_LINE_BYTES + 1):
+                    if len(line) > MAX_REPORT_LINE_BYTES:
                         raise ValueError("oversized report")
                     record = decode(line)
                     if not started:

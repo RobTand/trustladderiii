@@ -260,3 +260,11 @@ short function selector into many parameter cases; if that collection exceeds
 the budget, it reports a test-plan error rather than an infrastructure failure.
 Selections enter the container through stdin so large plans fit independently
 of the host's per-argument limit.
+
+The plan also reserves space for every test verdict within the controller's
+8 MiB result limit, including repeated tests across checks and JSON escaping.
+Results include messages for the first 20 failing tests, clipped to 1,000
+characters each. Every named test retains its outcome and pass flag.
+After collection, each event is limited to the longest collected ID plus 8 KiB.
+The trusted reader also limits the whole journal to 32 MiB and bounds its
+record count. These bounds apply independently.

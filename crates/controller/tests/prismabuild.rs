@@ -1649,12 +1649,18 @@ fn main() {
     }
     if args.get(1).is_some_and(|arg| arg == "--review-budgets") {
         let mut failures = 0;
-        for test in [oversized_plan_is_refused_before_submission as fn(), result_budget_rejects_repeated_checks] {
+        for test in [
+            oversized_plan_is_refused_before_submission as fn(),
+            result_budget_rejects_repeated_checks,
+        ] {
             failures += usize::from(std::panic::catch_unwind(test).is_err());
         }
         let mut database = support::Database::start();
         let settings = database.create("pb_plan_budget");
-        failures += usize::from(std::panic::catch_unwind(|| oversized_planner_reply_reaches_plan_feedback(&settings)).is_err());
+        failures += usize::from(
+            std::panic::catch_unwind(|| oversized_planner_reply_reaches_plan_feedback(&settings))
+                .is_err(),
+        );
         database.stop();
         assert_eq!(failures, 0);
         return;
@@ -2129,20 +2135,24 @@ fn oversized_plan_is_refused_before_submission() {
     assert!(!calls.contains("--seal-only") && !calls.contains("--publish"));
 }
 
-
 fn result_budget_rejects_repeated_checks() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
-    delivery.checks.as_mut().unwrap().plan = (0..40000).map(|i| Check {
-        name: format!("check-{i}"), kind: Kind::Regression,
-        tests: vec!["test_value.py::test_value".into()],
-    }).collect();
+    delivery.checks.as_mut().unwrap().plan = (0..40000)
+        .map(|i| Check {
+            name: format!("check-{i}"),
+            kind: Kind::Regression,
+            tests: vec!["test_value.py::test_value".into()],
+        })
+        .collect();
     let mut adapter = fixture(root.path(), "pending");
     let completion = adapter.execute(&delivery).unwrap();
-    assert!(matches!(completion.observations.first(), Some(Observation::Checks {
+    assert!(
+        matches!(completion.observations.first(), Some(Observation::Checks {
         report: true, pass: false, failed_tests, ..
     }) if failed_tests[0].message.contains("8388608") && failed_tests[0].message.contains("reduce")),
-        "result budget must complete a plan failure before publication");
+        "result budget must complete a plan failure before publication"
+    );
     assert!(adapter.action_key(&delivery).unwrap().is_none());
 }
 
@@ -2164,20 +2174,58 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
                 }
             }
         }));
-    let mut controller = Controller::open(tl3_store::Store::open(settings).unwrap(), registry, Bootstrap {
-        operations:None, repos:vec![repository()], rob:1, slots:1, pool:1,
-    }).unwrap();
-    controller.intake(LabelledIssue {delivery:"oversized-planner".into(), owner:"RobTand".into(),
-        repo:"tl3-sandbox".into(), installation:1, number:42, title:"Plan budget".into(), actor:1, label:"tl3".into()}).unwrap();
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        registry,
+        Bootstrap {
+            operations: None,
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+        },
+    )
+    .unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "oversized-planner".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "Plan budget".into(),
+            actor: 1,
+            label: "tl3".into(),
+        })
+        .unwrap();
     for _ in 0..100 {
-        if !controller.drive_once().unwrap() {break;}
+        if !controller.drive_once().unwrap() {
+            break;
+        }
     }
     let world = controller.world().unwrap();
-    assert_eq!(world.nodes[0].question.map(|q| q.kind), Some(tl3_kernel::QKind::CantMeet),
-        "oversized plans must follow the normal planner retry and feedback path");
+    assert_eq!(
+        world.nodes[0].question.map(|q| q.kind),
+        Some(tl3_kernel::QKind::CantMeet),
+        "oversized plans must follow the normal planner retry and feedback path"
+    );
     assert_eq!(world.nodes[0].run_incidents, 0);
     let mut store = tl3_store::Store::open(settings).unwrap();
     let findings = store.worker_document("0", "findings").unwrap().unwrap();
-    assert!(findings.as_array().unwrap().iter().any(|v| v.as_str().unwrap().contains("4194304") && v.as_str().unwrap().contains("reduce")));
-    assert!(!controller.snapshot().unwrap().pending_effects.iter().any(|e| e.kind == "PrismaBuild"));
+    assert!(
+        findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("4194304")
+                && v.as_str().unwrap().contains("reduce"))
+    );
+    assert!(
+        !controller
+            .snapshot()
+            .unwrap()
+            .pending_effects
+            .iter()
+            .any(|e| e.kind == "PrismaBuild")
+    );
 }
