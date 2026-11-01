@@ -213,8 +213,12 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 Inspect the terminal record, verified logs, CAS receipt and cleanup. The log's
 `container_image` is the immutable ID to qualify and configure. The tag is
 only a preparation label. The image ID is the real pin: apt packages and pip's
-transitive dependencies resolve at build time. An image built on dl380g10 is local to dl380g10;
+transitive dependencies resolve at build time. An image built on dl380g10 is amd64 and local to dl380g10;
 the ARM workers need a separate native build and its own immutable image ID.
+The pinned Torch CPU and Triton releases publish Python 3.14 aarch64 wheels.
+Native arm64 builds are worth qualifying to use the Sparks' CPU capacity;
+CPU Torch itself is not an architecture blocker. An amd64 image does not
+qualify an arm64 build or prove the remaining native dependencies there.
 PB's `--container-image` requirement keeps checks on a worker that positively
 reports the image. Do not add a host tag to ordinary checks.
 
