@@ -774,7 +774,7 @@ It leaves out ranking, bottleneck scoring, Hindsight writes and the orphan sweep
 - the parent phases and Escalated;
 - dependencies;
 - pauses owned by deciders;
-- the slice-two gate with W of 2, the multi-account agent pool, ranking and bottleneck scoring;
+- the slice-two gate, the multi-account agent pool, ranking and bottleneck scoring;
 - recursive escalation;
 - decision batches checked against current facts;
 - "accept as is";
