@@ -922,7 +922,7 @@ fn check_gate_planning(width: u8) {
 }
 
 fn check_gate_progress(width: u8) {
-    let before = gate_world(width);
+    let mut before = gate_world(width);
     kani::assume(before.is_settled());
     let event = before.witness().unwrap();
     kani::cover!(
@@ -933,6 +933,54 @@ fn check_gate_progress(width: u8) {
         before.nodes.iter().filter(|n| n.pool).count() == usize::from(width),
         "all W leaves have admitted maker runs"
     );
+    // A symbolic actor in apply duplicates large Node reads and exhausted
+    // 64 GiB. These independent roots are interchangeable; keep the actor at 0.
+    let (actor, event) = match event {
+        Event::Reply {
+            node,
+            generation,
+            reply,
+        } => (
+            node,
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
+        ),
+        Event::Ack { node, seq, ack } => (
+            node,
+            Event::Ack {
+                node: NodeId(0),
+                seq,
+                ack,
+            },
+        ),
+        Event::Fact { node, fact } => (
+            node,
+            Event::Fact {
+                node: NodeId(0),
+                fact,
+            },
+        ),
+        Event::Command { node, id, command } => (
+            node,
+            Event::Command {
+                node: NodeId(0),
+                id,
+                command,
+            },
+        ),
+        Event::NewRequest { .. } | Event::NewAdoption { .. } => unreachable!(),
+    };
+    let measure = before.measure();
+    for i in 1..4 {
+        if actor == NodeId(i as u64) {
+            before.nodes.swap(0, i);
+        }
+    }
+    require_consistent(&before);
+    assert_eq!(before.measure(), measure);
     let mut after = before.clone();
     let mut out = Outbox::new();
     apply(&mut after, event, &mut out);
