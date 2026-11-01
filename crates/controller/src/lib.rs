@@ -402,6 +402,7 @@ impl Controller {
                         }),
                         &issue.title,
                         None,
+                        executor::Upstream::GitHub,
                         error,
                         &mut failure,
                     )?;
@@ -703,6 +704,7 @@ impl Controller {
                         None,
                         "An incoming update",
                         None,
+                        executor::Upstream::GitHub,
                         error.into(),
                         &mut commit,
                     )?;
@@ -764,6 +766,8 @@ impl Controller {
                             target,
                             &title,
                             node,
+                            observation_upstream(&snapshot, &observation)?
+                                .unwrap_or(executor::Upstream::GitHub),
                             error,
                             &mut commit,
                         )?;

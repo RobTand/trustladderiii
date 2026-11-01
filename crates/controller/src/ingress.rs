@@ -370,6 +370,7 @@ fn translator_failed(
         None,
         "An incoming GitHub update",
         None,
+        crate::executor::Upstream::GitHub,
         error,
         &mut commit,
     )?;

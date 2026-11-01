@@ -49,6 +49,7 @@ impl Controller {
         target: Option<IssueTarget>,
         title: &str,
         node: Option<NodeId>,
+        upstream: Upstream,
         error: Error,
         commit: &mut Commit,
     ) -> Result<()> {
@@ -66,6 +67,7 @@ impl Controller {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if previous.iter().any(|incident| {
             incident.open
+                && incident.signature.upstream == upstream
                 && incident.signature.class == class
                 && incident
                     .input_failure
@@ -89,7 +91,7 @@ impl Controller {
                 incidents: count,
             });
         let signature = IncidentSignature {
-            upstream: Upstream::GitHub,
+            upstream,
             class: class.into(),
         };
         let id = crate::looks::incident_id(snapshot, format!("input.{}", commit.rows.len()));

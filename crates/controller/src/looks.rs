@@ -231,10 +231,10 @@ impl Controller {
             {
                 continue;
             }
-            if state.external_wait.is_some() {
-                if !self.retire_wait(snapshot, &state.delivery, commit)? {
-                    continue;
-                }
+            if state.external_wait.is_some()
+                && !self.retire_wait(snapshot, &state.delivery, commit)?
+            {
+                continue;
             }
             commit.rows.push(RowChange::Delete {
                 table: "allowances".into(),
@@ -268,6 +268,7 @@ impl Controller {
                     }),
                     &request.title,
                     Some(delivery.node()),
+                    Upstream::PrismaBuild,
                     error,
                     commit,
                 )?;
@@ -611,7 +612,7 @@ impl Controller {
                     let mut commit = Commit::new(
                         format!(
                             "look-progress:{}:{}",
-                            &state.delivery.key,
+                            state.delivery.key,
                             snapshot.revision.get()
                         ),
                         json!({"progress_read":state.delivery.key}),
@@ -1319,10 +1320,10 @@ impl Controller {
                 .iter()
                 .any(|r| r.table == "watches" && r.id == row.id);
             if !pending && !watched && !incident_open {
-                if state.external_wait.is_some() {
-                    if !self.retire_wait(snapshot, &state.delivery, &mut commit)? {
-                        continue;
-                    }
+                if state.external_wait.is_some()
+                    && !self.retire_wait(snapshot, &state.delivery, &mut commit)?
+                {
+                    continue;
                 }
                 commit.rows.push(RowChange::Delete {
                     table: "allowances".into(),
