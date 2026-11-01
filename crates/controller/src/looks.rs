@@ -649,7 +649,21 @@ impl Controller {
                     }
                 } else {
                     let found = serde_json::to_string(&completion)?;
+                    let mut setup_gap = false;
+                    for observation in &completion.observations {
+                        if let Observation::Queue(fact) = observation
+                            && matches!(
+                                fact.evidence,
+                                crate::adapters::mergify::Evidence::ChecksUnavailable { .. }
+                            )
+                            && !fact.recorded(snapshot)?
+                        {
+                            setup_gap = true;
+                            break;
+                        }
+                    }
                     let new = effect.state.is_pending()
+                        || setup_gap
                         || (state.found.as_ref() != Some(&found)
                             && !completion.observations.is_empty());
                     state.found = Some(found);
@@ -1620,6 +1634,12 @@ mod incident_tests {
     }
 }
 
+pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
+    format!("required-checks:{}:{gap}", node.0)
+}
+
 impl Controller {
     pub(crate) fn check_setup_incident(
         &self,
@@ -1628,12 +1648,36 @@ impl Controller {
         node: NodeId,
         permissions: &[String],
     ) -> Result<()> {
-        let id = format!("required-checks:{}", node.0);
-        let key = format!("incident:{id}");
+        for permission in permissions
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            self.check_setup_gap(snapshot, commit, node, permission)?;
+        }
+        Ok(())
+    }
+
+    fn check_setup_gap(
+        &self,
+        snapshot: &Snapshot,
+        commit: &mut Commit,
+        node: NodeId,
+        permission: &str,
+    ) -> Result<()> {
+        let id = check_setup_incident_id(node, permission);
+        if snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+        {
+            return Ok(());
+        }
+        // Reopening keeps the incident ID but needs a new notice delivery.
+        let key = format!("incident:{id}:{}", snapshot.revision.get());
         let request = crate::request(snapshot, node)?;
         let summary = format!(
             "Required-check setup: {}. TL3 continues with the available requirements and check runs.",
-            permissions.join("; ")
+            permission
         );
         let signature = IncidentSignature {
             upstream: Upstream::Mergify,

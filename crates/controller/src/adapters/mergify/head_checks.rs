@@ -51,6 +51,21 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
     let requirements = github
         .required_status_checks(repo, &pull.base.branch)
         .await?;
+    let checks = if requirements.checks.is_empty() {
+        vec![]
+    } else {
+        github.check_runs(repo, &pull.head.sha).await?
+    };
+    evaluate(github, repo, pull, requirements, &checks).await
+}
+
+pub(super) async fn evaluate(
+    github: &GitHub,
+    repo: &str,
+    pull: &PullRequest,
+    requirements: tl3_github::RequiredChecks,
+    checks: &[CheckRun],
+) -> Result<Checks> {
     let required = requirements.checks;
     let mut unavailable = requirements.unavailable;
     if required.is_empty() {
@@ -61,7 +76,7 @@ pub(super) async fn read(github: &GitHub, repo: &str, pull: &PullRequest) -> Res
         });
     }
     let mut latest = BTreeMap::new();
-    for check in github.check_runs(repo, &pull.head.sha).await? {
+    for check in checks.iter().cloned() {
         if check.head_sha == pull.head.sha {
             let key = (check.app.as_ref().map(|app| app.id), check.name.clone());
             let entry = latest.entry(key).or_insert_with(|| check.clone());
