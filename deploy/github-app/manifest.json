@@ -16,7 +16,8 @@
     "checks": "write",
     "contents": "write",
     "metadata": "read",
-    "merge_queues": "read"
+    "merge_queues": "read",
+    "statuses": "read"
   },
   "default_events": [
     "issues",
@@ -24,6 +25,7 @@
     "pull_request",
     "check_run",
     "check_suite",
-    "merge_group"
+    "merge_group",
+    "status"
   ]
 }

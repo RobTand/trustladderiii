@@ -57,9 +57,12 @@ The controller does not change App permissions.
 ## Classic branch protection permission
 
 Reading classic required checks needs repository permission **Administration: Read**.
-The manifest requests it for new Apps. For an existing App, Rob must grant it in
-repository permissions and approve the installation's updated permissions before
-TL3 can read classic protection. A permission error keeps enqueueing pending.
+Legacy commit status contexts also need **Commit statuses: Read** and the `status`
+webhook subscription, which wakes pending enqueue when a status changes.
+The manifest requests these for new Apps. For an existing App, Rob must grant
+both permissions, approve the installation's updated permissions, and subscribe
+to `status` before TL3 can read and wait for legacy contexts. A permission error
+keeps enqueueing pending.
 The controller does not change App permissions.
 
 ## Served repository command permissions
