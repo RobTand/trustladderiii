@@ -704,6 +704,16 @@ impl Controller {
         let world = snapshot::decode(&snapshot)?;
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
+            // ClosePr removes the queue label without waiting for Mergify admission reads.
+            let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Mergify
+                && matches!(
+                    world.nodes[delivery
+                        .node()
+                        .index()
+                        .ok_or(Error::Invalid("node index overflow"))?]
+                    .phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                );
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
                     DeliveryOutput::Effect { node, seq, .. } => {
@@ -718,6 +728,7 @@ impl Controller {
                 match effect.state {
                     EffectState::Intended => {
                         if executor::upstream(delivery.output) == executor::Upstream::Mergify
+                            && !closing_queue
                             && !matches!(
                                 self.adapters
                                     .adapter(&delivery)?
@@ -798,9 +809,13 @@ impl Controller {
                     }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
-                        self.adapters
-                            .adapter(&delivery)?
-                            .reconcile_cancellation(&delivery)
+                        if closing_queue {
+                            Ok(Reconciliation::Found(Completion::confirmed(vec![])))
+                        } else {
+                            self.adapters
+                                .adapter(&delivery)?
+                                .reconcile_cancellation(&delivery)
+                        }
                     } else {
                         self.adapters.adapter(&delivery)?.reconcile(&delivery)
                     };
