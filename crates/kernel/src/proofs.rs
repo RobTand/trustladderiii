@@ -199,6 +199,12 @@ fn check_effect(
     }
 }
 
+fn rebase_progress_applies(node: &Node, generation: u64) -> bool {
+    node.phase == Phase::Rebasing
+        && node.current() == Some(Item::Await)
+        && node.run == Some(generation)
+}
+
 /// Applying one event keeps the world consistent and keeps every rule.
 fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
@@ -269,6 +275,37 @@ fn check_apply(event: Event) -> World {
                     assert_eq!(n.question.unwrap().cont, Cont::Ready(Resume::Reviewing));
                 }
             }
+        }
+    }
+    if let Event::Fact {
+        fact: Fact::Conflict,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if matches!(b.phase, Phase::Publishing | Phase::Queued) {
+            assert_eq!(n.phase, Phase::Rebasing);
+            assert_eq!(n.generation, b.generation + 1);
+            assert_eq!(n.credit, b.credit);
+            assert_eq!(n.holds, b.holds);
+        } else {
+            assert_eq!(n, b, "a repeated Conflict cannot restart the rebase");
+        }
+    }
+    if let Event::Reply {
+        generation,
+        reply: Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if rebase_progress_applies(b, generation) {
+            // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
+            let fuel =
+                |n: &Node| n.credit.balance() + i64::from(FREE_RECHECKS.saturating_sub(n.rechecks));
+            assert!(n.phase == Phase::AwaitingRob || fuel(n) < fuel(b));
         }
     }
     // Each of Rob's answers applies only to the question it names, and only
@@ -484,14 +521,40 @@ proof!(
     apply_changes_requested,
     check_apply(reply(Reply::ChangesRequested))
 );
-proof!(
-    apply_rebase_clean,
-    check_apply(reply(Reply::RebaseClean { head: kani::any() }))
-);
-proof!(
-    apply_rebase_needs_changes,
-    check_apply(reply(Reply::RebaseNeedsChanges))
-);
+proof!(apply_rebase_clean, {
+    let event = reply(Reply::RebaseClean { head: kani::any() });
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = rebase_progress_applies(b, generation);
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let funded = b.credit.can_spend(1);
+    kani::cover!(accepted && free, "clean rebase uses the free allowance");
+    kani::cover!(accepted && !free && funded, "clean rebase spends credit");
+    kani::cover!(accepted && !free && !funded, "clean rebase needs credit");
+});
+proof!(apply_rebase_needs_changes, {
+    let event = reply(Reply::RebaseNeedsChanges);
+    let Event::Reply { generation, .. } = event else {
+        unreachable!()
+    };
+    let before = check_apply(event);
+    let b = &before.nodes[0];
+    let accepted = rebase_progress_applies(b, generation);
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let funded = b.credit.can_spend(1);
+    kani::cover!(
+        accepted && free && funded,
+        "conflict fix pays despite free allowance"
+    );
+    kani::cover!(
+        accepted && !free && funded,
+        "conflict fix spends credit after allowance"
+    );
+    kani::cover!(accepted && !funded, "conflict fix needs credit");
+});
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
@@ -509,7 +572,18 @@ proof!(
     apply_ci_failed,
     check_apply(fact(Fact::CiFailed { infra: kani::any() }))
 );
-proof!(apply_conflict, check_apply(fact(Fact::Conflict)));
+fn check_conflict() {
+    let before = check_apply(fact(Fact::Conflict));
+    kani::cover!(
+        before.nodes[0].phase == Phase::Publishing,
+        "Q46 conflict before the queue"
+    );
+    kani::cover!(
+        before.nodes[0].phase == Phase::Queued,
+        "conflict after enqueue"
+    );
+}
+proof!(apply_conflict, check_conflict());
 proof!(
     apply_upstream_stalled,
     check_apply(fact(Fact::UpstreamStalled))
@@ -749,3 +823,15 @@ proof!(
     apply_adoption_has_no_maker_credit,
     check_adoption_has_no_maker_credit()
 );
+
+proof!(apply_rebase_progress_gate, {
+    let mut node = Node::new(RepoId(0));
+    node.phase = Phase::Rebasing;
+    node.run = Some(node.generation);
+    node.pos = kani::any();
+    kani::assume(node.pos < 2);
+    let awaiting = node.current() == Some(Item::Await);
+    kani::cover!(!awaiting, "the rebase has not reached Await");
+    kani::cover!(awaiting, "the rebase is awaiting its reply");
+    assert_eq!(rebase_progress_applies(&node, node.generation), awaiting);
+});

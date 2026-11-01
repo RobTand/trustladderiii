@@ -1551,7 +1551,11 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
         Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
         Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
         Phase::Queued => &["advance_queued", "progress_from_queued"],
-        Phase::Rebasing => &["advance_rebasing", "progress_from_rebasing"],
+        Phase::Rebasing => &[
+            "advance_rebasing",
+            "progress_from_rebasing",
+            "apply_rebase_progress_gate",
+        ],
         Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
         Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
         Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
@@ -2240,7 +2244,7 @@ fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) {
         }
         Fact::Conflict => {
             let m = &mut w.nodes[i];
-            if m.phase == Phase::Queued {
+            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
             }
         }

@@ -389,6 +389,16 @@ impl Adapter {
                 progress: None,
             }));
         }
+        if current_head
+            && state.pull_request.merged_at.is_none()
+            && state.pull_request.mergeable == Some(false)
+        {
+            observations.push(Observation::Kernel(tl3_kernel::Event::Fact {
+                node: delivery.node(),
+                fact: tl3_kernel::Fact::Conflict,
+            }));
+            return Ok(Reconciliation::Found(Completion::confirmed(observations)));
+        }
         let active = matches!(state.state, QueueState::Queued | QueueState::ChecksRunning);
         let terminal = matches!(
             state.state,

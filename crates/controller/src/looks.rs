@@ -1315,6 +1315,7 @@ pub(crate) fn incident_summary(
         }
         "not_found" => "could not find the requested resource",
         "invalid_request" => "rejected the request",
+        // Incidents stored before Q46 retain this class. Publication now reports Conflict.
         "unrebased_head" => {
             "refused to publish because the checked head conflicts with current main"
         }
