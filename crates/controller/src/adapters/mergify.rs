@@ -74,10 +74,27 @@ pub struct QueueFact {
     pub evidence: Evidence,
 }
 
+/// A required context and the app expected to report it; `None` accepts any source.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequiredCheck {
+    pub context: String,
+    pub app: Option<u64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
     ChecksUnavailable {
         permissions: Vec<String>,
+    },
+    /// Every check suite on the head completed without this required context (Q52).
+    CheckMissing {
+        head: String,
+        required: RequiredCheck,
+    },
+    /// The context of an open missing-check incident has reported on that head (Q52).
+    CheckReported {
+        head: String,
+        required: RequiredCheck,
     },
     Merged {
         head: String,
@@ -130,7 +147,33 @@ impl QueueFact {
         }
         Ok(None)
     }
+    /// Setup evidence is deduplicated against incidents, not observation receipts.
+    pub(crate) fn setup(&self) -> bool {
+        matches!(
+            self.evidence,
+            Evidence::ChecksUnavailable { .. }
+                | Evidence::CheckMissing { .. }
+                | Evidence::CheckReported { .. }
+        )
+    }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
+        if let Evidence::CheckMissing { head, required }
+        | Evidence::CheckReported { head, required } = &self.evidence
+        {
+            let Some(node) = self.node(snapshot)? else {
+                return Ok(false);
+            };
+            let id = crate::looks::missing_check_incident_id(node, head, required);
+            let incident = snapshot
+                .rows
+                .iter()
+                .find(|row| row.table == "incidents" && row.id == id);
+            // A raised incident stays deduplicated after a clear; a report matters only while open.
+            return Ok(match self.evidence {
+                Evidence::CheckMissing { .. } => incident.is_some(),
+                _ => !incident.is_some_and(|row| row.value["open"] == true),
+            });
+        }
         if let Evidence::ChecksUnavailable { permissions } = &self.evidence {
             let Some(node) = self.node(snapshot)? else {
                 return Ok(false);
@@ -168,6 +211,18 @@ impl QueueFact {
                 format!(
                     "required-checks-setup:{}",
                     serde_json::to_string(&gaps).unwrap()
+                )
+            }
+            Evidence::CheckMissing { head, required } => {
+                format!(
+                    "missing-check:{head}:{}",
+                    serde_json::to_string(required).unwrap()
+                )
+            }
+            Evidence::CheckReported { head, required } => {
+                format!(
+                    "check-reported:{head}:{}",
+                    serde_json::to_string(required).unwrap()
                 )
             }
             Evidence::Merged { head, .. } => format!("merged:{head}"),
@@ -320,7 +375,7 @@ impl Adapter {
         }
         let facts = self
             .runtime
-            .block_on(queue_facts(github, &delivery.repository, &state, head))?
+            .block_on(queue_facts(github, &delivery.repository, &state, head, &[]))?
             .into_iter()
             .map(Observation::Queue)
             .collect();
@@ -549,7 +604,8 @@ impl Executor for Adapter {
                         evidence: Evidence::CiFailed {
                             head_check: true,
                             ..
-                        } | Evidence::ChecksUnavailable { .. },
+                        } | Evidence::ChecksUnavailable { .. }
+                            | Evidence::CheckMissing { .. },
                         ..
                     })
                 )
@@ -609,7 +665,7 @@ impl Executor for Adapter {
             .block_on(head_checks::read(&github, &repo, &state.pull_request))?
             .ready
         {
-            return Err(Error::Invalid("required head checks are still pending"));
+            return Err(Error::ChecksPending);
         }
         let mut attempt = match self.baseline(delivery)? {
             Some(attempt) => attempt,
@@ -754,11 +810,13 @@ fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
 }
 
+/// `open` names the open missing-check incidents on the expected head.
 async fn queue_facts(
     github: &GitHub,
     repo: &Repository,
     state: &tl3_mergify::Observation,
     expected_head: &str,
+    open: &[RequiredCheck],
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
     if is_merge_queue_pr(pull) {
@@ -798,6 +856,33 @@ async fn queue_facts(
                 },
             });
         }
+        // Q52: once every suite on the head has completed, no app is still
+        // working on it, so a missing required context will not report.
+        if !checks.missing.is_empty() {
+            let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
+            if !suites.is_empty() && suites.iter().all(|suite| suite.status == "completed") {
+                facts.extend(checks.missing.iter().map(|required| QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::CheckMissing {
+                        head: pull.head.sha.clone(),
+                        required: required.clone(),
+                    },
+                }));
+            }
+        }
+        facts.extend(
+            open.iter()
+                .filter(|required| checks.reported.contains(required))
+                .map(|required| QueueFact {
+                    repository: repo.clone(),
+                    number: pull.number,
+                    evidence: Evidence::CheckReported {
+                        head: pull.head.sha.clone(),
+                        required: required.clone(),
+                    },
+                }),
+        );
         if let Some(evidence) = checks.evidence(pull) {
             facts.push(QueueFact {
                 repository: repo.clone(),
@@ -909,6 +994,7 @@ struct Tracked {
     head: String,
     approved: String,
     known_heads: Vec<String>,
+    missing: Vec<RequiredCheck>,
 }
 fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Result<Vec<Tracked>> {
     let world: World = crate::snapshot::decode(snapshot)?;
@@ -946,16 +1032,74 @@ fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Resu
             .filter(|entry| entry.kind == InternKind::Commit && entry.scope == row.id)
             .map(|entry| entry.value.clone())
             .collect();
+        let approved = approved_head(snapshot, n.approved)?;
         result.push(Tracked {
             number: row.value["number"]
                 .as_u64()
                 .ok_or(Error::Invalid("invalid PR number"))?,
+            missing: open_missing_checks(snapshot, node, &approved)?,
             head,
-            approved: approved_head(snapshot, n.approved)?,
+            approved,
             known_heads,
         });
     }
     Ok(result)
+}
+
+fn open_missing_checks(
+    snapshot: &Snapshot,
+    node: NodeId,
+    head: &str,
+) -> Result<Vec<RequiredCheck>> {
+    let mut open = Vec::new();
+    for row in snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "queue_facts")
+    {
+        let Ok(fact) = serde_json::from_value::<QueueFact>(row.value.clone()) else {
+            continue;
+        };
+        if let Evidence::CheckMissing {
+            head: missing,
+            required,
+        } = &fact.evidence
+            && missing == head
+            && fact.node(snapshot)? == Some(node)
+        {
+            let id = crate::looks::missing_check_incident_id(node, head, required);
+            if snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true)
+            {
+                open.push(required.clone());
+            }
+        }
+    }
+    Ok(open)
+}
+
+fn pending_enqueues(snapshot: &Snapshot, repo: &Repository, number: u64) -> Result<Vec<Input>> {
+    let mut pending = Vec::new();
+    for effect in &snapshot.pending_effects {
+        let delivery = crate::hydrate(effect, snapshot)?;
+        if delivery.repository == *repo
+            && delivery.pull_request == Some(number)
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::Enqueue,
+                    ..
+                }
+            )
+        {
+            pending.push(Input::Look {
+                key: effect.key.clone(),
+            });
+        }
+    }
+    Ok(pending)
 }
 
 /// Sources read evidence; only the controller maps PRs to nodes and steps the kernel.
@@ -983,6 +1127,7 @@ impl Translator {
             | Event::PullRequestUnlabeled { context, .. }
             | Event::CheckRunCompleted { context, .. }
             | Event::CheckRunUpdated { context, .. }
+            | Event::CheckSuiteCompleted { context, .. }
             | Event::MergeGroup { context, .. } => context,
             _ => return Ok(vec![]),
         };
@@ -1022,10 +1167,13 @@ impl Translator {
                         .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
                     let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                     let state = tl3_mergify::observe(pull_request.clone(), &checks, &head);
-                    facts.extend(
-                        self.runtime
-                            .block_on(queue_facts(github, repo, &state, &head))?,
-                    );
+                    facts.extend(self.runtime.block_on(queue_facts(
+                        github,
+                        repo,
+                        &state,
+                        &head,
+                        &[],
+                    ))?);
                 }
             }
             Event::PullRequestClosed {
@@ -1098,29 +1246,29 @@ impl Translator {
                                 .iter()
                                 .any(|pull| pull.number == item.number))
                 }) {
-                    let mut pending = Vec::new();
-                    for effect in &snapshot.pending_effects {
-                        let delivery = crate::hydrate(effect, snapshot)?;
-                        if delivery.repository == *repo
-                            && delivery.pull_request == Some(item.number)
-                            && matches!(
-                                delivery.output,
-                                Out::Effect {
-                                    kind: EffectKind::Enqueue,
-                                    ..
-                                }
-                            )
-                        {
-                            pending.push(Input::Look {
-                                key: effect.key.clone(),
-                            });
-                        }
-                    }
+                    let pending = pending_enqueues(snapshot, repo, item.number)?;
                     if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
                         facts.extend(self.look(github, repo, item)?);
                         if !queue_event {
                             wake.extend(pending);
                         }
+                    }
+                }
+            }
+            // A completed suite can be the last evidence that a required check won't report (Q52).
+            Event::CheckSuiteCompleted { check_suite, .. } => {
+                for item in open.iter().filter(|item| {
+                    item.approved == check_suite.head_sha
+                        && (check_suite.pull_requests.is_empty()
+                            || check_suite
+                                .pull_requests
+                                .iter()
+                                .any(|pull| pull.number == item.number))
+                }) {
+                    let pending = pending_enqueues(snapshot, repo, item.number)?;
+                    if !pending.is_empty() {
+                        facts.extend(self.look(github, repo, item)?);
+                        wake.extend(pending);
                     }
                 }
             }
@@ -1141,8 +1289,13 @@ impl Translator {
             item.number,
             &item.head,
         ))?;
-        self.runtime
-            .block_on(queue_facts(github, repo, &state, &item.approved))
+        self.runtime.block_on(queue_facts(
+            github,
+            repo,
+            &state,
+            &item.approved,
+            &item.missing,
+        ))
     }
     pub fn catch_up(
         &self,
@@ -1178,10 +1331,13 @@ impl Translator {
             {
                 let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                 let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
-                facts.extend(
-                    self.runtime
-                        .block_on(queue_facts(github, repo, &state, &head))?,
-                );
+                facts.extend(self.runtime.block_on(queue_facts(
+                    github,
+                    repo,
+                    &state,
+                    &head,
+                    &[],
+                ))?);
             }
         }
         for item in tracked(snapshot, repo, false)? {

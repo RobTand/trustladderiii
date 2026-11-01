@@ -1,6 +1,6 @@
 # TL3 state machine
 
-Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48 from 2026-11-01. The stack it runs on is in `docs/stack.md`.
+Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.
 
@@ -184,7 +184,9 @@ It leaves out internal names and IDs, file paths, logs and TL3's own vocabulary 
 
 Rob's answer arrives as an event. The request waits for it with no timer, and only the affected chain of work pauses while it waits. The channel is an adapter. Discord is planned for this and will be set up later. Until then, Rob answers in comments on the request's issue.
 
-Rob will often just comment rather than answer a question. An agent reads each of his comments on an active request and classifies it: change the request, stop, pause, resume, an answer, or a remark that needs no action. When it is unsure, TL3 asks him one short question (Q15). A comment on a closed request that says something is wrong files a linked correction request, which carries his authorization and can include a revert (Q21).
+Rob will often just comment rather than answer a question. An agent reads each of his comments on an active request and classifies it: change the request, restart, stop, pause, resume, an answer, or a remark that needs no action. "Cancel" means stop. When it is unsure, TL3 asks him one short question (Q15). A comment on a closed request that says something is wrong files a linked correction request, which carries his authorization and can include a revert (Q21).
+
+Restart is how Rob starts a request over after something went wrong (Q49). It reads the issue's current title and body from GitHub when it applies, so he can edit the issue first. On an open request, it works like changing the request: the request stops as replaced, and a new one linked to the same issue starts on its own. On a request that closed without merging, it files a new linked request and reopens the issue if TL3 closed it. Merged and Done work isn't restarted; a complaint files a correction. A restart that arrives while a stop is finishing waits for the close. If the issue is gone (404 or 410), nothing is filed and Rob gets a note on the operations issue; any other failed read raises an incident, and clearing it retries. A stop no longer closes the issue: the summary says to comment `restart` to start again.
 
 Incidents often span several requests, so until Discord exists they go to one pinned "TL3 operations" issue in TL3's own repo. Questions about a request stay on that request's issue (Q17).
 
@@ -456,6 +458,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q14 Requests TL3 files:** a replacement from "change the request" starts on its own under Rob's label. Findings become requests only once he approves them.
 - **Q15 Rob's comments:** an agent classifies each comment of his on an active request as a change, stop, pause, resume, answer or remark, and asks one short question when unsure.
 - **Q21 Complaints after close:** a comment from Rob saying something is wrong with closed work files a linked correction request. It carries his authorization and can include a revert.
+- **Q49 Restart, and stop leaves the issue open:** approved by Rob, 2026-11-01. A `restart` comment starts the request over from the issue's current title and body. On an open request it stops the request as replaced and files a new one on the same issue (Q14). On a request closed as Stopped, Abandoned, NotActionable, AlreadyDone or Duplicate, it files a new linked request and reopens the issue if TL3 closed it. It isn't offered on Merged or Done work. A root that closes as Stopped or Abandoned posts its summary, says to comment `restart` to start again, and leaves the issue open. "Cancel" is classified as stop. The controller builds this from existing kernel commands; the kernel didn't change.
 - **Q35 Other kinds of request:** research questions, reviews of existing PRs and multi-repo work each get their own grilling and definition of done after slice two.
 
 **Guarding the checks**
@@ -551,6 +554,60 @@ again. These defaults do not expand #143 beyond its ticket. This tracer retains
 the existing once-per-issue intake rule. Issue-trigger intake, fork support,
 catch-up, steering, scope trimming and splitting remain later tickets.
 
+## Q50 and Q51: failures TL3 causes itself
+
+Approved by Rob, 2026-11-01. A request spends credit on its own work, not on
+TL3's environment. On prismabuild#1968, TL3's test tool dropped executable bits
+(#283), and the maker's two `cant_meet` replies spent 2 credits. Every second
+incident also needed Rob's `clear incident`, even after the fix was deployed.
+
+- **Q50 Environment blockers:** the maker replies `blocked` when TL3's
+  environment stopped it. The reply cites an infrastructure-error `run_tests`
+  action key or a tool error recorded in the same run, and worker code checks
+  it. Only environment errnos get a tool-error id, a test run the tested code
+  could have cut short isn't evidence, and a later completed run of the same
+  tests retires an earlier failure. A `blocked` reply is an infrastructure
+  failure under Q7: a retry in a new generation, an incident on every second
+  failure, no credit spent. When the blocked reply raises the incident, the
+  incident cites the worker-recorded facts only, never the maker's report.
+  Unsupported evidence makes the reply `cant_meet`. Only the maker has
+  `run_tests`, so only the maker has `blocked`.
+- **Q51 Releases clear TL3-side incidents:** each incident records whether an
+  upstream or TL3 caused it. tl3d records the release it last started with.
+  The first start under a new release clears each open TL3-side incident that
+  holds an operation once, as Rob's clear would, and the operation retries. A
+  failure on the new release raises an incident again, which stays open until
+  the next release or Rob. Upstream incidents and same-release restarts are
+  unchanged.
+
+The controller implements both with the kernel's existing events. A `blocked`
+reply enters the kernel as "run failed", and a release clear enters as
+"incident cleared" with Rob's authority. The release identity is the Git tree
+hash built into the binaries, or the binary's digest when Git is unavailable.
+
+Incidents map onto cause classes by their source:
+
+| Source | Cause |
+|---|---|
+| Agent runs: crashes, stalls, reply-validation failures and Q50 blockers | TL3 |
+| Git worktree operations, including remote ones whose failure is ambiguous | TL3 |
+| Remote Git operations whose stderr clearly shows a network or remote cause, and invalid GitHub tokens | Upstream |
+| GitHub, Mergify and PrismaBuild operations, looks and stalls | Upstream |
+| Posting notices, reading incoming input, and required-check setup | Upstream |
+
+The model proxy is an upstream, but an agent run that fails because the proxy
+is down counts as TL3-side, because the controller can't yet tell it from a
+worker bug. A release retries it once; a proxy that is still down raises the
+incident again.
+
+A remote Git failure counts as upstream only when Git's stderr clearly shows a
+network or remote cause: "Could not resolve host", "Connection refused", "timed
+out", an HTTP 5xx or 429 from the remote, or "remote end hung up". Ambiguous
+exits, including a lock Git couldn't take during a fetch, stay TL3-side until
+#309. A GitHub token request that fails in transport during a worktree effect
+also stays TL3-side. The reasoning: a wasted deploy retry costs nothing, and a
+missed one costs Rob a manual clear. #309 tracks precise attribution.
+
 ## Q47: required checks before enqueue
 
 Rob, 2026-11-01 approved handling CI failures during Publishing at the enqueue
@@ -569,3 +626,15 @@ An older waiter blocks a younger leaf if it could actually run, or if their foot
 A younger grant cannot add a file holder that blocks an older waiter. When the older waiter's last conflicting holder releases, that release also frees a slot. Its older ticket protects the slot while disjoint younger holders continue running. This relies on holders eventually completing or being stopped, and on older eligible waiters eventually progressing.
 
 The per-leaf Kani proof bounds the world to four leaves at W=2 and W=3. It starts with an unpaused oldest waiter and its last conflicting holder. Younger leaves are visited before that waiter, both before and after the holder's successful teardown. The waiter must acquire a slot while disjoint overtakers remain active. It proves this bounded case, not unbounded temporal liveness with arbitrary arrivals or stalled upstreams. The covers require a disjoint bypass, including passing a waiter blocked by an older overlapping waiter. A scenario additionally repeats eight disjoint arrivals before the blocking holder releases. A store-backed scenario raises W from 1 to 3 with the oldest waiter at the highest node index; only disjoint work passes it, and it takes the next slot once its blocker releases.
+
+### Q52, Rob, 2026-11-01
+
+Rob approved three Publishing rows for a required check that never reports on the approved head. A workflow's path filter can skip the check, or the requirement can name the wrong app. Before Q52 the request waited silently in Publishing.
+
+- When every check suite on the approved head has completed and a required context from the expected app is absent, TL3 opens a deduplicated repo setup incident. It names the head, the context and the expected app. The enqueue stays pending. No failure is counted and no credit is charged.
+- When that context reports on that head from the expected app, TL3 clears the incident and evaluates the check normally.
+- `clear incident <id>` clears the incident. Required-check enforcement still applies, so the enqueue waits for the check.
+
+TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
+
+A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.

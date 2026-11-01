@@ -580,6 +580,158 @@
     }
   },
   {
+    "id": "restart-direct",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Restart this request from the issue."
+      },
+      "state": {
+        "phase": "Making",
+        "closed": false,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "restart"
+    }
+  },
+  {
+    "id": "restart-scratch",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Start this again from scratch with the updated description."
+      },
+      "state": {
+        "phase": "Making",
+        "closed": false,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "restart"
+    }
+  },
+  {
+    "id": "restart-closed",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Start over."
+      },
+      "state": {
+        "phase": "Closed(Stopped)",
+        "closed": true,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "restart"
+    }
+  },
+  {
+    "id": "restart-question",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Should we restart this?"
+      },
+      "state": {
+        "phase": "Making",
+        "closed": false,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "unsure"
+    }
+  },
+  {
+    "id": "restart-quote",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Alex said 'restart it'. I am only passing that on."
+      },
+      "state": {
+        "phase": "Making",
+        "closed": false,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "remark"
+    }
+  },
+  {
+    "id": "restart-negation",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Don't restart this one."
+      },
+      "state": {
+        "phase": "Closed(Stopped)",
+        "closed": true,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "remark"
+    }
+  },
+  {
+    "id": "restart-merged",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "The merged result is fine. No need to start over."
+      },
+      "state": {
+        "phase": "Closed(Merged)",
+        "closed": true,
+        "open_question": null,
+        "restartable": false
+      }
+    },
+    "expected": {
+      "kind": "remark"
+    }
+  },
+  {
+    "id": "restart-cancel",
+    "category": "restart",
+    "inputs": {
+      "comment": {
+        "author": "requester",
+        "body": "Cancel this."
+      },
+      "state": {
+        "phase": "Making",
+        "closed": false,
+        "open_question": null,
+        "restartable": true
+      }
+    },
+    "expected": {
+      "kind": "stop"
+    }
+  },
+  {
     "id": "answer-audit",
     "category": "answers",
     "inputs": {

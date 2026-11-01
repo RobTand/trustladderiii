@@ -10,6 +10,7 @@ pub mod adoption;
 pub mod findings;
 
 pub mod adapters;
+mod blocked;
 mod branches;
 pub mod cli;
 pub mod clock;
@@ -25,6 +26,7 @@ mod loom_tests;
 pub mod memory;
 mod notices;
 pub mod production;
+pub mod release;
 mod scope;
 mod snapshot;
 pub mod status;
@@ -81,6 +83,10 @@ pub enum Error {
     },
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
+    /// The enqueue guard is waiting for required checks to report. This is
+    /// evidence of a legitimate wait, not a failure (Q52).
+    #[error("required head checks are still pending")]
+    ChecksPending,
 }
 
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
@@ -636,8 +642,7 @@ impl Controller {
         }
         // Setup gaps describe current health. A fresh read after a clear must
         // not be suppressed by the receipt for an earlier observation.
-        let key = if matches!(&observation, Observation::Queue(fact) if matches!(fact.evidence, adapters::mergify::Evidence::ChecksUnavailable { .. }))
-        {
+        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
             format!("{key}:{}", snapshot.revision.get())
         } else {
             key.to_owned()
@@ -662,10 +667,7 @@ impl Controller {
         observation: &Observation,
     ) -> Result<()> {
         if let Observation::Queue(fact) = observation
-            && matches!(
-                fact.evidence,
-                adapters::mergify::Evidence::ChecksUnavailable { .. }
-            )
+            && fact.setup()
         {
             let identity = fact.identity();
             if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
@@ -719,6 +721,13 @@ impl Controller {
         self.held_effects
             .get(&executor::upstream(delivery.output))
             .is_some_and(|effects| effects.contains_key(&delivery.key))
+    }
+
+    fn hold_class(&self, delivery: &Delivery) -> Option<&str> {
+        self.held_effects
+            .get(&executor::upstream(delivery.output))
+            .and_then(|effects| effects.get(&delivery.key))
+            .map(String::as_str)
     }
 
     fn remove_hold(&mut self, delivery: &Delivery) {
@@ -1182,11 +1191,13 @@ impl Controller {
             from: effect.state,
             to,
         });
+        // A pending-checks hold waits on check webhooks; it arms no silence timer.
         if to == EffectState::Uncertain
             && let Some(class) = self
                 .held_effects
                 .get(&executor::upstream(delivery.output))
                 .and_then(|effects| effects.get(&effect.key))
+            && class != looks::CHECKS_PENDING
         {
             self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
         }
@@ -1434,6 +1445,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
                 .nodes
@@ -1460,7 +1472,7 @@ impl Controller {
                 notice: tl3_kernel::Notice::FileReplacement,
             } = output
             {
-                self.pending_replacement(snapshot, commit, node)?;
+                self.pending_replacement(snapshot, &world, commit, node)?;
                 continue;
             }
             let (node, key) = match output {
@@ -1626,7 +1638,12 @@ impl Controller {
             } = output
             {
                 let id = looks::incident_id(snapshot, index);
-                let (source, class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let (mut source, mut class) = self.attach_incident(snapshot, node, &id, commit)?;
+                let blocked = blocked::evidence(commit, node)?;
+                if blocked.is_some() {
+                    source = executor::Upstream::Workers;
+                    class = blocked::CLASS.into();
+                }
                 let signature = looks::IncidentSignature {
                     upstream: source,
                     class: class.clone(),
@@ -1648,6 +1665,10 @@ impl Controller {
                 {
                     summary.push(' ');
                     summary.push_str(&detail);
+                }
+                if let Some(evidence) = blocked {
+                    summary.push(' ');
+                    summary.push_str(&evidence);
                 }
                 if source == executor::Upstream::Workers {
                     let failure = commit
@@ -1702,6 +1723,7 @@ impl Controller {
                         signature: signature.clone(),
                         effect: None,
                         post_key: Some(key.clone()),
+                        cause: Some(looks::Cause::of(source, &class)),
                     }),
                 ));
                 delivery.note = Some(looks::incident_note(
@@ -1914,27 +1936,12 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "incidents" && r.id == id && r.value["open"] == true)
         {
-            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
-            if incident.blocking {
-                commit.rows.push(put(
-                    "inbox",
-                    format!("incident-clear:{}:{id}", comment.id),
-                    json!(Observation::Kernel(Event::Fact {
-                        node: incident
-                            .node
-                            .ok_or(Error::Invalid("blocking incident needs a node"))?,
-                        fact: Fact::IncidentCleared { by_rob: true }
-                    })),
-                ));
-            } else {
-                incident.open = false;
-                if !self.retry_notice(snapshot, &incident, commit)? {
-                    self.resume_incident_look(snapshot, &incident, commit)?;
-                }
-                commit
-                    .rows
-                    .push(put("incidents", id.into(), json!(incident)));
-            }
+            self.clear_incident(
+                snapshot,
+                decode_stored(row.value.clone())?,
+                format!("incident-clear:{}:{id}", comment.id),
+                commit,
+            )?;
         }
         commit.rows.push(put(
             "operations_comments",
@@ -1942,6 +1949,37 @@ impl Controller {
             json!({"repository":repository, "issue":issue, "comment":comment}),
         ));
         Ok(true)
+    }
+
+    /// Rob's clear, which a new release also applies to TL3-side incidents (Q51).
+    pub(crate) fn clear_incident(
+        &mut self,
+        snapshot: &Snapshot,
+        mut incident: looks::Incident,
+        inbox: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if incident.blocking {
+            commit.rows.push(put(
+                "inbox",
+                inbox,
+                json!(Observation::Kernel(Event::Fact {
+                    node: incident
+                        .node
+                        .ok_or(Error::Invalid("blocking incident needs a node"))?,
+                    fact: Fact::IncidentCleared { by_rob: true }
+                })),
+            ));
+        } else {
+            incident.open = false;
+            if !self.retry_notice(snapshot, &incident, commit)? {
+                self.resume_incident_look(snapshot, &incident, commit)?;
+            }
+            commit
+                .rows
+                .push(put("incidents", incident.id.clone(), json!(incident)));
+        }
+        Ok(())
     }
 
     fn translate(
@@ -2048,6 +2086,30 @@ impl Controller {
                     Evidence::ChecksUnavailable { permissions } => {
                         self.check_setup_incident(snapshot, commit, node, &permissions)?;
                         commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                    // Q52 rows: neither one reaches the kernel, so no failure or credit is charged.
+                    Evidence::CheckMissing { head, required } => {
+                        let enqueue_pending = current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            });
+                        if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
+                        {
+                            self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::CheckReported { head, required } => {
+                        let id = looks::missing_check_incident_id(node, &head, &required);
+                        if let Some(row) = snapshot.rows.iter().find(|row| {
+                            row.table == "incidents" && row.id == id && row.value["open"] == true
+                        }) {
+                            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
+                            incident.open = false;
+                            commit.rows.push(put("incidents", id, json!(incident)));
+                        }
                         return Ok(None);
                     }
                     Evidence::Merged {

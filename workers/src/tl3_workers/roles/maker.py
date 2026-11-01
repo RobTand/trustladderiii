@@ -187,6 +187,13 @@ def run(model, request, worktree, emit):
     needs_files = next(variant for variant in proposal["oneOf"]
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
+    blocked = next(variant for variant in proposal["oneOf"]
+                   if variant["properties"]["kind"]["const"] == "blocked")
+    for cited in blocked["properties"]["evidence"]["oneOf"]:
+        for name in ("tool", "class"):
+            cited["properties"].pop(name, None)
+            if name in cited["required"]:
+                cited["required"].remove(name)
     agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"])
     characters = ContextCharacters()
     last_message = None
@@ -232,6 +239,15 @@ def run(model, request, worktree, emit):
         Draft202012Validator(proposal).validate(reply)
         if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
+        if reply["kind"] == "blocked":
+            # Free text alone cannot claim an environment failure (Q50). Worker
+            # code adds the recorded class; only that reaches the incident text.
+            detail = worktree.evidence.detail(reply["evidence"])
+            if detail is None:
+                reply = {"kind": "cant_meet", "report": "blocked cited no environment failure "
+                         "recorded in this run: " + reply["report"]}
+            else:
+                reply["evidence"] = {**reply["evidence"], **detail}
         _check_reply(inputs, reply)
         json.dumps(reply, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if reply["kind"] != "done":

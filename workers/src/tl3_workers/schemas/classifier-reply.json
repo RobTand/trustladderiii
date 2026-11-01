@@ -25,6 +25,7 @@
         "kind": {
           "enum": [
             "stop",
+            "restart",
             "pause",
             "resume",
             "remark"

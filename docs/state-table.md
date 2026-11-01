@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47 and Q48. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47, Q48, Q50 and Q51. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -140,7 +140,7 @@ Every rule above is a safety property, except the progress witness. Liveness und
 | **Command** | Stop, pause, resume, change the request, an owner's decision, Rob's answer | Carries a command id. A repeated id is ignored. Rob's answer also names the question it answers. |
 | **Look** | Liveness or progress went quiet past its allowance | Reads the upstream's own record. See "Looks and stalls". |
 
-**Rob's comments.** An agent reads each comment Rob leaves on an active request's issue. It classifies the comment as one of these: change the request, stop, pause, resume, an answer to the open question, or a remark that needs no action. A remark changes nothing, and anything else enters the kernel as that command or answer. When the agent is unsure, TL3 asks Rob one short question and classifies his reply the same way (Q15). For comments on a closed request, see "Corrections after close".
+**Rob's comments.** An agent reads each comment Rob leaves on an active request's issue. It classifies the comment as one of these: change the request, restart, stop, pause, resume, an answer to the open question, or a remark that needs no action. "Cancel" counts as stop. A remark changes nothing, and anything else enters the kernel as that command or answer. Restart enters as change the request, with the issue's current text as the new text (Q49). When the agent is unsure, TL3 asks Rob one short question and classifies his reply the same way (Q15). For comments on a closed request, see "Corrections after close".
 
 Workers report liveness, as a heartbeat, and progress, such as new tool results, to a side table. That table is a cache, not state. Losing it loses nothing, because a look reads the upstream itself.
 
@@ -260,6 +260,27 @@ A job that produces no report never ran its tests, so it is an infrastructure fa
 
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
+**Environment blockers,** as Rob approved on 2026-11-01 (Q50):
+
+- A maker that TL3's environment stopped replies `blocked`. Examples are a sandbox or permission error, a tool failure, or a test run whose summary is an infrastructure error.
+- The reply cites evidence that its worker checks within the same run: a `run_tests` action key whose summary status is `infrastructure_error`, or a tool error the run recorded. Free text alone isn't evidence. A `blocked` reply that cites nothing the run recorded becomes `cant_meet`, and one without evidence breaks the reply schema.
+- Only environment failures count. A tool error gets an id only for an environment errno, such as a permission, read-only, full-disk, I/O or descriptor error, never for a missing, overlong or looping path, a file used as a directory, or a tree nested too deeply to walk. A test run that the tested code could have cut short isn't evidence, and a later completed run of the same tests retires an earlier failure.
+- A `blocked` reply is an infrastructure failure. It retries in a new generation, every second failure raises an incident, and it spends no credit. When the blocked reply itself raises the incident, the incident text cites the worker-recorded evidence: the action key or tool-error id, the tool and the error class. The maker's own report never goes into the GitHub post.
+- `cant_meet` stays the reply for a change that can't meet a goal. Dropped connections and worker crashes keep their existing path.
+
+**Cause classes and releases,** as Rob approved on 2026-11-01 (Q51):
+
+- Every incident records its cause class. An upstream incident comes from an outside service: GitHub, Mergify, PrismaBuild, or a Git remote a worktree reaches. A TL3-side incident comes from TL3 itself: its code, prompts, tools or harness environment, including Q50 blockers and worker reply-validation failures.
+- A remote Git failure counts as upstream only when Git's stderr clearly shows a network or remote cause: an unresolved host, a refused or timed-out connection, an HTTP 5xx or 429 from the remote, or a remote that hung up. Ambiguous exits stay TL3-side, because a wasted release retry costs nothing and a missed one costs Rob a manual clear.
+- Known imprecision, tracked in #309. Each of these counts as TL3-side, so a release retries it once, and a cause that persists raises the incident again:
+  - an agent run that fails because the model proxy is down, which TL3 can't yet tell from a worker bug;
+  - a fetch that fails on a Git lock;
+  - a GitHub token request that fails in transport during a worktree effect.
+- tl3d knows its release identity and records the last one it started with.
+- On its first start under a new release, each open TL3-side incident that holds an operation clears once, through the same "incident cleared" event as Rob's clear. Its operation retries.
+- If the operation fails again on the new release, the failure rules above raise an incident, which stays open until the next release or Rob's `clear incident`.
+- A restart on the same release clears nothing. Upstream incidents keep the rules above.
+
 **Delivery failures** follow the same rule, counted per effect. Every second retryable failure raises an incident, and only Rob can clear the effect's second incident.
 
 **Work failures** are failed checks, review findings and CI test failures. They follow the rules for rounds and attempts under "A failed round".
@@ -372,6 +393,7 @@ The exact models come from what CLIProxyAPI serves. They are set in config, and 
 | Maker needs more files (a list) | Credit at least 1, and the forecast with the new files still fits | Ready(the same Making) | Spend 1; record the larger footprint; release the slot and files. The worktree and session stay. |
 | Maker needs more files | Otherwise | As for out of room | |
 | Maker can't meet, with a report | | The next attempt, as for a failed round 1 | |
+| Maker blocked, with evidence its worker checked (Q50, Rob, 2026-11-01) | | See "Failures": an infrastructure failure | Spend nothing |
 | Maker out of room | Credit at least 1 | Planning, which must split | Spend 1; release the slot and files |
 | Maker out of room | Credit 0 | AwaitingRob(out of credit, continue to Planning, which must split) | Release the slot and files |
 
@@ -420,10 +442,15 @@ When the last step confirms, the leaf moves to Queued.
 | Conflict with current main | | Rebasing | Rebase onto main, in a new generation (Q46, Rob 2026-10-31) |
 | CI failed | A required check failed on the approved head before enqueue, because a test failed on the code | A failed round | Cancel the pending enqueue; remove `tl3-queue` if it was added (Q47, Rob, 2026-11-01) |
 | CI failed | The runner or its setup failed at the enqueue step | See "Failures" | Rerun the check, then enqueue when the failure rules allow (Q47, Rob, 2026-11-01) |
+| Check-suite or check-run evidence | All check suites on the approved head have completed, but a required context from the expected app is absent | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, context and expected app. No failure count or credit charge. (Q52, Rob, 2026-11-01) |
+| Required check reports | The context and expected app match an open missing-check incident on that head | Publishing | Clear that incident; evaluate the reported check normally (Q52) |
+| `clear incident <id>` | Rob names an open missing-check incident | Publishing | Clear the incident; required-check enforcement still applies (Q52) |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
 
 Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
+
+The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app. Waiting for required checks arms no allowance timer and spends no retry. The incident also clears when its head is replaced or the leaf closes.
 
 ### A failed round
 
@@ -536,12 +563,13 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | PR dequeued by a person | Record it | In Queued: release the slot and files, go to Ready(Publishing from step 4), and add a pause owned by Rob. Rob gets a note. Resuming puts the PR back in the queue. |
 | Effect permanently failed | Raise an incident | Outside Stopping: release any slot and files, and go to AwaitingRob(effect failed). The continuation retries the failed effect and carries on. A leaf that held a slot carries on through Ready; any other node returns to the same phase. For Stopping, see Stopping. |
 | Dependency delivered or abandoned | Mark it | Settle decides what follows |
-| Incident cleared | Clear the wait | The waiting operation runs again, first requesting a slot if it gave one back |
+| Incident cleared, by a probe, by Rob, or by a new release for a TL3-side incident (Q51) | Clear the wait | The waiting operation runs again, first requesting a slot if it gave one back |
 | Run failed | | See "Failures" |
 | Look | Read the upstream's record | What the look finds enters as replies, acknowledgements and facts |
 | Pause, with an owner | Add the pause | See "Pausing" below |
 | Resume, or the owner releases its pause | Remove the pause | Once no pause remains, settle requests a slot for a leaf in Ready, or runs the pending start |
 | Change the request (Rob, any time) | | Stopping(Replaced), and a new request linked to the same issue, which starts on its own (Q14) |
+| Restart (Rob, Q49) | | In any phase before Stopping: change the request, with the issue's current title and body as the new text. The controller reads them from GitHub when the restart applies, so Rob can edit the issue first. In Stopping(Stopped), Stopping(Duplicate), Stopping(AlreadyDone) or Stopping(NotActionable), the restart waits and applies once the node closes. Stopping(Merged) and Stopping(Replaced) refuse it, and so do Closed(Merged) and Closed(Replaced). If the read finds the issue gone (404 or 410), nothing is filed: the restart is dropped and Rob gets a plain note on the operations issue. Any other permanent read failure raises an incident and keeps the restart pending; clearing the incident retries the read. |
 | Stop or abandon | | Stopping(Stopped) or Stopping(Abandoned), from any phase except Stopping and Closed |
 
 **Pausing.** While a pause is in place, no new operation starts. What happens to work already under way depends on where the node is:
@@ -559,7 +587,7 @@ Every move into Closed runs `close(outcome)`. It:
 - adds the merged-leaf credit to the ledger, for a Merged leaf;
 - releases every pause this node owns;
 - tells the parent the outcome;
-- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request;
+- for a root, posts a plain-language summary to the issue, listing any unmet measures, and closes the issue. After Replaced, the issue stays open for the new request. After Stopped or Abandoned, the issue stays open too, and the summary tells Rob to comment `restart` to start again (Q49);
 - tells waiting nodes whether the work was delivered (Merged or Done) or abandoned;
 - records the code grades: rounds, attempts, credit spent, outcome, and time from start to merge;
 - from slice three on, marks a judge postmortem as owed.
@@ -578,6 +606,10 @@ Every move into Closed runs `close(outcome)`. It:
 
 - Rob comments on the closed request that something is wrong. The correction is filed automatically and carries his authorization, so it starts like a request he labelled (Q21).
 - Rob approves a finding that files it.
+
+**A restart after close** applies to a request that closed without merging: Stopped, Abandoned (not yet in the kernel), NotActionable, AlreadyDone or Duplicate. Closed(Merged), Closed(Done) and Closed(Replaced) refuse it. Rob's restart comment files a new request linked to the closed one, on the same issue, from the issue's current title and body. It carries his authorization, so it starts like a request he labelled. If TL3 closed the issue, the restart reopens it. The closed node itself doesn't change. Merged and Done requests aren't offered a restart; a complaint files a correction instead.
+
+**Q49, approved by Rob, 2026-11-01:** restart starts a request over from the issue as it is now, on an open request or one that closed without merging. A root that closes as Stopped or Abandoned leaves its issue open and says how to restart. The controller implements restart with the existing change-the-request command and linked-request filing; the kernel is unchanged.
 
 ## The effect machine
 

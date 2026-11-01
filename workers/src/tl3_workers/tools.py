@@ -1,6 +1,7 @@
 """TL3 file tools. Every filesystem access starts at an open worktree handle."""
 
 from contextlib import contextmanager, nullcontext
+import errno
 import glob as globlib
 import json
 import os
@@ -62,6 +63,10 @@ def _parts(path):
     parts = PurePosixPath(path).parts
     if ".git" in parts:
         raise ValueError("Git metadata paths are forbidden")
+    # NAME_MAX per part. The total leaves room under PATH_MAX for the test
+    # tool's staging directory, where a longer path would fail outside the tool.
+    if len(path.encode("utf-8")) > 3072 or any(len(part.encode("utf-8")) > 255 for part in parts):
+        raise ValueError("Path is too long")
     return parts
 
 
@@ -95,11 +100,79 @@ def _matching_lines(stream, pattern):
         yield number, text, length > len(text)
 
 
+# Errors the environment causes. ENOTDIR, ENOENT, ENAMETOOLONG, ELOOP and
+# EISDIR follow from the model's own paths, so they never count (Q50).
+ENVIRONMENT_ERRNOS = frozenset(
+    errno.errorcode[code] for code in (
+        errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOSPC, errno.EDQUOT,
+        errno.EIO, errno.EMFILE, errno.ENFILE, errno.ENOMEM,
+    )
+)
+
+
+def environment_class(error):
+    """The errno name of an environment failure, or None for the model's own input."""
+    if error.errno is None:
+        return "EACCES" if isinstance(error, PermissionError) else None
+    name = errno.errorcode.get(error.errno)
+    return name if name in ENVIRONMENT_ERRNOS else None
+
+
+class Evidence:
+    """Environment failures this run's tools recorded. A blocked reply must cite one (Q50)."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self.infrastructure_keys = {}
+        self.tool_errors = {}
+
+    def tool_error(self, name, cls, selectors=None):
+        with self._lock:
+            error = f"tool-error-{len(self.tool_errors) + 1}"
+            self.tool_errors[error] = {"tool": name, "class": cls, "selectors": selectors}
+            return error
+
+    def test_result(self, result, selectors):
+        if not isinstance(result, dict):
+            return
+        if result.get("status") == "completed":
+            # A later complete run of the same tests shows the environment recovered.
+            with self._lock:
+                for key in [k for k, s in self.infrastructure_keys.items() if s == selectors]:
+                    del self.infrastructure_keys[key]
+                for error in self.tool_errors.values():
+                    if error["selectors"] == selectors:
+                        error["retired"] = True
+            return
+        if result.get("status") != "infrastructure_error" or result.get("origin") == "test_run":
+            return
+        key = result.get("action_key")
+        if isinstance(key, str) and re.fullmatch("[0-9a-f]{64}", key):
+            with self._lock:
+                self.infrastructure_keys[key] = selectors
+        else:
+            result["tool_error"] = self.tool_error("run_tests", "test_submission", selectors)
+
+    def detail(self, evidence):
+        """The worker-recorded facts behind cited evidence, or None if this run has none."""
+        with self._lock:
+            if evidence.get("action_key") in self.infrastructure_keys:
+                return {"class": "test_infrastructure"}
+            error = self.tool_errors.get(evidence.get("tool_error"))
+            if error is None or error.get("retired"):
+                return None
+            return {"tool": error["tool"], "class": error["class"]}
+
+    def cites(self, evidence):
+        return self.detail(evidence) is not None
+
+
 class Worktree:
     def __init__(self, root):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self._mutation_lock = Lock()
         self._memory = current.get()
+        self.evidence = Evidence()
 
     def __enter__(self):
         return self
@@ -332,6 +405,9 @@ def build_tools(worktree, descriptions):
             with _lock:
                 try:
                     result = _method(*args, **kwargs)
+                    if _name == "run_tests":
+                        selectors = (bool(kwargs.get("base")), tuple(sorted(set(kwargs.get("tests") or ()))))
+                        worktree.evidence.test_result(result, selectors)
                     if _summary is not None:
                         try:
                             _summary.tool(_name, kwargs, result)
@@ -340,12 +416,19 @@ def build_tools(worktree, descriptions):
                     return result
                 except UnicodeError as exc:
                     raise ToolException("Expected valid UTF-8 text.") from exc
+                except RecursionError as exc:
+                    raise ToolException("The worktree is nested too deeply to walk.") from exc
                 except ValueError as exc:
                     raise ToolException(str(exc)) from exc
                 except FileNotFoundError as exc:
                     raise ToolException("File or directory not found.") from exc
                 except OSError as exc:
-                    raise ToolException("Worktree tool rejected the path or operation.") from exc
+                    message = "Worktree tool rejected the path or operation."
+                    cls = environment_class(exc)
+                    if cls is None:
+                        raise ToolException(message) from exc
+                    error = worktree.evidence.tool_error(_name, cls)
+                    raise ToolException(f"{message} Tool error id: {error}.") from exc
 
         tools.append(StructuredTool.from_function(
             func=guarded, name=name, description=description,
