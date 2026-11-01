@@ -15,6 +15,14 @@ fn open(
     controller
 }
 
+fn restricted_reply() -> String {
+    let comment: Value = serde_json::from_str(include_str!(
+        "../../../mergify/tests/fixtures/replies/command-restricted.json"
+    ))
+    .unwrap();
+    comment["body"].as_str().unwrap().to_owned()
+}
+
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
@@ -140,21 +148,17 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             _ => 201,
         };
         state.command_reply = match mode {
-            "reply-restricted" => Some("> `queue`\n\n#### ☑️ Command disallowed due to [command restrictions](https://docs.mergify.com/commands/restrictions) in the Mergify configuration.".into()),
-            "reply-failed" => Some("> `queue`\n\n#### ❌ Command failed: queue is not configured.".into()),
+            "reply-restricted" => Some(restricted_reply()),
+            "reply-failed" => Some("> `queue`\n\n#### ❌ This pull request cannot be queued because it conflicts with the base branch.".into()),
             _ => None,
         };
         if mode == "reply-ignored" {
-            state.comments.push(reply(
-                998,
-                "mergify[bot]",
-                "> `queue`\n\n#### ❌ Command failed: old command.",
-            ));
-            state.comments.push(reply(
-                999,
-                "mergify[bot]",
-                "> `queue`\n\n#### ❌ Command failed: old command.",
-            ));
+            state
+                .comments
+                .push(reply(998, "mergify[bot]", &restricted_reply()));
+            state
+                .comments
+                .push(reply(999, "mergify[bot]", &restricted_reply()));
         }
     }
     ingress::apply(&mut controller, tl3_controller::cli::Input::GitHubWake).unwrap();
@@ -188,11 +192,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "queue"
         ]
     );
-    if matches!(mode, "reply-restricted" | "reply-failed" | "reply-late") {
+    if matches!(mode, "reply-restricted" | "reply-late") {
         if mode == "reply-late" {
             drop(controller);
             controller = open(settings, &api, root.path(), clock.clone());
-            api.state.lock().unwrap().comments.push(reply(1001, "mergify[bot]", "> `queue`\n\n#### ☑️ Command disallowed due to command restrictions in the Mergify configuration."));
+            api.state.lock().unwrap().comments.push(reply(
+                1001,
+                "mergify[bot]",
+                &restricted_reply(),
+            ));
             drain(&mut controller);
         }
         let snapshot = controller.snapshot().unwrap();
@@ -207,7 +215,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         for text in [
             "commands_restrictions",
             ".mergify.yml",
-            "tl3-robtand[bot]",
+            "factory[bot]",
             "queue",
             "requeue",
         ] {
@@ -226,27 +234,53 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         println!("test requeue_{mode} ... ok");
         return;
     }
+    if mode == "reply-failed" {
+        for (index, heading) in [
+            "🚫 Queue temporarily unavailable",
+            "❌ Command failed: queue is not configured",
+            "Error: the queue could not accept this pull request",
+        ]
+        .iter()
+        .enumerate()
+        {
+            api.state.lock().unwrap().comments.push(reply(
+                1002 + index as u64,
+                "mergify[bot]",
+                &format!("> `queue`\n\n#### {heading}"),
+            ));
+        }
+        drain(&mut controller);
+        assert!(
+            !controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| { row.table == "incidents" && row.value["open"] == true }),
+            "other Mergify replies must not become permanent command-restrictions incidents"
+        );
+    }
     if mode == "reply-ignored" {
-        api.state.lock().unwrap().comments.push(reply(
-            1001,
-            "someone",
-            "> `queue`\n\n#### ❌ Command failed: forged.",
-        ));
+        api.state
+            .lock()
+            .unwrap()
+            .comments
+            .push(reply(1001, "someone", &restricted_reply()));
         api.state.lock().unwrap().comments.push(reply(
             1002,
             "mergify[bot]",
-            "> `refresh`\n\n#### ❌ Command failed: unrelated command.",
+            &restricted_reply().replace("`queue`", "`refresh`"),
         ));
         api.state
             .lock()
             .unwrap()
             .comments
             .push(reply(1003, "someone", "@mergifyio queue"));
-        api.state.lock().unwrap().comments.push(reply(
-            1004,
-            "mergify[bot]",
-            "> `queue`\n\n#### ❌ Command failed: someone else's command.",
-        ));
+        api.state
+            .lock()
+            .unwrap()
+            .comments
+            .push(reply(1004, "mergify[bot]", &restricted_reply()));
         drain(&mut controller);
         assert!(
             !controller
