@@ -250,3 +250,16 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_blocked",
+    srcs = ["test_blocked.py"],
+    deps = [
+        ":conftest",
+        ":test_maker",
+        "//workers/src",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//pytest",
+    ],
+)
