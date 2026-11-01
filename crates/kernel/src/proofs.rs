@@ -1043,7 +1043,10 @@ fn check_gate_waiting_progress(width: u8) {
     assert!(before.witness().is_none());
     assert!(!before.is_settled());
     kani::cover!(
-        before.nodes.iter().all(|n| matches!(n.phase, Phase::Ready(_))),
+        before
+            .nodes
+            .iter()
+            .all(|n| matches!(n.phase, Phase::Ready(_))),
         "a world with only ready leaves can advance"
     );
     kani::cover!(
