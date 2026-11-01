@@ -369,7 +369,7 @@ impl Respond for Api {
                         .args([
                             "merge-tree",
                             "--write-tree",
-                            "main",
+                            s.pull.as_ref().unwrap()["base"]["ref"].as_str().unwrap(),
                             s.pull.as_ref().unwrap()["head"]["sha"].as_str().unwrap(),
                         ])
                         .output()
@@ -393,7 +393,7 @@ impl Respond for Api {
                             .args([
                                 "merge-tree",
                                 "--write-tree",
-                                "main",
+                                pull["base"]["ref"].as_str().unwrap(),
                                 pull["head"]["sha"].as_str().unwrap(),
                             ])
                             .output()
