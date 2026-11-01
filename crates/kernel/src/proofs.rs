@@ -1093,20 +1093,12 @@ fn check_gate_waiting_progress(width: u8) {
 fn check_gate_maker_progress(width: u8) {
     let mut world = gate_world_in_phase(width, Some(Phase::Making));
     kani::assume(!world.nodes[0].paused);
-    let n = world.nodes[0];
+    let generation = world.nodes[0].generation;
+    let head = world.nodes[0].head.unwrap_or(HeadId(0));
     let before_measure = world.measure();
     let mut out = Outbox::new();
-    apply(
-        &mut world,
-        Event::Reply {
-            node: NodeId(0),
-            generation: n.generation,
-            reply: Reply::MakerDone {
-                head: n.head.unwrap_or(HeadId(0)),
-            },
-        },
-        &mut out,
-    );
+    // apply dispatches this fixed, valid node directly to on_reply.
+    on_reply(&mut world, 0, generation, Reply::MakerDone { head }, &mut out);
     require_consistent(&world);
     assert!(world.measure() < before_measure);
     kani::cover!(true, "maker completion lowers the gate world's measure");
