@@ -842,8 +842,8 @@ fn main() {
         before,
         "Postgres restart changed the recovered records"
     );
-    database.stop();
     println!("test recovered_records_survive_postgres_restart ... ok");
+    database.stop();
     println!(
         "{} crash safety scenarios passed; no skips",
         scenario_count + total
