@@ -65,6 +65,7 @@ def main():
             }
             model_context = nullcontext()
             if args.recorded:
+                request['model']['name'] = 'recorded-langchain'
                 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
                 from langchain_core.messages import AIMessage
                 reply = {'kind': 'brief', 'brief': 'The sandbox exercises TL3 changes.',
@@ -123,7 +124,8 @@ def main():
         usage = span.get_attribute('mlflow.chat.tokenUsage')
         assert all(key in usage for key in ['input_tokens', 'output_tokens', 'total_tokens'])
     print(json.dumps({
-        'mode': 'recorded' if args.recorded else 'real_proxy', 'trace_id': trace_id,
+        'mode': ('recorded' if trace.info.tags['model'] == 'recorded-langchain' else
+                 'read_back' if args.read_latest else 'real_proxy'), 'trace_id': trace_id,
         'experiment': experiment, 'span_count': len(spans),
         'request_preview': trace.info.request_preview, 'response_preview': trace.info.response_preview,
         'root_inputs': root.inputs, 'root_outputs': root.outputs, 'root_tags': trace.info.tags,
