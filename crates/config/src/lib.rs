@@ -239,6 +239,24 @@ fn default_base_branch() -> String {
     tl3_worktrees::branch_template::DEFAULT_BASE.into()
 }
 
+fn validate_protected_paths(field: &str, patterns: &[String]) -> Result<(), Error> {
+    for pattern in patterns {
+        if pattern.trim().is_empty()
+            || pattern.starts_with('/')
+            || pattern.contains('\\')
+            || pattern.chars().any(char::is_control)
+            || pattern.split('/').any(|part| matches!(part, "." | ".."))
+            || glob::Pattern::new(pattern).is_err()
+        {
+            return Err(invalid(
+                field,
+                "use nonempty repository-relative glob patterns without traversal",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Models {
@@ -459,6 +477,7 @@ impl Config {
                 ));
             }
         }
+        validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
         let limits = &self.limits;
         if limits.context_tokens == 0 {
             return Err(invalid(
@@ -522,6 +541,7 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
+            validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
             tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
             tl3_worktrees::BranchName::new(&repo.base_branch)

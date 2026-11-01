@@ -3,6 +3,49 @@ use serde_json::json;
 use tl3_kernel::NodeId;
 use tl3_store::{Commit, RowChange, Snapshot};
 
+#[derive(Clone, Default)]
+pub(crate) struct ProtectedPaths(Vec<(crate::Repository, Vec<String>)>);
+
+impl ProtectedPaths {
+    pub(crate) fn new(repos: &[tl3_config::Repository]) -> Self {
+        Self(
+            repos
+                .iter()
+                .map(|repo| {
+                    (
+                        crate::Repository {
+                            owner: repo.owner.clone(),
+                            name: repo.name.clone(),
+                            installation: repo.installation_id,
+                        },
+                        repo.protected_paths.clone(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn for_repository(
+        &self,
+        repo: &crate::Repository,
+        global: &[String],
+    ) -> Result<Vec<String>> {
+        let (_, extra) =
+            self.0
+                .iter()
+                .find(|(identity, _)| identity == repo)
+                .ok_or(Error::Invalid(
+                    "repository protected paths are not configured",
+                ))?;
+        let mut paths = tl3_config::Planning::default().protected_paths;
+        paths.extend_from_slice(global);
+        paths.extend_from_slice(extra);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
+
 impl Controller {
     /// Call once per branch before its first check. A replay returns the original trim head;
     /// re-read the current branch head before reporting it to the kernel.
@@ -11,7 +54,7 @@ impl Controller {
         &mut self,
         adapter: &Real,
         delivery: &Delivery,
-        protected: &[String],
+        global_protected: &[String],
     ) -> Result<tl3_worktrees::ScopeTrim> {
         let snapshot = self.store.load()?;
         if delivery.epoch != snapshot.epoch.get() {
@@ -19,7 +62,7 @@ impl Controller {
                 "scope trim epoch does not match the controller",
             ));
         }
-        let trim = adapter.trim_scope(delivery, protected)?;
+        let trim = adapter.trim_scope(delivery, global_protected)?;
         let paths: Vec<_> = trim
             .removed_paths
             .iter()

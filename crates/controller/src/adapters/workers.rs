@@ -114,6 +114,7 @@ pub struct Supervisor {
     settings: tl3_config::Workers,
     models: tl3_config::Models,
     planning: tl3_config::Planning,
+    protected_paths: crate::scope::ProtectedPaths,
     limits: tl3_config::Limits,
     store: tl3_config::Store,
     records_root: PathBuf,
@@ -152,6 +153,7 @@ impl Supervisor {
             settings: config.workers.clone(),
             models: config.models.clone(),
             planning: config.planning.clone(),
+            protected_paths: crate::scope::ProtectedPaths::new(&config.github.repos),
             limits: config.limits.clone(),
             store: config.store.clone(),
             records_root: records_root.to_owned(),
@@ -330,7 +332,7 @@ impl Supervisor {
             let findings = store
                 .worker_document(&node, "findings")?
                 .unwrap_or(json!([]));
-            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.planning.protected_paths, "forecast": forecast});
+            inputs = json!({"ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?

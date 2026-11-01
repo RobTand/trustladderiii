@@ -1309,6 +1309,9 @@ Before reporting a leaf's proposed head or starting its first check, call:
 controller.trim_scope(&worktrees, &delivery, &config.planning.protected_paths)?;
 ```
 
+The adapter adds the mandatory defaults and the `github.repos` protected paths
+matching `delivery.repository`; callers pass only the global additions.
+
 `delivery.paths` contains the plan's declared files. The trim runs once per branch.
 Its receipt always returns the original trimmed head, even after later maker
 commits. The adoption tracer must re-read the current branch head after the hook
