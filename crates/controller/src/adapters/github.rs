@@ -203,7 +203,6 @@ impl Adapter {
                 .and_then(|event| event.actor.as_ref())
                 .is_some_and(|actor| actor.login == app)
             {
-                self.fence(delivery)?;
                 issue = self
                     .runtime
                     .block_on(client.reopen_issue(&repo, delivery.issue))?;
@@ -489,6 +488,15 @@ fn writer_input(
             violations: vec![],
         });
     }
+    if let Some(crate::steering::Task::RestartDropped { text }) = &delivery.steering {
+        return Ok(WriteRequest {
+            kind: MessageKind::Note,
+            facts: json!({"issue_title": title, "request": request,
+                "change": "The issue for this request could not be found, so the restart was dropped. Nothing was filed.",
+                "change_quote": text}),
+            violations: vec![],
+        });
+    }
     if let Some(crate::steering::Task::ClarifyComment { question, excerpt }) = &delivery.steering {
         return Ok(WriteRequest {
             kind: MessageKind::Clarification,
@@ -683,7 +691,12 @@ impl Adapter {
             .is_none()
         {
             let mut policy = self.policy.clone();
-            let input = if matches!(notice, Some(Notice::Incident { .. })) {
+            // These posts can't read the request's issue: it lives elsewhere or is gone.
+            let input = if matches!(notice, Some(Notice::Incident { .. }))
+                || matches!(
+                    delivery.steering,
+                    Some(crate::steering::Task::RestartDropped { .. })
+                ) {
                 let context = delivery
                     .question_context
                     .as_ref()

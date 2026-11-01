@@ -33,6 +33,10 @@ pub enum Task {
         text: String,
         issue: Option<tl3_github::Issue>,
     },
+    /// The request's issue is gone, so the restart was dropped and nothing filed.
+    RestartDropped {
+        text: String,
+    },
 }
 
 impl Delivery {
@@ -616,6 +620,53 @@ impl Controller {
                 steering: Some(restart),
             },
         );
+        Ok(())
+    }
+
+    /// Q49: a gone issue (404 or 410) ends the restart. Other read failures keep
+    /// it pending behind their incident, and clearing that incident retries it.
+    pub(crate) fn drop_restart(
+        &self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Some(Task::Restart { text, .. }) = &delivery.steering else {
+            return Err(Error::Invalid("invalid restart"));
+        };
+        let node = delivery.node();
+        let id = node.0.to_string();
+        for table in ["replacement", "replacement_pending"] {
+            if snapshot.rows.iter().any(|r| r.table == table && r.id == id) {
+                commit.rows.push(RowChange::Delete {
+                    table: table.into(),
+                    id: id.clone(),
+                });
+            }
+        }
+        let binding = request(snapshot, node)?;
+        let mut note = delivery.clone();
+        note.key = format!("restart-dropped:{}", delivery.key);
+        note.marker_key = None;
+        note.epoch = snapshot.epoch.get();
+        note.output = Output::Comment {
+            node,
+            kind: CommentKind::ReplacementDropped,
+        };
+        note.question_context = Some(json!({"issue_title": binding.title,
+            "request": format!("{} (https://github.com/{}/{}/issues/{})", binding.title,
+                binding.repo.owner, binding.repo.name, binding.issue)}));
+        note.steering = Some(Task::RestartDropped { text: text.clone() });
+        // The request's own issue is gone, so the note goes to the operations issue.
+        if let Some(operations) = &self.bootstrap.operations {
+            note.repository = Repository {
+                owner: operations.owner.clone(),
+                name: operations.name.clone(),
+                installation: operations.installation_id,
+            };
+            note.issue = operations.number;
+        }
+        queue_comment(self, commit, note);
         Ok(())
     }
 

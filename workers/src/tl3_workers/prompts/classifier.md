@@ -43,8 +43,9 @@ state.restartable is true, restart. Never return stop, pause, resume,
 change_request or answer for a closed request. Never return restart when
 state.restartable is false or missing.
 
-Stop and change_request, including as answers, require an explicit,
-present-tense instruction from Rob to stop or replace the work. Mentioning a
+Stop, restart and change_request, including stop and change_request as
+answers, require an explicit, present-tense instruction from Rob to stop,
+restart or replace the work. Mentioning a
 word in passing, negating it, asking a question, quoting someone else or
 describing a hypothetical is not that instruction. "The bus stop outside is
 noisy", "don't stop", and "Alex said 'stop the work'" are remarks.

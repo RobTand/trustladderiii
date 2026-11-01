@@ -64,6 +64,14 @@ impl Controller {
             }
             return Ok(());
         }
+        if class == "not_found"
+            && matches!(
+                delivery.steering,
+                Some(crate::steering::Task::Restart { .. })
+            )
+        {
+            return self.drop_restart(snapshot, delivery, commit);
+        }
         let node = delivery.node();
         let request = request(snapshot, node)?;
         let id = crate::looks::incident_id(snapshot, "post");

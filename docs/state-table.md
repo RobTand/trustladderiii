@@ -542,7 +542,7 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | Pause, with an owner | Add the pause | See "Pausing" below |
 | Resume, or the owner releases its pause | Remove the pause | Once no pause remains, settle requests a slot for a leaf in Ready, or runs the pending start |
 | Change the request (Rob, any time) | | Stopping(Replaced), and a new request linked to the same issue, which starts on its own (Q14) |
-| Restart (Rob, any time before Stopping(Merged) or Stopping(Replaced)) | | Change the request, with the issue's current title and body as the new text. The controller reads them from GitHub when the restart applies, so Rob can edit the issue first. In Stopping(Stopped), the restart applies once the node closes (Q49). |
+| Restart (Rob, Q49) | | In any phase before Stopping: change the request, with the issue's current title and body as the new text. The controller reads them from GitHub when the restart applies, so Rob can edit the issue first. In Stopping(Stopped), Stopping(Duplicate), Stopping(AlreadyDone) or Stopping(NotActionable), the restart waits and applies once the node closes. Stopping(Merged) and Stopping(Replaced) refuse it, and so do Closed(Merged) and Closed(Replaced). If the read finds the issue gone (404 or 410), nothing is filed: the restart is dropped and Rob gets a plain note on the operations issue. Any other permanent read failure raises an incident and keeps the restart pending; clearing the incident retries the read. |
 | Stop or abandon | | Stopping(Stopped) or Stopping(Abandoned), from any phase except Stopping and Closed |
 
 **Pausing.** While a pause is in place, no new operation starts. What happens to work already under way depends on where the node is:
@@ -580,7 +580,7 @@ Every move into Closed runs `close(outcome)`. It:
 - Rob comments on the closed request that something is wrong. The correction is filed automatically and carries his authorization, so it starts like a request he labelled (Q21).
 - Rob approves a finding that files it.
 
-**A restart after close** applies to a request that closed without merging: Stopped, Abandoned, NotActionable, AlreadyDone or Duplicate. Rob's restart comment files a new request linked to the closed one, on the same issue, from the issue's current title and body. It carries his authorization, so it starts like a request he labelled. If TL3 closed the issue, the restart reopens it. The closed node itself doesn't change. Merged and Done requests aren't offered a restart; a complaint files a correction instead.
+**A restart after close** applies to a request that closed without merging: Stopped, Abandoned (not yet in the kernel), NotActionable, AlreadyDone or Duplicate. Closed(Merged), Closed(Done) and Closed(Replaced) refuse it. Rob's restart comment files a new request linked to the closed one, on the same issue, from the issue's current title and body. It carries his authorization, so it starts like a request he labelled. If TL3 closed the issue, the restart reopens it. The closed node itself doesn't change. Merged and Done requests aren't offered a restart; a complaint files a correction instead.
 
 **Q49, approved by Rob, 2026-11-01:** restart starts a request over from the issue as it is now, on an open request or one that closed without merging. A root that closes as Stopped or Abandoned leaves its issue open and says how to restart. The controller implements restart with the existing change-the-request command and linked-request filing; the kernel is unchanged.
 
