@@ -39,7 +39,8 @@ document. Fields not described by the schemas are errors.
     "repo": {
       "readme": "A greeting library.",
       "file_list": ["greeting.py"],
-      "materials": [{"path": "greeting.py", "content": "def greet(): ..."}]
+      "file_count": 1,
+      "tree_summary": ""
     },
     "memories": [{"id": "memory-1", "content": "The public API is greet()."}]
   },
@@ -58,7 +59,9 @@ events, matching ticket #24.
 directory to `worktree` before running the role. It reads and strips the key
 file at runtime, after validating the inputs. It gives only `inputs` to the
 model. Neither a key nor a key path enters the role prompt. Ingest and audit
-have no tools. Other roles can declare the confined file tools below.
+explore the pinned base checkout with the confined read-only file tools below.
+The repo input contains a bounded README and file-list prefix, with a tree
+summary when truncated. Repository source contents arrive through tools.
 Deployment owns process and network isolation.
 
 Models use `langchain_openai.ChatOpenAI` with Chat Completions explicitly

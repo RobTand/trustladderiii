@@ -28,6 +28,20 @@ impl Worktrees {
                 destination.as_os_str(),
             ],
         )?;
+        // Fetched bases can exist only under refs/tl3, which clone does not copy.
+        self.run(
+            destination,
+            "fetch snapshot commit",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
+                OsStr::new("--"),
+                self.repo.as_os_str(),
+                OsStr::new(head.as_str()),
+            ],
+        )?;
         self.run(
             destination,
             "checkout snapshot",

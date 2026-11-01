@@ -127,34 +127,24 @@
       "type": "object",
       "properties": {
         "readme": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 65536
         },
         "file_list": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "maxItems": 10000
         },
-        "materials": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string",
-                "minLength": 1
-              },
-              "content": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "path",
-              "content"
-            ],
-            "additionalProperties": false
-          }
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tree_summary": {
+          "type": "string",
+          "maxLength": 16384
         }
       },
       "required": [

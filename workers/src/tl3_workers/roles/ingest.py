@@ -24,6 +24,11 @@ ROLE = Role(
     input_schema="ingest-input",
     reply_schema="ingest-reply",
     code_only_fields=("forecast",),
-    tools={},
+    tools={
+        "list": "List repository directories to locate evidence for the request.",
+        "read": "Read repository text to check the request against its implementation.",
+        "glob": "Find repository paths using relative glob patterns.",
+        "grep": "Find literal references in repository text to check the request.",
+    },
     check_reply=check_memory_ids,
 )
