@@ -2,6 +2,7 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
+import socket
 import threading
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -11,6 +12,9 @@ import pytest
 from tl3_workers import runtime
 import test_workers
 from test_workers import BRIEF
+
+_socket_connect = socket.socket.connect
+_getaddrinfo = socket.getaddrinfo
 
 # pytest collects the shared fixture under this module-level name.
 request_doc = test_workers.request_doc
@@ -275,7 +279,7 @@ def test_tool_arguments_results_and_model_tool_calls_are_bounded(request_doc, tm
     assert 'read' in tool.name
     assert 'large.txt' in json.dumps(tool.inputs)
     assert 'tool-result-marker' in json.dumps(tool.outputs)
-    assert 'truncated' in json.dumps(tool.outputs)
+    assert 'truncated' in json.dumps(tool.outputs).lower()
     assert len(json.dumps(tool.outputs, ensure_ascii=False).encode()) <= 65536
     assert any('read1' in json.dumps(span.outputs) for span in spans if span.span_type == 'CHAT_MODEL')
 
@@ -367,7 +371,15 @@ def test_export_marks_experiment_for_trace_ui(request_doc, monkeypatch, exporter
 
 
 def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, tmp_path,
-                                                                 exporters, receiver):
+                                                                 monkeypatch, exporters, receiver):
+    def connect(sock, address):
+        assert address[0] == "127.0.0.1"
+        return _socket_connect(sock, address)
+    def lookup(host, *args, **kwargs):
+        assert host == "127.0.0.1"
+        return _getaddrinfo(host, *args, **kwargs)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
     uri, packets = receiver
     usage = {'prompt_tokens': 11, 'completion_tokens': 7, 'total_tokens': 18,
              'prompt_tokens_details': {'cached_tokens': 8}, 'cache_write_tokens': 2,
