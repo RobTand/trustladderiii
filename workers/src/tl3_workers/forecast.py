@@ -15,6 +15,7 @@ from tl3_workers.tools import Worktree, _parts
 
 
 MAX_FILE_BYTES = 1_048_576
+RANGED_FILE_TOKENS = 16_384
 TOKENIZER_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
 TOKENIZER_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
 
