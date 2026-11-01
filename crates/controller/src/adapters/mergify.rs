@@ -267,7 +267,6 @@ pub struct Adapter {
     clients: BTreeMap<u64, GitHub>,
     epoch: i64,
     records: Records,
-    head_checks: head_checks::Cache,
     runtime: &'static tokio::runtime::Runtime,
 }
 impl Adapter {
@@ -277,7 +276,6 @@ impl Adapter {
             clients,
             epoch,
             records: Records::new(records),
-            head_checks: head_checks::Cache::default(),
             runtime: crate::executor::runtime()?,
         })
     }
@@ -304,13 +302,7 @@ impl Adapter {
         }
         let facts = self
             .runtime
-            .block_on(queue_facts(
-                github,
-                &delivery.repository,
-                &state,
-                head,
-                &self.head_checks,
-            ))?
+            .block_on(queue_facts(github, &delivery.repository, &state, head))?
             .into_iter()
             .map(Observation::Queue)
             .collect();
@@ -749,7 +741,6 @@ async fn queue_facts(
     repo: &Repository,
     state: &tl3_mergify::Observation,
     expected_head: &str,
-    head_checks: &head_checks::Cache,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
     if is_merge_queue_pr(pull) {
@@ -772,7 +763,13 @@ async fn queue_facts(
             QueueState::Waiting | QueueState::Unknown | QueueState::FailedCi | QueueState::Dequeued
         )
     {
-        let checks = head_checks.read(github, repo, state).await?;
+        let repo_name = full_name(repo);
+        let requirements = github
+            .required_status_checks(&repo_name, &pull.base.branch)
+            .await?;
+        let checks =
+            head_checks::evaluate(github, &repo_name, pull, requirements, &state.check_runs)
+                .await?;
         head_infrastructure = checks.infrastructure();
         if !checks.unavailable.is_empty() {
             facts.push(QueueFact {
@@ -946,14 +943,12 @@ fn tracked(snapshot: &Snapshot, repo: &Repository, include_closed: bool) -> Resu
 /// Sources read evidence; only the controller maps PRs to nodes and steps the kernel.
 pub struct Translator {
     clients: BTreeMap<u64, GitHub>,
-    head_checks: head_checks::Cache,
     runtime: &'static tokio::runtime::Runtime,
 }
 impl Translator {
     pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
         Ok(Self {
             clients,
-            head_checks: head_checks::Cache::default(),
             runtime: crate::executor::runtime()?,
         })
     }
@@ -1009,13 +1004,10 @@ impl Translator {
                         .block_on(github.check_runs(&full_name(repo), &pull_request.head.sha))?;
                     let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                     let state = tl3_mergify::observe(pull_request.clone(), &checks, &head);
-                    facts.extend(self.runtime.block_on(queue_facts(
-                        github,
-                        repo,
-                        &state,
-                        &head,
-                        &self.head_checks,
-                    ))?);
+                    facts.extend(
+                        self.runtime
+                            .block_on(queue_facts(github, repo, &state, &head))?,
+                    );
                 }
             }
             Event::PullRequestClosed {
@@ -1131,13 +1123,8 @@ impl Translator {
             item.number,
             &item.head,
         ))?;
-        self.runtime.block_on(queue_facts(
-            github,
-            repo,
-            &state,
-            &item.approved,
-            &self.head_checks,
-        ))
+        self.runtime
+            .block_on(queue_facts(github, repo, &state, &item.approved))
     }
     pub fn catch_up(
         &self,
@@ -1173,13 +1160,10 @@ impl Translator {
             {
                 let head = approved_head(snapshot, world.nodes[node.0 as usize].approved)?;
                 let state = tl3_mergify::observe(pull.clone(), &changes.check_runs, &head);
-                facts.extend(self.runtime.block_on(queue_facts(
-                    github,
-                    repo,
-                    &state,
-                    &head,
-                    &self.head_checks,
-                ))?);
+                facts.extend(
+                    self.runtime
+                        .block_on(queue_facts(github, repo, &state, &head))?,
+                );
             }
         }
         for item in tracked(snapshot, repo, false)? {

@@ -1412,9 +1412,8 @@ incident for each distinct permission gap. Available requirements and queued CI 
 observations are retained; unavailable status-only contexts are skipped. Status
 changes rely on existing looks, with no `status` webhook subscription.
 
-Queue observations reuse the check runs already read with the PR. An unchanged
-successful observation reuses the previous head-check evaluation. The cache holds
-only the last observation and is discarded on restart. Protection requirements
-are read on every look because they can change independently of the PR. Legacy
-statuses and failure annotations stay fresh. An unchanged queued look with one
-App-bound requirement uses five REST reads instead of six.
+Queue observations evaluate the check runs already read with the PR, removing
+one duplicate REST read per look. Protection requirements, legacy statuses and
+failure annotations stay fresh. A queued look with one App-bound requirement
+uses five REST reads instead of six. Cleared setup incidents reopen when fresh
+evidence reports that the same permission gap persists.

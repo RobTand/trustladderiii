@@ -2484,16 +2484,6 @@ fn legacy_intent_ignores_completed_at() {
 fn main() {
     if let Some(mode) = std::env::args()
         .nth(1)
-        .and_then(|arg| arg.strip_prefix("--check-read-").map(str::to_owned))
-    {
-        let mut database = support::Database::start();
-        check_reads::scenario(&database.create("check_read"), &mode);
-        database.stop();
-        return;
-    }
-
-    if let Some(mode) = std::env::args()
-        .nth(1)
         .and_then(|arg| arg.strip_prefix("--held-").map(str::to_owned))
     {
         let mut database = support::Database::start();
