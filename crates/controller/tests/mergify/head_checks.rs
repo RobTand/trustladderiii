@@ -321,6 +321,7 @@ fn refused_then_retry(mode: &str) {
             json!({"id":700,"check_suite_id":800,"head_sha":delivery.head_sha,
             "status":"completed","conclusion":"cancelled","run_attempt":1}),
         );
+        state.required = true;
         state.rerun_status = if mode == "grant-retry" { 403 } else { 422 };
     }
     let mut adapter = api.adapter(root.path(), 1);
