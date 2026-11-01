@@ -157,8 +157,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
 
-    def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
-        """Run pytest paths/node IDs. Set base=true to run the role's check base."""
+    def run(tests, base=False):
         selected = _selectors([] if tests is None else tests)
         key = None
         try:
@@ -220,5 +219,35 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
             if key:
                 result["action_key"] = key
             return result
+
+    def run_tests(tests: list[str] | None = None, base: bool = False) -> dict:
+        """Run pytest; automatically compare failures with the role's check base."""
+        result = run(tests, base)
+        if base or result["status"] != "completed":
+            return result
+        failed = [item for item in result["tests"] if item["outcome"] in ("failed", "error")]
+        if not failed:
+            return result
+        baseline = run([item["test"] for item in failed], True)
+        result["base"] = {key: value for key, value in baseline.items() if key != "tests"}
+        outcomes = {item["test"]: item for item in baseline["tests"]}
+        for item in failed:
+            before = outcomes.get(item["test"])
+            outcome = "unverified"
+            if baseline["status"] == "completed":
+                outcome = before["outcome"] if before else "missing"
+                if before and before["message"].startswith("Selector not found:"):
+                    outcome = "missing"
+                if not before and baseline["note"]:
+                    outcome = "unverified"
+            item["base_outcome"] = outcome
+            item["classification"] = (
+                "pre-existing" if outcome in ("failed", "error") else
+                "new" if outcome in ("passed", "missing") else "unverified"
+            )
+        while len(json.dumps(result).encode()) > SUMMARY_BYTES and result["tests"]:
+            result["tests"].pop()
+            result["note"] = "Truncated: test entries were cut. Totals include all head results."
+        return result
 
     return run_tests

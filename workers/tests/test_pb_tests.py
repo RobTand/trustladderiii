@@ -74,7 +74,12 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     summary = Summary()
     summary.add("tests/test_code.py::test_value", outcome, "fixture failure" if outcome == "failed" else "")
     result = call(submission, summary.result, ["tests/test_code.py::test_value"])
-    assert result == {**summary.result, "action_key": KEY}
+    expected = {**summary.result, "action_key": KEY}
+    if outcome in ("failed", "error"):
+        summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
+        expected["base"] = {key: value for key, value in infrastructure(
+            "The role did not supply a check base and checkout.").items() if key != "tests"}
+    assert result == expected
     args = json.loads((submission[1] / "submitted.json").read_text())
     assert "--detach" in args and "--anywhere" in args
     assert "--timeout-s" not in args
@@ -340,7 +345,7 @@ from tl3_harness.test_tool import Summary
 selected = args[args.index("--") + 6]
 run = subprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py"),
                       selected, str(root / "checkout"), "--summary"], capture_output=True, text=True)
-assert run.returncode in (0, 1), run.stdout + run.stderr
+assert run.returncode in (0, 1, 4, 5), run.stdout + run.stderr
 summary = Summary()
 for line in run.stdout.splitlines():
     record = json.loads(line)

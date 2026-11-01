@@ -30,13 +30,13 @@ a pass. Inspect the returned summary, failures, skips, errors and truncation.
 An infrastructure error is not test evidence. The controller runs independent
 checks and review after your reply.
 
-For a suspected pre-existing regression failure, confirm it with
-run_tests(tests=[...], base=true). This runs check_base_sha, the controller's
-check base, and returns base outcomes and the action key. The harness accepts
-a regression test that fails by assertion or error on both base and head as
-pre-existing. Name it and both runs in your self-check. Never edit unrelated
-code, pins or tests to make it pass. Missing, skipped or uncollected tests
-are not excused.
+run_tests automatically compares failures and errors with check_base_sha,
+the controller's check base, in one extra action. It returns base outcomes,
+classifications and both action keys. The harness accepts a regression test
+that fails by assertion or error on both base and head as pre-existing.
+Name it and both runs in your self-check; it is not a reason for cant_meet.
+Never edit unrelated code, pins or tests to make it pass. Missing, skipped or
+uncollected tests are not excused. An unverified comparison is not evidence.
 
 Before replying done, self-check every goal exactly once by goal_id. Every goal
 must be met, with concrete evidence such as test names, the action key and the
