@@ -38,3 +38,22 @@ fn missing_text_does_not_bypass_path_confinement() {
         );
     }
 }
+
+#[test]
+fn exploration_checkout_uses_pinned_commit_and_recovers_partial_checkout() {
+    let f = crate::git_tests::Repo::new();
+    let root = f.root.path().join("explore");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("partial"), "interrupted clone").unwrap();
+    let materials = json!({
+        "base_checkout": {"repository": f.path, "commit": f.base},
+        "repo": {"readme": "base", "file_list": ["README.md"]}
+    });
+    materialize(&root, &materials).unwrap();
+    assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "base\n");
+    assert_eq!(crate::git_tests::git(&root, &["rev-parse", "HEAD"]), f.base);
+    assert!(!root.join("partial").exists());
+    fs::write(root.join("README.md"), "dirty").unwrap();
+    materialize(&root, &materials).unwrap();
+    assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "base\n");
+}

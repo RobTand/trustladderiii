@@ -286,6 +286,43 @@ mod tests {
     }
 
     #[test]
+    fn repository_orientation_ignores_total_text_size() {
+        let f = crate::git_tests::Repo::new();
+        let content = "source-only-never-inline\n".repeat(40_000);
+        for index in 0..36 {
+            fs::write(f.path.join(format!("source-{index}.txt")), &content).unwrap();
+        }
+        crate::git_tests::git(&f.path, &["add", "."]);
+        crate::git_tests::git(&f.path, &["commit", "-qm", "large repository"]);
+        let head = crate::git_tests::git(&f.path, &["rev-parse", "HEAD"]);
+        let repo = repository_materials(&f.path, &head).unwrap();
+        assert!(repo.get("materials").is_none());
+        assert!(!repo.to_string().contains("source-only-never-inline"));
+        assert_eq!(repo["file_list"].as_array().unwrap().len(), 37);
+    }
+
+    #[test]
+    fn repository_orientation_summarizes_many_files_and_truncates_readme() {
+        let f = crate::git_tests::Repo::new();
+        fs::write(f.path.join("README.md"), "é".repeat(40_000)).unwrap();
+        fs::create_dir(f.path.join("src")).unwrap();
+        for index in 0..10_001 {
+            fs::write(f.path.join(format!("src/{index:05}.txt")), "x").unwrap();
+        }
+        crate::git_tests::git(&f.path, &["add", "."]);
+        crate::git_tests::git(&f.path, &["commit", "-qm", "many files"]);
+        let head = crate::git_tests::git(&f.path, &["rev-parse", "HEAD"]);
+        let repo = repository_materials(&f.path, &head).unwrap();
+        assert!(repo["file_list"].as_array().unwrap().len() <= 10_000);
+        assert_eq!(repo["file_count"], 10_002);
+        assert!(repo["tree_summary"].as_str().unwrap().contains("src/: 10001 files"));
+        let readme = repo["readme"].as_str().unwrap();
+        assert!(readme.len() <= 65_536);
+        assert!(readme.ends_with("[truncated; use read for the rest]"));
+        assert!(repo.to_string().len() < 150_000);
+    }
+
+    #[test]
     fn repository_materials_use_committed_text_without_following_symlinks() {
         let root = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
