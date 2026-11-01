@@ -52,7 +52,8 @@ review decides. Use cant_meet when the change cannot meet a goal. Do not invent
 results. A completed edit is not proof that a test passed.
 A failing check your change caused is never unverified.
 
-Return one JSON object:
+Reply with one JSON object only: no prose, no code fences. Report your work in
+its fields. It is one of:
 
 - done with self_check, every goal marked met with evidence;
 - needs_files with a nonempty files list, each entry containing path and why;

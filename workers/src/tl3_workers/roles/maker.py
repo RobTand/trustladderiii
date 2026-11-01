@@ -11,7 +11,7 @@ from langchain_core.messages import messages_from_dict, messages_to_dict
 from langchain_openai import ChatOpenAI
 from jsonschema import Draft202012Validator
 
-from tl3_workers.contracts import read_json, schema
+from tl3_workers.contracts import read_json, read_reply, schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles.base import Role
@@ -228,7 +228,7 @@ def run(model, request, worktree, emit):
             return {"kind": "out_of_room"}
         if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:
             raise ValueError("missing final maker reply")
-        reply = read_json(last_message.text)
+        reply = read_reply(last_message.text)
         Draft202012Validator(proposal).validate(reply)
         if reply["kind"] == "done" and any(check["status"] != "met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
