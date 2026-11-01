@@ -187,8 +187,8 @@ def _run(request, emit):
                              lambda text: _checked(role, request["inputs"], read_reply(text)))
         else:
             reply = role.run(model, request, worktree, emit)
-    if not role.validates_reply:
-        _checked(role, request["inputs"], reply)
+            if not role.validates_reply:
+                _checked(role, request["inputs"], reply)
     emit({"event": "reply", "role": role.name, "reply": reply})
     return reply
 

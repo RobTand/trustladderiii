@@ -220,7 +220,8 @@ def run(model, request, worktree, emit):
         # A rerun after a worker failure continues this visit with its spent allowance.
         start = saved["start"]
         history = _resumable(messages_from_dict(saved["messages"]), start)
-        allowance.spent, allowance.turns = saved["spent"], saved["turns"]
+        if allowance is not None:
+            allowance.spent, allowance.turns = saved["spent"], saved["turns"]
     else:
         history = []
         if session and session.exists() and request.get("resume_session"):
@@ -253,8 +254,9 @@ def run(model, request, worktree, emit):
                         elif isinstance(message, ToolMessage):
                             emit({"event": "progress", "unit": "tool_result"})
                 if progress:
+                    spent, turns = (allowance.spent, allowance.turns) if allowance else (0, 0)
                     save(progress, {"generation": visit, "start": start, "messages": messages_to_dict(history),
-                                    "spent": allowance.spent, "turns": allowance.turns})
+                                    "spent": spent, "turns": turns})
         finally:
             stream.close()
         if last_message is None or last_message.tool_calls or last_message.invalid_tool_calls:

@@ -156,5 +156,6 @@ def test_role_owns_optional_reply_check(tmp_path, monkeypatch):
     events = []
     with pytest.raises(ValueError, match="fixture veto"):
         runtime.run({"role": "audit", "worktree": str(tmp_path), "inputs": {}}, events.append)
-    assert checked == [({}, REPLY)]
-    assert events == [{"event": "progress", "unit": "model_turn"}]
+    # The vetoed reply gets one repair turn, which the fake answers the same way.
+    assert checked == [({}, REPLY)] * 2
+    assert events == [{"event": "progress", "unit": "model_turn"}] * 2

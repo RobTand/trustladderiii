@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+from jsonschema import ValidationError
 from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, read_reply, validate
@@ -113,6 +114,11 @@ def run(model, request, worktree, emit):
                         if message.invalid_tool_calls:
                             raise ValueError("invalid reviewer tool calls")
                         last_message = message
+                        # Save a valid reply with its turn, so a crash after it costs no model call.
+                        try:
+                            state["reply"] = check(message.text)
+                        except (ValueError, ValidationError):
+                            pass
                 state["messages"] = messages_to_dict(history)
                 if session:
                     save(session, state)
@@ -133,9 +139,6 @@ def run(model, request, worktree, emit):
         if reply["verdict"] == "out_of_room":
             raise ValueError("model cannot report reviewer exhaustion")
         check_reply(request["inputs"], reply)
-        state["reply"] = reply
-        if session:
-            save(session, state)
         return reply
 
     try:

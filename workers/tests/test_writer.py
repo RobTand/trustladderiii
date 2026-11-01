@@ -115,7 +115,8 @@ def test_invalid_option_counts_do_not_leave_worker(tmp_path, writer_request, cou
     reply = {**QUESTION, "options": [QUESTION["options"][0]] * count}
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("index", [-1, None, True, "0"])
@@ -123,7 +124,8 @@ def test_invalid_recommendations_do_not_leave_worker(tmp_path, writer_request, i
     reply = {**QUESTION, "recommended_option": index}
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("field", [
@@ -142,7 +144,8 @@ def test_blank_required_text_does_not_leave_worker(tmp_path, writer_request, fie
         reply[field] = value
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("field", list(QUESTION))
@@ -150,7 +153,8 @@ def test_missing_question_fields_do_not_leave_worker(tmp_path, writer_request, f
     reply = {key: value for key, value in QUESTION.items() if key != field}
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("kind,reply", [
@@ -163,7 +167,8 @@ def test_wrong_reply_shape_does_not_leave_worker(tmp_path, writer_request, kind,
     writer_request["inputs"] = inputs_for(kind)
     result = start_worker(tmp_path, writer_request, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("inputs", [

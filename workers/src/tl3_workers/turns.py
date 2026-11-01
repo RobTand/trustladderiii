@@ -15,18 +15,22 @@ REPAIR = ("Your reply failed validation: {}\nTools are unavailable for this turn
           "corrected JSON object matching your reply schema and nothing else.")
 
 
+def validation_message(error):
+    return error.message if isinstance(error, ValidationError) else str(error)
+
+
 class InvalidReply(ValueError):
     def __init__(self, first, second):
-        super().__init__("reply invalid after one repair turn")
+        super().__init__(f"{validation_message(first)}; repaired reply: {validation_message(second)}")
         self.errors = (first, second)
+
+
+class Unrepairable(ValueError):
+    """A check failed for a reason the model cannot fix, such as missing tokenizer data."""
 
 
 class RepairUnavailable(Exception):
     """The run's input allowance has no room for a repair turn."""
-
-
-def validation_message(error):
-    return error.message if isinstance(error, ValidationError) else str(error)
 
 
 class TurnControl(AgentMiddleware):
@@ -76,6 +80,8 @@ def repaired(control, history, ask, check):
     text = ask()
     try:
         return check(text)
+    except Unrepairable:
+        raise
     except (ValueError, ValidationError) as first:
         try:
             with control.repair(history, first):
