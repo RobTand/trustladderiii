@@ -1,5 +1,4 @@
 """Prove the opt-in in real contained checks and maker summaries, through PB."""
-from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -9,7 +8,7 @@ from tl3_harness import Check, Container, Kind, run_checks
 from tl3_harness.execution import require_admission, result_json
 from tl3_harness.model import Outcome
 from tl3_harness.test_tool import run_current
-from tl3_harness.trees import git
+from tl3_harness.trees import export, git
 from verify_reproducing import save
 from verify_scratch import verify as verify_cleanup
 
@@ -63,6 +62,8 @@ def test_containment(tmp_path):
 '''+f'    assert sorted(os.sched_getaffinity(0)) == {sorted(__import__("os").sched_getaffinity(0))!r}\n')
         git(repo, 'init', '-q')
         sha = save(repo, 'scratch execution fixture')
+        summary_tree = repo / 'exported'
+        export(repo, sha, summary_tree)
         tests = tuple('test_exec.py::' + name for name in ('test_copied_executable', 'test_compiled_library', 'test_containment'))
         plan = (Check('executable scratch boundary', Kind.BEHAVIOR_PRESERVING, tests),)
         for enabled in (False, True):
@@ -72,7 +73,7 @@ def test_containment(tmp_path):
             expected = [Outcome.PASSED if enabled else Outcome.ERROR] * 2 + [Outcome.PASSED]
             assert [test.base for test in results[0].tests] == expected
             assert [test.head for test in results[0].tests] == expected
-            summary = run_current(repo, container, tests)
+            summary = run_current(summary_tree, container, tests)
             print(json.dumps(summary), flush=True)
             assert summary['status'] == 'completed'
             assert summary['totals'] == {'passed': 3 if enabled else 1, 'failed': 0, 'error': 0 if enabled else 2, 'skipped': 0}
