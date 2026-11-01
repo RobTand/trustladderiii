@@ -17,6 +17,13 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         raise InvalidReport("missing report header")
     if records[-1] != {"event": "finish", "exit_code": exit_code} or exit_code not in (0, 1, 2, 4, 5):
         raise InvalidReport("incomplete report or inconsistent process exit")
+    if (len(records) == 4 and exit_code == 4
+            and set(records[1]) == {"event", "message"} and records[1]["event"] == "plan-error"
+            and isinstance(records[1]["message"], str) and 0 < len(records[1]["message"]) <= 1000
+            and records[2] == {"event": "collection", "tests": []}):
+        if messages is not None:
+            messages.update(dict.fromkeys(tests, records[1]["message"]))
+        return dict.fromkeys(tests, Outcome.UNCOLLECTED)
     phases = {}
     selected = None
     collection_errors = {}

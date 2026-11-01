@@ -233,7 +233,7 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
     tests/test_example.py tests/test_other.py
 ```
 
-The runner bounds each report record to 64 KiB. For a large expanded suite,
+The runner bounds each report record to 4 MiB and also bounds the record count. For a large expanded suite,
 use `--per-file` to call `run_checks` separately for each selected file inside
 one admitted action. Results are combined in one JSON inventory, and each call
 continues the action's cumulative progress count.
@@ -252,3 +252,19 @@ Record action keys and every remaining limitation in the PR. After review,
 the coordinator sets the immutable ID on the relevant `[[github.repos]]`
 entry, or updates the global default. Keep the previous ID for rollback.
 Preparation and verification do not edit live configuration.
+
+Plans whose selected node IDs exceed the report budget are rejected by the
+planner and before PrismaBuild submission, with an instruction to reduce the
+selection. The harness checks the same budget at entry. Pytest can expand a
+short function selector into many parameter cases; if that collection exceeds
+the budget, it reports a test-plan error rather than an infrastructure failure.
+Selections enter the container through stdin so large plans fit independently
+of the host's per-argument limit.
+
+The plan also reserves space for every test verdict within the controller's
+8 MiB result limit, including repeated tests across checks and JSON escaping.
+Results include messages for the first 20 failing tests, clipped to 1,000
+characters each. Every named test retains its outcome and pass flag.
+After collection, each event is limited to the longest collected ID plus 8 KiB.
+The trusted reader also limits the whole journal to 32 MiB and bounds its
+record count. These bounds apply independently.

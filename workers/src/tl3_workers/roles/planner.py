@@ -5,6 +5,7 @@ from pathlib import PurePosixPath
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, MAX_FILE_BYTES
 from tl3_harness import Check, Kind
+from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
 
@@ -50,6 +51,12 @@ def check_reply(inputs, reply):
             if not cited <= goals:
                 violations.append("A check cites an unknown goal.")
             covered.update(cited)
+        if "Checks must name exact pytest node IDs." not in violations:
+            try:
+                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
+                                          for i, check in enumerate(reply['checks']) if check['node_ids']))
+            except ValueError as error:
+                violations.append(str(error))
         if covered != goals:
             violations.append("Every goal must have a check.")
         paths.update(reply["files"])
