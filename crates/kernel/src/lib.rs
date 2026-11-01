@@ -2683,7 +2683,9 @@ fn first_in_line(w: &World, i: usize) -> bool {
     }
     let mut first_runnable = mine;
     for (j, waiter) in w.nodes.iter().enumerate() {
-        let Some(theirs) = waiter.ticket else { continue };
+        let Some(theirs) = waiter.ticket else {
+            continue;
+        };
         if !matches!(waiter.phase, Phase::Ready(_)) || waiter.repo != me.repo || theirs >= mine {
             continue;
         }
