@@ -1059,13 +1059,13 @@ fn check_gate_waiting_progress(width: u8) {
 // every settled gate world. Prove each application separately to keep the event
 // payload and actor concrete, as in the general per-event proofs.
 fn check_gate_maker_progress(width: u8) {
-    let before = gate_world_in_phase(width, Some(Phase::Making));
-    kani::assume(!before.nodes[0].paused);
-    let n = before.nodes[0];
-    let mut after = before.clone();
+    let mut world = gate_world_in_phase(width, Some(Phase::Making));
+    kani::assume(!world.nodes[0].paused);
+    let n = world.nodes[0];
+    let before_measure = world.measure();
     let mut out = Outbox::new();
     apply(
-        &mut after,
+        &mut world,
         Event::Reply {
             node: NodeId(0),
             generation: n.generation,
@@ -1075,48 +1075,48 @@ fn check_gate_maker_progress(width: u8) {
         },
         &mut out,
     );
-    require_consistent(&after);
-    assert!(after.measure() < before.measure());
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
     kani::cover!(true, "maker completion lowers the gate world's measure");
 }
 
 fn check_gate_merge_progress(width: u8) {
-    let before = gate_world_in_phase(width, Some(Phase::Queued));
-    kani::assume(!before.nodes[0].paused);
-    let mut after = before.clone();
+    let mut world = gate_world_in_phase(width, Some(Phase::Queued));
+    kani::assume(!world.nodes[0].paused);
+    let before_measure = world.measure();
     let mut out = Outbox::new();
     apply(
-        &mut after,
+        &mut world,
         Event::Fact {
             node: NodeId(0),
             fact: Fact::PrMerged {
-                head: before.nodes[0].head.unwrap_or(HeadId(0)),
+                head: world.nodes[0].head.unwrap_or(HeadId(0)),
                 checks_passed: true,
             },
         },
         &mut out,
     );
-    require_consistent(&after);
-    assert!(after.measure() < before.measure());
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
     kani::cover!(true, "a merge lowers the gate world's measure");
 }
 
 fn check_gate_resume_progress(width: u8) {
-    let before = gate_world(width);
-    kani::assume(before.nodes[0].paused);
-    let mut after = before.clone();
+    let mut world = gate_world(width);
+    kani::assume(world.nodes[0].paused);
+    let before_measure = world.measure();
     let mut out = Outbox::new();
     apply(
-        &mut after,
+        &mut world,
         Event::Command {
             node: NodeId(0),
-            id: before.nodes[0].last_cmd + 1,
+            id: world.nodes[0].last_cmd + 1,
             command: Command::Resume,
         },
         &mut out,
     );
-    require_consistent(&after);
-    assert!(after.measure() < before.measure());
+    require_consistent(&world);
+    assert!(world.measure() < before_measure);
     kani::cover!(true, "resuming lowers the gate world's measure");
 }
 
