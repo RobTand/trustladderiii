@@ -461,8 +461,46 @@ def test_redacts_review_credential_forms(planted, secret):
     assert 'visible-after' in json.dumps(result)
 
 
+# Forms a second probe found after the review round. Header values run to the end
+# of their line, so these sit on a line of their own.
+PLANTED_LINES = [
+    ('Authorization: Token abcdef296token', 'abcdef296token'),
+    ('Authorization: Digest username="u", response="deadbeef296"', 'deadbeef296'),
+    ('Authorization: AWS4-HMAC-SHA256 Credential=AKIAXXXXXXXXXXXXXXXX/20251101/x, Signature=sig296aws',
+     'sig296aws'),
+    ('Proxy-Authorization: Negotiate neg296tok', 'neg296tok'),
+    ('Cookie: session=cookie296abc; other=1', 'cookie296abc'),
+    ('Set-Cookie: sid=setcookie296; Path=/', 'setcookie296'),
+    ('{"password": "ab\\"cd296esc"}', 'cd296esc'),
+    ('sk_live_abcdefABCDEF296ghij', 'abcdefABCDEF296ghij'),
+    ('rk_test_abcdefABCDEF296ghij', 'abcdefABCDEF296ghij'),
+    ('AIzaSyA-abcdefghijklmnopqrstuvwxyz01234', 'abcdefghijklmnopqrstuvwxyz01234'),
+    ('glpat-abcdefghij296klmnop', 'abcdefghij296klmnop'),
+    ('npm_abcdefghijklmnopqrstuvwxyz0123456789', 'abcdefghijklmnopqrstuvwxyz0123456789'),
+    ('SG.abcdefghij296.klmnopqrstuv296', 'klmnopqrstuv296'),
+    ('hf_abcdefghijklmnopqrstuvwxyz0123', 'abcdefghijklmnopqrstuvwxyz0123'),
+    ('-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF296\n-----END PGP PRIVATE KEY BLOCK-----', 'lQOYBF296'),
+    ('https://x.example/a?X-Amz-Signature=sigq296&b=1', 'sigq296'),
+    ('curl --password hunter296 http://x', 'hunter296'),
+    ('curl -u admin:clipw296 http://x', 'clipw296'),
+    ('https://hooks.slack.com/services/T000/B000/slackhook296', 'slackhook296'),
+    ('https://discord.com/api/webhooks/123/discordtok296', 'discordtok296'),
+    (json.dumps({'k': 'secret:\tjson-tab-296'}), 'json-tab-296'),
+    (json.dumps({'k': 'password:\n  json-newline-296'}), 'json-newline-296'),
+]
+
+
+@pytest.mark.parametrize('planted,secret', PLANTED_LINES)
+def test_redacts_further_credential_forms(planted, secret):
+    from tl3_workers.tracing import Redactor
+    result = json.dumps(Redactor(None).payload({'content': 'visible-before\n' + planted + '\nvisible-after'}))
+    assert secret not in result
+    assert 'visible-before' in result and 'visible-after' in result
+
+
 @pytest.mark.parametrize('key', ['OPENAI_API_KEY', 'x-api-key', 'github_token', 'webhook_secret',
-                                 'secret', 'token', 'passwd_hash', 'private_key_id', 'credential_id'])
+                                 'secret', 'token', 'passwd_hash', 'private_key_id', 'credential_id',
+                                 'Cookie', 'Set-Cookie', 'AUTHORIZATION'])
 def test_redacts_sensitive_key_substrings(key):
     from tl3_workers.tracing import Redactor
     assert Redactor(None).payload({key: 'opaque-sensitive-value-296'})[key] == '[REDACTED]'
@@ -474,7 +512,7 @@ def test_review_secrets_never_reach_export(request_doc, exporters, receiver, sur
     from tl3_workers.tracing import observe, record_chunk_usage
     uri, packets = receiver
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
-    planted = '\n'.join(text for text, _ in PLANTED)
+    planted = '\n'.join(text for text, _ in PLANTED + PLANTED_LINES)
     with observe(request_doc):
         with mlflow.start_span(name='review-fixture', span_type='CHAT_MODEL') as model:
             if surface == 'model_input':
@@ -488,9 +526,37 @@ def test_review_secrets_never_reach_export(request_doc, exporters, receiver, sur
             tool.set_outputs(planted if surface == 'tool_result' else 'visible-result')
     for child in exporters:
         assert child.wait(timeout=15) == 0
-    for _, secret in PLANTED:
+    for _, secret in PLANTED + PLANTED_LINES:
         assert secret.encode() not in packets[-1][2]
     assert b'visible-file' in packets[-1][2]
+
+
+def test_every_exported_field_is_free_of_planted_secrets(request_doc, exporters, receiver):
+    import mlflow
+    from tl3_workers.tracing import observe, record_chunk_usage
+    uri, packets = receiver
+    marker = 'ghp_every296field0123456789abcdef'
+    request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
+    request_doc['trace'] = {'repo': marker, 'issue': marker, 'request': marker,
+                            'attempt': marker, 'round': marker}
+    request_doc['inputs']['issue']['body'] = marker
+    with pytest.raises(RuntimeError):
+        with observe(request_doc):
+            with mlflow.start_span(name='name-' + marker, span_type='CHAT_MODEL') as model:
+                model.set_inputs({'messages': [{'role': 'user', 'content': marker}]})
+                model.set_outputs({'content': marker, 'tool_calls': [{'args': {'x': marker}}]})
+                model.set_attributes({'tl3.unlisted': marker, 'headers': marker,
+                                      'mlflow.chat.tokenUsage': {'input_tokens': 3, marker: 4}})
+                record_chunk_usage({'usage': {'prompt_tokens': 3, marker: 1, 'completion_tokens': marker}})
+            with mlflow.start_span(name='tool-' + marker, span_type='TOOL') as tool:
+                tool.set_inputs({'path': marker, marker: 'value'})
+                tool.set_outputs([marker, {'nested': {marker: marker}}])
+                tool.set_attribute('tl3.unlisted', marker)
+            raise RuntimeError(marker)
+    for child in exporters:
+        assert child.wait(timeout=15) == 0
+    assert marker.encode() not in packets[-1][2]
+    assert marker[4:].encode() not in packets[-1][2]
 
 
 def test_payload_preserves_recent_messages_and_argument_tails():
