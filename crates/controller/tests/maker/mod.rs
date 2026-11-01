@@ -893,11 +893,15 @@ pub(super) fn repository_images(database: &mut Database) {
         supervisor.execute(&delivery).unwrap();
         let _ = terminal(&mut supervisor, &delivery);
         let request: Value = serde_json::from_slice(
-            &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
-        ).unwrap();
-        assert_eq!(request["inputs"]["tests"]["image"],
+            &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            request["inputs"]["tests"]["image"],
             override_image.unwrap_or(config.prismabuild.container_image),
-            "staged maker input must use its repository image or the global fallback");
+            "staged maker input must use its repository image or the global fallback"
+        );
     }
     println!("test maker_repository_image_override_and_global_fallback ... ok");
 }
