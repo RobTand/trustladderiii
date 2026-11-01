@@ -447,7 +447,13 @@ impl Adapter {
         let image = self
             .images
             .for_repository(&delivery.repository, &self.settings.image);
-        let changed_paths = checks::stage(&input, &self.settings.harness, delivery, image, self.images.exec_scratch(&delivery.repository))?;
+        let changed_paths = checks::stage(
+            &input,
+            &self.settings.harness,
+            delivery,
+            image,
+            self.images.exec_scratch(&delivery.repository),
+        )?;
         let mut command = self.settings.python.clone();
         command.extend(["-I".into(), "-B".into(), "action.py".into()]);
         let action = SubmitAction {

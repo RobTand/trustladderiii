@@ -201,7 +201,8 @@ mod tests {
                 let harness = f.root.path().join("harness");
                 fs::create_dir(&harness).unwrap();
                 fs::write(harness.join("__init__.py"), "").unwrap();
-                let changed = stage(&staged, &harness, &f.delivery(), "sha256:fixture", false).unwrap();
+                let changed =
+                    stage(&staged, &harness, &f.delivery(), "sha256:fixture", false).unwrap();
                 assert_eq!(changed, ["README.md"]);
                 assert!(staged.join("served.bundle").is_file());
                 assert_eq!(

@@ -11,7 +11,11 @@ impl Images {
                 .iter()
                 .map(|repo| {
                     (
-                        (repo.owner.to_ascii_lowercase(), repo.name.to_ascii_lowercase(), repo.installation_id),
+                        (
+                            repo.owner.to_ascii_lowercase(),
+                            repo.name.to_ascii_lowercase(),
+                            repo.installation_id,
+                        ),
                         (repo.container_image.clone(), repo.exec_scratch),
                     )
                 })
@@ -20,11 +24,13 @@ impl Images {
     }
 
     pub(super) fn exec_scratch(&self, repo: &Repository) -> bool {
-        self.0.get(&(
-            repo.owner.to_ascii_lowercase(),
-            repo.name.to_ascii_lowercase(),
-            repo.installation,
-        )).is_some_and(|(_, enabled)| *enabled)
+        self.0
+            .get(&(
+                repo.owner.to_ascii_lowercase(),
+                repo.name.to_ascii_lowercase(),
+                repo.installation,
+            ))
+            .is_some_and(|(_, enabled)| *enabled)
     }
 
     pub(super) fn for_repository<'a>(&'a self, repo: &Repository, fallback: &'a str) -> &'a str {

@@ -2095,7 +2095,11 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
         .unwrap();
         let image = format!("sha256:{}", expected.repeat(64));
         assert_eq!(request["image"], image, "staged harness image");
-        assert_eq!(request["exec_scratch"], expected == "b", "scratch opt-in follows repository identity");
+        assert_eq!(
+            request["exec_scratch"],
+            expected == "b",
+            "scratch opt-in follows repository identity"
+        );
         let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
             .unwrap()
             .lines()
