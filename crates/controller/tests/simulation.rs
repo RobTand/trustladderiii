@@ -81,10 +81,6 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
-        (
-            "q48_capacity_ticket_order",
-            gate_migration::q48_ticket_order,
-        ),
         ("repository_count_mismatch", |s| {
             repository_followups::corrupt_index(s, "count")
         }),
@@ -174,6 +170,10 @@ fn main() {
         ("agent_capacity_crash_after_commit", |s| {
             gate_migration::pool_crash(s, "AfterCommit")
         }),
+        (
+            "q48_capacity_ticket_order",
+            gate_migration::q48_ticket_order,
+        ),
         ("gate_capacity_reopen", gate_migration::reopen),
         ("gate_capacity_downgrade", gate_migration::downgrade),
         (
