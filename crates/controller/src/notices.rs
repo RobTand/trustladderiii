@@ -24,6 +24,7 @@ fn kind(delivery: &Delivery) -> &'static str {
             CommentKind::Clarify => "clarification question",
             CommentKind::FileCorrection => "replacement filing",
             CommentKind::ReplacementDropped => "dropped-change note",
+            CommentKind::Restart => "restart",
             CommentKind::Classify => "classification",
         },
         Output::Effect { .. } => unreachable!(),

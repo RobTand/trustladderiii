@@ -789,6 +789,38 @@ mod scope_summary_tests {
     use super::*;
 
     #[test]
+    fn stopped_summary_keeps_issue_open_and_offers_restart() {
+        let summary = |outcome: Outcome, note: Option<&str>| -> Delivery {
+            serde_json::from_value(json!({
+                "key":"summary:0", "epoch":1,
+                "output":Out::Notice {node:tl3_kernel::NodeId(0), notice:Notice::Summary(outcome)},
+                "generation":1, "repository":{"owner":"RobTand","name":"sandbox","installation":1},
+                "issue":42, "paths":[], "attempt":1, "round":0, "note":note
+            }))
+            .unwrap()
+        };
+        let restart = "Comment `restart` on this issue to start again.";
+        assert!(Adapter::close_reason(&summary(Outcome::Stopped, None)).is_none());
+        assert_eq!(
+            fixed_notice_text(&summary(Outcome::Stopped, None)).unwrap(),
+            Some(restart.into())
+        );
+        let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
+        let text = fixed_notice_text(&summary(Outcome::Stopped, Some(saved)))
+            .unwrap()
+            .unwrap();
+        assert!(text.starts_with(restart) && text.ends_with(saved));
+        for outcome in [
+            Outcome::Duplicate,
+            Outcome::NotActionable,
+            Outcome::AlreadyDone,
+        ] {
+            assert!(Adapter::close_reason(&summary(outcome, None)).is_some());
+            assert_eq!(fixed_notice_text(&summary(outcome, None)).unwrap(), None);
+        }
+    }
+
+    #[test]
     fn scope_summary_keeps_scratch_and_trim_notes_separate_and_appends_each_once() {
         let saved = "Saved unfinished work, kept for 30 days:\nrefs/tl3/scratch/issue-42-node-0";
         let removed =

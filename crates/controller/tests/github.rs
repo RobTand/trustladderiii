@@ -9,6 +9,8 @@ mod notice_incidents;
 mod real_writer;
 #[path = "github/request_vocabulary.rs"]
 mod request_vocabulary;
+#[path = "github/restart.rs"]
+mod restart;
 #[path = "github/startup_ack.rs"]
 mod startup_ack;
 #[path = "github/steering.rs"]
@@ -123,6 +125,10 @@ struct ApiState {
     forbidden_filing: bool,
     intake_target_missing: bool,
     intake_target_status: Option<u16>,
+    issue_title: Option<String>,
+    issue_body: Option<String>,
+    closed_by: Option<String>,
+    reopens: usize,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -278,6 +284,22 @@ impl Respond for Api {
                 state.deletes += 1;
                 ResponseTemplate::new(204)
             }
+            ("PATCH", path)
+                if path.starts_with("/repos/owner/sandbox/issues/")
+                    && serde_json::from_slice::<Value>(&request.body)
+                        .is_ok_and(|body| body["state"] == "open") =>
+            {
+                state.closed = false;
+                state.reopens += 1;
+                let mut issue = fixture(false)["issue"].clone();
+                if let Some(title) = &state.issue_title {
+                    issue["title"] = json!(title);
+                }
+                if let Some(body) = &state.issue_body {
+                    issue["body"] = json!(body);
+                }
+                ResponseTemplate::new(200).set_body_json(issue)
+            }
             ("PATCH", path) if path.starts_with("/repos/owner/sandbox/issues/") => {
                 state.closed = true;
                 let mut issue = fixture(false)["issue"].clone();
@@ -289,11 +311,25 @@ impl Respond for Api {
                 if state.empty_body {
                     issue["body"] = Value::Null;
                 }
+                if let Some(title) = &state.issue_title {
+                    issue["title"] = json!(title);
+                }
+                if let Some(body) = &state.issue_body {
+                    issue["body"] = json!(body);
+                }
                 if state.closed {
                     issue["state"] = json!("closed");
                 }
                 ResponseTemplate::new(200).set_body_json(issue)
             }
+            ("GET", "/repos/owner/sandbox/issues/12/events") => ResponseTemplate::new(200)
+                .set_body_json(match &state.closed_by {
+                    Some(login) => {
+                        json!([{"id": 5, "event": "closed", "actor": {"id": 99, "login": login},
+                        "created_at": "2026-10-30T02:00:00Z"}])
+                    }
+                    None => json!([]),
+                }),
             (
                 "GET",
                 "/repos/owner/tl3/issues"
@@ -561,8 +597,22 @@ fn main() {
             "guidance" => steering::guidance(&settings),
             "credit" => steering::credit(&settings),
             "answer_replacement" => steering::answer_replacement(&settings),
+            "restart_open" => restart::open_request(&settings),
+            "restart_stopped" => restart::stopped_request(&settings),
+            "restart_merged" => restart::merged_request(&settings),
+            "restart_reopen" => restart::reopens_issue_tl3_closed(),
             _ => panic!("unknown gate case: {case}"),
         }
+        database.stop();
+        return;
+    }
+    if args.get(1).is_some_and(|arg| arg == "--restart") {
+        message_reconciliation();
+        println!("test message_reconciliation ... ok");
+        restart::reopens_issue_tl3_closed();
+        restart::open_request(&database.create("restart_open"));
+        restart::stopped_request(&database.create("restart_stopped"));
+        restart::merged_request(&database.create("restart_merged"));
         database.stop();
         return;
     }
@@ -662,6 +712,10 @@ fn main() {
     steering::unanswered_clarification_closes(&database.create("unanswered_clarification"));
     steering::dropped_change_quote();
     steering::second_replacement(&database.create("second_replacement"));
+    restart::open_request(&database.create("restart_open"));
+    restart::stopped_request(&database.create("restart_stopped"));
+    restart::merged_request(&database.create("restart_merged"));
+    restart::reopens_issue_tl3_closed();
     for point in [
         "none",
         "EventWritten",
@@ -679,7 +733,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 73 } else { 191 };
+    let scenario_count = if group == Some("flow") { 77 } else { 195 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
@@ -1017,9 +1071,22 @@ fn message_reconciliation() {
     summary.key = "notice:0:2".into();
     adapter.execute(&summary).unwrap();
     assert!(!api.state.lock().unwrap().closed);
+    // Q49: a stopped request keeps its issue open and says how to start again.
     let mut summary = delivery(Notice::Summary(Outcome::Stopped));
     summary.epoch = 1;
     summary.key = "notice:0:3".into();
+    adapter.execute(&summary).unwrap();
+    assert!(!api.state.lock().unwrap().closed);
+    assert!(adapter.reconcile(&summary).is_ok());
+    assert!(!api.state.lock().unwrap().closed);
+    assert!(api.state.lock().unwrap().comments.iter().any(|c| {
+        let body = c["body"].as_str().unwrap();
+        body.contains("notice:0:3")
+            && body.contains("Comment `restart` on this issue to start again.")
+    }));
+    let mut summary = delivery(Notice::Summary(Outcome::NotActionable));
+    summary.epoch = 1;
+    summary.key = "notice:0:5".into();
     adapter.execute(&summary).unwrap();
     assert!(api.state.lock().unwrap().closed);
     api.state.lock().unwrap().closed = false;
@@ -1866,12 +1933,23 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
     serde_json::to_writer(&mut *stdin, &stop).unwrap();
     stdin.write_all(b"\n").unwrap();
     stdin.flush().unwrap();
-    wait(&mut || api.state.lock().unwrap().closed);
+    wait(&mut || {
+        api.state.lock().unwrap().comments.iter().any(|c| {
+            c["body"]
+                .as_str()
+                .unwrap()
+                .contains("Comment `restart` on this issue to start again.")
+        })
+    });
     wait(&mut || {
         let snapshot = store.load().unwrap();
         snapshot.pending_effects.is_empty()
             && !snapshot.rows.iter().any(|row| row.table == "watches")
     });
+    assert!(
+        !api.state.lock().unwrap().closed,
+        "Q49: a stop leaves the issue open"
+    );
     assert_eq!(
         store.worker_document("0", "audits").unwrap().unwrap()["verdict"],
         "agree"

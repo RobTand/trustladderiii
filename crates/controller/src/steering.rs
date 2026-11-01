@@ -27,6 +27,12 @@ pub enum Task {
         since: String,
         comment_issue: u64,
     },
+    /// Q49: a restart files its request from the issue text read when it applies.
+    Restart {
+        comment_key: String,
+        text: String,
+        issue: Option<tl3_github::Issue>,
+    },
 }
 
 impl Delivery {

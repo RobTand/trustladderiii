@@ -77,6 +77,37 @@ def test_every_kind_through_protocol(tmp_path, request_doc, body, closed, reply)
     assert_reply(tmp_path, request_doc, reply)
 
 
+@pytest.mark.parametrize("body,closed,reply", [
+    ("Restart this request.", False, {"kind": "restart"}),
+    ("Start this again from scratch.", False, {"kind": "restart"}),
+    ("Start over.", True, {"kind": "restart"}),
+    ("Should we restart?", False, {"kind": "unsure", "question": "Do you want me to start this request over now?"}),
+    ("Should we start over?", True, {"kind": "unsure", "question": "Do you want me to start this request over now?"}),
+    ("Alex said 'restart it'.", False, {"kind": "remark"}),
+    ("Don't restart this.", True, {"kind": "remark"}),
+    ("If this breaks again, I'd restart it.", False, {"kind": "remark"}),
+    ("Cancel this request.", False, {"kind": "stop"}),
+])
+def test_restart_through_protocol(tmp_path, request_doc, body, closed, reply):
+    request_doc["inputs"]["comment"]["body"] = body
+    request_doc["inputs"]["state"].update({"closed": closed, "restartable": True,
+                                           "phase": "Closed(Stopped)" if closed else "Making"})
+    assert_reply(tmp_path, request_doc, reply)
+
+
+@pytest.mark.parametrize("state,reply", [
+    ({"closed": True, "phase": "Closed(Merged)", "restartable": False}, {"kind": "restart"}),
+    ({"closed": True, "phase": "Closed(Merged)"}, {"kind": "restart"}),
+    ({"restartable": False}, {"kind": "restart"}),
+    ({"restartable": True}, {"kind": "restart", "new_text": "Return goodbye."}),
+])
+def test_restart_needs_a_restartable_request(tmp_path, request_doc, state, reply):
+    request_doc["inputs"]["state"].update(state)
+    result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
+    assert result.exit_code == 1
+    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+
+
 @pytest.mark.parametrize("kind,answers,body,answer,data", [
     ("audit_disagreement", ["continue", "change_request", "stop"], "Keep ingest's reading.", "continue", {}),
     ("needs_splitting", ["change_request", "stop"], "Only fix the greeting.", "change_request",
