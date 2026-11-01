@@ -554,6 +554,50 @@ def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):
     assert result.stderr.strip() == "tl3_workers: request failed"
 
 
+def test_check_base_schema_accepts_only_commit_ids(maker_request):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema
+
+    validator = Draft202012Validator(schema("maker-input"))
+    inputs = maker_request["inputs"]
+    for value in ("a" * 40, "b" * 64):
+        assert validator.is_valid({**inputs, "check_base_sha": value})
+    for value in ("HEAD", "-main", "A" * 40, "a" * 39, None):
+        assert not validator.is_valid({**inputs, "check_base_sha": value})
+
+
+def test_check_base_reaches_maker_test_tool(maker_request):
+    from tl3_workers.tools import Worktree
+
+    base = git(maker_request["worktree"], "rev-parse", "HEAD")
+    maker_request["inputs"]["check_base_sha"] = base
+    response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
+    with Worktree(maker_request["worktree"]) as tree:
+        maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
+        assert getattr(tree, "check_base_sha", None) == base
+
+
+def test_plan_check_kinds_reach_maker_test_tool(maker_request):
+    from tl3_workers.tools import Worktree
+
+    response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
+    with Worktree(maker_request["worktree"]) as tree:
+        maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
+        assert getattr(tree, "test_checks", None) == maker_request["inputs"]["plan"]["checks"]
+
+
+def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "pre-existing only for tests named in regression checks" in prompt
+    assert "fails-on-base means this test also failed or errored on base, but no regression check names it." in prompt
+    assert "fails-on-base does not excuse demonstrating, reproducing or behavior-preserving checks" in prompt
+    assert "Never edit unrelated code, pins or tests to make it pass" in prompt
+    assert "Name it and both runs in your self-check; it is not a reason for cant_meet" in prompt
+    assert "For a goal verified by review, give the change and your account" in prompt
+    assert "Name evidence your tools cannot reach as unverified; review decides" in prompt
+    assert "A failing check your change caused is never unverified." in prompt
+
+
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
     observed = []
     settings = []

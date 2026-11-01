@@ -38,6 +38,7 @@
     },
     "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
     "round": {"type": "integer", "enum": [0, 1]},
+    "check_base_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "reviewed_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "current_review_findings": {
       "type": "array", "items": {"$ref": "#/properties/feedback/items"}
