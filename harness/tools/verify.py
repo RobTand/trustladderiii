@@ -37,6 +37,8 @@ def main():
     subprocess.run(suite, check=True)
     from verify_reproducing import verify
     verify(container)
+    from verify_scratch import verify as verify_scratch
+    verify_scratch(container)
     fixtures = source / "tests/fixtures"
     with tempfile.TemporaryDirectory(prefix="tl3-fixture-") as directory:
         repo = Path(directory)
