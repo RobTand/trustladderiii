@@ -47,11 +47,14 @@ def main():
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
     results = rust_gate.execute_binary(binary, harness == 'custom', arguments)
     check_workspace()
-    config = json.loads(Path('tools/ci/rust-test-budget.json').read_text())
-    rust_gate.check_budget(results, config, config)
+    # .bazelrc names the executor class; budgets stay strict without one.
+    runner = os.environ.get('TL3_RUNNER_CLASS', 'baseline')
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
+    # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
-    receipt.write_text(json.dumps({'rust': {name: names}}))
+    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner}))
+    config = json.loads(Path('tools/ci/rust-test-budget.json').read_text())
+    rust_gate.check_budget(results, config, config, runner_class=runner)
 
 
 if __name__ == '__main__':
