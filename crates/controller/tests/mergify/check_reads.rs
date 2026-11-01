@@ -5,7 +5,9 @@ use tl3_controller::executor::Observation;
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued(settings, &api, root.path(), true);
+    let pending = mode == "reopen-look";
+    api.state.lock().unwrap().lag = pending;
+    let mut controller = queued(settings, &api, root.path(), !pending);
     if let Some(source) = mode.strip_prefix("reopen-") {
         reopen(&mut controller, &api, source);
     } else if mode == "gaps" {
@@ -287,7 +289,14 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
             "a persisting permission gap must reopen after clear on the next {source}"
         );
         assert_eq!(incidents[0].value["blocking"], false);
-        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            if source == "look" {
+                Phase::Publishing
+            } else {
+                Phase::Queued
+            }
+        );
     }
     clear_gap(controller, &incident.id, 3);
     api.state.lock().unwrap().restricted = None;
