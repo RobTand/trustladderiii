@@ -1246,6 +1246,7 @@ struct FailedPublishState {
     key: Option<String>,
     reads: usize,
     writes: usize,
+    hold_cleanup: bool,
 }
 struct FailedPublish {
     fake: adapters::worktrees::Fake,
@@ -1272,6 +1273,17 @@ impl Executor for FailedPublish {
             } else {
                 tl3_controller::Error::Invalid("fixture lost publish response")
             });
+        }
+        if self.state.borrow().hold_cleanup
+            && matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: EffectKind::RemoveWorktree,
+                    ..
+                }
+            )
+        {
+            return Err(tl3_controller::Error::Invalid("fixture teardown outage"));
         }
         self.fake.execute(delivery)
     }
@@ -1311,6 +1323,7 @@ fn closed_publish_looks(settings: &tl3_config::Store, case: &str) {
     let clock = FakeClock::new();
     let state = Rc::new(RefCell::new(FailedPublishState::default()));
     let permanent = case != "held";
+    state.borrow_mut().hold_cleanup = case == "stopping";
     let mut c = open(
         settings,
         root.path(),
@@ -1332,7 +1345,47 @@ fn closed_publish_looks(settings: &tl3_config::Store, case: &str) {
         .into_iter()
         .find(|row| row.table == "allowances" && row.id == key)
         .unwrap();
-    stop_request(&mut c);
+    if case == "stopping" {
+        c.observe(
+            "stop-before-cleanup",
+            Observation::Kernel(Event::Command {
+                node: NodeId(0),
+                id: 1,
+                command: Command::Stop,
+            }),
+        )
+        .unwrap();
+        drain(&mut c);
+        assert!(matches!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Stopping(_)
+        ));
+        let reads = state.borrow().reads;
+        c.look_key(&key).unwrap();
+        assert_eq!(
+            state.borrow().reads,
+            reads,
+            "stopping must end the failed publish look while cleanup is unfinished"
+        );
+        let snapshot = c.snapshot().unwrap();
+        let cleanup = &snapshot.pending_effects[0].key;
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "allowances" && &row.id == cleanup),
+            "cleanup must retain its own look"
+        );
+        state.borrow_mut().hold_cleanup = false;
+        c.retry_held_effects(Upstream::Worktrees);
+        drain(&mut c);
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(tl3_kernel::Outcome::Stopped)
+        );
+    } else {
+        stop_request(&mut c);
+    }
     if case == "startup" {
         drop(c);
         let mut store = Store::open(settings).unwrap();
@@ -1506,7 +1559,14 @@ fn look_that_closes_request(settings: &tl3_config::Store) {
 
 fn closed_looks_regressions(db: &mut support::Database) -> usize {
     let mut failed = 0;
-    for case in ["permanent", "startup", "held", "healthy", "closing"] {
+    for case in [
+        "permanent",
+        "startup",
+        "held",
+        "healthy",
+        "closing",
+        "stopping",
+    ] {
         let settings = db.create(&format!("closed_looks_{case}"));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if case == "healthy" {
