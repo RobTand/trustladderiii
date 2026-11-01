@@ -1,0 +1,97 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "py_library")
+
+# gazelle:python_root
+# gazelle:python_generation_mode project
+# gazelle:python_default_visibility //visibility:public
+# gazelle:python_test_file_pattern *_test.py
+
+filegroup(
+    name = "schemas",
+    srcs = glob(["tl3_workers/schemas/*.json"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "runtime_files",
+    srcs = glob([
+        "tl3_workers/prompts/*.md",
+        "tl3_workers/evaluation/*.json",
+    ]) + [":schemas"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "__main__",
+    srcs = ["tl3_workers/__main__.py"],
+    visibility = ["//visibility:public"],
+    deps = [":src"],
+)
+
+py_binary(
+    name = "classifier_eval",
+    srcs = ["tl3_workers/classifier_eval.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":src",
+        "@tl3_pip//langchain_core",
+    ],
+)
+
+py_binary(
+    name = "tracing",
+    srcs = ["tl3_workers/tracing.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@tl3_pip//httpx",
+        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//opentelemetry_proto",
+        "@tl3_pip//opentelemetry_sdk",
+        "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
+    ],
+)
+
+py_library(
+    name = "src",
+    srcs = [
+        "tl3_workers/__init__.py",
+        "tl3_workers/__main__.py",
+        "tl3_workers/classifier_eval.py",
+        "tl3_workers/contracts.py",
+        "tl3_workers/forecast.py",
+        "tl3_workers/memory.py",
+        "tl3_workers/pb_tests.py",
+        "tl3_workers/quota.py",
+        "tl3_workers/recall.py",
+        "tl3_workers/roles/__init__.py",
+        "tl3_workers/roles/audit.py",
+        "tl3_workers/roles/base.py",
+        "tl3_workers/roles/classifier.py",
+        "tl3_workers/roles/ingest.py",
+        "tl3_workers/roles/maker.py",
+        "tl3_workers/roles/planner.py",
+        "tl3_workers/roles/reviewer.py",
+        "tl3_workers/roles/writer.py",
+        "tl3_workers/runtime.py",
+        "tl3_workers/session.py",
+        "tl3_workers/tools.py",
+        "tl3_workers/tracing.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//deepagents",
+        "@tl3_pip//httpx",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//langchain_openai",
+        "@tl3_pip//langgraph",
+        "@tl3_pip//langgraph_prebuilt",
+        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//opentelemetry_proto",
+        "@tl3_pip//opentelemetry_sdk",
+        "@tl3_pip//referencing",
+        "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
+        "@tl3_pip//tiktoken",
+    ],
+)
