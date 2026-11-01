@@ -155,7 +155,7 @@ impl Adapter {
                         head: branch.as_str().into(),
                         base: self.branches.base(&delivery.repository).into(),
                         body: format!(
-                                "Closes #{}.{}\n\n{}",
+                                "Refs #{}.{}\n\n{}",
                                 delivery.issue,
                                 delivery
                                     .proposed

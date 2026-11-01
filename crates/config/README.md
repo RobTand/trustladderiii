@@ -117,4 +117,5 @@ A template must contain `{issue}` and `{node}` exactly once, separated by a
 literal containing a nondigit. Other placeholders and invalid Git refs are
 rejected. Issue numbers are positive; node numbers can be zero. Both use
 canonical decimal digits. Formatting and recognition share the same parser.
-Publication writes `Closes #N` for the request's issue.
+Publication writes `Refs #N` for the request's issue. TL3 closes the issue after
+all leaves finish.
