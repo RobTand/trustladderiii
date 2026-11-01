@@ -467,6 +467,9 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let world = snapshot::decode(snapshot)?;
+        if issue.number == 0 {
+            return Err(Error::Invalid("issue number must be positive"));
+        }
         let index = snapshot
             .rows
             .iter()
@@ -1675,11 +1678,15 @@ impl Controller {
         let files = paths
             .iter()
             .map(|p| {
+                if p.is_empty() {
+                    return Err(Error::Invalid("footprint path must be nonempty"));
+                }
                 self.store
                     .intern_path(repo, p)
+                    .map_err(Error::from)
                     .map(|id| tl3_kernel::FileId(id.get() as u64))
             })
-            .collect::<tl3_store::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
         Ok(world.intern_footprint(files))
     }
 
@@ -2454,7 +2461,10 @@ impl Controller {
                 target,
                 files,
             } => {
-                let current = &world.nodes[node.0 as usize];
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
                 if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
                 {
                     return Ok(None);
@@ -2475,7 +2485,10 @@ impl Controller {
                 generation,
                 sha,
             } => {
-                let current = &world.nodes[node.0 as usize];
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
                 if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
                 {
                     return Ok(None);
@@ -2504,6 +2517,9 @@ impl Controller {
                 },
             },
             Observation::PullRequest { node, number } => {
+                if number == 0 {
+                    return Err(Error::Invalid("pull request number must be positive"));
+                }
                 let request = request(snapshot, node)?;
                 let repo = self
                     .store
@@ -2615,6 +2631,7 @@ impl Controller {
         Ok(Some(event))
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
+        tl3_worktrees::CommitId::new(sha)?;
         Ok(HeadId(
             self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
         ))

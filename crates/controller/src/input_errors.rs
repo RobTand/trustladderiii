@@ -56,6 +56,7 @@ impl Controller {
             return Err(error);
         }
         eprintln!("input failed for {scope}: {error}");
+        let target = target.filter(|target| target.issue > 0);
         let class = crate::looks::failure_class(&error);
         let previous = snapshot
             .rows
@@ -91,7 +92,7 @@ impl Controller {
             upstream: Upstream::GitHub,
             class: class.into(),
         };
-        let id = crate::looks::incident_id(snapshot, "input");
+        let id = crate::looks::incident_id(snapshot, format!("input.{}", commit.rows.len()));
         let summary = format!(
             "{} Other requests can continue.",
             crate::looks::incident_summary(title, &signature, needs_rob, None)
