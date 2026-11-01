@@ -118,6 +118,13 @@ fn repository_orientation_and_ingest_replay() {
             "ORIENTATION {}",
             json!({"repository":name,"head":head.as_str(),"file_count":repo["file_count"],"listed_files":repo["file_list"].as_array().unwrap().len(),"orientation_bytes":repo.to_string().len(),"summarized":repo["tree_summary"] != ""})
         );
+        if let Some(output) = std::env::var_os("TL3_TEST_ORIENTATION_OUTPUT") {
+            fs::write(
+                PathBuf::from(output).join(format!("{name}.json")),
+                inputs.to_string(),
+            )
+            .unwrap();
+        }
         if name.starts_with("prismabuild") {
             let checkout = root.path().join("checkout");
             fs::create_dir(&checkout).unwrap();

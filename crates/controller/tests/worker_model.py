@@ -23,6 +23,8 @@ def no_network(*args, **kwargs):
 
 def create_model(request):
     reply = scripted_reply(request, mode, marker)
+    if mode == "diagnostic-failure":
+        raise ValueError("sized briefs must declare their root files")
     if request["role"] == "maker":
         return FakeMessagesListChatModel(responses=[
             AIMessage(content="", tool_calls=[{"name": "write", "args": {

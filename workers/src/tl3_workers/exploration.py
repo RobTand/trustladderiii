@@ -42,9 +42,20 @@ def retained(messages, limit):
             groups[-1].append(message)
     kept, used = [], 0
     for group in reversed(groups):
-        size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
-        if used + size > limit:
+        available = limit - used
+        overhead = sum(len(json.dumps(m.model_copy(update={"content": ""}).model_dump(),
+                                      ensure_ascii=False).encode()) for m in group)
+        if overhead > available:
             break
+        size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
+        if size > available:
+            each = max(0, (available - overhead) // len(group) - 32)
+            original = group
+            while size > available:
+                group = [m.model_copy(update={"content": m.text.encode("utf-8")[:each].decode("utf-8", errors="ignore")})
+                         for m in original]
+                size = sum(len(json.dumps(m.model_dump(), ensure_ascii=False).encode()) for m in group)
+                each //= 2
         kept = group + kept
         used += size
     if len(kept) < len(messages) - len(prefix):
@@ -64,9 +75,12 @@ class ExplorationMiddleware(AgentMiddleware):
         messages = retained(request.messages, self.budget.history_bytes)
         request = request.override(messages=messages)
         bound = input_bound(request)
-        # Reserve another context of this size for finalization before exploring.
+        # Reserve the original input plus maximum retained evidence before exploring.
+        original = messages[:next(i for i, m in enumerate(messages) if isinstance(m, HumanMessage)) + 1]
+        final_reserve = input_bound(request.override(messages=original, tools=[]))
+        final_reserve += self.budget.history_bytes * 2 + len(FINISH) + 1024
         final = (self.turns >= self.budget.tool_turns
-                 or self.spent + 2 * (bound + len(FINISH) + 128) > self.budget.input_tokens)
+                 or self.spent + bound + final_reserve > self.budget.input_tokens)
         if self.final:
             raise ValueError("missing final model reply")
         if final:

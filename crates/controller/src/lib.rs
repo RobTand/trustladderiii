@@ -2177,7 +2177,7 @@ impl Controller {
                     .get(node.0 as usize)
                     .ok_or(Error::Invalid("worker node missing"))?;
                 if n.run != Some(generation) || n.generation != generation {
-                    return Ok(());
+                    return Ok(None);
                 }
                 commit.rows.push(put(
                     "worker_failures",
