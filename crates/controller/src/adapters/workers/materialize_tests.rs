@@ -142,3 +142,17 @@ fn repository_orientation_and_ingest_replay() {
         }
     }
 }
+
+#[test]
+fn failed_attempt_preserves_diagnostic_before_retirement() {
+    let f = crate::git_tests::Repo::new();
+    let attempt = tempfile::tempdir().unwrap();
+    fs::write(attempt.path().join("exit.json"), r#"{"code":1}"#).unwrap();
+    fs::write(attempt.path().join("memory.json"), r#"{"outcome":"failed","reason":{"failure_class":"ValueError","failure_message":"reply cites a memory it was not given"}}"#).unwrap();
+    let Reconciliation::Found(completion) = inspect(attempt.path(), &f.delivery()).unwrap() else {
+        panic!("a failed exit must be terminal");
+    };
+    let value = json!(completion.observations);
+    assert_eq!(value[0]["WorkerFailed"]["failure_class"], "ValueError");
+    assert_eq!(value[0]["WorkerFailed"]["failure_message"], "reply cites a memory it was not given");
+}

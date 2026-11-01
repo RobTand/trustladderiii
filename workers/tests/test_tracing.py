@@ -167,6 +167,8 @@ def test_tracing_initialization_failure_does_not_fail_run(request_doc, monkeypat
 
 @pytest.mark.parametrize('error,category,message', [
     (ValueError('done requires code changes'), 'ValueError', 'done requires code changes'),
+    (ValueError('reply cites a memory it was not given'), 'ValueError',
+     'reply cites a memory it was not given'),
     (RuntimeError('fixture-secret-value /private/key provider payload'), 'RuntimeError', 'worker run failed'),
 ])
 def test_failed_worker_trace_records_a_safe_reason(request_doc, monkeypatch, exporters, receiver,
