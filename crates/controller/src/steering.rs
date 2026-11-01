@@ -679,7 +679,10 @@ fn comment_binding<'a>(
                 .rows
                 .iter()
                 .find(|r| {
-                    r.table == "requests" && r.id == pr.id && r.value["repo"] == json!(repository)
+                    r.table == "requests"
+                        && r.id == pr.id
+                        && serde_json::from_value::<Repository>(r.value["repo"].clone())
+                            .is_ok_and(|stored| stored == *repository)
                 })?
                 .value["issue"]
                 .as_u64()

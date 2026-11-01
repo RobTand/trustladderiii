@@ -28,6 +28,13 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn input_incident(
+        &mut self,
+        notice: &tl3_controller::input_errors::IncidentNotice,
+        epoch: i64,
+    ) -> Result<()> {
+        self.hit("input_incident", format!("{}:{epoch}", notice.key))
+    }
     fn intake_question(
         &mut self,
         question: &tl3_controller::adoption::Clarification,
@@ -177,6 +184,17 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             number: 17,
         };
         assert!(router.intake_question(&question, 3).is_err());
+        let incident = tl3_controller::input_errors::IncidentNotice {
+            key: "incident:probe".into(),
+            target: tl3_controller::input_errors::IssueTarget {
+                repository: question.repository.clone(),
+                issue: 17,
+            },
+            title: "A request".into(),
+            summary: "Work needs help.".into(),
+            id: "probe".into(),
+        };
+        assert!(router.input_incident(&incident, 3).is_err());
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.retire(&mut store).is_err());
@@ -186,6 +204,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                 (primary, "implementation", String::new()),
                 (primary, "app_login", "42".into()),
                 (primary, "intake_question", format!("{}:3", question.key())),
+                (primary, "input_incident", "incident:probe:3".into()),
                 (primary, "wait_record", "key:checkout".into()),
                 (primary, "recover_deliveries", "17:29".into()),
                 (primary, "retire", String::new()),

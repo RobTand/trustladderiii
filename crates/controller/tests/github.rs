@@ -1,6 +1,8 @@
 use tl3_controller::executor::Output as Out;
 #[path = "github/catchup_heads.rs"]
 mod catchup_heads;
+#[path = "github/intake_errors.rs"]
+mod intake_errors;
 #[path = "github/notice_incidents.rs"]
 mod notice_incidents;
 #[path = "github/real_writer.rs"]
@@ -119,6 +121,7 @@ struct ApiState {
     question_status: Option<u16>,
     rejected_question_posts: usize,
     forbidden_filing: bool,
+    intake_target_missing: bool,
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<ApiState>>);
@@ -162,6 +165,11 @@ impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
         let original_path = request.url.path();
+        if state.intake_target_missing
+            && original_path.starts_with("/repos/owner/sandbox/issues/12")
+        {
+            return ResponseTemplate::new(404);
+        }
         let mapped_path = original_path
             .replace(
                 "/repos/owner/tl3/issues/17",
@@ -487,6 +495,10 @@ fn post_event(
     response.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--intake-errors") {
+        intake_errors::run();
+        return;
+    }
     if env::args().nth(1).as_deref() == Some("--real-worker-contracts") {
         real_writer::run("multiline");
         real_writer::classifier_contract();
@@ -567,6 +579,9 @@ fn main() {
         .get(1)
         .and_then(|arg| arg.strip_prefix("--gate-group="));
     assert!(group.is_none_or(|group| matches!(group, "notices" | "flow")));
+    if args.len() == 1 || group == Some("flow") {
+        intake_errors::run_with_database(&mut database);
+    }
     if group != Some("flow") {
         notice_incidents::run(&mut database);
         operations_and_delivery_log(&database.create("operations"));
@@ -1443,15 +1458,17 @@ impl GitHubTranslator for RecordingTranslator {
         }])
     }
 }
-struct FailsOnce(bool);
-impl GitHubTranslator for FailsOnce {
+struct TransientOnce(bool);
+impl GitHubTranslator for TransientOnce {
     fn translate(
         &mut self,
         _delivery: &GitHubDelivery,
         _snapshot: &tl3_store::Snapshot,
     ) -> tl3_controller::Result<Vec<Input>> {
         if std::mem::take(&mut self.0) {
-            return Err(tl3_controller::Error::Invalid("fixture translation error"));
+            return Err(tl3_controller::Error::Adapter(
+                "fixture translation error".into(),
+            ));
         }
         Ok(vec![])
     }
@@ -1510,8 +1527,8 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     let mut controller = controller(settings, root.path(), &api.uri());
     let calls = Arc::new(Mutex::new(vec![]));
     controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
-    controller.register_github_translator("retry-test", FailsOnce(true));
-    assert!(ingress::drain(&mut controller).is_err());
+    controller.register_github_translator("retry-test", TransientOnce(true));
+    ingress::drain(&mut controller).unwrap();
     assert_eq!(calls.lock().unwrap().len(), 7);
     assert_eq!(
         store

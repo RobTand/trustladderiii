@@ -17,6 +17,7 @@ pub mod executor;
 mod goals;
 mod http;
 pub mod ingress;
+pub mod input_errors;
 pub mod looks;
 #[cfg(all(test, loom))]
 #[path = "../tests/loom/mod.rs"]
@@ -62,6 +63,14 @@ pub enum Error {
     HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
     MessageRejected,
+    #[error(
+        "repository {owner}/{name} (installation {installation}) has open requests; keep it in github.repos until drained"
+    )]
+    RepositoryInFlight {
+        owner: String,
+        name: String,
+        installation: u64,
+    },
     #[error("upstream permanently failed: {class}")]
     Permanent {
         class: &'static str,
@@ -107,12 +116,20 @@ impl From<tl3_worktrees::Error> for Error {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Repository {
     pub owner: String,
     pub name: String,
     pub installation: u64,
 }
+impl PartialEq for Repository {
+    fn eq(&self, other: &Self) -> bool {
+        self.installation == other.installation
+            && self.owner.eq_ignore_ascii_case(&other.owner)
+            && self.name.eq_ignore_ascii_case(&other.name)
+    }
+}
+impl Eq for Repository {}
 #[derive(Clone, Debug)]
 pub struct Bootstrap {
     pub repos: Vec<Repository>,
@@ -275,6 +292,23 @@ impl Controller {
     fn reconcile_capacity(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut world = snapshot::decode(&snapshot)?;
+        let mut repositories = stored_repositories(&snapshot)?;
+        if repositories.len() != world.gates.len() {
+            return Err(Error::Invalid("stored repositories and gates differ"));
+        }
+        for (index, repository) in repositories.iter().enumerate() {
+            if !self.bootstrap.repos.contains(repository)
+                && world.nodes.iter().any(|node| {
+                    node.repo == tl3_kernel::RepoId(index as u64) && !node.phase.is_closed()
+                })
+            {
+                return Err(Error::RepositoryInFlight {
+                    owner: repository.owner.clone(),
+                    name: repository.name.clone(),
+                    installation: repository.installation,
+                });
+            }
+        }
         let configured = self.bootstrap.slots;
         let configured_pool = self.bootstrap.pool;
         if configured_pool < world.pool_capacity
@@ -305,14 +339,32 @@ impl Controller {
             changes.push(json!({"repo": repo, "stored": gate.w, "configured": configured}));
             gate.w = configured;
         }
-        if changes.is_empty() && pool_change.is_none() {
+        let mut additions = Vec::new();
+        for repository in &self.bootstrap.repos {
+            if !repositories.contains(repository) {
+                let index = repositories.len();
+                repositories.push(repository.clone());
+                world.gates.push(tl3_kernel::Gate { w: configured });
+                additions.push((index, repository));
+            }
+        }
+        if changes.is_empty() && pool_change.is_none() && additions.is_empty() {
             return Ok(());
         }
         let mut commit = Commit::new(
             format!("controller:gates:{}", snapshot.revision.get()),
-            json!({"gate_capacity": changes, "agent_capacity": pool_change}),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change, "repositories": additions}),
             &snapshot,
         );
+        for (index, repository) in additions {
+            self.store
+                .intern_repo(&repository.owner, &repository.name)?;
+            commit.rows.push(put(
+                "repos",
+                index.to_string(),
+                serde_json::to_value(repository)?,
+            ));
+        }
         let (world, outputs) = tl3_kernel::settle_world(world);
         self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
         self.store.commit(&commit)?;
@@ -366,15 +418,53 @@ impl Controller {
             return Ok(false);
         };
         let snapshot = self.store.load()?;
+        let world = snapshot::decode(&snapshot)?;
         let mut commit = Commit::new(
             format!("github:{}", issue.delivery),
             json!({"labelled_issue": issue, "proposed": proposed}),
             &snapshot,
         );
-        if let Some(event) =
-            self.prepare_intake(&snapshot, &issue, repository, proposed, &mut commit)?
-        {
-            self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
+        let event =
+            match self.prepare_intake(&snapshot, &issue, repository.clone(), proposed, &mut commit)
+            {
+                Ok(event) => event,
+                Err(error) => {
+                    let mut failure = Commit::new(
+                        format!(
+                            "intake-failed:{}:{}",
+                            issue.delivery,
+                            snapshot.revision.get()
+                        ),
+                        json!({"labelled_issue":issue}),
+                        &snapshot,
+                    );
+                    self.input_failed(
+                        &snapshot,
+                        &format!(
+                            "intake:{}/{}/{}:{}",
+                            repository.owner.to_ascii_lowercase(),
+                            repository.name.to_ascii_lowercase(),
+                            repository.installation,
+                            issue.number
+                        ),
+                        Some(input_errors::IssueTarget {
+                            repository,
+                            issue: issue.number,
+                        }),
+                        &issue.title,
+                        None,
+                        executor::Upstream::GitHub,
+                        error,
+                        &mut failure,
+                    )?;
+                    if !failure.rows.is_empty() {
+                        self.store.commit(&failure)?;
+                    }
+                    return Ok(false);
+                }
+            };
+        if let Some(event) = event {
+            self.apply(&snapshot, world, event, &mut commit)?;
         }
         self.store.commit(&commit)?;
         self.retry_held_effects(executor::Upstream::GitHub);
@@ -429,16 +519,16 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let world = snapshot::decode(snapshot)?;
-        let index = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "repos" && r.value == json!(repo))
+        if issue.number == 0 {
+            return Err(Error::Invalid("issue number must be positive"));
+        }
+        let (index, repo) = stored_repositories(snapshot)?
+            .into_iter()
+            .enumerate()
+            .find(|(_, stored)| *stored == repo)
             .ok_or(Error::Invalid(
                 "served repository requires a snapshot migration",
-            ))?
-            .id
-            .parse::<u64>()
-            .map_err(|_| Error::Invalid("invalid repository index"))?;
+            ))?;
         let repo_id = self.store.intern_repo(&repo.owner, &repo.name)?;
         let issue_id = self.store.intern_issue(repo_id, issue.number)?.get();
         let existing = latest_request(snapshot, &repo, issue.number);
@@ -473,12 +563,12 @@ impl Controller {
             };
             let event = if let Some(proposed) = &proposed {
                 Event::NewAdoption {
-                    repo: tl3_kernel::RepoId(index),
+                    repo: tl3_kernel::RepoId(index as u64),
                     head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
                 }
             } else {
                 Event::NewRequest {
-                    repo: tl3_kernel::RepoId(index),
+                    repo: tl3_kernel::RepoId(index as u64),
                 }
             };
             commit.rows.push(put(
@@ -607,6 +697,9 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        if self.post_input_incident(&snapshot)? {
+            return Ok(true);
+        }
         for row in snapshot
             .rows
             .iter()
@@ -647,7 +740,30 @@ impl Controller {
             }
         }
         if let Some(row) = snapshot.rows.iter().find(|r| r.table == "inbox") {
-            let observation: Observation = serde_json::from_value(row.value.clone())?;
+            let observation: Observation = match serde_json::from_value(row.value.clone()) {
+                Ok(observation) => observation,
+                Err(error) => {
+                    snapshot::decode(&snapshot)?;
+                    let mut commit =
+                        Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
+                    self.input_failed(
+                        &snapshot,
+                        &format!("observation:{}", row.id),
+                        None,
+                        "An incoming update",
+                        None,
+                        executor::Upstream::GitHub,
+                        error.into(),
+                        &mut commit,
+                    )?;
+                    commit.rows.push(RowChange::Delete {
+                        table: "inbox".into(),
+                        id: row.id.clone(),
+                    });
+                    self.store.commit(&commit)?;
+                    return Ok(true);
+                }
+            };
             let mut waiting_for_queue = false;
             if let Observation::Queue(fact) = &observation
                 && fact.needs_queue_ack()
@@ -681,10 +797,29 @@ impl Controller {
                 let mut world = snapshot::decode(&snapshot)?;
                 let mut commit =
                     Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
-                if let Some(event) =
-                    self.translate(&snapshot, &mut world, observation, &mut commit)?
-                {
-                    self.apply(&snapshot, world, event, &mut commit)?;
+                match self.translate(&snapshot, &mut world, observation.clone(), &mut commit) {
+                    Ok(Some(event)) => self.apply(&snapshot, world, event, &mut commit)?,
+                    Ok(None) => {}
+                    Err(error) => {
+                        commit = Commit::new(
+                            format!("consume:{}", row.id),
+                            row.value.clone(),
+                            &snapshot,
+                        );
+                        let (target, title, node) =
+                            input_errors::observation_context(&snapshot, &observation)?;
+                        self.input_failed(
+                            &snapshot,
+                            &format!("observation:{}", crate::evidence_key(&observation)?),
+                            target,
+                            &title,
+                            node,
+                            observation_upstream(&snapshot, &observation)?
+                                .unwrap_or(executor::Upstream::GitHub),
+                            error,
+                            &mut commit,
+                        )?;
+                    }
                 }
                 commit.rows.push(RowChange::Delete {
                     table: "inbox".into(),
@@ -1501,7 +1636,8 @@ impl Controller {
                     id.clone(),
                     json!(looks::Incident {
                         id: id.clone(),
-                        node,
+                        node: Some(node),
+                        input_failure: None,
                         open: true,
                         needs_rob,
                         blocking: n.waiting_incident,
@@ -1641,11 +1777,15 @@ impl Controller {
         let files = paths
             .iter()
             .map(|p| {
+                if p.is_empty() {
+                    return Err(Error::Invalid("footprint path must be nonempty"));
+                }
                 self.store
                     .intern_path(repo, p)
+                    .map_err(Error::from)
                     .map(|id| tl3_kernel::FileId(id.get() as u64))
             })
-            .collect::<tl3_store::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
         Ok(world.intern_footprint(files))
     }
 
@@ -1671,7 +1811,16 @@ impl Controller {
                 .find(|r| r.table == "incidents" && r.id == id)
                 .map(|row| -> Result<bool> {
                     let incident: looks::Incident = serde_json::from_value(row.value.clone())?;
-                    let request = request(snapshot, incident.node)?;
+                    let Some(node) = incident.node else {
+                        return Ok(incident
+                            .input_failure
+                            .as_ref()
+                            .and_then(|f| f.target.as_ref())
+                            .is_some_and(|target| {
+                                target.issue == issue && target.repository == *repository
+                            }));
+                    };
+                    let request = request(snapshot, node)?;
                     Ok(request.issue == issue
                         && request.repo.owner.eq_ignore_ascii_case(&repository.owner)
                         && request.repo.name.eq_ignore_ascii_case(&repository.name)
@@ -1714,7 +1863,9 @@ impl Controller {
                     "inbox",
                     format!("incident-clear:{}:{id}", comment.id),
                     json!(Observation::Kernel(Event::Fact {
-                        node: incident.node,
+                        node: incident
+                            .node
+                            .ok_or(Error::Invalid("blocking incident needs a node"))?,
                         fact: Fact::IncidentCleared { by_rob: true }
                     })),
                 ));
@@ -2431,7 +2582,10 @@ impl Controller {
                 target,
                 files,
             } => {
-                let current = &world.nodes[node.0 as usize];
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
                 if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
                 {
                     return Ok(None);
@@ -2452,7 +2606,10 @@ impl Controller {
                 generation,
                 sha,
             } => {
-                let current = &world.nodes[node.0 as usize];
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
                 if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
                 {
                     return Ok(None);
@@ -2481,6 +2638,9 @@ impl Controller {
                 },
             },
             Observation::PullRequest { node, number } => {
+                if number == 0 {
+                    return Err(Error::Invalid("pull request number must be positive"));
+                }
                 let request = request(snapshot, node)?;
                 let repo = self
                     .store
@@ -2592,10 +2752,33 @@ impl Controller {
         Ok(Some(event))
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
+        tl3_worktrees::CommitId::new(sha)?;
         Ok(HeadId(
             self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
         ))
     }
+}
+
+fn stored_repositories(snapshot: &Snapshot) -> Result<Vec<Repository>> {
+    let mut repositories = BTreeMap::new();
+    for row in snapshot.rows.iter().filter(|row| row.table == "repos") {
+        let index = row
+            .id
+            .parse::<usize>()
+            .map_err(|_| Error::Invalid("invalid repository index"))?;
+        let repository: Repository = serde_json::from_value(row.value.clone())?;
+        if repositories.insert(index, repository).is_some() {
+            return Err(Error::Invalid("duplicate repository index"));
+        }
+    }
+    let mut result = Vec::new();
+    for (index, repository) in repositories {
+        if index != result.len() {
+            return Err(Error::Invalid("gap in repository indices"));
+        }
+        result.push(repository);
+    }
+    Ok(result)
 }
 
 fn latest_request<'a>(
@@ -2607,7 +2790,10 @@ fn latest_request<'a>(
         .rows
         .iter()
         .filter(|r| {
-            r.table == "requests" && r.value["repo"] == json!(repo) && r.value["issue"] == issue
+            r.table == "requests"
+                && r.value["issue"] == issue
+                && serde_json::from_value::<Repository>(r.value["repo"].clone())
+                    .is_ok_and(|stored| stored == *repo)
         })
         .max_by_key(|r| r.id.parse::<u64>().unwrap_or(0))
 }
