@@ -12,6 +12,8 @@ const GATE_PROOFS: &[&str] = &[
     "gate_planning_w3",
     "gate_progress_w2",
     "gate_progress_w3",
+    "gate_waiting_progress_w2",
+    "gate_waiting_progress_w3",
     "gate_maker_progress_w2",
     "gate_maker_progress_w3",
     "gate_merge_progress_w2",
