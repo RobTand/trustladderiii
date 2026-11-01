@@ -10,6 +10,7 @@ artifacts retain raw seconds and record the selected class and multiplier.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | hosted-x64 | 12 | 0 | 5,277 | 1.125107 | 1.25 |
 | hosted-arm64 | 10 | 2 | 5,604 | 1.022898 | 1.15 |
+| buildbuddy-amd64 | 10 | 0 | 18,310 | 1.486524 | 1.65 |
 
 The sample is the latest 12 hosted light-check runs with timing artifacts at
 collection, spanning 2026-10-31 to 2026-11-01. It includes failed and cancelled
@@ -67,3 +68,19 @@ metadata and reports SHA-256 digests for the policy and sorted input manifest.
 Artifacts currently expire after seven days, so the committed summary retains
 the numerical evidence after their expiry. The helper audits this workflow's
 alternating ARM-even, x64-odd shard layout.
+
+## BuildBuddy remote execution
+
+Bazel runs each Rust binary through `tools/bazel/rust_runner.py`, which takes
+its class from `TL3_RUNNER_CLASS` in `.bazelrc`. The `buildbuddy-amd64` row
+above comes from ten uncached runs of every Rust test target in one invocation
+(`--runs_per_test=10 --nocache_test_results`), read by
+`tools/ci/bazel_budget_calibration.py` with the same formula. Its worst run
+maximum was `workers::maker_failure_fix-killed` at 22.298s against 15s. The
+summary and overruns are in `bazel-budget-calibration.json`.
+
+arm64 executors are not calibrated: the same procedure produced nine complete
+runs, with one `workers` run timing out at 900s and `publishing` scenarios at
+up to 4.5 times their budgets. Until ten complete runs exist, the arm64
+post-merge run sets `TL3_BUDGETS=record`: it enforces results and keeps each
+test's seconds in its receipt, but enforces no budget.
