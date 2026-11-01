@@ -124,8 +124,8 @@ Every model request sends one stable attempt identity through both X-Session-ID
 and model_kwargs.prompt_cache_key. It contains node, generation and attempt,
 never the model key. An unaccepted maker or reviewer visit reuses its saved
 generation, so a worker retry keeps its affinity. A later attempt gets a new
-identity. Identical streamed usage repeated on finish and trailing chunks is
-counted once before LangChain aggregates it, including recorded usage.
+identity. Streamed usage uses the last usage chunk per call. Totals on finish and
+trailing chunks are never summed, including in recorded usage.
 
 The worker writes only flushed, UTF-8, `\n`-terminated JSON to stdout, whatever
 the locale. At startup it moves its own fd 1 to stderr, so prints, C

@@ -15,7 +15,8 @@ from deepagents.profiles import (
     register_harness_profile,
 )
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, schema, validate
@@ -46,19 +47,17 @@ class ProxyChatOpenAI(ChatOpenAI):
         params["ls_provider"] = "tl3_proxy"
         return params
 
-
     def _stream(self, *args, **kwargs):
-        seen = set()
+        last_usage = None
         for chunk in super()._stream(*args, **kwargs):
             if chunk.message.usage_metadata is not None:
-                usage = json.dumps(chunk.message.usage_metadata, sort_keys=True)
-                # CLIProxyAPI repeats the same total on finish and trailing chunks.
-                if usage in seen:
-                    chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
-                        update={"usage_metadata": None})})
-                else:
-                    seen.add(usage)
+                # CLIProxyAPI sends totals on finish and again on a trailing chunk.
+                last_usage = chunk.message.usage_metadata
+                chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
+                    update={"usage_metadata": None})})
             yield chunk
+        if last_usage is not None:
+            yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
 
 
 def session_identity(request):
