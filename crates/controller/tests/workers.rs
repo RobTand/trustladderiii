@@ -421,7 +421,12 @@ fn main() {
         let checks_fail = args.get(3).is_some_and(|arg| arg == "--checks-fail");
         maker::scenario(&database.create("maker_failure"), &args[2], checks_fail);
         database.stop();
-        let suffix = if checks_fail { "_checks_fail" } else { "" };
+        // The checks-fail variant owns the existing maker_failure_normal budget.
+        let suffix = if args[2] == "normal" && !checks_fail {
+            "_checks_pass"
+        } else {
+            ""
+        };
         println!("test maker_failure_{}{suffix} ... ok", args[2]);
         return;
     }

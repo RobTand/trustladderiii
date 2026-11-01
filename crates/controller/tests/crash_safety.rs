@@ -402,6 +402,7 @@ fn run(
                     before,
                     "seed={seed} scenario={scenario} point={selected} key={key}: torn commit"
                 );
+                println!("test {scenario}_{selected}_cut_{} ... ok", killed.len());
                 break;
             }
             writeln!(input, "continue").unwrap();
@@ -843,7 +844,10 @@ fn main() {
     );
     database.stop();
     println!("test recovered_records_survive_postgres_restart ... ok");
-    println!("{scenario_count} crash safety scenarios passed; no skips");
+    println!(
+        "{} crash safety scenarios passed; no skips",
+        scenario_count + total
+    );
     println!(
         "{total} real SIGKILL cuts passed in {:.2}s; seed={seed}; no skips",
         started.elapsed().as_secs_f64()
