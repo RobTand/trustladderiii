@@ -5,22 +5,19 @@ struct Workers(adapters::workers::Fake);
 impl Executor for Workers {
     fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
         match delivery.output {
-            Out::Effect { kind: EffectKind::StartRun(Role::Plan), .. } => {
-                Ok(Completion::confirmed(vec![Observation::Plan {
-                    node: delivery.node(),
-                    generation: delivery.generation,
-                    paths: vec![format!("leaf-{}.rs", delivery.node().0)],
-                    fits: true,
-                }]))
-            }
-            Out::Effect { kind: EffectKind::StartRun(Role::Make), .. } => {
+            Out::Effect { kind: EffectKind::StartRun(Role::Plan | Role::Make), .. } => {
                 Ok(Completion::confirmed(vec![]))
             }
             _ => self.0.execute(delivery),
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        self.0.reconcile(delivery)
+        match delivery.output {
+            Out::Effect { kind: EffectKind::StartRun(Role::Plan | Role::Make), .. } => {
+                Ok(Reconciliation::Pending)
+            }
+            _ => self.0.reconcile(delivery),
+        }
     }
 }
 fn registry(root: &Path) -> Registry {
@@ -49,9 +46,19 @@ fn seed(settings: &tl3_config::Store, root: &Path, slots: u8) -> Snapshot {
         }).unwrap());
         drain(&mut c);
     }
+    // Finish all plans after admission, so W=1 has two already-planned waiters.
+    assert!(c.world().unwrap().nodes.iter().all(|n| matches!(n.phase, Phase::Planning { .. })));
+    for node in 0..3 {
+        let generation = c.world().unwrap().nodes[node].generation;
+        c.observe(&format!("plan-{node}"), Observation::Plan {
+            node: NodeId(node as u64), generation,
+            paths: vec![format!("leaf-{node}.rs")], fits: true,
+        }).unwrap();
+        drain(&mut c);
+    }
     let w = c.world().unwrap();
     assert_eq!(w.gates[0].w, slots);
-    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), usize::from(slots), "{w:?}; rows={:?}", c.snapshot().unwrap().rows);
+    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), usize::from(slots), "{w:?}");
     if slots == 1 {
         assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
     }
