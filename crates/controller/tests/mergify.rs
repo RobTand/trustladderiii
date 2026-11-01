@@ -273,7 +273,7 @@ impl Respond for Api {
                 ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":state.workflow.iter().collect::<Vec<_>>()}))
             }
             ("GET", "/repos/owner/sandbox/actions/runs/700") => ResponseTemplate::new(200).set_body_json(state.workflow.clone().unwrap()),
-            ("GET", "/repos/owner/sandbox/check-runs/900/annotations") => ResponseTemplate::new(200).set_body_json(state.annotations.clone()),
+            ("GET", "/repos/owner/sandbox/check-runs/900/annotations" | "/repos/owner/sandbox/check-runs/901/annotations") => ResponseTemplate::new(200).set_body_json(state.annotations.clone()),
             ("POST", "/repos/owner/sandbox/actions/runs/700/rerun") => {
                 state.reruns += 1;
                 if state.rerun_status == 201 {
