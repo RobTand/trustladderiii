@@ -487,9 +487,6 @@ PLANTED_LINES = [
     ('https://discord.com/api/webhooks/123/discordtok296', 'discordtok296'),
     (json.dumps({'k': 'secret:\tjson-tab-296'}), 'json-tab-296'),
     (json.dumps({'k': 'password:\n  json-newline-296'}), 'json-newline-296'),
-    # Valid JSON is judged by its field names, however deeply it is quoted.
-    (json.dumps({'k': json.dumps({'password': 'ab"cd-nested-296'})}), 'cd-nested-296'),
-    ('{"token": ["list-secret-296", "other"], "note": "kept"}', 'list-secret-296'),
 ]
 
 
@@ -499,6 +496,22 @@ def test_redacts_further_credential_forms(planted, secret):
     result = json.dumps(Redactor(None).payload({'content': 'visible-before\n' + planted + '\nvisible-after'}))
     assert secret not in result
     assert 'visible-before' in result and 'visible-after' in result
+
+
+@pytest.mark.parametrize('document', [
+    json.dumps({'k': json.dumps({'password': 'ab"cd-nested-296'}), 'note': 'kept'}),
+    json.dumps({'token': ['list-secret-296', 'other'], 'note': 'kept'}),
+    json.dumps(json.dumps({'headers': {'private_key': 12345296}, 'note': 'kept'})),
+])
+def test_json_text_is_judged_by_field_names_however_deeply_quoted(document):
+    # A string that is wholly JSON is parsed, so quoting depth and value shape
+    # cannot hide a sensitive field. Text that merely contains JSON relies on
+    # the patterns above.
+    from tl3_workers.tracing import Redactor
+    result = Redactor(None).payload({'content': document})['content']
+    for secret in ('cd-nested-296', 'list-secret-296', '12345296'):
+        assert secret not in result
+    assert 'kept' in result
 
 
 @pytest.mark.parametrize('key', ['OPENAI_API_KEY', 'x-api-key', 'github_token', 'webhook_secret',
