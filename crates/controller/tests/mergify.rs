@@ -1337,6 +1337,7 @@ fn delivery() -> Delivery {
         job_generation: None,
         steering: None,
         request_text: None,
+        proposed: None,
     }
 }
 fn label_removed_before_confirmation() {

@@ -76,6 +76,8 @@ pub(super) fn stage(
     let repository = Worktrees::open(&run.repository, &run.repository)?;
     let served = root.join("served");
     let checkout = repository.clone_checkout(&served, &head)?;
+    // The adopted head can diverge from its durable main base.
+    checkout.import_commit(&run.repository, base)?;
     if checkout.verify_commit(base)? != *base {
         return Err(Error::Invalid("checks require an exact base"));
     }

@@ -28,6 +28,13 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn intake_question(
+        &mut self,
+        question: &tl3_controller::adoption::Clarification,
+        epoch: i64,
+    ) -> Result<()> {
+        self.hit("intake_question", format!("{}:{epoch}", question.key()))
+    }
     fn implementation(&self) -> &'static str {
         let _: Result<()> = self.hit("implementation", String::new());
         self.name
@@ -157,6 +164,11 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
         };
         assert_delivery_methods(&mut router, &stop, primary, &calls);
         assert_eq!(router.implementation(), primary);
+        let question = tl3_controller::adoption::Clarification {
+            repository: delivery(Role::Make).repository,
+            number: 17,
+        };
+        assert!(router.intake_question(&question, 3).is_err());
         assert!(router.wait_record("key", Path::new("checkout")).is_err());
         assert!(router.recover_deliveries(17, 29).is_err());
         assert!(router.retire(&mut store).is_err());
@@ -164,6 +176,7 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
             *calls.lock().unwrap(),
             vec![
                 (primary, "implementation", String::new()),
+                (primary, "intake_question", format!("{}:3", question.key())),
                 (primary, "wait_record", "key:checkout".into()),
                 (primary, "recover_deliveries", "17:29".into()),
                 (primary, "retire", String::new()),

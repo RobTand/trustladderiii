@@ -34,7 +34,7 @@ fn small(n: &Node) -> bool {
         && n.next_seq < LIMIT
         && n.last_cmd < LIMIT
         && n.repo.0 < 2
-        && [n.head, n.checked, n.approved, n.merged]
+        && [n.proposed, n.head, n.checked, n.approved, n.merged]
             .into_iter()
             .flatten()
             .all(|h| h.0 < 8)
@@ -123,6 +123,8 @@ fn check_nodes(before: &World, after: &World) {
     while i < before.nodes.len() {
         let b = &before.nodes[i];
         let n = &after.nodes[i];
+        assert!(n.proposed == b.proposed);
+        assert!(!b.adopted || n.adopted);
         // Effect keys only move forward.
         assert!(n.next_seq >= b.next_seq);
         // Closed is final. Only a late merge changes it, from Stopped or Replaced to Merged.
@@ -205,6 +207,13 @@ fn check_apply(event: Event) -> World {
     apply(&mut after, event.clone(), &mut out);
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
+    if let Event::NewAdoption { repo, head } = &event {
+        if repo.index().is_some_and(|r| r < before.gates.len()) {
+            assert_eq!(after.nodes.len(), before.nodes.len() + 1);
+            assert_eq!(after.nodes.last().unwrap().proposed, Some(*head));
+            assert!(!after.nodes.last().unwrap().adopted);
+        }
+    }
     require_consistent(&after);
     check_nodes(&before, &after);
     let exempt = match event {
@@ -665,4 +674,78 @@ proof!(
 proof!(
     pr_merged_closed,
     check_pr_merged(Phase::Closed(kani::any()))
+);
+
+proof!(apply_new_adoption, {
+    let repo = kani::any();
+    let after = check_apply(Event::NewAdoption {
+        repo,
+        head: HeadId(7),
+    });
+    kani::cover!(
+        repo.index().is_some_and(|r| r < after.gates.len()),
+        "new adoption retains the requested head"
+    );
+});
+
+fn adoption_preparation() -> World {
+    let w = any_world(Some(Phase::Making));
+    let n = &w.nodes[0];
+    kani::assume(n.pos == 0 && n.proposed.is_some());
+    kani::assume(
+        n.effect
+            .is_some_and(|e| e.kind == EffectKind::PrepareWorktree && !e.cancelling),
+    );
+    w
+}
+
+fn check_adoption_at_most_once() {
+    let mut w = adoption_preparation();
+    let before = w.nodes[0];
+    let mut out = Outbox::new();
+    on_ack(
+        &mut w,
+        0,
+        before.effect.unwrap().seq,
+        Ack::Confirmed,
+        &mut out,
+    );
+    let after = w.nodes[0];
+    if before.adopted {
+        kani::cover!(true, "a later prepare preserves the existing head");
+        assert!(after.adopted && after.head == before.head);
+        assert!(after.phase == Phase::Making);
+    } else {
+        kani::cover!(true, "the first prepare adopts the proposed head");
+        assert!(after.adopted && after.head == before.proposed);
+        assert!(after.phase == Phase::Checking);
+    }
+    require_consistent(&w);
+}
+
+fn check_adoption_has_no_maker_credit() {
+    let mut w = adoption_preparation();
+    kani::assume(!w.nodes[0].adopted);
+    let before = w.nodes[0];
+    let mut out = Outbox::new();
+    on_ack(
+        &mut w,
+        0,
+        before.effect.unwrap().seq,
+        Ack::Confirmed,
+        &mut out,
+    );
+    let after = w.nodes[0];
+    kani::cover!(after.phase == Phase::Checking, "adoption reaches checking");
+    assert!(after.phase == Phase::Checking);
+    assert!(after.credit == before.credit);
+    assert!(after.attempt == before.attempt && after.round == before.round);
+    assert!(after.run.is_none() && !after.pool && out.is_empty());
+    require_consistent(&w);
+}
+
+proof!(apply_adoption_at_most_once, check_adoption_at_most_once());
+proof!(
+    apply_adoption_has_no_maker_credit,
+    check_adoption_has_no_maker_credit()
 );

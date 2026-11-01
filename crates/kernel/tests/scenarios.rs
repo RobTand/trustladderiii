@@ -865,3 +865,65 @@ fn q44_the_same_head_keeps_its_exhaustion_history() {
         assert_eq!(run.phase(), Phase::Planning { must_split: true });
     }
 }
+
+fn adoption_run() -> Run {
+    let mut run = Run {
+        w: World::new(&[1], 1),
+        cmd: 0,
+        seen: BTreeSet::new(),
+        notices: Vec::new(),
+    };
+    run.send(Event::NewAdoption {
+        repo: RepoId(0),
+        head: HeadId(7),
+    });
+    run.confirm();
+    run.reply(Reply::IngestDone { size: 1 });
+    run.reply(Reply::AuditAgrees);
+    run.plan([FileId(0)]);
+    run
+}
+
+#[test]
+fn adoption_enters_checks_without_a_maker_or_credit_charge() {
+    let mut run = adoption_run();
+    assert_eq!(run.phase(), Phase::Checking);
+    assert_eq!(run.node().head, Some(HeadId(7)));
+    assert_eq!(
+        (run.node().attempt, run.node().round, run.credit()),
+        (1, 0, 4)
+    );
+    assert!(run.node().adopted);
+    run.reply(CHECKS_PASS);
+    run.reply(Reply::Approved { head: HeadId(7) });
+    run.fact(Fact::PrMerged {
+        head: HeadId(7),
+        checks_passed: true,
+    });
+    assert_eq!(run.phase(), Phase::Closed(Outcome::Merged));
+    assert_eq!(run.credit(), 5);
+}
+
+#[test]
+fn adoption_failure_runs_a_normal_fix_and_never_readopts() {
+    let mut run = adoption_run();
+    run.reply(Reply::ChecksDone {
+        report: true,
+        pass: false,
+        in_footprint: true,
+    });
+    assert_eq!(run.phase(), Phase::Making);
+    assert_eq!(
+        (run.node().attempt, run.node().round, run.credit()),
+        (1, 1, 4)
+    );
+    assert_eq!(run.node().head, Some(HeadId(7)));
+    let mut head = HeadId(7);
+    run.pass(&mut head);
+    assert_eq!(run.node().head, Some(HeadId(8)));
+    run.fact(Fact::CiFailed { infra: false });
+    assert_eq!(run.phase(), Phase::Making);
+    assert_eq!(run.node().attempt, 2);
+    assert_eq!(run.node().head, Some(HeadId(8)));
+    assert_eq!(run.credit(), 3);
+}

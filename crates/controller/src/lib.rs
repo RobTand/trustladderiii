@@ -6,6 +6,7 @@ compile_error!("the loom feature is only supported for library unit tests");
 #[cfg(all(test, loom))]
 extern crate self as tl3_controller;
 
+pub mod adoption;
 pub mod findings;
 
 pub mod adapters;
@@ -179,6 +180,8 @@ struct Request {
     issue_id: i64,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    proposed: Option<adoption::ProposedPullRequest>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -300,21 +303,55 @@ impl Controller {
     }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
+        self.intake_proposed(issue, None)
+    }
+
+    fn intake_proposed(
+        &mut self,
+        issue: LabelledIssue,
+        proposed: Option<adoption::ProposedPullRequest>,
+    ) -> Result<bool> {
         let Some(repository) = self.intake_repository(&issue) else {
             return Ok(false);
         };
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
             format!("github:{}", issue.delivery),
-            json!({"labelled_issue": issue}),
+            json!({"labelled_issue": issue, "proposed": proposed}),
             &snapshot,
         );
-        if let Some(event) = self.prepare_intake(&snapshot, &issue, repository, &mut commit)? {
+        if let Some(event) =
+            self.prepare_intake(&snapshot, &issue, repository, proposed, &mut commit)?
+        {
             self.apply(&snapshot, snapshot::decode(&snapshot)?, event, &mut commit)?;
         }
         self.store.commit(&commit)?;
         self.retry_held_effects(executor::Upstream::GitHub);
         Ok(true)
+    }
+
+    fn queue_adoption_question(&mut self, question: adoption::Clarification) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let key = question.key();
+        if self
+            .store
+            .event_matches(&[format!("{key}:sent")], &json!({"question_sent":key}))?
+        {
+            return Ok(());
+        }
+        if snapshot
+            .rows
+            .iter()
+            .any(|r| r.table == "adoption_questions" && r.id == key)
+        {
+            return Ok(());
+        }
+        let mut commit = Commit::new(key.clone(), json!(&question), &snapshot);
+        commit
+            .rows
+            .push(put("adoption_questions", key, json!({"question":question})));
+        self.store.commit(&commit)?;
+        Ok(())
     }
 
     fn intake_repository(&self, issue: &LabelledIssue) -> Option<Repository> {
@@ -337,6 +374,7 @@ impl Controller {
         snapshot: &Snapshot,
         issue: &LabelledIssue,
         repo: Repository,
+        proposed: Option<adoption::ProposedPullRequest>,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
         let world = snapshot::decode(snapshot)?;
@@ -382,6 +420,16 @@ impl Controller {
             } else {
                 None
             };
+            let event = if let Some(proposed) = &proposed {
+                Event::NewAdoption {
+                    repo: tl3_kernel::RepoId(index),
+                    head: self.head(NodeId(world.nodes.len() as u64), &proposed.head)?,
+                }
+            } else {
+                Event::NewRequest {
+                    repo: tl3_kernel::RepoId(index),
+                }
+            };
             commit.rows.push(put(
                 "requests",
                 node,
@@ -391,11 +439,10 @@ impl Controller {
                     title: issue.title.clone(),
                     issue_id,
                     source,
+                    proposed,
                 }),
             ));
-            return Ok(Some(Event::NewRequest {
-                repo: tl3_kernel::RepoId(index),
-            }));
+            return Ok(Some(event));
         }
         Ok(None)
     }
@@ -509,6 +556,35 @@ impl Controller {
     /// The hook exposes durable boundaries for process-level fault injection.
     pub fn drive_once_with(&mut self, mut hook: impl FnMut(Boundary, &str)) -> Result<bool> {
         let snapshot = self.store.load()?;
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|r| r.table == "adoption_questions")
+        {
+            let question = serde_json::from_value(row.value["question"].clone())?;
+            hook(Boundary::BeforeDispatch, &row.id);
+            let result = self
+                .adapters
+                .get(executor::Upstream::GitHub)?
+                .intake_question(&question, snapshot.epoch.get());
+            hook(Boundary::AfterDispatch, &row.id);
+            match result {
+                Ok(()) => {
+                    let mut commit = Commit::new(
+                        format!("{}:sent", row.id),
+                        json!({"question_sent":row.id}),
+                        &snapshot,
+                    );
+                    commit.rows.push(RowChange::Delete {
+                        table: "adoption_questions".into(),
+                        id: row.id.clone(),
+                    });
+                    self.store.commit(&commit)?;
+                    return Ok(true);
+                }
+                Err(error) => eprintln!("adoption clarification pending for {}: {error}", row.id),
+            }
+        }
         for row in snapshot
             .rows
             .iter()
@@ -1228,6 +1304,7 @@ impl Controller {
                 repository: request.repo,
                 issue: request.issue,
                 pull_request,
+                proposed: request.proposed,
                 paths,
                 attempt: n.attempt,
                 round: n.round,
@@ -1692,7 +1769,9 @@ impl Controller {
                 }
                 return Ok(None);
             }
-            Observation::Kernel(Event::Ack { .. } | Event::NewRequest { .. }) => {
+            Observation::Kernel(
+                Event::Ack { .. } | Event::NewRequest { .. } | Event::NewAdoption { .. },
+            ) => {
                 return Err(Error::Invalid(
                     "acknowledgements require an effect key; requests require authorized intake",
                 ));
@@ -1702,6 +1781,48 @@ impl Controller {
                 node,
                 fact: Fact::CiFailed { infra },
             },
+            Observation::WorktreePrepared {
+                node,
+                repository,
+                base_sha,
+                sha,
+            } => {
+                let Some(n) = world.nodes.get(node.0 as usize) else {
+                    return Ok(None);
+                };
+                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                    return Ok(None);
+                }
+                let id = node.0.to_string();
+                let mut run = if let Some(materials) = self.store.worker_materials(&id)?
+                    && let Some(run) = materials.get("check_run")
+                {
+                    serde_json::from_value::<adapters::prismabuild::CheckRun>(run.clone())?
+                } else {
+                    let brief = self
+                        .store
+                        .worker_document(&id, "briefs")?
+                        .ok_or(Error::Invalid("adoption needs its accepted brief"))?;
+                    let plan = self
+                        .store
+                        .worker_document(&id, "plans")?
+                        .ok_or(Error::Invalid("adoption needs its accepted plan"))?;
+                    let inputs = production::maker_inputs(&brief, &plan)?;
+                    adapters::prismabuild::CheckRun {
+                        repository: repository.clone(),
+                        base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
+                        reviewed_sha: None,
+                        reproducing_unavailable: None,
+                        plan: serde_json::from_value(inputs["plan"]["checks"].clone())?,
+                    }
+                };
+                run.repository = repository;
+                run.base_sha = tl3_worktrees::CommitId::new(base_sha)?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
             Observation::CheckPlan { node, sha, run } => {
                 request(snapshot, node)?;
                 if let Some(n) = world.nodes.get(node.0 as usize)
@@ -2398,6 +2519,7 @@ fn observation_upstream(
         Observation::CheckPlan { .. } | Observation::Checks { .. } => Some(Upstream::PrismaBuild),
         Observation::RebaseConflict { .. }
         | Observation::Rebased { .. }
+        | Observation::WorktreePrepared { .. }
         | Observation::ScratchSaved { .. }
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
         Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {

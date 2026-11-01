@@ -1369,6 +1369,135 @@ fn replay_snapshot_retains_legacy_identity() {
 }
 
 #[test]
+fn adoption_fetches_only_the_pinned_pull_ref() {
+    let f = Fixture::new();
+    let pinned = f.manager.resolve("HEAD").unwrap();
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    let fetched = f
+        .manager
+        .fetch_pull_head(&f.remote, None, 17, &pinned)
+        .unwrap();
+    assert_eq!(fetched, pinned);
+    write_commit(&f.repo, "author.txt", "later\n", "later author push");
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    assert_eq!(
+        f.manager
+            .fetch_pull_head(&f.remote, None, 17, &pinned)
+            .unwrap(),
+        pinned
+    );
+    let invocations = f.manager.invocations.lock().unwrap();
+    let fetches: Vec<_> = invocations
+        .iter()
+        .filter(|i| i.argv.iter().any(|a| a == "fetch"))
+        .collect();
+    assert_eq!(fetches.len(), 1, "a retained pin ignores later pushes");
+    assert!(
+        fetches[0]
+            .argv
+            .iter()
+            .any(|a| a == "+refs/pull/17/head:refs/tl3/pulls/17")
+    );
+}
+
+#[test]
+fn adoption_branch_preserves_author_head_and_separate_base() {
+    let f = Fixture::new();
+    let base = f.manager.resolve("HEAD").unwrap();
+    write_commit(&f.repo, "author.txt", "author\n", "author change");
+    let start = f.manager.resolve("HEAD").unwrap();
+    let branch = f
+        .manager
+        .create_branch_from(&f.name, &base, &start)
+        .unwrap();
+    assert_eq!(branch.base, base);
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), start);
+    assert_eq!(
+        f.manager
+            .resolve(&format!("refs/tl3/starts/{}", f.name.as_str()))
+            .unwrap(),
+        start
+    );
+    f.manager.create_worktree(&f.name, &f.worktree).unwrap();
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "author\n"
+    );
+    write_commit(&f.worktree, "author.txt", "fixed\n", "fix");
+    let fixed = f.manager.resolve(&f.name.reference()).unwrap();
+    f.manager
+        .create_branch_from(&f.name, &base, &start)
+        .unwrap();
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), fixed);
+}
+
+#[test]
+fn adoption_crash_repairs_only_an_unchanged_start() {
+    let f = Fixture::new();
+    let base = f.manager.resolve("HEAD").unwrap();
+    write_commit(&f.repo, "author.txt", "author\n", "author change");
+    let start = f.manager.resolve("HEAD").unwrap();
+    f.manager
+        .update_refs(&format!(
+            "create {} {}\ncreate {} {}\ncreate refs/tl3/starts/{} {}\n",
+            f.name.reference(),
+            start.as_str(),
+            f.name.base_ref(),
+            base.as_str(),
+            f.name.as_str(),
+            start.as_str()
+        ))
+        .unwrap();
+    git(
+        &f.repo,
+        [
+            "worktree",
+            "add",
+            "--no-checkout",
+            "--lock",
+            "--reason",
+            "initializing",
+            f.worktree.to_str().unwrap(),
+            f.name.as_str(),
+        ],
+    );
+    assert!(
+        f.manager
+            .finish_prepare(&f.name, &f.worktree, true)
+            .unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "author\n"
+    );
+    write_commit(&f.worktree, "author.txt", "maker\n", "maker ran");
+    git(
+        &f.repo,
+        [
+            "worktree",
+            "lock",
+            "--reason",
+            "initializing",
+            f.worktree.to_str().unwrap(),
+        ],
+    );
+    assert!(matches!(
+        f.manager.finish_prepare(&f.name, &f.worktree, true),
+        Err(Error::Recovery)
+    ));
+    assert_eq!(
+        fs::read_to_string(f.worktree.join("author.txt")).unwrap(),
+        "maker\n"
+    );
+}
+
+#[test]
 fn review_abort_rebase_preserves_spawn_failure() {
     let f = Fixture::new();
     assert!(
@@ -1537,4 +1666,58 @@ fn scratch_refs_expire_only_after_thirty_days() {
     f.manager.prune_scratch(expired_ref, expected).unwrap();
     assert!(f.manager.resolve_optional(&reference).unwrap().is_none());
     assert!(f.manager.branch_state(&f.name).unwrap().is_some());
+}
+
+#[test]
+fn adoption_releases_pull_ref_without_losing_the_author_commit() {
+    let f = Fixture::new();
+    let head = f.manager.resolve("HEAD").unwrap();
+    git(
+        &f.repo,
+        ["push", f.bare.to_str().unwrap(), "HEAD:refs/pull/17/head"],
+    );
+    f.manager
+        .fetch_pull_head(&f.remote, None, 17, &head)
+        .unwrap();
+    f.manager.create_branch_from(&f.name, &head, &head).unwrap();
+    f.manager.delete_pull_head(17).unwrap();
+    f.manager.delete_pull_head(17).unwrap();
+    assert!(
+        f.manager
+            .resolve_optional("refs/tl3/pulls/17")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(f.manager.resolve(&f.name.reference()).unwrap(), head);
+}
+
+#[test]
+fn adoption_scope_trim_excludes_main_only_progress() {
+    let f = Fixture::new();
+    let common = f.manager.head().unwrap();
+    write_commit(&f.repo, "main-only.txt", "main progress\n", "main progress");
+    let base = f.manager.head().unwrap();
+    git(&f.repo, ["checkout", "--detach", common.as_str()]);
+    write_commit(&f.repo, "shared.txt", "requested\n", "author change");
+    write_commit(&f.repo, "extra.txt", "unrelated\n", "author extra");
+    let author = f.manager.head().unwrap();
+    f.manager
+        .create_branch_from(&f.name, &base, &author)
+        .unwrap();
+    f.manager.create_worktree(&f.name, &f.worktree).unwrap();
+    let trim = f
+        .manager
+        .trim_scope(&f.name, &f.worktree, &["shared.txt".into()], &[])
+        .unwrap();
+    assert_eq!(
+        trim.removed_paths,
+        vec![PathBuf::from("extra.txt")],
+        "main-only changes are not request extras"
+    );
+    assert!(!f.worktree.join("extra.txt").exists());
+    assert!(
+        !f.worktree.join("main-only.txt").exists(),
+        "trimming must not import main's independent tree"
+    );
+    assert_eq!(f.manager.merge_base(&author, &trim.head).unwrap(), author);
 }

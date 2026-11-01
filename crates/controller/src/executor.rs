@@ -60,6 +60,8 @@ pub struct Delivery {
     pub repository: crate::Repository,
     pub issue: u64,
     pub pull_request: Option<u64>,
+    #[serde(default)]
+    pub proposed: Option<crate::adoption::ProposedPullRequest>,
     pub paths: Vec<String>,
     pub attempt: u8,
     pub round: u8,
@@ -149,6 +151,12 @@ pub enum Observation {
         node: NodeId,
         infra: bool,
         checks: Vec<crate::findings::CiFailure>,
+    },
+    WorktreePrepared {
+        node: NodeId,
+        repository: std::path::PathBuf,
+        base_sha: String,
+        sha: String,
     },
     CheckPlan {
         node: NodeId,
@@ -308,6 +316,15 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    fn intake_question(
+        &mut self,
+        _question: &crate::adoption::Clarification,
+        _epoch: i64,
+    ) -> Result<()> {
+        Err(crate::Error::Invalid(
+            "adapter cannot clarify adoption intake",
+        ))
+    }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

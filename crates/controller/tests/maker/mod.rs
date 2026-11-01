@@ -769,6 +769,55 @@ fn restart_after_replan(settings: &tl3_config::Store) {
     assert!(git(&worktree, &["show", "HEAD:greeting.py"]).contains("replanned attempt"));
 }
 
+pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let (config, worktree, _) = fixture(settings, root.path(), "normal");
+    fs::write(worktree.join("author.txt"), "Author proposal\n").unwrap();
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "-m", "Author proposal"]);
+    let author = git(&worktree, &["rev-parse", "HEAD"]);
+    let mut store = Store::open(settings).unwrap();
+    let mut materials = store.worker_materials("0").unwrap().unwrap();
+    materials["maker"]["feedback"] =
+        json!([{"kind":"failed_check", "report":"Greeting still fails.", "goal_ids":["greeting"]}]);
+    store.put_worker_materials("0", &materials).unwrap();
+    let mut delivery = super::delivery();
+    delivery.key = "adopted-first-fix".into();
+    delivery.round = 1;
+    delivery.output = Out::Effect {
+        node: NodeId(0),
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Make),
+        head: None,
+    };
+    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    let mut supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
+    supervisor.execute(&delivery).unwrap();
+    let completion = terminal(&mut supervisor, &delivery);
+    assert!(
+        !failed(&completion),
+        "first adopted fix must start a real maker: {}",
+        fs::read_to_string(root_for(&config, &delivery.key).join("attempt-00000000/stderr.log"))
+            .unwrap_or_default()
+    );
+    let runs = requests(&config);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["inputs"]["round"], 1);
+    assert_eq!(runs[0]["resume_session"], false);
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD^"]), author);
+    let session = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
+    let history: Value = serde_json::from_slice(&fs::read(session).unwrap()).unwrap();
+    assert_eq!(
+        history
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["type"] == "human")
+            .count(),
+        1
+    );
+}
+
 pub(super) fn legacy_session(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let (config, worktree, _) = fixture(settings, root.path(), "normal");
@@ -820,6 +869,8 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
 }
 
 pub(super) fn run(database: &mut Database) {
+    adopted_fix_without_session(&database.create("adopted_first_fix"));
+    println!("test adopted_first_fix_runs_real_maker_without_session ... ok");
     real::reproducing_fix(&database.create("maker_reproducing_fix"), false);
     real::reproducing_fix(&database.create("maker_reproducing_rebase"), true);
     println!("test review_fix_maps_findings_to_checks_and_carries_reasons_to_review ... ok");

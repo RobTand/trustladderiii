@@ -37,6 +37,26 @@ impl Worktrees {
         Self::open(destination, destination)
     }
 
+    /// Import a pinned commit that need not belong to the checkout's head history.
+    pub fn import_commit(&self, source: &Path, commit: &CommitId) -> Result<(), Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        self.run(
+            &self.repo,
+            "import check commit",
+            [
+                OsStr::new("fetch"),
+                OsStr::new("--quiet"),
+                OsStr::new("--no-tags"),
+                OsStr::new("--no-auto-maintenance"),
+                OsStr::new("--no-write-fetch-head"),
+                OsStr::new("--"),
+                source.as_os_str(),
+                OsStr::new(commit.as_str()),
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Preserve every check commit across PrismaBuild's checkout materialization.
     pub fn bundle_check_input(
         &self,
