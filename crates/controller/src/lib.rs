@@ -1812,6 +1812,23 @@ impl Controller {
                 {
                     return Ok(None);
                 }
+                if matches!(
+                    fact.evidence,
+                    Evidence::CiFailed {
+                        head_check: true,
+                        ..
+                    }
+                ) {
+                    let can_consume = current.phase == tl3_kernel::Phase::Queued
+                        || current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            });
+                    // A later active enqueue must still be able to consume this head evidence.
+                    if !can_consume {
+                        return Ok(None);
+                    }
+                }
                 let value = json!(&fact);
                 if let Evidence::CiFailed { head, .. }
                 | Evidence::Conflict { head, .. }
