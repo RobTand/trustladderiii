@@ -184,6 +184,16 @@ PB's managed Docker shim and commits the admitted container. Its default
 `sandbox` profile retains the original dependencies. The `prismabuild` profile
 adds GCC, libc development headers, bubblewrap, pytest-xdist 3.8.0, PyYAML
 6.0.3, and setuptools 80.9.0. Both profiles use pytest 9.0.2 and Python 3.14.
+The `prismaquant` and `tessera` profiles use the reviewed frozen dependency
+lists in `tools/images/`. They add g++, make, Python development headers,
+libgomp, CPU-only Torch 2.11.0, Triton and the repositories' Python dependencies.
+PrismaQuant uses pytest 9.1.1 and Triton 3.6.0; Tessera uses pytest 8.4.2
+and Triton 3.8.0. Build tools are bootstrapped before installing the frozen
+lists without dependency resolution or build isolation. The CPU Torch wheel
+index is available only during trusted preparation. The served repository
+is not installed into its own image; checks import the exported candidate.
+PrismaQuant's frozen Tessera dependency is a separate, pinned Git install.
+
 Bubblewrap's presence does not grant user namespaces or privileges to tests.
 Use a distinct tag for a candidate so preparation preserves the current image.
 

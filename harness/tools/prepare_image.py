@@ -2,29 +2,39 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import subprocess
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base", help="locally available Ubuntu 26.04 image")
-    parser.add_argument("--profile", choices=("sandbox", "prismabuild"), default="sandbox")
+    parser.add_argument("--profile", choices=("sandbox", "prismabuild", "prismaquant", "tessera"), default="sandbox")
     parser.add_argument("--tag")
     args = parser.parse_args()
-    args.tag = args.tag or ("tl3-harness:prismabuild" if args.profile == "prismabuild" else "tl3-harness:t5")
+    args.tag = args.tag or ("tl3-harness:t5" if args.profile == "sandbox" else f"tl3-harness:{args.profile}")
     owner = os.environ.get("PRISMABUILD_CONTAINER_OWNER")
     if not owner or not os.environ.get("PRISMABUILD_CONTAINER_MARKER"):
         raise RuntimeError("image preparation requires a PrismaBuild action")
     name = "tl3-image-" + owner[:20]
     system = "gcc libc6-dev bubblewrap" if args.profile == "prismabuild" else ""
     packages = "pytest-xdist==3.8.0 PyYAML==6.0.3 setuptools==80.9.0" if args.profile == "prismabuild" else ""
+    pip_install = f"/opt/tl3/bin/python -m pip install --no-cache-dir pytest==9.0.2 {packages}"
+    if args.profile in ("prismaquant", "tessera"):
+        system = "python3.14-dev gcc g++ make libgomp1 bubblewrap"
+        requirements = (Path(__file__).with_name("images") / f"{args.profile}.txt").read_text()
+        pip_install = f"""cat > /tmp/tl3-requirements.txt <<'TL3_REQUIREMENTS'
+{requirements}TL3_REQUIREMENTS
+/opt/tl3/bin/python -m pip install --no-cache-dir setuptools==80.10.2 wheel==0.48.0
+/opt/tl3/bin/python -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu --no-build-isolation --no-deps -r /tmp/tl3-requirements.txt
+rm /tmp/tl3-requirements.txt"""
     install = f"""
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install --no-install-recommends -y python3 python3-venv git ca-certificates {system}
 python3 -m venv /opt/tl3
-/opt/tl3/bin/python -m pip install --no-cache-dir pytest==9.0.2 {packages}
+{pip_install}
 /opt/tl3/bin/python -c 'import sys; assert sys.version_info >= (3, 14)'
 apt-get clean
 rm -rf /var/lib/apt/lists/*
