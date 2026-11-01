@@ -64,3 +64,26 @@ def test_failed_run_summary_keeps_safe_diagnostic(tmp_path, monkeypatch):
                      "memory": {"summary_file": str(path)}}, lambda _: None)
     assert json.loads(path.read_text())["reason"] == {
         "failure_class": "ValueError", "failure_message": "reply cites a memory it was not given"}
+
+
+@pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])
+def test_parallel_results_are_bounded_and_marked_as_clipped(tmp_path, monkeypatch, role, reply):
+    observed = []
+    (tmp_path / "large.txt").write_text(("evidence " * 100 + "\n") * 200)
+
+    class InspectModel(FakeMessagesListChatModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(messages)
+            return super()._generate(messages, **kwargs)
+
+    calls = [{"name": "read", "args": {"path": "large.txt"}, "id": str(i), "type": "tool_call"}
+             for i in range(5)]
+    monkeypatch.setattr(runtime, "create_model", lambda _: InspectModel(responses=[
+        AIMessage(content="", tool_calls=calls), AIMessage(content=json.dumps(reply))]))
+    events = []
+    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {}}, events.append)
+    results = [m for m in observed[-1] if isinstance(m, ToolMessage)]
+    assert {m.tool_call_id for m in results} == {str(i) for i in range(5)}
+    assert sum(len(m.text.encode()) for m in results) <= 32_768
+    assert any("clipped" in m.text for m in observed[-1] if m.type == "human")
+    assert events[-1]["reply"] == reply
