@@ -231,7 +231,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
         .unwrap()
         .rows
         .into_iter()
-        .find(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
+        .find(|row| row.table == "incidents" && row.id.starts_with("required-checks:"))
         .unwrap();
     assert_eq!(incident.value["open"], true);
     for sequence in 1..=2 {
@@ -241,7 +241,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
         let incidents: Vec<_> = snapshot
             .rows
             .iter()
-            .filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "setup")
+            .filter(|row| row.table == "incidents" && row.id.starts_with("required-checks:"))
             .collect();
         assert_eq!(
             incidents.len(),
@@ -273,7 +273,7 @@ fn reopen(controller: &mut Controller, api: &Server, source: &str) {
             .rows
             .iter()
             .find(|row| row.table == "incidents"
-                && row.value["signature"]["class"] == "setup"
+                && row.id.starts_with("required-checks:")
                 && row.id == incident.id)
             .unwrap()
             .value["open"],
