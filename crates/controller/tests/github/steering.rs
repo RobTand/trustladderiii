@@ -903,6 +903,8 @@ pub(super) fn writer_rejection() {
                 number: 17,
             }),
         )
+        .unwrap()
+        .with_repositories(&repositories())
         .unwrap();
         let mut clarification = delivery(Notice::MeasuresPosted);
         clarification.key = "clarify:writer-rejection".into();
@@ -964,6 +966,8 @@ pub(super) fn writer_rejection() {
                 number: 17,
             }),
         )
+        .unwrap()
+        .with_repositories(&repositories())
         .unwrap();
         let mut note = delivery(Notice::MeasuresPosted);
         note.key = "replacement-dropped:0".into();
@@ -1014,6 +1018,8 @@ pub(super) fn writer_rejection() {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     for output in [
         Out::Notice {

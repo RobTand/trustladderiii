@@ -1109,6 +1109,8 @@ fn writer_checks() {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     let posted = api.state.lock().unwrap().posts;
     for notice in [
