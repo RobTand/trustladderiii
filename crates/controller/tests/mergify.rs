@@ -113,6 +113,7 @@ struct State {
     rerun_lost_response: bool,
     required: bool,
     classic: bool,
+    restricted: Option<(String, u16)>,
     classic_context_only: bool,
     annotations: Value,
     statuses: Value,
@@ -163,6 +164,7 @@ impl State {
             rerun_lost_response: false,
             required: false,
             classic: false,
+            restricted: None,
             classic_context_only: false,
             annotations: json!([]),
             statuses: json!([]),
@@ -258,7 +260,18 @@ impl Respond for Api {
         {
             return response;
         }
+        if method == "GET" && let Some((read, status)) = &state.restricted
+            && (read == "branch" && path.contains("/branches/main") && !path.contains("/rules/")
+                || read == "rules" && path.contains("/rules/branches/")
+                || read == "status" && path.ends_with("/statuses"))
+        {
+            return ResponseTemplate::new(*status);
+        }
         match (method, path) {
+            ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
+                if state.classic { json!({"protection":{"required_status_checks":{
+                    "contexts":["Sandbox tests"], "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
+                else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
             ("GET", "/repos/owner/sandbox/branches/main/protection/required_status_checks") => {
@@ -2745,6 +2758,14 @@ fn main() {
         "missing",
         "app",
         "status",
+        "action_required",
+        "stale",
+        "restricted-branch403",
+        "restricted-branch404",
+        "restricted-rules403",
+        "restricted-rules404",
+        "restricted-status403",
+        "restricted-status404",
     ] {
         classic_protection::scenario(&database.create(&format!("classic_{mode}")), mode);
     }

@@ -42,13 +42,14 @@ class FormParser(HTMLParser):
 
 
 class ManifestRequirements(unittest.TestCase):
-    def test_legacy_statuses_are_readable(self):
+    def test_no_new_permissions_for_classic_checks(self):
         manifest = json.loads((ROOT / "manifest.json").read_text())
-        self.assertEqual("read", manifest["default_permissions"].get("statuses"))
+        self.assertNotIn("administration", manifest["default_permissions"])
+        self.assertNotIn("statuses", manifest["default_permissions"])
 
-    def test_legacy_status_changes_wake_pending_enqueue(self):
+    def test_no_unused_status_subscription(self):
         manifest = json.loads((ROOT / "manifest.json").read_text())
-        self.assertIn("status", manifest["default_events"])
+        self.assertNotIn("status", manifest["default_events"])
 
 
 class WizardTests(unittest.TestCase):
@@ -146,10 +147,10 @@ class WizardTests(unittest.TestCase):
                          manifest["hook_attributes"])
         self.assertEqual({"issues": "write", "pull_requests": "write", "checks": "write",
                           "contents": "write", "metadata": "read", "merge_queues": "read",
-                          "actions": "write", "administration": "read", "statuses": "read"},
+                          "actions": "write"},
                          manifest["default_permissions"])
         self.assertEqual({"issues", "issue_comment", "pull_request", "check_run",
-                          "check_suite", "merge_group", "status"}, set(manifest["default_events"]))
+                          "check_suite", "merge_group"}, set(manifest["default_events"]))
         self.assertEqual([], self.requests)
         self.assertFalse((self.config / "github-app.json").exists())
 

@@ -62,6 +62,10 @@ fn wake(controller: &mut Controller, api: &Server) {
 }
 
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
+    if let Some(mode) = mode.strip_prefix("restricted-") {
+        restricted(settings, mode);
+        return;
+    }
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut controller = publishing(settings, &api, root.path());
@@ -80,7 +84,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         if mode != "missing" && mode != "status" {
             state.head_checks = vec![json!({"id":900,"name":"Sandbox tests","head_sha":head,
                 "status":if mode == "pass" {"in_progress"} else {"completed"},
-                "conclusion":if mode == "pass" {Value::Null} else {json!("failure")},
+                "conclusion":if mode == "pass" {Value::Null} else if matches!(mode, "action_required" | "stale") {json!(mode)} else {json!("failure")},
                 "completed_at":"2026-11-01T03:00:00Z",
                 "app":{"id":if mode == "app" {99} else {15368},"slug":"github-actions"},
                 "check_suite":{"id":800}})];
@@ -227,4 +231,53 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(controller.world().unwrap().nodes[0].round, 0);
     println!("test classic_head_{mode} ... ok");
+}
+
+fn restricted(settings: &tl3_config::Store, mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = publishing(settings, &api, root.path());
+    let read = if mode.starts_with("branch") { "branch" } else if mode.starts_with("rules") { "rules" } else { "status" };
+    let status = if mode.ends_with("403") { 403 } else { 404 };
+    {
+        let mut state = api.state.lock().unwrap();
+        state.required = read == "branch";
+        state.classic = read != "branch";
+        state.classic_context_only = read == "status";
+        state.restricted = Some((read.into(), status));
+    }
+    finish_head(&api);
+    // Keep an observable check-run gate even when legacy statuses are unavailable.
+    if read == "status" {
+        api.state.lock().unwrap().head_checks[0]["conclusion"] = Value::Null;
+        api.state.lock().unwrap().head_checks[0]["status"] = json!("in_progress");
+        drain(&mut controller);
+        assert_eq!(api.state.lock().unwrap().posts, 0);
+        finish_head(&api);
+        wake(&mut controller, &api);
+    } else {
+        drain(&mut controller);
+    }
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued,
+        "an unavailable optional read must not block Publishing");
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+    assert_eq!(controller.world().unwrap().nodes[0].round, 0);
+    let snapshot = controller.snapshot().unwrap();
+    let incidents: Vec<_> = snapshot.rows.iter().filter(|row| row.table == "incidents").collect();
+    assert_eq!(incidents.len(), 1, "one deduplicated setup incident");
+    assert_eq!(incidents[0].value["blocking"], false);
+    assert_eq!(incidents[0].value["signature"]["class"], "setup");
+    let permission = if read == "branch" { "Contents: read" } else if read == "rules" { "Metadata: read" } else { "Commit statuses: read" };
+    assert!(incidents[0].value["summary"].as_str().unwrap().contains(permission));
+    api.state.lock().unwrap().checks = fixture("failed", "checks");
+    let key = snapshot.rows.iter().find(|row| row.table == "allowances" && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue").unwrap().id.clone();
+    controller.look_key(&key).unwrap();
+    for _ in 0..30 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Making { break; }
+        if !controller.drive_once().unwrap() { break; }
+    }
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making,
+        "restricted reads must not discard queued CI failures");
+    assert_eq!(controller.snapshot().unwrap().rows.iter().filter(|row| row.table == "incidents").count(), 1);
+    println!("test restricted_head_{mode} ... ok");
 }

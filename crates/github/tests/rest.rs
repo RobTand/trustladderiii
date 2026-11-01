@@ -1094,13 +1094,13 @@ async fn required_status_checks_union_preserves_classic_app_ids() {
     // contexts repeats checks on modern GitHub responses; it must not erase app binding.
     Mock::given(method("GET"))
         .and(path(
-            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+            "/repos/owner/sandbox/branches/main",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "contexts":["shared", "legacy"],
+            "protection":{"required_status_checks":{"contexts":["shared", "legacy"],
             "checks":[{"context":"shared", "app_id":15368},
                       {"context":"classic", "app_id":99},
-                      {"context":"any-app", "app_id":-1}]
+                      {"context":"any-app", "app_id":-1}]}}
         })))
         .mount(&server)
         .await;
@@ -1136,9 +1136,9 @@ async fn required_status_checks_classic_contexts_without_rulesets() {
     .await;
     Mock::given(method("GET"))
         .and(path(
-            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+            "/repos/owner/sandbox/branches/main",
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"contexts":["issue-link"]})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"protection":{"required_status_checks":{"contexts":["issue-link"]}}})))
         .mount(&server)
         .await;
     let required = github
@@ -1151,26 +1151,25 @@ async fn required_status_checks_classic_contexts_without_rulesets() {
 }
 
 #[tokio::test]
-async fn required_status_checks_protection_errors_are_not_empty_requirements() {
+async fn required_status_checks_protection_403_keeps_rulesets() {
     let server = MockServer::start().await;
     let github = client(&server).await;
     get(
         &server,
         "/repos/owner/sandbox/rules/branches/main",
-        json!([]),
+        json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ruleset","integration_id":42}]}}]),
     )
     .await;
     Mock::given(method("GET"))
         .and(path(
-            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+            "/repos/owner/sandbox/branches/main",
         ))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"message":"Forbidden"})))
         .mount(&server)
         .await;
-    assert!(matches!(
-        github.required_status_checks("owner/sandbox", "main").await,
-        Err(Error::Http { status: 403 })
-    ));
+    let required = github.required_status_checks("owner/sandbox", "main").await.unwrap();
+    assert_eq!(required.len(), 1);
+    assert_eq!(required[0].context, "ruleset");
 }
 
 #[tokio::test]
@@ -1189,7 +1188,7 @@ async fn required_status_checks_classic_404_preserves_rulesets() {
     .await;
     Mock::given(method("GET"))
         .and(path(
-            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+            "/repos/owner/sandbox/branches/main",
         ))
         .respond_with(ResponseTemplate::new(404))
         .expect(1)
@@ -1216,7 +1215,7 @@ async fn required_status_checks_unprotected_branch_has_none() {
     .await;
     Mock::given(method("GET"))
         .and(path(
-            "/repos/owner/sandbox/branches/main/protection/required_status_checks",
+            "/repos/owner/sandbox/branches/main",
         ))
         .respond_with(ResponseTemplate::new(404))
         .expect(1)
