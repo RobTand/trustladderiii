@@ -10,6 +10,8 @@ mod head_checks;
 mod held;
 #[path = "mergify/merge_closure.rs"]
 mod merge_closure;
+#[path = "mergify/missing_checks.rs"]
+mod missing_checks;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -115,6 +117,8 @@ struct State {
     rerun_message: String,
     rerun_lost_response: bool,
     required: bool,
+    required_app: u64,
+    suites: Value,
     classic: bool,
     restricted: Option<(String, u16)>,
     classic_context_only: bool,
@@ -167,6 +171,8 @@ impl State {
             rerun_message: "Resource not accessible by integration".into(),
             rerun_lost_response: false,
             required: false,
+            required_app: 15368,
+            suites: json!([]),
             classic: false,
             restricted: None,
             classic_context_only: false,
@@ -234,6 +240,9 @@ impl support::github::Routes for State {
             self.checks()
         }
     }
+    fn suites(&self) -> Value {
+        self.suites.clone()
+    }
 }
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
@@ -279,7 +288,7 @@ impl Respond for Api {
                     "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
                 else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
-                if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
+                if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
                 assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
@@ -2521,6 +2530,15 @@ fn main() {
     }
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--missing-check-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        missing_checks::scenario(&database.create("missing_check"), &mode);
+        database.stop();
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2873,6 +2891,21 @@ fn main() {
     ] {
         scenario!(head_checks::scenario(
             &database.create(&format!("head_{mode}")),
+            mode
+        ));
+    }
+    for mode in [
+        "path-filter",
+        "wrong-app",
+        "late-report",
+        "rob-clear",
+        "clock-running",
+        "clock-missing",
+        "ci-failed",
+        "head-replaced",
+    ] {
+        scenario!(missing_checks::scenario(
+            &database.create(&format!("missing_{mode}")),
             mode
         ));
     }

@@ -572,3 +572,15 @@ An older waiter blocks a younger leaf if it could actually run, or if their foot
 A younger grant cannot add a file holder that blocks an older waiter. When the older waiter's last conflicting holder releases, that release also frees a slot. Its older ticket protects the slot while disjoint younger holders continue running. This relies on holders eventually completing or being stopped, and on older eligible waiters eventually progressing.
 
 The per-leaf Kani proof bounds the world to four leaves at W=2 and W=3. It starts with an unpaused oldest waiter and its last conflicting holder. Younger leaves are visited before that waiter, both before and after the holder's successful teardown. The waiter must acquire a slot while disjoint overtakers remain active. It proves this bounded case, not unbounded temporal liveness with arbitrary arrivals or stalled upstreams. The covers require a disjoint bypass, including passing a waiter blocked by an older overlapping waiter. A scenario additionally repeats eight disjoint arrivals before the blocking holder releases. A store-backed scenario raises W from 1 to 3 with the oldest waiter at the highest node index; only disjoint work passes it, and it takes the next slot once its blocker releases.
+
+### Q52, Rob, 2026-11-01
+
+Rob approved three Publishing rows for a required check that never reports on the approved head. A workflow's path filter can skip the check, or the requirement can name the wrong app. Before Q52 the request waited silently in Publishing.
+
+- When every check suite on the approved head has completed and a required context from the expected app is absent, TL3 opens a deduplicated repo setup incident. It names the head, the context and the expected app. The enqueue stays pending. No failure is counted and no credit is charged.
+- When that context reports on that head from the expected app, TL3 clears the incident and evaluates the check normally.
+- `clear incident <id>` clears the incident. Required-check enforcement still applies, so the enqueue waits for the check.
+
+TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
+
+A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.

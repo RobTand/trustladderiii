@@ -81,6 +81,10 @@ pub enum Error {
     },
     #[error("upstream quota exhausted")]
     Quota { retry_after: std::time::Duration },
+    /// The enqueue guard is waiting for required checks to report. This is
+    /// evidence of a legitimate wait, not a failure (Q52).
+    #[error("required head checks are still pending")]
+    ChecksPending,
 }
 
 fn decode_stored<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
@@ -636,8 +640,7 @@ impl Controller {
         }
         // Setup gaps describe current health. A fresh read after a clear must
         // not be suppressed by the receipt for an earlier observation.
-        let key = if matches!(&observation, Observation::Queue(fact) if matches!(fact.evidence, adapters::mergify::Evidence::ChecksUnavailable { .. }))
-        {
+        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
             format!("{key}:{}", snapshot.revision.get())
         } else {
             key.to_owned()
@@ -662,10 +665,7 @@ impl Controller {
         observation: &Observation,
     ) -> Result<()> {
         if let Observation::Queue(fact) = observation
-            && matches!(
-                fact.evidence,
-                adapters::mergify::Evidence::ChecksUnavailable { .. }
-            )
+            && fact.setup()
         {
             let identity = fact.identity();
             if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
@@ -719,6 +719,13 @@ impl Controller {
         self.held_effects
             .get(&executor::upstream(delivery.output))
             .is_some_and(|effects| effects.contains_key(&delivery.key))
+    }
+
+    fn hold_class(&self, delivery: &Delivery) -> Option<&str> {
+        self.held_effects
+            .get(&executor::upstream(delivery.output))
+            .and_then(|effects| effects.get(&delivery.key))
+            .map(String::as_str)
     }
 
     fn remove_hold(&mut self, delivery: &Delivery) {
@@ -1182,11 +1189,13 @@ impl Controller {
             from: effect.state,
             to,
         });
+        // A pending-checks hold waits on check webhooks; it arms no silence timer.
         if to == EffectState::Uncertain
             && let Some(class) = self
                 .held_effects
                 .get(&executor::upstream(delivery.output))
                 .and_then(|effects| effects.get(&effect.key))
+            && class != looks::CHECKS_PENDING
         {
             self.failure_allowance(&snapshot, &effect.key, class, &mut commit)?;
         }
@@ -1434,6 +1443,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
                 .nodes
@@ -2009,6 +2019,30 @@ impl Controller {
                     Evidence::ChecksUnavailable { permissions } => {
                         self.check_setup_incident(snapshot, commit, node, &permissions)?;
                         commit.rows.push(put("queue_facts", identity, value));
+                        return Ok(None);
+                    }
+                    // Q52 rows: neither one reaches the kernel, so no failure or credit is charged.
+                    Evidence::CheckMissing { head, required } => {
+                        let enqueue_pending = current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            });
+                        if enqueue_pending && commit_sha(snapshot, current.approved) == Some(&head)
+                        {
+                            self.missing_check_incident(snapshot, commit, node, &head, &required)?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
+                    Evidence::CheckReported { head, required } => {
+                        let id = looks::missing_check_incident_id(node, &head, &required);
+                        if let Some(row) = snapshot.rows.iter().find(|row| {
+                            row.table == "incidents" && row.id == id && row.value["open"] == true
+                        }) {
+                            let mut incident: looks::Incident = decode_stored(row.value.clone())?;
+                            incident.open = false;
+                            commit.rows.push(put("incidents", id, json!(incident)));
+                        }
                         return Ok(None);
                     }
                     Evidence::Merged {
