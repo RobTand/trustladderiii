@@ -90,8 +90,10 @@ Maker uses the same runtime retention policy with a 64 KiB exploration-history
 window. Recent call/result groups remain whole when they fit; older text is
 removed or clipped with a notice. Human requests and repair feedback stay in
 order, including across resumed visits. Edits remain in the worktree and can be
-read again. Maker can continue long sessions without an intake turn ceiling or
-cumulative token allowance. Its existing context exhaustion check, self-check,
+read again. Maker permits 64 tool turns and 6,000,000 conservatively charged
+input tokens, with the same final-answer reservation as intake. This leaves room
+above the observed 50-turn session while bounding endless work. An exhausted
+no-change done becomes cant_meet without another model call. Its context check, self-check,
 reply validation, and code-owned commit still apply. Planner and reviewer can
 select a policy through the same role field.
 

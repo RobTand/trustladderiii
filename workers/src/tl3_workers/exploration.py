@@ -10,14 +10,15 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 @dataclass(frozen=True)
 class ExplorationBudget:
-    tool_turns: int | None = 4
-    input_tokens: int | None = 300_000
+    tool_turns: int = 4
+    input_tokens: int = 300_000
     history_bytes: int = 32_768
 
 
 FINISH = ("The exploration budget is exhausted. Tools are unavailable. Finish now from the "
           "supplied request and retained evidence. Return the final JSON matching your reply "
-          "schema. State any uncertainty in the brief or audit objections.")
+          "schema. State uncertainty and unfinished work in the reply. Never claim a goal "
+          "was met without supporting evidence.")
 
 
 def input_bound(request):
@@ -86,9 +87,8 @@ class ExplorationMiddleware(AgentMiddleware):
         original = [m for m in messages if isinstance(m, HumanMessage)]
         final_reserve = input_bound(request.override(messages=original, tools=[]))
         final_reserve += self.budget.history_bytes * 2 + len(FINISH) + 1024
-        final = ((self.budget.tool_turns is not None and self.turns >= self.budget.tool_turns)
-                 or (self.budget.input_tokens is not None
-                     and self.spent + bound + final_reserve > self.budget.input_tokens))
+        final = (self.turns >= self.budget.tool_turns
+                 or self.spent + bound + final_reserve > self.budget.input_tokens)
         if self.final:
             raise ValueError("missing final model reply")
         if final:
@@ -96,9 +96,13 @@ class ExplorationMiddleware(AgentMiddleware):
             request = request.override(tools=[], tool_choice=None,
                                        messages=messages + [HumanMessage(content=FINISH)])
             bound = input_bound(request)
-        if self.budget.input_tokens is not None and self.spent + bound > self.budget.input_tokens:
+        if self.spent + bound > self.budget.input_tokens:
             raise ValueError("intake input exceeds exploration budget")
         response = handler(request)
+        if final:
+            for message in response.result:
+                if isinstance(message, AIMessage):
+                    message.response_metadata["tl3_budget_exhausted"] = True
         reported = sum((m.usage_metadata or {}).get("input_tokens", 0)
                        for m in response.result if isinstance(m, AIMessage))
         self.spent += max(bound, reported)
