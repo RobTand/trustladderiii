@@ -726,6 +726,7 @@ fn terminal_before_enqueue_ack(settings: &tl3_config::Store) {
     controller.drive_once().unwrap();
     assert_eq!(queue_facts(&mut controller).len(), 1);
     assert_kernel_facts(settings, 1);
+    println!("test terminal_before_enqueue_ack ... ok");
 }
 fn watched_merge(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -761,6 +762,7 @@ fn watched_merge(settings: &tl3_config::Store) {
         "closed nodes leave the watched set"
     );
     assert_kernel_facts(settings, 1);
+    println!("test watched_merge ... ok");
 }
 fn merged(
     settings: &tl3_config::Store,
@@ -853,6 +855,9 @@ fn merged(
     catch_up(settings, &api, &mut restarted);
     assert!(queue_facts(&mut restarted).is_empty());
     assert_kernel_facts(settings, 1);
+    println!(
+        "test merged_unapproved_{unapproved}_webhook_{webhook_first}_checks_{checks_passed} ... ok"
+    );
 }
 fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     let api = Server::new();
@@ -896,6 +901,7 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     }
     assert_ne!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(api.state.lock().unwrap().pull["head"]["sha"], head);
+    println!("test queue_failure_conflict_{conflict}_infra_{infra} ... ok");
 }
 fn generic_dequeue(settings: &tl3_config::Store, dirty: bool, lazy: bool) {
     let api = Server::new();
@@ -1055,6 +1061,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         assert!(!controller.world().unwrap().nodes[0].paused);
         assert_kernel_facts(settings, 1);
     }
+    println!("test person_actions_{action} ... ok");
 }
 fn ignored_events(settings: &tl3_config::Store) {
     let api = Server::new();
@@ -1277,6 +1284,7 @@ fn late_merge_after_close(settings: &tl3_config::Store, webhook: bool) {
     catch_up(settings, &api, &mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].credit, credit);
     assert_kernel_facts(settings, 1);
+    println!("test late_merge_after_close_webhook_{webhook} ... ok");
 }
 
 fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
@@ -1301,6 +1309,7 @@ fn translator_retries_after_api_failure(settings: &tl3_config::Store) {
     ingress::drain(&mut controller).unwrap();
     assert!(controller.drive_once().unwrap());
     assert_kernel_facts(settings, 1);
+    println!("test translator_retries_after_api_failure ... ok");
 }
 
 fn assert_kernel_facts(settings: &tl3_config::Store, expected: usize) {
@@ -1387,6 +1396,7 @@ fn label_removed_before_confirmation() {
     assert_eq!(adapter.execute(&delivery).unwrap().ack, Ack::Confirmed);
     assert_eq!(api.state.lock().unwrap().posts, 1);
     assert!(!api.state.lock().unwrap().label);
+    println!("test label_removed_before_confirmation ... ok");
 }
 
 fn applied_marker_waits_for_person_evidence() {
@@ -1417,6 +1427,7 @@ fn applied_marker_waits_for_person_evidence() {
         if matches!(fact.evidence, adapters::mergify::Evidence::DequeuedByPerson { event: 601 }))
     );
     assert_eq!(api.state.lock().unwrap().posts, 1);
+    println!("test applied_marker_waits_for_person_evidence ... ok");
 }
 
 fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
@@ -1445,6 +1456,7 @@ fn in_progress_confirms_enqueue(settings: &tl3_config::Store) {
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
     assert_eq!(api.state.lock().unwrap().posts, 1);
     assert_kernel_facts(settings, 0);
+    println!("test in_progress_confirms_enqueue ... ok");
 }
 
 fn outside_merge_checks(settings: &tl3_config::Store, passed: bool, has_checks: bool, stale: bool) {
@@ -1481,6 +1493,7 @@ fn outside_merge_checks(settings: &tl3_config::Store, passed: bool, has_checks: 
         .collect();
     assert_eq!(merges.len(), 1);
     assert_eq!(merges[0]["checks_passed"], passed);
+    println!("test outside_merge_checks_passed_{passed}_checks_{has_checks}_stale_{stale} ... ok");
 }
 
 fn delayed_merge(settings: &tl3_config::Store, passed: bool, webhook: bool) {
@@ -1534,6 +1547,7 @@ fn delayed_merge(settings: &tl3_config::Store, passed: bool, webhook: bool) {
     assert_eq!(incident, !passed);
     catch_up(settings, &api, &mut controller);
     assert_kernel_facts(settings, 1);
+    println!("test delayed_merge_passed_{passed}_webhook_{webhook} ... ok");
 }
 
 fn progress(controller: &mut Controller) -> tl3_controller::executor::WatchProgress {
@@ -1617,6 +1631,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
         assert_eq!(read.previous, Some(previous));
         drain(&mut controller);
     }
+    println!("test stalled_merge_progress ... ok");
 }
 
 fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
@@ -1680,6 +1695,7 @@ fn unapproved_merge_does_not_wait(settings: &tl3_config::Store, path: &str) {
         api.state.lock().unwrap().queue_check()["status"],
         "in_progress"
     );
+    println!("test unapproved_merge_does_not_wait_{path} ... ok");
 }
 
 struct RetireError(Adapter);
@@ -1775,6 +1791,7 @@ fn retirement_does_not_block(settings: &tl3_config::Store, missing_upstream: boo
                 .any(|row| row.id == old.key && row.table == "retiring_effects")
         );
     }
+    println!("test retirement_does_not_block_missing_{missing_upstream} ... ok");
 }
 
 fn marker_files(root: &Path) -> Vec<std::path::PathBuf> {
@@ -1866,6 +1883,7 @@ fn marker_retirement(settings: &tl3_config::Store, confirmed: bool) {
             .iter()
             .any(|row| row.table == "retiring_effects")
     );
+    println!("test marker_retirement_confirmed_{confirmed} ... ok");
 }
 
 fn executor_recovery() {
@@ -1942,6 +1960,7 @@ fn executor_recovery() {
     drop(adapter);
     let mut old = api.adapter(root.path(), 1);
     assert!(old.execute(&delivery).is_err());
+    println!("test executor_recovery ... ok");
 }
 fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
     let api = Server::new();
@@ -2397,6 +2416,7 @@ fn command_dequeue_pauses(settings: &tl3_config::Store, title: bool) {
             "an unverified manual-looking title follows the generic retry rule"
         );
         assert!(!c.world().unwrap().nodes[0].paused);
+        println!("test command_dequeue_pauses_title_{title} ... ok");
         return;
     }
     assert_eq!(
@@ -2641,7 +2661,6 @@ fn main() {
     executor_recovery();
     label_removed_before_confirmation();
     applied_marker_waits_for_person_evidence();
-    println!("test executor_recovery ... ok");
     let mut database = support::Database::start();
     for status in [403, 429] {
         rate_limited_read_defers_quota(&database.create(&format!("quota_{status}")), status);
@@ -2709,7 +2728,6 @@ fn main() {
             );
         }
     }
-    println!("test merged, catch-up, restart and unapproved head ... ok");
     database.restart();
     for (dirty, lazy) in [(true, false), (false, false), (true, true)] {
         generic_dequeue(
@@ -2764,11 +2782,9 @@ fn main() {
     queue_failure(&database.create("failed"), false, false);
     queue_failure(&database.create("infra"), false, true);
     queue_failure(&database.create("conflict"), true, false);
-    println!("test queue failures and conflict ... ok");
     for action in ["unlabeled", "closed", "synchronize"] {
         person_actions(&database.create(action), action);
     }
-    println!("test person actions ... ok");
     ignored_events(&database.create("ignored"));
     println!("test ignored events ... ok");
     for mode in [
@@ -2815,5 +2831,5 @@ fn main() {
         merge_closure::scenario(&database.create(&format!("merge_closure_{mode}")), mode);
     }
     database.stop();
-    println!("108 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("118 Mergify scenarios passed; no skips; no live upstream calls");
 }

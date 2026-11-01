@@ -176,3 +176,111 @@ xfail, uncollected tests, pre-existing failures, and a process exiting without
 a report. A live fixture checks the exact admitted CPU mask, blocked network,
 absent fleet and socket paths, absent inherited environment, and read-only
 checkout and harness mounts.
+
+## Prepare and roll a repository image
+
+Build from a clean commit through PrismaBuild. The preparation script uses
+PB's managed Docker shim and commits the admitted container. Its default
+`sandbox` profile retains the original dependencies. The `prismabuild` profile
+adds GCC, libc development headers, bubblewrap, pytest-xdist 3.8.0, PyYAML
+6.0.3, and setuptools 80.9.0. Both profiles use pytest 9.0.2 and Python 3.14.
+Bubblewrap's presence does not grant user namespaces or privileges to tests.
+Use a distinct tag for a candidate so preparation preserves the current image.
+
+On dl380g10, with a locally available Ubuntu 26.04 base image:
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+    --cwd "$CHECKOUT" --tag dl380g10 \
+    --cpus 2 --demand mem_gb=4 --priority -9 \
+    --container-image "$BASE_IMAGE_ID" \
+    --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 \
+    --env OPENBLAS_NUM_THREADS=1 --detach -- \
+    /usr/bin/python3.14 harness/tools/prepare_image.py "$BASE_IMAGE_ID" \
+    --profile prismabuild --tag tl3-harness:pb-candidate
+```
+
+Inspect the terminal record, verified logs, CAS receipt and cleanup. The log's
+`container_image` is the immutable ID to qualify and configure. The tag is
+only a preparation label. The image ID is the real pin: apt packages and pip's
+transitive dependencies resolve at build time. An image built on dl380g10 is local to dl380g10;
+the ARM workers need a separate native build and its own immutable image ID.
+PB's `--container-image` requirement keeps checks on a worker that positively
+reports the image. Do not add a host tag to ordinary checks.
+
+Make a clean, unshallowed clone of the served repository and create a bundle:
+
+```sh
+git -C "$SERVED_CLONE" bundle create "$INPUT/served.bundle" HEAD
+```
+
+Install the trusted harness outside the served checkout. Snapshot the bundle,
+trusted package and inventory script together in a separate committed input
+repository. Submit `tools/inventory.py` with the bundle path, image ID and
+selected test file paths. For PB, use the files listed in `tools/verify.py`'s
+`FAST` tuple plus the existing test files for each pilot issue. The script
+extracts function and method node IDs and calls `run_checks` on the exact
+bundled revision for both base and head. Pytest expands parametrized cases.
+Functions explicitly marked `__test__ = False` are excluded.
+
+```sh
+python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
+    --cwd "$INPUT" --anywhere --cpus 1 --demand mem_gb=4 --priority -9 \
+    --container-image "$IMAGE_ID" --progress-phase tests=300 \
+    --env PYTHONPATH=trusted --env OMP_NUM_THREADS=1 \
+    --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 --detach -- \
+    /usr/bin/python3.14 inventory.py --per-file served.bundle "$IMAGE_ID" \
+    tests/test_example.py tests/test_other.py
+```
+
+The runner bounds each report record to 4 MiB and also bounds the record count. For a large expanded suite,
+use `--per-file` to call `run_checks` separately for each selected file inside
+one admitted action. Results are combined in one JSON inventory, and each call
+continues the action's cumulative progress count.
+
+An inventory action exits nonzero if any selected node does not pass. Its
+JSON retains every node's outcome and failure message. Record skips and
+classify failures as image dependencies, host requirements, or test defects.
+Do not grant root, GPUs, the shared mount, or additional container access to
+make a pilot pass. A Git export has no `.git` directory, and `/tmp` is tmpfs;
+tests requiring repository metadata, executable temporary files, or qualified disk scratch need separate
+pilot eligibility decisions.
+
+Repeat the same selection in the candidate image, run the sandbox suite
+through `run_checks`, and run `tools/verify.py` for the harness boundary checks.
+Record action keys and every remaining limitation in the PR. After review,
+the coordinator sets the immutable ID on the relevant `[[github.repos]]`
+entry, or updates the global default. Keep the previous ID for rollback.
+Preparation and verification do not edit live configuration.
+
+Plans whose selected node IDs exceed the report budget are rejected by the
+planner and before PrismaBuild submission, with an instruction to reduce the
+selection. The harness checks the same budget at entry. Pytest can expand a
+short function selector into many parameter cases; if that collection exceeds
+the budget, it reports a test-plan error rather than an infrastructure failure.
+Selections enter the container through stdin so large plans fit independently
+of the host's per-argument limit.
+
+The plan also reserves space for every test verdict within the controller's
+8 MiB result limit, including repeated tests across checks and JSON escaping.
+Results include messages for the first 20 failing tests, clipped to 1,000
+characters each. Every named test retains its outcome and pass flag.
+After collection, each event is limited to the longest collected ID plus 8 KiB.
+The trusted reader also limits the whole journal to 32 MiB and bounds its
+record count. These bounds apply independently.
+
+Each test receives a temporary directory that is removed after its function
+fixtures finish, including when setup, the test or teardown fails. `tmp_path`
+and `tmpdir` use pytest's numbered, test-named directory. Python's default
+temporary directory and the `TMPDIR`, `TEMP` and `TMP` environment variables point there during the test,
+so cooperating subprocesses use the same scratch. Module and session fixtures
+retain their separately owned temporary directories for their scope.
+Cleanup is best effort: a file recreated by a background writer must not turn a
+passing test into a teardown error. Any residue stays within the fixed tmpfs
+and is discarded with the container.
+The container has one disposable 512 MiB `/tmp` tmpfs. This is RAM charged to
+the action's memory slice, alongside Python, subprocesses and other test memory.
+The scratch verifier runs at production demand, 1 CPU and 2 GiB, including
+four consecutive tests that each write 384 MiB. Cleanup bounds cumulative
+plan use. One test must fit within that boundary; paths hardcoded outside its temporary directory and
+wider-scope fixture data still consume the shared bound.

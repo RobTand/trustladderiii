@@ -54,15 +54,62 @@ fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
     .unwrap()
 }
 
+#[path = "simulation/gate_migration.rs"]
+mod gate_migration;
+
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.get(1).is_some_and(|s| s == "--child") {
         child(&args);
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--gate-migration-child") {
+        gate_migration::child(&args);
+        return;
+    }
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
+        ("agent_capacity_reopen", gate_migration::pool_reopen),
+        ("agent_capacity_downgrade", gate_migration::pool_downgrade),
+        (
+            "agent_capacity_idle_downgrade",
+            gate_migration::pool_idle_downgrade,
+        ),
+        (
+            "gate_capacity_ended_look",
+            gate_migration::ended_look_and_gate,
+        ),
+        ("agent_capacity_crash_rows", |s| {
+            gate_migration::pool_crash(s, "RowsWritten")
+        }),
+        ("agent_capacity_crash_effects", |s| {
+            gate_migration::pool_crash(s, "EffectsWritten")
+        }),
+        ("agent_capacity_crash_before_commit", |s| {
+            gate_migration::pool_crash(s, "BeforeCommit")
+        }),
+        ("agent_capacity_crash_after_commit", |s| {
+            gate_migration::pool_crash(s, "AfterCommit")
+        }),
+        ("gate_capacity_reopen", gate_migration::reopen),
+        ("gate_capacity_downgrade", gate_migration::downgrade),
+        (
+            "gate_capacity_idle_downgrade",
+            gate_migration::idle_downgrade,
+        ),
+        ("gate_capacity_crash_rows", |s| {
+            gate_migration::crash(s, "RowsWritten")
+        }),
+        ("gate_capacity_crash_effects", |s| {
+            gate_migration::crash(s, "EffectsWritten")
+        }),
+        ("gate_capacity_crash_before_commit", |s| {
+            gate_migration::crash(s, "BeforeCommit")
+        }),
+        ("gate_capacity_crash_after_commit", |s| {
+            gate_migration::crash(s, "AfterCommit")
+        }),
         ("write_outage_goes_idle", write_outage_goes_idle),
         ("labelled_issue_closes", labelled_issue_closes),
         (
@@ -138,6 +185,7 @@ fn main() {
         return;
     }
     status_requires_initialized_database(&database.create("status_fresh"));
+    println!("test status_requires_initialized_database ... ok");
     status_page_and_command(&database.create("status"), &mut database);
     println!("test status_page_and_command ... ok");
     database.stop();
@@ -2161,36 +2209,15 @@ fn publication_main_advance(settings: &tl3_config::Store, conflict: bool) {
         }
     }
     let snapshot = controller.snapshot().unwrap();
-    if conflict {
-        assert!(matches!(
-            controller.world().unwrap().nodes[0].phase,
-            Phase::AwaitingRob
-        ));
-        let incident = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "incidents" && r.value["signature"]["class"] == "unrebased_head")
-            .expect("publication conflict must explain why it stopped");
-        assert!(
-            incident.value["summary"]
-                .as_str()
-                .unwrap()
-                .contains("checked head conflicts with current main"),
-            "Rob must see the actual publication conflict: {}",
-            incident.value
-        );
-    } else {
-        assert_eq!(
-            controller.world().unwrap().nodes[0].phase,
-            Phase::Closed(Outcome::Merged),
-            "a nonconflicting main advance must not require Rob"
-        );
-        assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
-    }
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Closed(Outcome::Merged),
+        "publication must recover from a main advance without Rob"
+    );
+    assert!(!snapshot.rows.iter().any(|r| r.table == "incidents"));
 }
 
 fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
-    use adapters::worktrees::Real;
     use worktree_fixture::{Fixture, git};
     let root = tempfile::tempdir().unwrap();
     let fixture = Fixture::create(root.path());
@@ -2220,7 +2247,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     controller.intake(labelled()).unwrap();
     let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
     let checkout = fixture.adapter().checkout(&prepare);
-    let branch = Real::branch(&prepare).unwrap();
+    let branch = fixture.branch(&prepare);
     let mut created = false;
     let mut pushed = false;
     let mut rebased = false;

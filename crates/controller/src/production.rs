@@ -111,6 +111,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
             },
         },
     )?;
+    let pb = pb.with_repositories(&config.github.repos);
     let bell = pb.source();
     let writer = adapters::workers::writer::ProcessWriter::new(config, &records.join("writer"))?;
     adapters.register(
@@ -167,6 +168,7 @@ pub(crate) struct Materials {
 impl Materials {
     pub(crate) fn load(&self, delivery: &crate::executor::Delivery) -> Result<serde_json::Value> {
         use serde_json::json;
+        let base_branch = self.branches.base(&delivery.repository)?;
         let client = &self.clients[&delivery.repository.installation];
         let runtime = crate::executor::runtime()?;
         let name = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -174,7 +176,7 @@ impl Materials {
         let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
         let path = repository_path(&self.worktrees, &delivery.repository);
         let mut git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
-        git.set_base_branch(self.branches.base(&delivery.repository))?;
+        git.set_base_branch(base_branch)?;
         let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
         let token =
             tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
@@ -339,7 +341,7 @@ impl Materials {
     pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
         Self {
             clients: Default::default(),
-            branches: Default::default(),
+            branches: crate::branches::Branches::new(&[]).unwrap(),
             worktrees,
         }
     }
@@ -382,6 +384,28 @@ mod reply_defects {
         assert!(matches!(
             maker_inputs(&brief, &json!({"kind":"leaf"})),
             Err(crate::Error::Invalid(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod repo_conventions_tests {
+    #[test]
+    fn repo_conventions_unconfigured_materials_refuse_load() {
+        let fixture = crate::git_tests::Repo::new();
+        let materials = super::Materials::fixture(fixture.root.path().join("worktrees"));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            materials.load(&fixture.delivery())
+        }));
+        assert!(
+            result.is_ok(),
+            "unconfigured materials must return an error before contacting an upstream"
+        );
+        assert!(matches!(
+            result.unwrap(),
+            Err(crate::Error::Invalid(
+                "repository branch conventions are not configured"
+            ))
         ));
     }
 }

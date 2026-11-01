@@ -73,14 +73,24 @@ All paths are absolute. No tilde or environment-variable expansion occurs.
 The worktrees root and tools directory need not exist during offline validation.
 Allowances use positive integer seconds. Expiry triggers a look at the upstream,
 not a work-duration deadline. Credit reserve and free rechecks allow zero;
-W must be 1 for slice one. Listen addresses are numeric socket addresses with a
+W must be in 1..=3, matching the approved capacity and proof bounds. Rob approved
+3 slots per repo once built and proven (Q29 amended, 2026-10-31). The coordinator
+selects the deployment value; the example remains at 1. Slots and file locks are
+granted together in ticket order. Disjoint leaves can run concurrently when agent capacity is
+available, and overlapping leaves wait without holding a slot or any files.
+Listen addresses are numeric socket addresses with a
 fixed nonzero port. The example status address is `127.0.0.1:8033`; deployment
 sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP and reject embedded credentials,
 queries, and fragments. Parse diagnostics omit source lines.
 
 `limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.
-It defaults to 1 for existing configuration files. Changing an initialized
-world's capacity requires a snapshot migration.
+It defaults to 1 for existing configuration files. `Controller::open` reconciles
+both `limits.w` and `limits.agent_pool` with the stored world. Increases settle
+through the kernel, then persist both capacities, admitted leaves and resulting
+effects in one atomic commit. Reopening at the same capacities writes nothing.
+A gate decrease refuses startup while any request in that repo is open. A pool
+decrease refuses startup while any request is open. Idle decreases are recorded
+in the event journal. Startup also retires ended looks when capacity changes.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.
@@ -119,3 +129,26 @@ rejected. Issue numbers are positive; node numbers can be zero. Both use
 canonical decimal digits. Formatting and recognition share the same parser.
 Publication writes `Refs #N` for the request's issue. TL3 closes the issue after
 all leaves finish.
+
+## Repository check images
+
+Each `[[github.repos]]` entry accepts an optional `container_image`. Omission
+uses `[prismabuild] container_image`. Both settings require an immutable image
+ID or manifest digest in the formats above. Repository overrides match the
+owner and name without regard to ASCII case, and the installation ID exactly.
+The controller stages the selected image into the harness request and seals
+that same image as the PrismaBuild placement requirement.
+
+For example, keep the sandbox on the global image and set the PB override:
+
+```toml
+[[github.repos]]
+owner = "RobTand"
+name = "prismabuild"
+installation_id = 123 # Replace with the installation's numeric ID.
+container_image = "sha256:<64 lowercase hex digits>"
+```
+
+Build and qualify an image with the steps in [the harness guide](../../harness/README.md#prepare-and-roll-a-repository-image).
+The image must already exist on every eligible worker. PrismaBuild checks
+availability before claiming an action and never transfers or pulls images.

@@ -258,7 +258,7 @@ impl Controller {
         if !backfill.rows.is_empty() {
             store.commit(&backfill)?;
         }
-        Ok(Self {
+        let mut controller = Self {
             store,
             adapters,
             bootstrap,
@@ -266,7 +266,57 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
-        })
+        };
+        controller.reconcile_capacity()?;
+        controller.cleanup_ended_looks()?;
+        Ok(controller)
+    }
+
+    fn reconcile_capacity(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut world = snapshot::decode(&snapshot)?;
+        let configured = self.bootstrap.slots;
+        let configured_pool = self.bootstrap.pool;
+        if configured_pool < world.pool_capacity
+            && world.nodes.iter().any(|node| !node.phase.is_closed())
+        {
+            return Err(Error::Invalid(
+                "limits.agent_pool cannot decrease while requests are in flight; drain all repositories first",
+            ));
+        }
+        let pool_change = (configured_pool != world.pool_capacity)
+            .then(|| json!({"stored": world.pool_capacity, "configured": configured_pool}));
+        world.pool_capacity = configured_pool;
+        let mut changes = Vec::new();
+        for (repo, gate) in world.gates.iter_mut().enumerate() {
+            if configured == gate.w {
+                continue;
+            }
+            if configured < gate.w
+                && world.nodes.iter().any(|node| {
+                    node.repo == tl3_kernel::RepoId(repo as u64)
+                        && !matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                })
+            {
+                return Err(Error::Invalid(
+                    "limits.w cannot decrease while requests are in flight; drain the repository first",
+                ));
+            }
+            changes.push(json!({"repo": repo, "stored": gate.w, "configured": configured}));
+            gate.w = configured;
+        }
+        if changes.is_empty() && pool_change.is_none() {
+            return Ok(());
+        }
+        let mut commit = Commit::new(
+            format!("controller:gates:{}", snapshot.revision.get()),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change}),
+            &snapshot,
+        );
+        let (world, outputs) = tl3_kernel::settle_world(world);
+        self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
+        self.store.commit(&commit)?;
+        Ok(())
     }
 
     pub fn register_github_translator(
@@ -656,9 +706,12 @@ impl Controller {
             let delivery = hydrate(effect, &snapshot)?;
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
-                    DeliveryOutput::Effect { node, seq, .. } => world.nodes
-                        [node.index().ok_or(Error::Invalid("node index overflow"))?]
-                    .effect_cancelling(seq),
+                    DeliveryOutput::Effect { node, seq, .. } => {
+                        let node = &world.nodes
+                            [node.index().ok_or(Error::Invalid("node index overflow"))?];
+                        node.effect_cancelling(seq)
+                            || matches!(node.phase, tl3_kernel::Phase::Closed(_))
+                    }
                     DeliveryOutput::Notice { .. } | DeliveryOutput::Comment { .. } => false,
                 };
             if cancelling {
@@ -1113,9 +1166,21 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
+        let (world, outputs) = tl3_kernel::step(world, event);
+        self.record_kernel_result(snapshot, world, outputs, commit)?;
+        commit.result = json!({"kernel_event": event});
+        Ok(())
+    }
+
+    fn record_kernel_result(
+        &mut self,
+        snapshot: &Snapshot,
+        world: World,
+        outputs: Vec<Out>,
+        commit: &mut Commit,
+    ) -> Result<()> {
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
-        let (world, outputs) = tl3_kernel::step(world, event);
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
                 || previous
@@ -1169,7 +1234,6 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
-        commit.result = json!({"kernel_event": event});
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
                 .nodes
@@ -1512,6 +1576,7 @@ impl Controller {
                 });
             }
         }
+        self.retire_ended_effect_looks(snapshot, &world, commit)?;
         Ok(())
     }
 
@@ -1938,7 +2003,7 @@ impl Controller {
                 node,
                 generation,
                 role,
-                reply,
+                mut reply,
             } => {
                 let n = world
                     .nodes
@@ -1966,6 +2031,35 @@ impl Controller {
                         }));
                     }
                 };
+                if role == "planner" && reply["kind"] == "leaf" {
+                    let checks = reply["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, check)| {
+                            Ok(adapters::prismabuild::Check {
+                                name: format!("check-{}", index + 1),
+                                kind: serde_json::from_value(check["kind"].clone())?,
+                                tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
+                        match error {
+                            Error::Invalid(message) => {
+                                reply["violations"]
+                                    .as_array_mut()
+                                    .unwrap()
+                                    .push(json!(message));
+                                mapped = adapters::workers::protocol::MappedReply::Kernel(
+                                    Reply::PlanCantMeet,
+                                );
+                            }
+                            error => return Err(error),
+                        }
+                    }
+                }
                 if role == "reviewer" {
                     let mut criteria =
                         adapters::workers::review::criteria(&mut self.store, snapshot, node)?;

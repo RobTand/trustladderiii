@@ -5,6 +5,23 @@
 
 use std::collections::BTreeSet;
 
+const GATE_PROOFS: &[&str] = &[
+    "gate_grant_w2",
+    "gate_grant_w3",
+    "gate_planning_w2",
+    "gate_planning_w3",
+    "gate_progress_w2",
+    "gate_progress_w3",
+    "gate_waiting_progress_w2",
+    "gate_waiting_progress_w3",
+    "gate_maker_progress_w2",
+    "gate_maker_progress_w3",
+    "gate_merge_progress_w2",
+    "gate_merge_progress_w3",
+    "gate_resume_progress_w2",
+    "gate_resume_progress_w3",
+];
+
 const LIB: &str = include_str!("../src/lib.rs");
 const PROOFS: &str = include_str!("../src/proofs.rs");
 
@@ -57,7 +74,8 @@ fn expand(mapped: BTreeSet<&'static str>) -> BTreeSet<String> {
 
 #[test]
 fn every_event_and_phase_has_a_proof() {
-    let mapped = expand(mapped());
+    let mut mapped = expand(mapped());
+    mapped.extend(GATE_PROOFS.iter().map(|name| name.to_string()));
     let proven: BTreeSet<String> = proven().into_iter().map(String::from).collect();
     let missing: Vec<_> = mapped.difference(&proven).collect();
     let unmapped: Vec<_> = proven.difference(&mapped).collect();

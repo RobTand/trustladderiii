@@ -40,7 +40,10 @@ impl Flow {
                 repository.to_str().unwrap(),
             ],
         );
-        let mut real = Real::new(&config.worktrees_root, 0).unwrap();
+        let mut real = Real::new(&config.worktrees_root, 0)
+            .unwrap()
+            .with_repositories(&config.github.repos)
+            .unwrap();
         real.serve_local(
             Repository {
                 owner: "RobTand".into(),

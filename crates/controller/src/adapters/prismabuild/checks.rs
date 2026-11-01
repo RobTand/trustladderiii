@@ -1,6 +1,7 @@
 use crate::{Error, Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -31,6 +32,51 @@ pub enum Kind {
     Regression,
     BehaviorPreserving,
     Reproducing,
+}
+
+const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+
+pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
+    let tests: BTreeSet<_> = plan.iter().flat_map(|check| &check.tests).collect();
+    let collection = serde_json::to_vec(&serde_json::json!({"event":"collection", "tests":tests}))?;
+    // Python's event encoding adds three object spaces, list separators and a newline.
+    let collection_bytes = collection.len() + 4 + tests.len().saturating_sub(1);
+    let oversized_phase = tests.iter().try_fold(false, |oversized, test| {
+        serde_json::to_vec(test)
+            .map(|bytes| oversized || bytes.len() + 8192 > MAX_REPORT_LINE_BYTES)
+    })?;
+    if collection_bytes > MAX_REPORT_LINE_BYTES || oversized_phase {
+        return Err(Error::Invalid(
+            "Check plan exceeds the 4194304-byte report limit; reduce the selected tests or parameter cases.",
+        ));
+    }
+    let mut result_bytes =
+        65536 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12 + 2;
+    for check in plan {
+        result_bytes += ascii_json_bytes(&serde_json::json!({
+            "name":check.name, "kind":check.kind, "custody":"in-process",
+            "verdict":"infrastructure-failure", "tests":[],
+        }))? + 1;
+        for test in &check.tests {
+            result_bytes += ascii_json_bytes(&serde_json::json!({
+                "test":test, "base":"uncollected", "head":"uncollected",
+                "pre_existing":false, "passed":false, "message":"",
+            }))? + 1;
+        }
+        if result_bytes > super::results::MAX_RESULT_BYTES {
+            return Err(Error::Invalid(
+                "Check plan exceeds the 8388608-byte result limit; reduce the selected tests or checks.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
+    Ok(serde_json::to_string(value)?
+        .chars()
+        .map(|ch| if ch.is_ascii() { 1 } else { 6 * ch.len_utf16() })
+        .sum())
 }
 
 pub(super) fn stage(

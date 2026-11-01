@@ -9,6 +9,7 @@ All production crates share the root workspace and Cargo.lock. The optional `ser
 
 - `World::new(&[slots_per_repo], pool_capacity)` creates an empty world.
 - `step(world, event) -> (World, Vec<Out>)` applies one event and takes every enabled internal transition.
+- `settle_world(world) -> (World, Vec<Out>)` settles reconciled gate or agent capacity without inventing an external event.
 - `Event` carries new requests, operation replies, effect acknowledgements, facts and commands.
 - `Out::Effect` names the node, sequence, effect kind and exact head where needed. `Out::Notice` asks for a message.
 - `World::check`, `consistent` and `valid` check the invariant. `World::witness` and `measure` support progress checks.
@@ -112,7 +113,8 @@ The bounds are:
 
 - two requests, or three after a new one arrives;
 - two repos of four files each;
-- W and the agent pool at most 2;
+- W at most 3 and the agent pool at most 2 in the general proofs;
+- four requests in fourteen focused gate proofs at W = 2 and W = 3, covering grants, file locks, tickets, planning admission and progress;
 - counters below 2^40.
 
 These are simplifications against the state table, all deliberate:
@@ -153,7 +155,7 @@ Earlier runs:
 Submit from a clean commit. PrismaBuild snapshots the entire checkout for each action.
 Do not edit files while a campaign submits. Keep the manifest and receipts outside the checkout.
 
-From the repo root, generate and submit all 81 proofs and the tests:
+From the repo root, generate and submit all 101 proofs and the tests:
 
 ```bash
 python3 crates/kernel/run.py manifest > /tmp/tl3-kernel-campaign.json
@@ -163,9 +165,10 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py --endings KEY...
 
 The manifest gives each proof its own action and lets PrismaBuild choose any eligible worker.
 It reserves one CPU per action, bounds Cargo and native thread counts, and sets priority -10.
-Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 32 GiB, and progress proofs reserve 24 GiB.
-`progress_from_queued` and `apply_new_request` reserve 32 GiB.
-These budgets use measurements from the production representation: reply proofs peaked at 21.8 GiB, progress proofs at 19.1 GiB and new requests at 27.9 GiB.
+Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 44 GiB, and general progress proofs reserve 24 GiB.
+All four-node gate proofs reserve 10 GiB, after measured peaks of 2.7 to 5.3 GiB. Waiting-only worlds prove separately that some internal transition is enabled; mixed worlds prove that every other world has a maker, merge or resume witness. Each concrete event application proves strict progress. This preserves the original worlds and assertions without expanding `is_settled` across all four phases in one solver invocation.
+`progress_from_queued`, `apply_new_request`, `apply_new_adoption` and `apply_reviewer_out_of_room` reserve 44 GiB.
+The coordinator set the 44 GiB budget on 2026-11-01 after six proofs from the former 64 GiB class peaked at 27.9–35.3 GiB. The two rebase reply proofs reserve 48 GiB after a measured peak of 38.7 GiB. Other 32 GiB classes keep 32 GiB. Critical-path development tests use priority -9 when named by the coordinator; bulk proofs remain at -10.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.
 Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.

@@ -92,7 +92,7 @@ fn workers(
     mode: String,
 ) -> impl Executor {
     let add_add = mode == "add-add";
-    let d5 = mode.starts_with("d5-");
+    let d5 = mode.starts_with("d5-") || (mode.starts_with("q46-") && mode != "q46-clean");
     support::workers::Workers::new(
         Some(Box::new(real)),
         fake,
@@ -172,6 +172,8 @@ struct State {
     comments: Vec<Value>,
     operations_comments: Vec<Value>,
     labels: bool,
+    conflicting_enqueue: bool,
+    mergeable_override: Option<bool>,
     closed: bool,
     fail_reads: bool,
     not_found: Option<&'static str>,
@@ -193,6 +195,8 @@ impl Default for State {
             comments: vec![],
             operations_comments: vec![],
             labels: false,
+            conflicting_enqueue: false,
+            mergeable_override: None,
             closed: false,
             fail_reads: false,
             not_found: None,
@@ -293,6 +297,15 @@ impl support::github::Routes for State {
 }
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
+        if r.method == "POST" && r.url.path() == "/v1/default/banks/tl3/memories" {
+            let body: Value = serde_json::from_slice(&r.body).unwrap();
+            assert_eq!(body["async"], true);
+            assert_eq!(body["items"].as_array().unwrap().len(), 1);
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "success": true, "async": true, "operation_id": body["operation_id"],
+                "bank_id": "tl3", "items_count": 1,
+            }));
+        }
         let mut s = self.state.lock().unwrap();
         let method = r.method.as_str();
         let path = r.url.path();
@@ -360,6 +373,17 @@ impl Respond for Api {
                     "head":{"ref":body["head"],"sha":head,"repo":{"id":1,"name":"tl3-sandbox","owner":{"id":1,"login":"RobTand"}}},
                     "base":{"ref":body["base"],"sha":base,"repo":null},"updated_at":"2026-10-30T00:00:00Z"}),
                     );
+                    let merge = Command::new("git")
+                        .current_dir(&self.fixture.remote)
+                        .args([
+                            "merge-tree",
+                            "--write-tree",
+                            s.pull.as_ref().unwrap()["base"]["ref"].as_str().unwrap(),
+                            s.pull.as_ref().unwrap()["head"]["sha"].as_str().unwrap(),
+                        ])
+                        .output()
+                        .unwrap();
+                    s.pull.as_mut().unwrap()["mergeable"] = json!(merge.status.success());
                     s.pull.clone().unwrap()
                 }
                 ("GET", "/pulls/100") => {
@@ -370,6 +394,22 @@ impl Respond for Api {
                             &self.fixture.remote,
                             &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
                         ));
+                    }
+                    let mergeable_override = s.mergeable_override;
+                    if let Some(pull) = &mut s.pull {
+                        let output = Command::new("git")
+                            .current_dir(&self.fixture.remote)
+                            .args([
+                                "merge-tree",
+                                "--write-tree",
+                                pull["base"]["ref"].as_str().unwrap(),
+                                pull["head"]["sha"].as_str().unwrap(),
+                            ])
+                            .output()
+                            .unwrap();
+                        let mergeable = mergeable_override.unwrap_or(output.status.success());
+                        pull["mergeable"] = json!(mergeable);
+                        pull["mergeable_state"] = json!(if mergeable { "clean" } else { "dirty" });
                     }
                     s.pull.clone().unwrap()
                 }
@@ -404,6 +444,12 @@ impl Respond for Api {
                     assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
                         && c["head_sha"] == *head
                         && c["app"]["id"] == 123));
+                    let merge = Command::new("git")
+                        .current_dir(&self.fixture.remote)
+                        .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
+                        .output()
+                        .unwrap();
+                    s.conflicting_enqueue = !merge.status.success();
                     s.operations.push("enqueue".into());
                     s.labels = true;
                     json!([{"name":"tl3-queue"}])
@@ -485,6 +531,8 @@ impl Server {
             Some(operations()),
         )
         .unwrap()
+        .with_repositories(&self.api.fixture.repositories)
+        .unwrap()
     }
 }
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {
@@ -538,6 +586,11 @@ fn drain(c: &mut Controller, source: &mut WorkerOutputSource, store: &mut Store,
                 break;
             }
         }
+        assert_ne!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::AwaitingRob,
+            "publication must recover without asking Rob"
+        );
         source.poll_once(store, &sender).unwrap();
         let mut observed = false;
         for input in receiver.try_iter() {
@@ -613,16 +666,25 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         fixture.repositories = config.github.repos.clone();
     }
     let f = Arc::new(fixture);
-    commit(&f.source, "value.py", "def value(): return 1\n");
-    commit(
-        &f.source,
-        "pyproject.toml",
+    let original = git(&f.source, &["rev-parse", "HEAD"]);
+    fs::write(f.source.join("value.py"), "def value(): return 1\n").unwrap();
+    fs::write(
+        f.source.join("pyproject.toml"),
         "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
-    );
+    )
+    .unwrap();
     commit(
         &f.source,
         "test_value.py",
         "from value import value\ndef test_value(): assert value() == 2\n",
+    );
+    assert_eq!(
+        git(
+            &f.source,
+            &["rev-list", "--count", &format!("{original}..HEAD")]
+        ),
+        "1",
+        "publishing setup needs one base commit, not one per file"
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
     if mode == "repo-conventions" {
@@ -644,7 +706,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             vec![primary, backup]
         };
     }
-    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    config.hindsight.endpoint = server.server.uri().parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![
@@ -712,6 +774,55 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         label: "tl3".into(),
     })
     .unwrap();
+    if mode.starts_with("q46-") {
+        let (sender, receiver) = mpsc::channel();
+        let start = Instant::now();
+        loop {
+            let node = c.world().unwrap().nodes[0];
+            let reached = match mode {
+                "q46-checking" | "q46-clean" => node.phase == Phase::Checking,
+                "q46-reviewing" => node.phase == Phase::Reviewing,
+                "q46-enqueue" => node.effect.is_some_and(|e| e.kind == EffectKind::Enqueue),
+                _ => panic!("unknown Q46 mode"),
+            };
+            if reached {
+                break;
+            }
+            c.drive_once().unwrap();
+            source.poll_once(&mut store, &sender).unwrap();
+            for input in receiver.try_iter() {
+                tl3_controller::ingress::apply(&mut c, input).unwrap();
+            }
+            assert!(start.elapsed() < Duration::from_secs(90));
+        }
+        if mode != "q46-clean" {
+            commit(&f.source, "value.py", "def value(): return 3\n");
+        }
+        commit(
+            &f.source,
+            "main-moved.txt",
+            "main moved before publication\n",
+        );
+        git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
+        if mode == "q46-enqueue" {
+            let mut state = server.api.state.lock().unwrap();
+            state.pull.as_mut().unwrap()["mergeable"] = json!(false);
+            state.pull.as_mut().unwrap()["mergeable_state"] = json!("dirty");
+        }
+        if mode == "q46-enqueue" {
+            for _ in 0..100 {
+                assert!(c.drive_once().unwrap());
+                assert!(
+                    !server.api.state.lock().unwrap().conflicting_enqueue,
+                    "a conflicting checked head must rebase before enqueue"
+                );
+                if c.world().unwrap().nodes[0].phase == Phase::Rebasing {
+                    break;
+                }
+            }
+            assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
+        }
+    }
     if mode == "before-enqueue" {
         let (sender, receiver) = mpsc::channel();
         let start = Instant::now();
@@ -795,6 +906,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         return;
     }
     drain(&mut c, &mut source, &mut store, Phase::Queued);
+    tl3_controller::memory::flush(&mut store, &config.hindsight)
+        .expect("publishing fixture must acknowledge memories instead of retrying a closed port");
     if mode == "repo-conventions" {
         let state = server.api.state.lock().unwrap();
         let pull = state.pull.as_ref().unwrap();
@@ -820,6 +933,25 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .unwrap()
         .to_owned();
     let credit = c.world().unwrap().nodes[0].credit.balance();
+    if mode.starts_with("q46-") {
+        let node = c.world().unwrap().nodes[0];
+        assert_eq!(node.credit.spent, u32::from(mode != "q46-clean"));
+        assert_eq!(node.rechecks, 0);
+        assert!(node.question.is_none());
+        let main = git(&f.remote, &["rev-parse", "main"]);
+        let d = f.delivery(EffectKind::Push, 100);
+        let checkout = f.adapter().checkout(&d);
+        let contains_main = git(&checkout, &["merge-base", &first_head, &main]) == main;
+        assert_eq!(contains_main, mode != "q46-clean");
+        assert_eq!(
+            fs::read_to_string(root.path().join("reviews.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            if mode == "q46-clean" { 1 } else { 2 }
+        );
+    }
+
     let d = f.delivery(EffectKind::Push, 100);
     if matches!(mode, "push" | "reports-latest" | "review-reset-push") {
         let checkout = f.adapter().checkout(&d);
@@ -855,6 +987,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         {
             let mut state = server.api.state.lock().unwrap();
             state.queue_fixture = "dequeued";
+            state.mergeable_override = Some(false);
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");
@@ -891,6 +1024,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         {
             let mut state = server.api.state.lock().unwrap();
             state.queue_fixture = "running";
+            state.mergeable_override = None;
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
@@ -1080,6 +1214,9 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 | "add-add"
                 | "d5-clean"
                 | "d5-conflict"
+                | "q46-checking"
+                | "q46-reviewing"
+                | "q46-enqueue"
         ) {
             2
         } else {
@@ -1247,7 +1384,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         state.checks.len(),
         if mode == "round-one-rebase" {
             2
-        } else if matches!(mode, "changes" | "new-attempt" | "review-retry") {
+        } else if matches!(
+            mode,
+            "changes" | "new-attempt" | "review-retry" | "q46-checking" | "q46-reviewing"
+        ) {
             1
         } else {
             reviews.len()
@@ -1314,6 +1454,82 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     drop(c);
     drop(server.runtime);
 }
+fn publication_open_conflict() {
+    let root = tempfile::tempdir().unwrap();
+    let f = Arc::new(Fixture::create(root.path()));
+    let prepare = f.delivery(EffectKind::PrepareWorktree, 1);
+    f.adapter().execute(&prepare).unwrap();
+    let head = commit(&f.adapter().checkout(&prepare), "shared.txt", "leaf side\n");
+    let mut push = f.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(head);
+    f.adapter().execute(&push).unwrap();
+    f.advance_main(true);
+    let server = Server::new(f);
+    let mut open = push.clone();
+    open.key = "open-conflict".into();
+    open.output = Out::Effect {
+        node: NodeId(0),
+        seq: 3,
+        kind: EffectKind::OpenPr,
+        head: None,
+    };
+    let mut adapter = server.adapter(&root.path().join("github"), 1);
+    let result = adapter.execute(&open).unwrap();
+    assert!(
+        result.observations.iter().any(|o| matches!(
+            o,
+            Observation::Kernel(tl3_kernel::Event::Fact {
+                fact: tl3_kernel::Fact::Conflict,
+                ..
+            })
+        )),
+        "opening a conflicting PR must report Conflict: {result:?}"
+    );
+    assert!(
+        result
+            .observations
+            .iter()
+            .any(|o| matches!(o, Observation::PullRequest { number: 100, .. })),
+        "keep the PR binding for re-publication and teardown"
+    );
+    assert!(
+        matches!(adapter.reconcile(&open).unwrap(), Reconciliation::Found(c)
+        if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
+    );
+    assert!(!server.api.state.lock().unwrap().labels);
+}
+fn publication_requires_conventions() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = Arc::new(Fixture::create(root.path()));
+    let prepare = fixture.delivery(EffectKind::PrepareWorktree, 1);
+    fixture.adapter().execute(&prepare).unwrap();
+    let mut push = fixture.delivery(EffectKind::Push, 2);
+    push.head_sha = Some(fixture.head(&prepare));
+    fixture.adapter().execute(&push).unwrap();
+    let server = Server::new(fixture.clone());
+    let mut adapter = server
+        .adapter(&root.path().join("github"), 1)
+        .with_repositories(&[])
+        .unwrap();
+    let result = adapter.execute(&fixture.delivery(EffectKind::OpenPr, 3));
+    assert!(
+        matches!(
+            result,
+            Err(tl3_controller::Error::Invalid(
+                "repository branch conventions are not configured"
+            ))
+        ),
+        "an unconfigured publisher must reject publication, got {result:?}"
+    );
+    assert!(
+        server
+            .runtime
+            .block_on(server.server.received_requests())
+            .unwrap()
+            .is_empty()
+    );
+}
+
 fn publication_recovery() {
     let root = tempfile::tempdir().unwrap();
     let f = Arc::new(Fixture::create(root.path()));
@@ -1532,6 +1748,16 @@ fn publication_404_look(settings: &tl3_config::Store, case: &str) {
 }
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("q46-open") {
+        publication_open_conflict();
+        println!("test publication_open_conflict ... ok");
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--require-conventions") {
+        publication_requires_conventions();
+        println!("test publication_requires_conventions ... ok");
+        return;
+    }
     if let Some(case) = env::args()
         .nth(1)
         .and_then(|arg| arg.strip_prefix("--effect-404=").map(str::to_owned))
@@ -1550,6 +1776,7 @@ fn main() {
             "merged".into(),
         );
         support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
         if std::env::args().len() > 1 {
             return;
         }
@@ -1567,6 +1794,10 @@ fn main() {
         println!("test publishing_{mode} ... ok");
         return;
     }
+    publication_open_conflict();
+    println!("test publication_open_conflict ... ok");
+    publication_requires_conventions();
+    println!("test publication_requires_conventions ... ok");
     publication_recovery();
     println!("test publication_lost_response_recovery ... ok");
     let python = prepare_workers();
@@ -1581,6 +1812,10 @@ fn main() {
         "rebase",
         "round-one-rebase",
         "add-add",
+        "q46-checking",
+        "q46-reviewing",
+        "q46-enqueue",
+        "q46-clean",
         "d5-clean",
         "d5-conflict",
         "unapproved",
@@ -1613,7 +1848,5 @@ fn main() {
         println!("test {mode} ... ok");
     }
     database.stop();
-    println!(
-        "All publishing scenarios passed; recorded upstreams; no nested submissions; no skips"
-    );
+    println!("35 publishing scenarios passed; recorded upstreams; no nested submissions; no skips");
 }

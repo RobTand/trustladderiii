@@ -228,18 +228,7 @@ fn invalid_values_name_the_setting_and_the_fix() {
             "limits.fit_tokens",
             "less than",
         ),
-        (
-            vec!["limits", "w"],
-            Value::Integer(0),
-            "limits.w",
-            "slice one",
-        ),
-        (
-            vec!["limits", "w"],
-            Value::Integer(2),
-            "limits.w",
-            "slice one",
-        ),
+        (vec!["limits", "w"], Value::Integer(0), "limits.w", "1..=3"),
         (
             vec!["github", "rob", "id"],
             Value::Integer(0),
@@ -837,6 +826,28 @@ fn planning_overhead_must_leave_room_under_the_fit_limit() {
 }
 
 #[test]
+fn gate_width_accepts_approved_limits() {
+    for w in [1, 2, 3] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["limits"]["w"] = Value::Integer(w);
+        let config = Config::parse(&toml::to_string(&document).unwrap())
+            .expect("Q29 amended permits gate widths one through three");
+        assert_eq!(i64::from(config.limits.w), w);
+    }
+}
+
+#[test]
+fn gate_width_rejects_values_outside_approval() {
+    for w in [256, 4, 8, 255, 0, i64::from(u32::MAX)] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["limits"]["w"] = Value::Integer(w);
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err();
+        assert!(error.to_string().contains("limits.w"), "{w}: {error}");
+        assert!(error.to_string().contains("1..=3"), "{w}: {error}");
+    }
+}
+
+#[test]
 fn repo_conventions_default_and_accept_explicit_values() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(
@@ -882,6 +893,38 @@ fn repo_conventions_reject_ambiguous_templates_and_invalid_refs() {
                 .unwrap_err()
                 .to_string()
                 .contains("base_branch")
+        );
+    }
+}
+
+#[test]
+fn repository_images_accept_immutable_overrides_and_reject_tags() {
+    for image in [
+        format!("sha256:{}", "b".repeat(64)),
+        format!("registry/repo@sha256:{}", "c".repeat(64)),
+    ] {
+        let text = changed(&["github", "repos"], {
+            let mut document: Value = EXAMPLE.parse().unwrap();
+            document["github"]["repos"][0]
+                .as_table_mut()
+                .unwrap()
+                .insert("container_image".into(), Value::String(image));
+            document["github"]["repos"].clone()
+        });
+        assert!(
+            Config::parse(&text).is_ok(),
+            "immutable per-repo image must parse"
+        );
+    }
+    for image in ["", "tl3-harness:t5", "sha256:abc", "content:sha256:abcd"] {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert("container_image".into(), Value::String(image.into()));
+        assert!(
+            Config::parse(&toml::to_string(&document).unwrap()).is_err(),
+            "reject mutable or invalid image {image}"
         );
     }
 }

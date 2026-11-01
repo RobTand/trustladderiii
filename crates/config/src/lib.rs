@@ -217,6 +217,8 @@ pub struct Identity {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
+    #[serde(default)]
+    pub container_image: Option<String>,
     pub owner: String,
     pub name: String,
     pub installation_id: u64,
@@ -477,8 +479,8 @@ impl Config {
                 "sum must be less than limits.fit_tokens",
             ));
         }
-        if limits.w != 1 {
-            return Err(invalid("limits.w", "must be 1 in slice one (Q29)"));
+        if !(1..=3).contains(&limits.w) {
+            return Err(invalid("limits.w", "must be in 1..=3"));
         }
         if limits.agent_pool == 0 {
             return Err(invalid("limits.agent_pool", "must be greater than zero"));
@@ -520,6 +522,16 @@ impl Config {
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
             tl3_worktrees::BranchName::new(&repo.base_branch)
                 .map_err(|error| invalid(format!("{field}.base_branch"), error.to_string()))?;
+            if repo
+                .container_image
+                .as_deref()
+                .is_some_and(|image| !immutable_image(image))
+            {
+                return Err(invalid(
+                    format!("{field}.container_image"),
+                    "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
+                ));
+            }
             if repo.installation_id == 0 {
                 return Err(invalid(
                     format!("{field}.installation_id"),

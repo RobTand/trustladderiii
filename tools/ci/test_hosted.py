@@ -114,7 +114,8 @@ class HostedTests(unittest.TestCase):
                 '    raise SystemExit(0)\n'
                 'if not marker.exists():\n'
                 '    raise SystemExit("dependency cache was not prepared")\n'
-                'print("test lifecycle ... ok")\n')
+                'print("test lifecycle ... ok")\n'
+                'print("1 fixture scenarios passed; no skips")\n')
             policy = root / rust_gate.POLICY
             policy.parent.mkdir(parents=True)
             policy.write_text(json.dumps({'seconds': 10, 'slow': {}}))

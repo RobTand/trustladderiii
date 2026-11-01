@@ -75,6 +75,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(controller.world().unwrap().nodes[0].round, 1);
         assert_eq!(api.state.lock().unwrap().reruns, 0);
         assert_eq!(api.state.lock().unwrap().posts, 1);
+        println!("test head_check_{mode} ... ok");
         return;
     }
     drain(&mut controller);
@@ -139,6 +140,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             controller.world().unwrap().nodes[0].phase,
             Phase::AwaitingRob
         ));
+        println!("test head_check_{mode} ... ok");
         return;
     }
     if matches!(mode, "otherhead" | "optional") {
@@ -147,6 +149,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             0,
             "only required checks on this PR head may be rerun"
         );
+        println!("test head_check_{mode} ... ok");
         return;
     }
     if mode == "restart" {
