@@ -1791,6 +1791,12 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--subscription-errors") {
+        let mut db = support::Database::start();
+        subscription_error_is_isolated(&db.create("subscription_errors"));
+        db.stop();
+        return;
+    }
     for (flag, test) in [
         (
             "--pending-cancel-look",
@@ -2818,4 +2824,74 @@ fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
     }
     assert_eq!(calls.get(), before);
     println!("test effect_http_{case} ... ok");
+}
+
+fn subscription_error_is_isolated(settings: &tl3_config::Store) {
+    struct SubscriptionFailure(adapters::prismabuild::Adapter);
+    impl Executor for SubscriptionFailure {
+        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+            self.0.execute(d)
+        }
+        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.0.reconcile(d)
+        }
+        fn wait_record(
+            &mut self,
+            key: &str,
+            checkout: &Path,
+        ) -> tl3_controller::Result<tl3_controller::executor::WaitRecord> {
+            self.0.wait_record(key, checkout)
+        }
+        fn watch_wait(
+            &mut self,
+            _: &Delivery,
+            _: Option<&tl3_store::ExternalWait>,
+        ) -> tl3_controller::Result<()> {
+            Err(tl3_controller::Error::Invalid(
+                "one wait subscription is unavailable",
+            ))
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        WaitingMaker {
+            fake: adapters::workers::Fake::new(root.path()),
+            stops: Rc::new(Cell::new(0)),
+            owner: "prismabuild".into(),
+            checkout: root.path().join("worktree"),
+        },
+    );
+    registry.register(
+        Upstream::PrismaBuild,
+        SubscriptionFailure(waits::adapter(root.path())),
+    );
+    waits::record(root.path(), "claimed");
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
+    c.intake(labelled()).unwrap();
+    drain(&mut c);
+    for _ in 0..3 {
+        assert!(
+            c.look_now().is_ok(),
+            "one subscription failure must not stop other looks"
+        );
+    }
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|row| row.table == "incidents" && row.value["open"] == true)
+            .count(),
+        1,
+        "repeated failed subscriptions reuse their incident"
+    );
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
 }
