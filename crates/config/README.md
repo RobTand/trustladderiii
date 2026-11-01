@@ -76,7 +76,7 @@ not a work-duration deadline. Credit reserve and free rechecks allow zero;
 W must be in 1..=3, matching the approved capacity and proof bounds. Rob approved
 3 slots per repo once built and proven (Q29 amended, 2026-10-31). The coordinator
 selects the deployment value; the example remains at 1. Slots and file locks are
-granted together. Disjoint leaves can run concurrently when agent capacity is
+granted together in ticket order. Disjoint leaves can run concurrently when agent capacity is
 available, and overlapping leaves wait without holding a slot or any files.
 Listen addresses are numeric socket addresses with a
 fixed nonzero port. The example status address is `127.0.0.1:8033`; deployment
@@ -84,13 +84,13 @@ sets an explicit LAN address for the status page. HTTP endpoints allow LAN HTTP 
 queries, and fragments. Parse diagnostics omit source lines.
 
 `limits.agent_pool` sets the kernel's simultaneous agent capacity, from 1 to 255.
-It defaults to 1 for existing configuration files. Changing the stored agent pool
-requires a separate snapshot migration. `Controller::open` reconciles `limits.w`
-with stored gate capacity. Increases
-settle through the kernel, then persist the gate, admitted leaves and resulting
-effects atomically. Reopening at the same width writes nothing. A decrease
-refuses startup while any request in the repo is open; an idle decrease is
-recorded in the event journal.
+It defaults to 1 for existing configuration files. `Controller::open` reconciles
+both `limits.w` and `limits.agent_pool` with the stored world. Increases settle
+through the kernel, then persist both capacities, admitted leaves and resulting
+effects in one atomic commit. Reopening at the same capacities writes nothing.
+A gate decrease refuses startup while any request in that repo is open. A pool
+decrease refuses startup while any request is open. Idle decreases are recorded
+in the event journal. Startup also retires ended looks when capacity changes.
 
 Run `cargo test --locked --manifest-path crates/config/Cargo.toml` through
 PrismaBuild from a clean commit. Tests use temporary fixture secret files only.

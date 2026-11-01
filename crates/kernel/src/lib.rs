@@ -1569,7 +1569,7 @@ pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
     (world, out)
 }
 
-/// Settle after the controller reconciles stored gate capacity.
+/// Settle after the controller reconciles stored gate or agent capacity.
 pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     let mut out = Vec::new();
     settle(&mut world, &mut out, None);
@@ -2671,7 +2671,7 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// Oldest slot waiter, or oldest waiter for the agent pool.
+/// First come, first served: no one waiting in the same line holds an older ticket.
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };

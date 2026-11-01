@@ -618,11 +618,13 @@ The gate is part of the world, so its changes are atomic with the step that make
 
 **Slice one (Q29 amended, Rob 2026-10-31):** W is configurable from 1 through 3. Rob approved raising W from 1 to 3 slots per repo once built and proven.
 
-A leaf gets its slot and all its files together. Leaves are served in ticket order, including a leaf waiting on files. A leaf waiting for a slot holds neither a slot nor files and keeps its place in line. Planning is admitted when fewer than W leaves are waiting for a slot.
+A leaf gets its slot and all its files together. Leaves are served in ticket order, including a leaf waiting on files. A leaf waiting for a slot holds neither a slot nor files and keeps its place in line.
 
 **Slice two:**
 
-- W remains configurable; the approved deployment target is 3 per repo (Q29 amended, Rob 2026-10-31).
+- W is 2 per repo to start, tuned later from measured capacity (Q29).
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - A queued leaf is eligible when it isn't paused and isn't waiting on an incident. A leaf that isn't eligible reserves nothing.
 - A leaf is runnable when it is eligible and all its files are free.
 - Each free slot goes to the runnable leaf with the highest rank, with ties going to the older leaf. The rank is defined under "Status, bottlenecks and ranking". When two leaves want the same file, the one that unblocks more gets it (Q30, Q36, Q38).

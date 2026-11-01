@@ -25,7 +25,7 @@ context_tokens = 150000
 # Q6, docs/state-table.md, "Progress credit": starting reserve and free rebases.
 credit_reserve = 3
 free_rechecks = 3
-# Q29, docs/state-table.md, "Gates": slice one has one slot per repo.
+# Q29 amended: W may be 1 to 3; the approved slice-one deployment value is 3.
 w = 1
 # Q39, docs/state-machine.md: simultaneous agent runs.
 agent_pool = 1
