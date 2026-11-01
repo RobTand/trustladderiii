@@ -127,7 +127,8 @@ def failure_tags(error):
         "missing final model reply", "reply cites a memory it was not given",
         "only code may supply a forecast", "sized briefs must declare their root files",
         "duplicate JSON key", "non-finite JSON number",
-        "intake input exceeds exploration budget",
+        "ingest input exceeds exploration budget", "audit input exceeds exploration budget",
+        "maker input exceeds exploration budget",
         "declared files must use canonical relative paths",
         "declared file exceeds the 1048576-byte limit",
         "declared file must be UTF-8 text without binary control bytes",
@@ -141,7 +142,7 @@ def failure_tags(error):
     elif isinstance(error, ValidationError):
         # Validator names and schema paths come from our schemas, never instance values.
         path = "/".join(str(part) for part in error.absolute_schema_path)
-        message = f"reply validation failed: {error.validator} at schema {path}"
+        message = f"schema validation failed: {error.validator} at schema {path}"
     elif isinstance(error, ValueError):
         message = "invalid worker data"
         if (type(error) is ValueError and len(error.args) == 1

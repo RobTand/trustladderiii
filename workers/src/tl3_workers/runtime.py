@@ -103,7 +103,7 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None)
     )
     middleware = [filesystem]
     if role.exploration_budget is not None:
-        middleware.append(ExplorationMiddleware(role.exploration_budget))
+        middleware.append(ExplorationMiddleware(role.exploration_budget, role.name))
     return create_deep_agent(
         model=model, tools=build_tools(worktree, role.tools), subagents=[], system_prompt=prompt,
         middleware=middleware, name="tl3_" + role.name,

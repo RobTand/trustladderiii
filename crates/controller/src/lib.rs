@@ -1590,7 +1590,14 @@ impl Controller {
                                 })
                                 .map(|row| &row.value)
                         });
-                    if let Some(failure) = failure {
+                    let incident_generation = snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "nodes" && row.id == node.0.to_string())
+                        .and_then(|row| row.value["generation"].as_u64());
+                    if let Some(failure) = failure
+                        && failure["generation"].as_u64() == incident_generation
+                    {
                         summary.push_str(&format!(
                             " Last worker failure: {}: {}.",
                             failure["failure_class"].as_str().unwrap_or("unknown"),
@@ -2485,6 +2492,12 @@ impl Controller {
                         }
                     }
                 };
+                if mapped != Reply::RunFailed {
+                    commit.rows.push(RowChange::Delete {
+                        table: "worker_failures".into(),
+                        id: node.0.to_string(),
+                    });
+                }
                 if role == "reviewer" {
                     commit.rows.push(put(
                         "reviewer_session",

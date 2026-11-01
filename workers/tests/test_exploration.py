@@ -95,8 +95,9 @@ def test_parallel_results_are_bounded_and_marked_as_clipped(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])
-@pytest.mark.parametrize("reported", [True, False])
-def test_real_orientation_allows_four_exploration_turns(tmp_path, monkeypatch, role, reply, reported):
+@pytest.mark.parametrize("reported,orientation_bytes", [(True, 88_000), (False, 88_000), (True, 200_000)])
+def test_real_orientation_allows_four_exploration_turns(tmp_path, monkeypatch, role, reply, reported,
+                                                       orientation_bytes):
     observed = []
     (tmp_path / "evidence.txt").write_text("evidence")
 
@@ -116,9 +117,9 @@ def test_real_orientation_allows_four_exploration_turns(tmp_path, monkeypatch, r
 
     monkeypatch.setattr(runtime, "create_model", lambda _: OrientationModel(responses=[]))
     events = []
-    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {"orientation": "x" * 88_000}},
+    runtime.run({"role": role, "worktree": str(tmp_path), "inputs": {"orientation": "x" * orientation_bytes}},
                 events.append)
-    assert len(observed) == 5, "88 KB orientation must leave room for all four exploration rounds"
+    assert len(observed) == 5, "orientation must leave room for all four exploration rounds"
     for messages in observed:
         assert_tool_pairs(messages)
     assert events[-1]["reply"] == reply

@@ -78,20 +78,23 @@ another exploration call, the runtime reserves the original input and bounded
 evidence for a final answer. At that boundary it removes tools and asks for the
 final JSON. Schema validation and the role's reply checks still apply.
 
-Each call charges the larger of provider-reported input tokens and a conservative
-UTF-8 byte bound on messages, tool schemas, and framing. Missing usage therefore
-cannot grant extra calls. This bound deliberately overcounts ordinary text.
+Each call charges provider-reported input tokens when present. Otherwise it
+estimates tokens as serialized UTF-8 bytes divided by three, rounded up, including
+messages, tool schemas, and framing. Final-answer reserves use the same estimate.
+The latest reported call size also sets a floor for the next-call and final-answer
+reserves when provider usage exceeds the estimate.
 Only 32 KiB of recent exploration messages reaches the next model call. Complete
 call/result groups retain their IDs. Large result text is clipped within that
-limit. Older groups leave the prompt, while the original request remains intact.
+limit. The newest group always survives; oversized call arguments become a marked
+excerpt, keeping each call paired with its result. Older groups leave the prompt, while the original request remains intact.
 An original input larger than the entire allowance fails with a fixed diagnostic.
 
 Maker uses the same runtime retention policy with a 64 KiB exploration-history
 window. Recent call/result groups remain whole when they fit; older text is
 removed or clipped with a notice. Human requests and repair feedback stay in
 order, including across resumed visits. Edits remain in the worktree and can be
-read again. Maker permits 64 tool turns and 6,000,000 conservatively charged
-input tokens, with the same final-answer reservation as intake. This leaves room
+read again. Maker permits 64 tool turns and 6,000,000 input
+tokens, with the same final-answer reservation as intake. This leaves room
 above the observed 50-turn session while bounding endless work. An exhausted
 no-change done becomes cant_meet without another model call. Its context check, self-check,
 reply validation, and code-owned commit still apply. Planner and reviewer can
