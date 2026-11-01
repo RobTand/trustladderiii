@@ -5,7 +5,6 @@ gate-result.json as a BuildBuddy artifact; this script fetches it. A failed,
 timed-out or disconnected run, or a missing or malformed result, fails here.
 """
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -32,14 +31,15 @@ class BuildBuddy:
     def __init__(self, key, api=API):
         self.key, self.api = key, api
 
-    def call(self, method, body, timeout=120):
+    def call(self, method, body, timeout=120, raw=False):
+        """JSON in; JSON out, or the raw body for GetFile."""
         request = urllib.request.Request(
             self.api + method, data=json.dumps(body).encode(),
             headers={'x-buildbuddy-api-key': self.key, 'Content-Type': 'application/json'})
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                return json.load(response)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+                return response.read() if raw else json.load(response)
+        except (urllib.error.URLError, TimeoutError, ValueError) as error:
             raise RemoteError(f'BuildBuddy {method} failed: {error}') from error
 
 
@@ -85,8 +85,7 @@ def wait(client, invocation_id, deadline, interval=15, clock=time.monotonic, sle
 def fetch(client, invocation, name):
     for artifact in invocation.get('artifacts', []):
         if artifact.get('name') == name:
-            data = client.call('GetFile', {'uri': artifact['uri']}, timeout=300).get('data', '')
-            return base64.b64decode(data)
+            return client.call('GetFile', {'uri': artifact['uri']}, timeout=300, raw=True)
     return None
 
 
