@@ -298,7 +298,11 @@ pub(crate) fn repository_materials(
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::{fs, process::Command};
+    use std::{
+        fs,
+        io::Write,
+        process::{Command, Stdio},
+    };
 
     #[test]
     fn accepted_plan_supplies_maker_goals_and_named_checks() {
@@ -335,11 +339,20 @@ mod tests {
     fn repository_orientation_summarizes_many_files_and_truncates_readme() {
         let f = crate::git_tests::Repo::new();
         fs::write(f.path.join("README.md"), "é".repeat(40_000)).unwrap();
-        fs::create_dir(f.path.join("src")).unwrap();
+        crate::git_tests::git(&f.path, &["add", "README.md"]);
+        let blob = crate::git_tests::git(&f.path, &["hash-object", "-w", "README.md"]);
+        let mut child = Command::new("git")
+            .current_dir(&f.path)
+            .args(["update-index", "--index-info"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
         for index in 0..10_001 {
-            fs::write(f.path.join(format!("src/{index:05}.txt")), "x").unwrap();
+            writeln!(input, "100644 {blob}\tsrc/{index:05}.txt").unwrap();
         }
-        crate::git_tests::git(&f.path, &["add", "."]);
+        drop(input);
+        assert!(child.wait().unwrap().success());
         crate::git_tests::git(&f.path, &["commit", "-qm", "many files"]);
         let head = crate::git_tests::git(&f.path, &["rev-parse", "HEAD"]);
         let repo = repository_materials(&f.path, &head).unwrap();

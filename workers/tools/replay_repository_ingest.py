@@ -14,6 +14,7 @@ import worker_process
 
 
 INSPECT = '''
+metrics_path = Path(sys.argv[1]).with_suffix('.metrics.json')
 class InspectModel(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         assert {tool.name for tool in tools} == {'list', 'read', 'glob', 'grep'}
@@ -32,7 +33,7 @@ class InspectModel(FakeMessagesListChatModel):
             assert any('--gpus' in m.text for m in results)
             metrics['tools'] = [m.name for m in results]
             metrics['tool_result_bytes'] = sum(len(m.text.encode()) for m in results)
-        Path(sys.argv[1]).with_suffix('.metrics.json').write_text(json.dumps(metrics))
+        metrics_path.write_text(json.dumps(metrics))
         return super()._generate(messages, **kwargs)
 '''
 
@@ -64,6 +65,17 @@ def main():
     ]}, {"content": json.dumps(brief)}]
     worker_process.LAUNCH = worker_process.LAUNCH.replace(
         'model = FakeMessagesListChatModel(', INSPECT + '\nmodel = InspectModel(')
+    worker_process.LAUNCH = worker_process.LAUNCH.replace("def create_model(request):", """
+original_run = runtime.run
+def record_failures(request, emit):
+    try:
+        return original_run(request, emit)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
+runtime.run = record_failures
+def create_model(request):""")
     with tempfile.TemporaryDirectory(prefix="tl3-ingest-replay-") as directory:
         root = Path(directory)
         request = {
@@ -79,7 +91,7 @@ def main():
         assert not Path(request["key_file"]).exists()
         metrics = json.loads((root / "scripted-model.metrics.json").read_text())
         assert len(metrics["tools"]) == 5
-        print(json.dumps({"repository": "RobTand/prismabuild", "issue": 1968,
+        print(json.dumps({"repository": "RobTand/" + sys.argv[3], "issue": 1968,
                           "model": "scripted recording; no network or credentials",
                           "exit_code": result.exit_code, **metrics}))
 

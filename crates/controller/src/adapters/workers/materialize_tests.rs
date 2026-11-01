@@ -72,18 +72,39 @@ fn exploration_checkout_uses_pinned_commit_and_recovers_partial_checkout() {
 }
 
 #[test]
-#[ignore = "requires explicit test-only repository clones; run through PrismaBuild"]
-fn real_repository_orientation_and_ingest_replay() {
-    let repositories =
-        PathBuf::from(std::env::var_os("TL3_TEST_REPOSITORIES").expect("test clones required"));
+fn repository_orientation_and_ingest_replay() {
+    let generated = crate::git_tests::Repo::new();
+    let repositories = if let Some(root) = std::env::var_os("TL3_TEST_REPOSITORIES") {
+        ["prismabuild", "prismaquant", "tessera"]
+            .into_iter()
+            .map(|name| (name, PathBuf::from(&root).join(format!("{name}.git"))))
+            .collect::<Vec<_>>()
+    } else {
+        fs::create_dir_all(generated.path.join("tools/fleet")).unwrap();
+        fs::create_dir_all(generated.path.join("tests")).unwrap();
+        fs::write(
+            generated.path.join("tools/fleet/docker"),
+            "# --gpus grammar fixture\n".repeat(600),
+        )
+        .unwrap();
+        fs::write(
+            generated
+                .path
+                .join("tests/test_docker_shim_global_options.py"),
+            "def test_options(): pass\n",
+        )
+        .unwrap();
+        crate::git_tests::git(&generated.path, &["add", "."]);
+        crate::git_tests::git(&generated.path, &["commit", "-qm", "replay fixture"]);
+        vec![("prismabuild-fixture", generated.path.clone())]
+    };
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../workers/tests/fixtures/prismabuild-1968.json"
     ))
     .unwrap();
     let issue = json!({"number": fixture["number"], "title": fixture["title"], "body": fixture["body"], "author":"requester", "comments":[]});
     let root = tempfile::tempdir().unwrap();
-    for name in ["prismabuild", "prismaquant", "tessera"] {
-        let repository = repositories.join(format!("{name}.git"));
+    for (name, repository) in repositories {
         let source = Worktrees::open(&repository, &repository).unwrap();
         let head = source.head().unwrap();
         let repo = crate::production::repository_materials(&repository, head.as_str()).unwrap();
@@ -96,7 +117,7 @@ fn real_repository_orientation_and_ingest_replay() {
             "ORIENTATION {}",
             json!({"repository":name,"head":head.as_str(),"file_count":repo["file_count"],"listed_files":repo["file_list"].as_array().unwrap().len(),"orientation_bytes":repo.to_string().len(),"summarized":repo["tree_summary"] != ""})
         );
-        if name == "prismabuild" {
+        if name.starts_with("prismabuild") {
             let checkout = root.path().join("checkout");
             fs::create_dir(&checkout).unwrap();
             materialize(&checkout, &json!({"base_checkout":{"repository":repository,"commit":head.as_str()},"repo":repo})).unwrap();
@@ -107,6 +128,7 @@ fn real_repository_orientation_and_ingest_replay() {
                 .arg(workers.join("tools/replay_repository_ingest.py"))
                 .arg(&inputs_path)
                 .arg(&checkout)
+                .arg(name)
                 .output()
                 .unwrap();
             assert!(
