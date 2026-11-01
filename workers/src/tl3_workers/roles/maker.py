@@ -187,7 +187,7 @@ def run(model, request, worktree, emit):
     needs_files = next(variant for variant in proposal["oneOf"]
                        if variant["properties"]["kind"]["const"] == "needs_files")
     del needs_files["properties"]["fits"]
-    agent = build_agent(model, ROLE, worktree, reply_schema=proposal)
+    agent = build_agent(model, ROLE, worktree, reply_schema=proposal, context_size=inputs["context_size"])
     characters = ContextCharacters()
     last_message = None
     history = []

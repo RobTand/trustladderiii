@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 import json
+import math
+import os
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,6 +15,30 @@ class ExplorationBudget:
     tool_turns: int = 4
     input_tokens: int = 300_000
     history_bytes: int = 32_768
+
+
+@dataclass(frozen=True)
+class CacheWeights:
+    uncached: float = 1.0
+    creation: float = 1.25
+    read: float = 0.1
+
+    @classmethod
+    def configured(cls):
+        values = {name: float(os.environ.get("TL3_CACHE_" + name.upper() + "_WEIGHT", default))
+                  for name, default in (("uncached", 1), ("creation", 1.25), ("read", 0.1))}
+        if any(not math.isfinite(value) or value < 0 for value in values.values()):
+            raise ValueError("cache weights must be finite and nonnegative")
+        return cls(**values)
+
+    def charge(self, tokens, details=None):
+        details = details or {}
+        counts = [details.get(name, 0) for name in ("cache_read", "cache_creation")]
+        read, creation = [count if type(count) is int and count >= 0 else 0 for count in counts]
+        if read + creation > tokens:
+            read = creation = 0
+        return math.ceil((tokens - read - creation) * self.uncached
+                         + creation * self.creation + read * self.read)
 
 
 FINISH = ("The exploration budget is exhausted. Tools are unavailable. Finish now from the "
@@ -102,27 +128,60 @@ def retained(messages, limit):
 
 
 class ExplorationMiddleware(AgentMiddleware):
-    def __init__(self, budget, role):
+    def __init__(self, budget, role, context_size=150_000):
         self.budget = budget
         self.role = role
+        self.context_size = context_size
+        self.weights = CacheWeights.configured()
         self.last_input = 0
+        self.last_estimate = None
+        self.cache_active = False
         self.turns = 0
         self.spent = 0
         self.final = False
+        self.compacted = False
+        self.compaction_prefix = []
+        self.compaction_offset = 0
+
+    def _context(self, estimate):
+        # Calibrate byte estimates to the latest provider count, then add new text.
+        return (estimate if self.last_estimate is None else
+                max(0, self.last_input + estimate - self.last_estimate))
 
     def wrap_model_call(self, request, handler):
-        messages = retained(request.messages, self.budget.history_bytes)
+        source = request.messages
+        messages = (self.compaction_prefix + source[self.compaction_offset:]
+                    if self.compacted else list(source))
         request = request.override(messages=messages)
         bound = input_estimate(request)
-        # Reserve the original input plus maximum retained evidence before exploring.
+        context = self._context(bound)
+        compact_now = (not self.compacted and context >= self.context_size * 0.7
+                       and any(isinstance(message, AIMessage) for message in messages))
+        if compact_now:
+            messages = retained(messages, self.budget.history_bytes)
+            self.compaction_prefix = messages
+            self.compaction_offset = len(source)
+            self.compacted = True
+            request = request.override(messages=messages)
+            bound = input_estimate(request)
+            context = self._context(bound)
+
+        cold_weight = (max(self.weights.uncached, self.weights.creation)
+                       if self.cache_active else self.weights.uncached)
+        if self.cache_active and not compact_now:
+            cached = min(context, self.last_input)
+            predicted = math.ceil(cached * self.weights.read + (context - cached) * cold_weight)
+        else:
+            predicted = math.ceil(context * cold_weight)
         original = [m for m in messages if isinstance(m, HumanMessage)]
-        final_reserve = input_estimate(request.override(messages=original, tools=[]))
-        final_reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
-        # A provider may tokenize above the fallback estimate. Carry that evidence
-        # into the next-call and final-answer reservations as well as the charge.
-        final_reserve = max(final_reserve, self.last_input)
-        final = (self.turns >= self.budget.tool_turns
-                 or self.spent + max(bound, self.last_input) + final_reserve > self.budget.input_tokens)
+        reserve = input_estimate(request.override(messages=original, tools=[]))
+        reserve += (self.budget.history_bytes * 2 + len(FINISH) + 1024 + 2) // 3
+        # A compaction may invalidate cached evidence. Reserve a cold final call.
+        reserve = math.ceil(max(reserve, context) * cold_weight)
+        context_full = (self.compacted and not compact_now and len(source) > self.compaction_offset
+                        and context >= self.context_size * 0.7)
+        final = (self.turns >= self.budget.tool_turns or context_full
+                 or self.spent + predicted + reserve > self.budget.input_tokens)
         if self.final:
             raise ValueError("missing final model reply")
         if final:
@@ -130,17 +189,22 @@ class ExplorationMiddleware(AgentMiddleware):
             request = request.override(tools=[], tool_choice=None,
                                        messages=messages + [HumanMessage(content=FINISH)])
             bound = input_estimate(request)
-        if self.spent + max(bound, self.last_input) > self.budget.input_tokens:
+        if self.spent + predicted > self.budget.input_tokens:
             raise ValueError(f"{self.role} input exceeds exploration budget")
         response = handler(request)
         if final:
             for message in response.result:
                 if isinstance(message, AIMessage):
                     message.response_metadata["tl3_budget_exhausted"] = True
-        reported = [(m.usage_metadata or {}).get("input_tokens")
-                    for m in response.result if isinstance(m, AIMessage)]
-        self.last_input = (sum(reported) if reported and all(type(n) is int and n >= 0 for n in reported)
-                           else bound)
-        self.spent += self.last_input
+        usage = [message.usage_metadata for message in response.result if isinstance(message, AIMessage)]
+        reported = bool(usage) and all(item and type(item.get("input_tokens")) is int
+                                       and item["input_tokens"] >= 0 for item in usage)
+        self.last_input = sum(item["input_tokens"] for item in usage) if reported else bound
+        self.spent += (sum(self.weights.charge(item["input_tokens"], item.get("input_token_details"))
+                           for item in usage) if reported else self.weights.charge(bound))
+        self.cache_active = reported and any(
+            (item.get("input_token_details") or {}).get("cache_read", 0)
+            or (item.get("input_token_details") or {}).get("cache_creation", 0) for item in usage)
+        self.last_estimate = bound
         self.turns += 1
         return response
