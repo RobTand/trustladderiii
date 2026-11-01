@@ -2736,7 +2736,15 @@ fn main() {
             lazy,
         );
     }
-    for mode in ["pass", "failure", "runner", "missing", "app", "status"] {
+    for mode in [
+        "pass",
+        "failure",
+        "stale-failure",
+        "runner",
+        "missing",
+        "app",
+        "status",
+    ] {
         classic_protection::scenario(&database.create(&format!("classic_{mode}")), mode);
     }
     for mode in [

@@ -73,6 +73,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "this repository has no ruleset requirements"
         );
         let head = state.pull["head"]["sha"].clone();
+        if mode == "stale-failure" {
+            state.checks = fixture("failed", "checks");
+            state.label = true;
+        }
         if mode != "missing" && mode != "status" {
             state.head_checks = vec![json!({"id":900,"name":"Sandbox tests","head_sha":head,
                 "status":if mode == "pass" {"in_progress"} else {"completed"},
@@ -93,7 +97,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         }
     }
     assert!(controller.drive_once().unwrap());
-    if mode == "failure" {
+    if matches!(mode, "failure" | "stale-failure") {
         // Consume only until the fix round starts, so the fake maker cannot finish it.
         for _ in 0..20 {
             if controller.world().unwrap().nodes[0].phase == Phase::Making {
@@ -115,6 +119,14 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "failed heads must never queue"
         );
         assert_eq!(api.state.lock().unwrap().reruns, 0);
+        if mode == "stale-failure" {
+            let state = api.state.lock().unwrap();
+            assert!(
+                !state.label,
+                "cancelled enqueue must remove its queue label"
+            );
+            assert_eq!(state.deletes, 1);
+        }
         println!("test classic_head_{mode} ... ok");
         return;
     }
