@@ -90,7 +90,9 @@ fn recorded_payloads_parse_into_the_expected_variants() {
                 assert_eq!(merge_group.head_sha, "batch-head");
                 8
             }
-            Event::PullRequestUpdated { .. } | Event::CheckRunUpdated { .. } => {
+            Event::PullRequestUpdated { .. }
+            | Event::PullRequestLabeled { .. }
+            | Event::CheckRunUpdated { .. } => {
                 panic!("unexpected variant")
             }
             Event::IssueLabeled {

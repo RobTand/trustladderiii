@@ -67,6 +67,16 @@ fn hostile_maker_head() {
                     checkout.to_str().unwrap(),
                 ],
             );
+            let branch = super::super::worktrees::Real::branch(&delivery).unwrap();
+            Worktrees::open(&checkout, &checkout)
+                .unwrap()
+                .create_branch_from(
+                    &branch,
+                    &CommitId::new(&f.base).unwrap(),
+                    &CommitId::new(&f.head).unwrap(),
+                )
+                .unwrap();
+            git(&checkout, &["checkout", "--quiet", branch.as_str()]);
             let mut store = Store::open(&settings).unwrap();
             store.put_worker_materials("0", &json!({})).unwrap();
             let snapshot = documents(
@@ -88,7 +98,7 @@ fn hostile_maker_head() {
             assert_eq!(request["worktree"], json!(checkout));
             assert_eq!(
                 store.worker_materials("0").unwrap().unwrap()["check_run"]["base_sha"],
-                f.head
+                f.base
             );
         },
     );

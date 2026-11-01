@@ -83,6 +83,8 @@ struct State {
     queue_rule: Value,
     comments: Vec<Value>,
     command_lost_response: bool,
+    command_status: u16,
+    command_attempts: usize,
     requeue_order: Vec<&'static str>,
     fail_reads: bool,
     rate_limit: Option<u16>,
@@ -120,12 +122,14 @@ impl State {
             posts: 0,
             requeues: 0,
             dequeued: false,
-            queue_rule: json!({"id":910,"name":"Rule: Queue TL3-approved PRs",
+            queue_rule: json!({"id":910,"name":"Rule: Queue TL3-approved PRs (queue)",
                 "status":"completed","conclusion":"failure",
                 "completed_at":"2026-10-31T23:00:00Z",
                 "app":{"id":10562,"slug":"mergify"}}),
             comments: vec![],
             command_lost_response: false,
+            command_status: 201,
+            command_attempts: 0,
             requeue_order: vec![],
             fail_reads: false,
             rate_limit: None,
@@ -153,6 +157,12 @@ impl State {
         let mut checks = self.checks.clone();
         for check in checks.as_array_mut().unwrap() {
             check["head_sha"] = self.pull["head"]["sha"].clone();
+            if check["name"] == "Mergify Merge Queue"
+                && check["status"] == "completed"
+                && check.get("completed_at").is_none()
+            {
+                check["completed_at"] = json!("2026-10-31T22:00:00Z");
+            }
         }
         let mut rule = self.queue_rule.clone();
         rule["head_sha"] = self.pull["head"]["sha"].clone();
@@ -269,6 +279,14 @@ impl Respond for Api {
                 assert_eq!(request.headers.get("authorization").unwrap(), "Bearer disposable");
                 let body: Value = serde_json::from_slice(&request.body).unwrap();
                 assert!(body["body"].as_str().unwrap().starts_with("@mergifyio queue\n"));
+                state.command_attempts += 1;
+                if state.command_status != 201 {
+                    let response = ResponseTemplate::new(state.command_status)
+                        .set_body_json(json!({"message":"Resource not accessible by integration"}));
+                    return if state.command_status == 429 {
+                        response.insert_header("retry-after", "0")
+                    } else { response };
+                }
                 let comment = json!({"id":1000 + state.requeues,"body":body["body"],
                     "user":{"id":123,"login":"factory[bot]"},
                     "created_at":"2026-10-31T22:20:05Z","updated_at":"2026-10-31T22:20:05Z",
@@ -1308,6 +1326,7 @@ fn delivery() -> Delivery {
         job_generation: None,
         steering: None,
         request_text: None,
+        proposed: None,
     }
 }
 fn label_removed_before_confirmation() {
@@ -2667,6 +2686,13 @@ fn main() {
         "delayed-rule",
         "lost-response",
         "no-acceptance",
+        "comment-first",
+        "label-first",
+        "stale-label",
+        "refusal",
+        "refusal-bound",
+        "rate-limit",
+        "permission",
     ] {
         requeue::scenario(&database.create(&format!("requeue_{mode}")), mode);
     }
@@ -2711,5 +2737,5 @@ fn main() {
         dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
     }
     database.stop();
-    println!("86 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("93 Mergify scenarios passed; no skips; no live upstream calls");
 }

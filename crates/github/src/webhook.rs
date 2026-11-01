@@ -40,6 +40,12 @@ pub enum Event {
         after: String,
         actor: Actor,
     },
+    PullRequestLabeled {
+        context: Context,
+        pull_request: PullRequest,
+        label: Label,
+        actor: Actor,
+    },
     PullRequestUnlabeled {
         context: Context,
         pull_request: PullRequest,
@@ -241,6 +247,12 @@ pub fn parse(delivery_id: &str, event_name: &str, body: &[u8]) -> Result<Deliver
             pull_request: field(&value, "pull_request")?,
             before: field(&value, "before")?,
             after: field(&value, "after")?,
+            actor: field(&value, "sender")?,
+        },
+        ("pull_request", "labeled") => Event::PullRequestLabeled {
+            context,
+            pull_request: field(&value, "pull_request")?,
+            label: field(&value, "label")?,
             actor: field(&value, "sender")?,
         },
         ("pull_request", "unlabeled") => Event::PullRequestUnlabeled {

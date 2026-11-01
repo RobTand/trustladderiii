@@ -7,7 +7,7 @@ use tl3_github::{CheckRun, GitHub, PullRequest};
 pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
 pub const MERGIFY_APP_ID: u64 = 10562;
 pub const QUEUE_LABEL: &str = "tl3-queue";
-pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs";
+pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueState {
@@ -173,11 +173,10 @@ pub fn observe(pull_request: PullRequest, checks: &[CheckRun], approved_head: &s
             .is_some_and(|rule| {
                 rule.status == "completed"
                     && rule.conclusion.is_some()
-                    && rule.completed_at.is_some_and(|finished| {
-                        queue
-                            .completed_at
-                            .is_none_or(|dequeued| finished >= dequeued)
-                    })
+                    && rule
+                        .completed_at
+                        .zip(queue.completed_at)
+                        .is_some_and(|(finished, dequeued)| finished >= dequeued)
             })
     });
     let unapproved_merge =

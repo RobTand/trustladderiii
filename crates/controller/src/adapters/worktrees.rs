@@ -76,6 +76,8 @@ struct Served {
 enum Intent {
     Prepare {
         base: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<String>,
     },
     Push {
         head: String,
@@ -333,8 +335,24 @@ impl Served {
                     .git
                     .fetch_main(&self.remote, self.token()?.as_ref())
                     .map_err(adapter)?;
+                let start = delivery
+                    .proposed
+                    .as_ref()
+                    .map(|proposed| {
+                        let pinned = CommitId::new(&proposed.head).map_err(adapter)?;
+                        self.git
+                            .fetch_pull_head(
+                                &self.remote,
+                                self.token()?.as_ref(),
+                                proposed.number,
+                                &pinned,
+                            )
+                            .map_err(adapter)
+                    })
+                    .transpose()?;
                 Ok(Intent::Prepare {
                     base: base.as_str().into(),
+                    start: start.map(|head| head.as_str().to_owned()),
                 })
             }
             Out::Effect {
@@ -411,24 +429,42 @@ impl Served {
     ) -> Result<Option<Completion>> {
         let mut observations = vec![];
         match &record.intent {
-            Intent::Prepare { base } => {
+            Intent::Prepare { base, start } => {
                 if writable {
-                    self.git
-                        .create_branch_at(branch, &CommitId::new(base).map_err(adapter)?)
-                        .map_err(adapter)?;
+                    let base = CommitId::new(base).map_err(adapter)?;
+                    if let Some(start) = start {
+                        self.git
+                            .create_branch_from(
+                                branch,
+                                &base,
+                                &CommitId::new(start).map_err(adapter)?,
+                            )
+                            .map_err(adapter)?;
+                    } else {
+                        self.git.create_branch_at(branch, &base).map_err(adapter)?;
+                    }
                     self.git
                         .create_worktree(branch, checkout)
                         .map_err(adapter)?;
                 }
-                if self.git.branch_state(branch).map_err(adapter)?.is_none() {
+                let Some((_, durable_base)) = self.git.branch_state(branch).map_err(adapter)?
+                else {
                     return Ok(None);
-                }
+                };
                 if !self
                     .git
                     .finish_prepare(branch, checkout, writable)
                     .map_err(adapter)?
                 {
                     return Ok(None);
+                }
+                if let Some(start) = start {
+                    observations.push(Observation::WorktreePrepared {
+                        node: record.delivery.node(),
+                        repository: checkout.into(),
+                        base_sha: durable_base.as_str().into(),
+                        sha: start.clone(),
+                    });
                 }
             }
             Intent::Push { head, expected } => {
@@ -614,6 +650,11 @@ impl Served {
                             .map_err(adapter)?;
                     }
                     self.git.delete_local_branch(branch).map_err(adapter)?;
+                    if let Some(proposed) = &record.delivery.proposed {
+                        self.git
+                            .delete_pull_head(proposed.number)
+                            .map_err(adapter)?;
+                    }
                     reproducing::remove(self.git.common_directory(), branch)?;
                 }
                 if self.git.branch_state(branch).map_err(adapter)?.is_some()
@@ -626,6 +667,11 @@ impl Served {
                         .remote_head(branch, &self.remote, token.as_ref())
                         .map_err(adapter)?
                         .is_some()
+                {
+                    return Ok(None);
+                }
+                if let Some(proposed) = &record.delivery.proposed
+                    && self.git.has_pull_head(proposed.number).map_err(adapter)?
                 {
                     return Ok(None);
                 }
