@@ -56,6 +56,8 @@ fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
 
 #[path = "simulation/gate_migration.rs"]
 mod gate_migration;
+#[path = "simulation/repository_migration.rs"]
+mod repository_migration;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -67,6 +69,13 @@ fn main() {
         gate_migration::child(&args);
         return;
     }
+    if args
+        .get(1)
+        .is_some_and(|s| s == "--repository-migration-child")
+    {
+        repository_migration::child(&args);
+        return;
+    }
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
@@ -74,6 +83,51 @@ fn main() {
             "q48_capacity_ticket_order",
             gate_migration::q48_ticket_order,
         ),
+        ("repository_add_reorder", repository_migration::add_reorder),
+        (
+            "repository_case_identity",
+            repository_migration::case_identity,
+        ),
+        (
+            "repository_append_three",
+            repository_migration::append_three,
+        ),
+        (
+            "repository_remove_active",
+            repository_migration::remove_active,
+        ),
+        ("repository_remove_idle", repository_migration::remove_idle),
+        (
+            "repository_installation",
+            repository_migration::installation,
+        ),
+        ("repository_crash_event", |s| {
+            repository_migration::crash(s, "EventWritten")
+        }),
+        ("repository_crash_rows", |s| {
+            repository_migration::crash(s, "RowsWritten")
+        }),
+        ("repository_crash_effects", |s| {
+            repository_migration::crash(s, "EffectsWritten")
+        }),
+        ("repository_crash_transitions", |s| {
+            repository_migration::crash(s, "TransitionsWritten")
+        }),
+        ("repository_crash_credit", |s| {
+            repository_migration::crash(s, "CreditWritten")
+        }),
+        ("repository_crash_before_commit", |s| {
+            repository_migration::crash(s, "BeforeCommit")
+        }),
+        ("repository_crash_after_commit", |s| {
+            repository_migration::crash(s, "AfterCommit")
+        }),
+        ("repository_crash_intern_before", |s| {
+            repository_migration::crash(s, "InternBeforeCommit")
+        }),
+        ("repository_crash_intern_after", |s| {
+            repository_migration::crash(s, "InternAfterCommit")
+        }),
         ("agent_capacity_reopen", gate_migration::pool_reopen),
         ("agent_capacity_downgrade", gate_migration::pool_downgrade),
         (
