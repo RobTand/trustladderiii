@@ -268,3 +268,13 @@ characters each. Every named test retains its outcome and pass flag.
 After collection, each event is limited to the longest collected ID plus 8 KiB.
 The trusted reader also limits the whole journal to 32 MiB and bounds its
 record count. These bounds apply independently.
+
+Each test receives a temporary directory that is removed after its function
+fixtures finish, including when setup, the test or teardown fails. `tmp_path`
+and `tmpdir` use that directory. Python's default temporary directory and the
+`TMPDIR`, `TEMP` and `TMP` environment variables point there during the test,
+so cooperating subprocesses use the same scratch. Module and session fixtures
+retain their separately owned temporary directories for their scope.
+The container still has one disposable 256 MiB `/tmp` tmpfs. One test must fit
+within that boundary; paths hardcoded outside its temporary directory and
+wider-scope fixture data still consume the shared bound.

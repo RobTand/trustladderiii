@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import types
 
 import pytest
@@ -91,6 +92,31 @@ class Reporter:
         self.summary = summary
         self.phases = {}
         self.collection_errors = []
+
+    @pytest.fixture(autouse=True)
+    def _tl3_scratch(self):
+        # Function fixtures finish before this directory is released; wider
+        # scoped fixtures keep their own session-owned temporary directories.
+        with tempfile.TemporaryDirectory(prefix='tl3-test-') as directory:
+            previous = tempfile.tempdir
+            environment = {name: os.environ.get(name) for name in ('TMPDIR', 'TEMP', 'TMP')}
+            tempfile.tempdir = directory
+            os.environ.update(dict.fromkeys(environment, directory))
+            try:
+                yield Path(directory)
+            finally:
+                tempfile.tempdir = previous
+                for name, value in environment.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+
+    @pytest.fixture
+    def tmp_path(self, _tl3_scratch):
+        path = _tl3_scratch / 'pytest'
+        path.mkdir()
+        return path
 
     def emit(self, **record):
         data = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(errors='backslashreplace')
