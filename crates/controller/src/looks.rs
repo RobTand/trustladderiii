@@ -184,6 +184,7 @@ impl Controller {
             Ok(matches!(delivery.output, Out::Effect { .. }))
         })
     }
+
     pub(crate) fn cleanup_ended_looks(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let world = snapshot::decode(&snapshot)?;
@@ -368,7 +369,6 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
-        self.cleanup_ended_looks()?;
         let snapshot = self.store.load()?;
         let states = snapshot
             .rows
