@@ -46,6 +46,7 @@ fn exploration_checkout_uses_pinned_commit_and_recovers_partial_checkout() {
     fs::create_dir(&root).unwrap();
     fs::write(root.join("partial"), "interrupted clone").unwrap();
     let bare = f.root.path().join("fetched.git");
+    fs::create_dir(&bare).unwrap();
     Worktrees::init_bare(&bare).unwrap();
     let mut source = Worktrees::open(&bare, &bare).unwrap();
     source.set_base_branch("main").unwrap();
