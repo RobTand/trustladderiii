@@ -1,0 +1,32 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/bazel:python.bzl", "tl3_py_test")
+
+py_binary(
+    name = "check_settings",
+    srcs = ["check_settings.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "trial",
+    srcs = ["trial.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_check_settings",
+    srcs = ["test_check_settings.py"],
+)
+
+tl3_py_test(
+    name = "test_trial",
+    srcs = ["test_trial.py"],
+    deps = [":trial"],
+)
+
+# Replayed by the controller's sandbox_gate test.
+filegroup(
+    name = "evidence",
+    srcs = glob(["evidence/**"]),
+    visibility = ["//visibility:public"],
+)
