@@ -2003,7 +2003,7 @@ impl Controller {
                 node,
                 generation,
                 role,
-                reply,
+                mut reply,
             } => {
                 let n = world
                     .nodes
@@ -2031,6 +2031,35 @@ impl Controller {
                         }));
                     }
                 };
+                if role == "planner" && reply["kind"] == "leaf" {
+                    let checks = reply["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, check)| {
+                            Ok(adapters::prismabuild::Check {
+                                name: format!("check-{}", index + 1),
+                                kind: serde_json::from_value(check["kind"].clone())?,
+                                tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
+                        match error {
+                            Error::Invalid(message) => {
+                                reply["violations"]
+                                    .as_array_mut()
+                                    .unwrap()
+                                    .push(json!(message));
+                                mapped = adapters::workers::protocol::MappedReply::Kernel(
+                                    Reply::PlanCantMeet,
+                                );
+                            }
+                            error => return Err(error),
+                        }
+                    }
+                }
                 if role == "reviewer" {
                     let mut criteria =
                         adapters::workers::review::criteria(&mut self.store, snapshot, node)?;

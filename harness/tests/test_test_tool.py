@@ -106,3 +106,16 @@ def test_no_report_is_infrastructure(fixture):
     result = test_tool.run_current(fixture, execution.Container("sha256:" + "1" * 64), ())
     assert result["status"] == "infrastructure_error"
     assert sum(result["totals"].values()) == 0
+
+
+def test_summary_accepts_node_ids_above_the_old_line_cap(fixture, monkeypatch):
+    test = 'test_value.py::test_' + 'x' * 70000
+    script = fixture / 'summary.py'
+    script.write_text('import json\n'
+                      'print(json.dumps({"event":"start","schema":1}))\n'
+                      f'print(json.dumps({{"event":"result","test":{test!r},"outcome":"passed","message":"","truncated":False}}))\n'
+                      'print(json.dumps({"event":"finish","exit_code":0}))\n')
+    monkeypatch.setattr(test_tool, 'container_command', lambda *args: [sys.executable, str(script)])
+    result = test_tool.run_current(fixture, execution.Container('sha256:' + '1' * 64), (test,))
+    assert result['status'] == 'completed'
+    assert result['totals']['passed'] == 1
