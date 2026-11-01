@@ -116,7 +116,7 @@ def run(model, request, worktree, emit):
                         last_message = message
                         # Save a valid reply with its turn, so a crash after it costs no model call.
                         try:
-                            state["reply"] = check(message.text)
+                            state["reply"] = checked[message.text] = check(message.text)
                         except (ValueError, ValidationError):
                             pass
                 state["messages"] = messages_to_dict(history)
@@ -141,8 +141,9 @@ def run(model, request, worktree, emit):
         check_reply(request["inputs"], reply)
         return reply
 
+    checked = {}
     try:
-        return repaired(control, history, ask, check)
+        return repaired(control, history, ask, lambda text: checked.get(text) or check(text))
     except _OutOfRoom:
         return {"verdict": "out_of_room"}
 
