@@ -660,8 +660,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     fs::write(&config.models.key_file, "fixture").unwrap();
     if mode == "repo-conventions" {
         let mut adapter = f.adapter().with_repositories(&config.github.repos).unwrap();
+        let mut preparation = f.delivery(EffectKind::PrepareWorktree, 999);
+        preparation.epoch = 0;
         adapter
-            .execute(&f.delivery(EffectKind::PrepareWorktree, 999))
+            .execute(&preparation)
             .expect("configured master base must prepare without a main branch");
     }
     let supervisor = Supervisor::new(&config, &root.path().join("fakes")).unwrap();
