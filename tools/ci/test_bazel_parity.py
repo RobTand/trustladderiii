@@ -25,6 +25,12 @@ class ParityTests(unittest.TestCase):
             bazel_parity.compare({'rust': {}, 'python': []},
                                  {'rust': {}, 'python': ['extra.py']})
 
+    def test_missing_python_file_names_the_repair_command(self):
+        with self.assertRaisesRegex(RuntimeError, 'workers/tests/test_new.py') as failure:
+            bazel_parity.compare({'rust': {}, 'python': ['workers/tests/test_new.py']},
+                                 {'rust': {}, 'python': []})
+        self.assertIn('bazel run //:gazelle', str(failure.exception))
+
     def test_empty_inventory_fails(self):
         with self.assertRaisesRegex(RuntimeError, 'empty'):
             bazel_parity.compare({'rust': {}, 'python': []}, {'rust': {}, 'python': []})
