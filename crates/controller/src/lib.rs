@@ -267,15 +267,26 @@ impl Controller {
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
         };
-        controller.reconcile_gates()?;
+        controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
         Ok(controller)
     }
 
-    fn reconcile_gates(&mut self) -> Result<()> {
+    fn reconcile_capacity(&mut self) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut world = snapshot::decode(&snapshot)?;
         let configured = self.bootstrap.slots;
+        let configured_pool = self.bootstrap.pool;
+        if configured_pool < world.pool_capacity
+            && world.nodes.iter().any(|node| !node.phase.is_closed())
+        {
+            return Err(Error::Invalid(
+                "limits.agent_pool cannot decrease while requests are in flight; drain all repositories first",
+            ));
+        }
+        let pool_change = (configured_pool != world.pool_capacity)
+            .then(|| json!({"stored": world.pool_capacity, "configured": configured_pool}));
+        world.pool_capacity = configured_pool;
         let mut changes = Vec::new();
         for (repo, gate) in world.gates.iter_mut().enumerate() {
             if configured == gate.w {
@@ -294,12 +305,12 @@ impl Controller {
             changes.push(json!({"repo": repo, "stored": gate.w, "configured": configured}));
             gate.w = configured;
         }
-        if changes.is_empty() {
+        if changes.is_empty() && pool_change.is_none() {
             return Ok(());
         }
         let mut commit = Commit::new(
             format!("controller:gates:{}", snapshot.revision.get()),
-            json!({"gate_capacity": changes}),
+            json!({"gate_capacity": changes, "agent_capacity": pool_change}),
             &snapshot,
         );
         let (world, outputs) = tl3_kernel::settle_world(world);

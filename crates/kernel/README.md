@@ -9,7 +9,7 @@ All production crates share the root workspace and Cargo.lock. The optional `ser
 
 - `World::new(&[slots_per_repo], pool_capacity)` creates an empty world.
 - `step(world, event) -> (World, Vec<Out>)` applies one event and takes every enabled internal transition.
-- `settle_world(world) -> (World, Vec<Out>)` settles a reconciled gate capacity without inventing an external event.
+- `settle_world(world) -> (World, Vec<Out>)` settles reconciled gate or agent capacity without inventing an external event.
 - `Event` carries new requests, operation replies, effect acknowledgements, facts and commands.
 - `Out::Effect` names the node, sequence, effect kind and exact head where needed. `Out::Notice` asks for a message.
 - `World::check`, `consistent` and `valid` check the invariant. `World::witness` and `measure` support progress checks.
@@ -168,7 +168,7 @@ It reserves one CPU per action, bounds Cargo and native thread counts, and sets 
 Advance, merge and non-reply event proofs reserve 10 GiB. Reply proofs reserve 44 GiB, and general progress proofs reserve 24 GiB.
 All four-node gate proofs reserve 10 GiB, after measured peaks of 2.7 to 5.3 GiB. Waiting-only worlds prove separately that some internal transition is enabled; mixed worlds prove that every other world has a maker, merge or resume witness. Each concrete event application proves strict progress. This preserves the original worlds and assertions without expanding `is_settled` across all four phases in one solver invocation.
 `progress_from_queued`, `apply_new_request`, `apply_new_adoption` and `apply_reviewer_out_of_room` reserve 44 GiB.
-The coordinator set the 44 GiB budget on 2026-11-01 after six proofs from the former 64 GiB class peaked at 27.9 to 35.3 GiB. The two rebase reply proofs reserve 48 GiB after a measured peak of 38.7 GiB. Other 32 GiB classes keep 32 GiB. Critical-path development tests use priority -9 when named by the coordinator; bulk proofs remain at -10.
+The coordinator set the 44 GiB budget on 2026-11-01 after six proofs from the former 64 GiB class peaked at 27.9–35.3 GiB. The two rebase reply proofs reserve 48 GiB after a measured peak of 38.7 GiB. Other 32 GiB classes keep 32 GiB. Critical-path development tests use priority -9 when named by the coordinator; bulk proofs remain at -10.
 If an ending shows that a proof needs more, raise that row's `demand.mem_gb` before retrying.
 Compare each ending's cgroup memory peak with the historical spike table above.
 Rust 1.99.1 and Kani 0.68.0 live at the same paths on dl380g10, sparky and sparklina.
@@ -184,7 +184,7 @@ Inside an admitted action, `run.py tests` checks formatting and Clippy, builds t
 The script fails if Kani fails or any cover is missing or unreachable. `KANI_OUTPUT=regular` shows CBMC's detailed progress.
 
 A submission is not a pass. Check the terminal exit code, actual logs and verified CAS receipt before reporting a result.
-CI runs separately on GitHub-hosted runners through Mergify. It does not submit to PrismaBuild.
+CI runs separately on Mergify's fleet runners. It does not submit to PrismaBuild.
 
 The proposed Q48 layer adds two per-leaf progress proofs at W=2 and W=3.
 They cover four leaves: an unpaused oldest waiter, its last conflicting holder,

@@ -1569,7 +1569,7 @@ pub fn step(world: World, event: Event) -> (World, Vec<Out>) {
     (world, out)
 }
 
-/// Settle after the controller reconciles stored gate capacity.
+/// Settle after the controller reconciles stored gate or agent capacity.
 pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     let mut out = Vec::new();
     settle(&mut world, &mut out, None);

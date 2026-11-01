@@ -300,7 +300,9 @@ Agreed (Q6): after the first 25 requests, Rob reviews these numbers.
 Proposed:
 
 - **One PR per leaf.**
-- **At most W leaves in flight per repo.** W is configurable from 1 through 3. Rob approved 3 slots per repo once built and proven (Q29 amended, 2026-10-31). W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
+- **At most W leaves in flight per repo,** starting at 2 in slice two and later adapting to measured capacity (Q29). Slice one uses 1. W also caps open PRs per repo, however large a request grows. Each repo has its own admission gate holding the slots and file locks.
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **Plan just in time.** A repo's next node gets planned when fewer than W leaves are waiting for a slot.
 - **Leaves span one repo.** A request that touches several repos splits into one child per repo, so no lock ever spans two gates.
 - **The parent checks the combined result.** After its last child closes, the parent runs its own acceptance check.
@@ -427,7 +429,9 @@ Settled in the grilling:
 
 - **Kinds of request.** Slices one and two take only code changes in one repo (Q1), and a code change is done when its PR merges with every goal confirmed (Q12). Research questions, reviews of existing PRs and work spanning several repos each get their own grilling and definition of done after slice two is solid (Q35).
 - **The decomposition trial.** Before slice two's splitting goes live, a dry run decomposes a handful of real requests, changing no code, to calibrate the fit limit and the forecast (Q34).
-- **W, the fit limit and the starting credit reserve:** 3 slots per repo once built and proven (Q29 amended, Rob 2026-10-31), 100k (Q4), and 3 (Q6).
+- **W, the fit limit and the starting credit reserve:** 2 per repo in slice two (Q29), 100k (Q4), and 3 (Q6).
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **The status view:** a read-only web page on the LAN plus a `tl3 status` command (Q24).
 
 Still open:
@@ -480,7 +484,9 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 
 **Order of work**
 
-- **Q29 W (amended by Rob, 2026-10-31):** raise the per-repo gate from 1 to 3 slots once built and proven. Existing ticket order and file-lock rules remain in force. Planning admits the next node when fewer than W leaves wait for a slot.
+- **Q29 W:** 2 changes in flight per repo in slice two, tuned later.
+
+  Q29 amended (Rob, 2026-10-31): W may be 1 to 3; the approved slice-one deployment value is 3.
 - **Q30 What runs first:** Rob: "we should be pulling work off that blocks the most other work. I don't really care about starvation." So there is no rule against starvation.
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later.
