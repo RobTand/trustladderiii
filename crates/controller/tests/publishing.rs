@@ -657,6 +657,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         fixture.repositories = config.github.repos.clone();
     }
     let f = Arc::new(fixture);
+    let original = git(&f.source, &["rev-parse", "HEAD"]);
     commit(&f.source, "value.py", "def value(): return 1\n");
     commit(
         &f.source,
@@ -667,6 +668,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         &f.source,
         "test_value.py",
         "from value import value\ndef test_value(): assert value() == 2\n",
+    );
+    assert_eq!(
+        git(&f.source, &["rev-list", "--count", &format!("{original}..HEAD")]),
+        "1",
+        "publishing setup needs one base commit, not one per file"
     );
     git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
     if mode == "repo-conventions" {

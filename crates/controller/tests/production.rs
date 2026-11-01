@@ -40,6 +40,22 @@ fn config(root: &Path) -> tl3_config::Config {
 }
 
 #[test]
+fn fixture_credentials_are_fast_and_repeatable() {
+    let root = tempfile::tempdir().unwrap();
+    let started = std::time::Instant::now();
+    let first = config(root.path());
+    let before = fs::read(&first.github.app_credentials_file).unwrap();
+    let second = config(root.path());
+    let after = fs::read(&second.github.app_credentials_file).unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "fixture credentials took {:?}; key generation must not be test work",
+        started.elapsed()
+    );
+    assert_eq!(before, after, "fixture credentials must not depend on entropy");
+}
+
+#[test]
 fn production_registers_every_real_adapter_and_source() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());

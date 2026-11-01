@@ -116,11 +116,17 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
     while c.drive_once().unwrap() {}
     let d = making.lock().unwrap().clone().unwrap();
     let checkout = f.adapter().checkout(&d);
+    let original = git(&checkout, &["rev-parse", "HEAD"]);
     commit(&checkout, "shared.txt", "requested\n");
     commit(&checkout, "extra.txt", "unrelated\n");
     commit(&checkout, "__init__.py", "unrelated\n");
     commit(&checkout, "example.com", "unrelated\n");
     let proposed = commit(&checkout, "pyproject.toml", "unrelated\n");
+    assert_eq!(
+        git(&checkout, &["rev-list", "--count", &format!("{original}..HEAD")]),
+        "1",
+        "the scope fixture needs one proposed commit, not one per file"
+    );
     let trim = c
         .trim_scope(
             &f.adapter(),
