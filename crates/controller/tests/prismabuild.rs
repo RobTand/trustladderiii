@@ -2168,14 +2168,21 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
         None, adapters::workers::Fake::new(&fakes), vec![], move |_, completion: &mut Completion| {
             for observation in &mut completion.observations {
                 if let Observation::Plan {node, generation, ..} = observation {
-                    replies.set(replies.get() + 1);
-                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply: serde_json::json!({
-                        "kind":"leaf", "files":["value.py"], "checks":[{
-                            "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
-                        "no_design_questions":true, "lands_on_its_own":true, "violations":[],
-                        "forecast":{"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{"value.py":0}, "overhead_tokens":0,
-                            "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true}
-                    })};
+                    let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{"value.py":0}, "overhead_tokens":0,
+                        "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});
+                    let reply = if replies.get() == 0 {
+                        replies.set(replies.get() + 1);
+                        serde_json::json!({
+                            "kind":"leaf", "files":["value.py"], "checks":[{
+                                "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
+                            "no_design_questions":true, "lands_on_its_own":true, "violations":[],
+                            "forecast":forecast
+                        })
+                    } else {
+                        serde_json::json!({"kind":"cant_meet", "files":["value.py"],
+                            "report":"No smaller selection is available.", "violations":[], "forecast":forecast})
+                    };
+                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply};
                 }
             }
         }));
