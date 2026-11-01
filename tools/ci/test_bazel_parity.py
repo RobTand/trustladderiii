@@ -32,6 +32,14 @@ class ParityTests(unittest.TestCase):
             bazel_parity.compare({'rust': {'tl3-kernel/lib/tl3_kernel': ['a']}, 'python': []},
                                  {'rust': {}, 'python': []})
 
+    def test_binaries_without_tests_need_no_cargo_timing(self):
+        # rust_gate's timing file has no key for a binary with zero tests.
+        bazel_parity.compare({'rust': {'binary': ['a']}, 'python': []},
+                             {'rust': {'binary': ['a'], 'tl3-config/tl3_config': []}, 'python': []})
+        with self.assertRaisesRegex(RuntimeError, 'empty'):
+            bazel_parity.compare({'rust': {'binary': ['a'], 'empty': ['x']}, 'python': []},
+                                 {'rust': {'binary': ['a'], 'empty': []}, 'python': []})
+
     def test_missing_rust_test_name_fails(self):
         with self.assertRaisesRegex(RuntimeError, 'second'):
             bazel_parity.compare({'rust': {'binary': ['first', 'second']}, 'python': []},
