@@ -18,6 +18,8 @@ pub struct Status {
     pub requests: Vec<RequestStatus>,
     pub memory: MemoryStatus,
     pub unassigned_incidents: Vec<String>,
+    /// Q53: models out of quota until their announced reset.
+    pub quota_models: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -222,6 +224,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         requests,
         memory,
         unassigned_incidents,
+        quota_models: vec![],
     })
 }
 
@@ -407,6 +410,7 @@ mod tests {
         );
         let model = Status {
             unassigned_incidents: vec![],
+            quota_models: vec![],
             memory: MemoryStatus::default(),
             requests: vec![
                 RequestStatus {

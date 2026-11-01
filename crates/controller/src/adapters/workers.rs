@@ -6,6 +6,7 @@ pub use writer::{FakeWriter, Writer};
 
 mod fake;
 mod json;
+mod ladder;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
