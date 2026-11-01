@@ -382,7 +382,7 @@ def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, t
     monkeypatch.setattr(socket, "getaddrinfo", lookup)
     uri, packets = receiver
     usage = {'prompt_tokens': 11, 'completion_tokens': 7, 'total_tokens': 18,
-             'prompt_tokens_details': {'cached_tokens': 8}, 'cache_write_tokens': 2,
+             'prompt_tokens_details': {'cached_tokens': 8, 'cache_write_tokens': 2}, 'cache_write_tokens': 2,
              'unexpected_secret': 'never-export-this-usage-field'}
     class Proxy(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -420,6 +420,7 @@ def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, t
         expected = {key: value for key, value in usage.items() if key != 'unexpected_secret'}
         assert raw == [expected, expected]
         assert span.get_attribute('mlflow.chat.tokenUsage')['cache_read_input_tokens'] > 0
+        assert span.get_attribute('mlflow.chat.tokenUsage')['cache_creation_input_tokens'] > 0
         assert b'never-export-this-usage-field' not in packets[-1][2]
     finally:
         server.shutdown()

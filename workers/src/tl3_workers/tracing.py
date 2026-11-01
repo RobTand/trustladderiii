@@ -48,7 +48,8 @@ class Redactor:
             return self.text(value)
         if isinstance(value, dict):
             return {self.text(str(key)): '[REDACTED]' if SENSITIVE_KEY.fullmatch(str(key))
-                    else self.clean(item) for key, item in value.items()}
+                    else self.clean(item) for key, item in value.items()
+                    if key not in {'response_metadata', 'additional_kwargs', 'headers'}}
         if isinstance(value, list):
             return [self.clean(item) for item in value]
         return value
@@ -66,6 +67,32 @@ class Redactor:
 def record_model_key(key):
     if capture := active.get():
         capture.redactor.secrets.add(key)
+
+
+def record_chunk_usage(chunk):
+    if active.get() is None or not chunk.get('usage'):
+        return
+    try:
+        import mlflow
+        span = mlflow.get_current_active_span()
+        if span is None or span.span_type not in {'LLM', 'CHAT_MODEL'}:
+            return
+        usage = chunk['usage']
+        counts = {key: value for key in ('prompt_tokens', 'completion_tokens', 'total_tokens',
+                                         'cache_write_tokens')
+                  if type(value := usage.get(key)) is int and value >= 0}
+        for key, fields in [('prompt_tokens_details', ('cached_tokens', 'cache_write_tokens')),
+                            ('completion_tokens_details', ('reasoning_tokens',))]:
+            if isinstance(details := usage.get(key), dict):
+                counts[key] = {field: value for field in fields
+                               if type(value := details.get(field)) is int and value >= 0}
+        chunks = span.get_attribute('tl3.proxy.usage_chunks') or []
+        if len(chunks) < 32:
+            span.set_attribute('tl3.proxy.usage_chunks', [*chunks, counts])
+        else:
+            span.set_attribute('tl3.proxy.usage_chunks_truncated', True)
+    except Exception:
+        failure()
 
 
 def record_reply(reply):
@@ -165,6 +192,7 @@ class Capture:
 
 def safe_span(span, redactor=None, role="unknown", model="unknown"):
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
+    from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
 
     redactor = redactor or Redactor(None)
     kind = json.loads(span.attributes.get('mlflow.spanType', '"CHAIN"'))
@@ -184,10 +212,11 @@ def safe_span(span, redactor=None, role="unknown", model="unknown"):
         result.attributes.add(key='mlflow.llm.model').value.string_value = redactor.text(model)[:256]
     # Retain only content and usage. Headers, provider metadata, resources and
     # raw exceptions stay local. Apply redaction before truncating or serializing.
-    for key in ('mlflow.spanInputs', 'mlflow.spanOutputs'):
+    for key in ('mlflow.spanInputs', 'mlflow.spanOutputs',
+                'tl3.proxy.usage_chunks', 'tl3.proxy.usage_chunks_truncated'):
         if (raw := span.attributes.get(key)) is not None:
             value = redactor.payload(json.loads(raw))
-            result.attributes.add(key=key).value.string_value = json.dumps(value, ensure_ascii=False)
+            _set_otel_proto_anyvalue(result.attributes.add(key=key).value, value)
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
         usage = json.loads(raw)
         usage = {key: value for key in TOKEN_FIELDS

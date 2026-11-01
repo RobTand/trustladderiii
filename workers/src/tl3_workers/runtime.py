@@ -39,6 +39,12 @@ BUILTIN_TOOL_DESCRIPTIONS = {
 
 
 class ProxyChatOpenAI(ChatOpenAI):
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        from tl3_workers.tracing import record_chunk_usage
+        record_chunk_usage(chunk)
+        return super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info)
+
     def _get_ls_params(self, stop=None, **kwargs):
         params = super()._get_ls_params(stop=stop, **kwargs)
         # Built-in per-model profiles can inject prompts and tools. TL3 owns its profile.
