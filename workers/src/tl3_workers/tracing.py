@@ -31,9 +31,9 @@ SECRET_PATTERNS = [
                r'(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|$)', re.DOTALL),
     re.compile(r'(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+'),
     # These headers carry a scheme and parameters, so an unquoted value runs to the
-    # end of its line.
+    # end of its line, unless the Bearer/Basic rule above already redacted it.
     re.compile(r'(?i)\b(?:(?:proxy-)?authorization|(?:set-)?cookie)\b' + ASSIGN +
-               '(?:' + QUOTED + r'|(?:(?!\\[nr])[^\r\n])*)'),
+               r'(?!\[REDACTED\])(?:' + QUOTED + r'|(?:(?!\\[nr])[^\r\n])*)'),
     re.compile(r'\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'),
     re.compile(r'\b(?:sk-[A-Za-z0-9_-]+|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|'
                r'gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|'
