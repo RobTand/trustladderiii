@@ -469,9 +469,9 @@ def test_regression_classification_matches_parametrized_selector(submission, sel
 def test_comparison_truncation_keeps_failures_before_passes(submission):
     summary = Summary()
     for i in range(60):
-        summary.add(f"test_code.py::test_pass_{i}", "passed", "p" * 80)
+        summary.add(f"test_code.py::test_pass_{i}", "passed", "p" * 90)
     for i in range(30):
-        summary.add(f"test_code.py::test_fail_{i}", "failed", "f" * 80)
+        summary.add(f"test_code.py::test_fail_{i}", "failed", "f" * 90)
     failures = [item["test"] for item in summary.result["tests"] if item["outcome"] == "failed"]
     assert failures and not summary.result["note"], "start with a complete head summary"
     result = call(submission, summary.result)
