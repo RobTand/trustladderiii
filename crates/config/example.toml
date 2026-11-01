@@ -50,6 +50,8 @@ installation_id = 1
 # Optional per-repository conventions. These defaults preserve existing branches.
 # branch_template = "tl3/issue-{issue}-node-{node}"
 # base_branch = "main"
+# Optional additions to the mandatory defaults and global planning.protected_paths.
+# protected_paths = ["CHANGELOG.md", "release/**"]
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]
