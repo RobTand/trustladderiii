@@ -72,6 +72,7 @@ fn main() {
     let cases: &[Scenario] = &[
         ("gate_capacity_reopen", gate_migration::reopen),
         ("gate_capacity_downgrade", gate_migration::downgrade),
+        ("gate_capacity_idle_downgrade", gate_migration::idle_downgrade),
         ("gate_capacity_crash_rows", |s| gate_migration::crash(s, "RowsWritten")),
         ("gate_capacity_crash_effects", |s| gate_migration::crash(s, "EffectsWritten")),
         ("gate_capacity_crash_before_commit", |s| gate_migration::crash(s, "BeforeCommit")),

@@ -40,8 +40,8 @@ fn boot(slots: u8) -> Bootstrap {
 fn open_at(settings: &tl3_config::Store, root: &Path, slots: u8) -> Controller {
     Controller::open(Store::open(settings).unwrap(), registry(root), boot(slots)).unwrap()
 }
-fn seed(settings: &tl3_config::Store, root: &Path) -> Snapshot {
-    let mut c = open_at(settings, root, 1);
+fn seed(settings: &tl3_config::Store, root: &Path, slots: u8) -> Snapshot {
+    let mut c = open_at(settings, root, slots);
     for number in 1..=3 {
         c.intake(LabelledIssue {
             delivery: format!("gate-{number}"), owner: "owner".into(), repo: "gate-migration".into(),
@@ -50,9 +50,11 @@ fn seed(settings: &tl3_config::Store, root: &Path) -> Snapshot {
         drain(&mut c);
     }
     let w = c.world().unwrap();
-    assert_eq!(w.gates[0].w, 1);
-    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), 1);
-    assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
+    assert_eq!(w.gates[0].w, slots);
+    assert_eq!(w.nodes.iter().filter(|n| n.holds).count(), usize::from(slots));
+    if slots == 1 {
+        assert!(w.nodes[1..].iter().all(|n| !n.holds && n.ticket.is_some()));
+    }
     c.snapshot().unwrap()
 }
 fn verify_migrated(c: &mut Controller, before: &Snapshot) -> Snapshot {
@@ -71,7 +73,7 @@ fn verify_migrated(c: &mut Controller, before: &Snapshot) -> Snapshot {
 }
 pub(super) fn reopen(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let before = seed(settings, root.path());
+    let before = seed(settings, root.path(), 1);
     let mut c = open_at(settings, root.path(), 3);
     let after = verify_migrated(&mut c, &before);
     drop(c);
@@ -80,15 +82,23 @@ pub(super) fn reopen(settings: &tl3_config::Store) {
 }
 pub(super) fn downgrade(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let before = seed(settings, root.path());
-    let mut c = open_at(settings, root.path(), 3);
-    verify_migrated(&mut c, &before);
-    let after = c.snapshot().unwrap();
-    drop(c);
+    let before = seed(settings, root.path(), 3);
     let result = Controller::open(Store::open(settings).unwrap(), registry(root.path()), boot(1));
     let Err(error) = result else { panic!("active gate capacity must not be silently lowered"); };
     assert!(error.to_string().contains("limits.w") && error.to_string().contains("in flight"), "{error}");
-    assert_eq!(Store::open(settings).unwrap().load().unwrap(), after);
+    assert_eq!(Store::open(settings).unwrap().load().unwrap(), before);
+}
+pub(super) fn idle_downgrade(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open_at(settings, root.path(), 3);
+    let before = c.snapshot().unwrap();
+    drop(c);
+    let mut c = open_at(settings, root.path(), 1);
+    assert_eq!(c.world().unwrap().gates[0].w, 1);
+    assert_eq!(c.snapshot().unwrap().revision.get(), before.revision.get() + 1);
+    let after = c.snapshot().unwrap();
+    drop(c);
+    assert_eq!(open_at(settings, root.path(), 1).snapshot().unwrap(), after);
 }
 pub(super) fn child(args: &[String]) {
     let settings: tl3_config::Store = serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
@@ -106,9 +116,13 @@ pub(super) fn child(args: &[String]) {
 }
 pub(super) fn crash(settings: &tl3_config::Store, point: &str) {
     let root = tempfile::tempdir().unwrap();
-    let before = seed(settings, root.path());
+    let before = seed(settings, root.path(), 1);
     let config = root.path().join("store.json");
-    fs::write(&config, serde_json::to_vec(settings).unwrap()).unwrap();
+    fs::write(&config, serde_json::to_vec(&json!({
+        "host":settings.host, "port":settings.port, "database":settings.database,
+        "user":settings.user, "password_file":settings.password_file,
+        "connect_timeout_secs":settings.connect_timeout_secs,
+    })).unwrap()).unwrap();
     let mut process = Command::new(env::current_exe().unwrap())
         .arg("--gate-migration-child").arg(&config).arg(root.path()).arg(point)
         .stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
