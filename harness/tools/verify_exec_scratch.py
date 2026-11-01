@@ -1,5 +1,6 @@
 """Prove the opt-in in real contained checks and maker summaries, through PB."""
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -59,7 +60,7 @@ def test_containment(tmp_path):
         pass
     else:
         raise AssertionError('network must stay disabled')
-'''+f'    assert sorted(os.sched_getaffinity(0)) == {sorted(__import__("os").sched_getaffinity(0))!r}\n')
+'''+f'    assert sorted(os.sched_getaffinity(0)) == {sorted(os.sched_getaffinity(0))!r}\n')
         git(repo, 'init', '-q')
         sha = save(repo, 'scratch execution fixture')
         summary_tree = repo / 'exported'
