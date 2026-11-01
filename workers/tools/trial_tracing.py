@@ -166,6 +166,11 @@ def main():
     for span in models:
         usage = span.get_attribute('mlflow.chat.tokenUsage')
         assert all(key in usage for key in ['input_tokens', 'output_tokens', 'total_tokens'])
+    if trace.info.tags['model'] != 'synthetic-maker':
+        reply = next(message['content'] for span in reversed(models)
+                     for choice in span.outputs.get('choices', [])
+                     if (message := choice.get('message', {})).get('content'))
+        assert json.loads(reply)['kind'] == 'brief', 'model reply JSON must remain readable'
     if args.synthetic:
         assert len(spans) == 121
         assert root.get_attribute('tl3.trace.truncated') is True

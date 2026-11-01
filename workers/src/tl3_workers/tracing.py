@@ -80,6 +80,15 @@ class Redactor:
         if limit < 256 or depth > 20:
             return '[truncated: content budget]'
         if isinstance(value, str):
+            if len(value) > limit // 6 - 64 and value[:128].lstrip().startswith(('{', '[')):
+                # Model replies and tool arguments often contain JSON on one
+                # physical line. Bound its fields without discarding the reply.
+                try:
+                    decoded = json.loads(value)
+                except (ValueError, RecursionError):
+                    pass
+                else:
+                    return json.dumps(self.clean(decoded, limit // 2, depth + 1), ensure_ascii=False)
             # Six bytes covers JSON's worst-case escaping of a character. Each
             # message/argument/result is bounded before pattern matching.
             return self.text(self.tail(value, min(STRING_CHARS, limit // 6 - 64)))
@@ -92,8 +101,9 @@ class Redactor:
                 if remaining < 512:
                     result['tl3.truncated'] = 'earlier fields omitted'
                     break
-                safe_key = self.text(self.tail(str(key), 128))
-                item = ('[REDACTED]' if SENSITIVE_KEY.search(str(key)) else
+                key_text = str(key)
+                safe_key = self.text(self.tail(key_text, 128))
+                item = ('[REDACTED]' if len(key_text) > 128 or SENSITIVE_KEY.search(key_text) else
                         self.clean(value[key], min(ITEM_BYTES, remaining - 256), depth + 1))
                 remaining -= len(json.dumps({safe_key: item}, ensure_ascii=False).encode()) + 2
                 result[safe_key] = item

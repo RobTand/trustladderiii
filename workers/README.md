@@ -521,11 +521,13 @@ credential files. Headers, provider metadata and raw exceptions are omitted.
 
 Each message, tool argument and result is bounded separately. Oversized text
 keeps complete trailing lines with a truncation note; an oversized single line
-is omitted to avoid exposing part of a credential. Message lists keep their
+is omitted to avoid exposing part of a credential. Serialized JSON is bounded
+by field first, so model replies and tool arguments remain readable. Message lists keep their
 newest items. Each span input/output is at most 64 KiB, and the trace has a
 1 MiB export budget. After that budget fills, spans keep metadata and token
 counts, with content-budget notices. The root retains space for readable inputs
-and the final reply. The root marks budget truncation with `tl3.trace.truncated`.
+and the final reply. If metadata also fills the export budget, the root counts
+omitted spans in `tl3.trace.omitted_spans`. The root marks budget truncation with `tl3.trace.truncated`.
 The MLflow server is LAN-only with no login; anyone on the LAN can read these
 prompts and repository contents. See the deployment README for access limits.
 
