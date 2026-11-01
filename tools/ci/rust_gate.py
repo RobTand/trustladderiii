@@ -15,10 +15,17 @@ import shards
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path('tools/ci/rust-test-budget.json')
 MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
+# Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
+BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15}
 
 
 def runner_class():
-    return 'baseline'
+    if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
+        return 'baseline'
+    arch = os.environ.get('RUNNER_ARCH')
+    if os.environ.get('RUNNER_OS') == 'Linux' and arch in ('X64', 'ARM64'):
+        return f'hosted-{arch.lower()}'
+    raise ValueError('Unmeasured hosted runner class')
 
 
 def check_budget(results, config, baseline, runner_class='baseline'):
@@ -28,8 +35,13 @@ def check_budget(results, config, baseline, runner_class='baseline'):
             or any(not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0
                    or limit > baseline['slow'][name] for name, limit in slow.items())):
         raise RuntimeError('Test budgets and the explicit slow list may not grow')
-    failures = [f'{name}: {elapsed:.3f}s > {slow.get(name, seconds):.3f}s'
-                for name, elapsed in sorted(results.items()) if elapsed > slow.get(name, seconds)]
+    if runner_class not in BUDGET_MULTIPLIERS:
+        raise ValueError(f'Unknown runner class: {runner_class}')
+    multiplier = BUDGET_MULTIPLIERS[runner_class]
+    failures = [f'{name}: {elapsed:.3f}s > {slow.get(name, seconds) * multiplier:.3f}s '
+                f'(base {slow.get(name, seconds):.3f}s, {runner_class} x{multiplier})'
+                for name, elapsed in sorted(results.items())
+                if elapsed > slow.get(name, seconds) * multiplier]
     if failures:
         raise RuntimeError('Per-test time budget exceeded:\n' + '\n'.join(failures))
 
@@ -180,7 +192,8 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
         raise ValueError('Test concurrency must be positive')
     config = json.loads((ROOT / POLICY).read_text())
     baseline = baseline_policy(config) if enforce else config
-    check_budget({}, config, baseline)
+    current_class = runner_class()
+    check_budget({}, config, baseline, runner_class=current_class)
     binaries = collect_binaries(manifest)
     setup_seconds = prepare_binaries(binaries)
     if shard is not None:
@@ -195,7 +208,8 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
     started = time.monotonic()
     results = execute_binaries(binaries, jobs)
     output = {'seconds': time.monotonic() - started, 'setup_seconds': setup_seconds,
-              'jobs': jobs, 'shard': shard, 'tests': results}
+              'jobs': jobs, 'shard': shard, 'tests': results,
+              'runner_class': current_class, 'budget_multiplier': BUDGET_MULTIPLIERS[current_class]}
     for name, seconds in sorted(results.items()):
         print(json.dumps({'test': name, 'seconds': seconds}), flush=True)
     path = report or ROOT / 'target/ci-test-times.json'
@@ -204,7 +218,7 @@ def test_workspace(manifest, jobs=None, report=None, enforce=True, shard=None):
     print(json.dumps({'test_wall_seconds': output['seconds'], 'jobs': jobs,
                       'timings': str(path)}), flush=True)
     if enforce:
-        check_budget(results, config, baseline)
+        check_budget(results, config, baseline, runner_class=current_class)
     return output
 
 
