@@ -422,3 +422,37 @@ fn corrupt_incident_during_probe_stops_ingress() {
         "corruption must stop before mutating the allowance into a setup failure"
     );
 }
+
+#[test]
+fn stored_repository_in_translator_has_fatal_decode_error() {
+    use tl3_controller::ingress::{GitHubDelivery, GitHubTranslator};
+    let mut db = support::Database::start();
+    let settings = db.create("translator_repository");
+    let root = tempfile::tempdir().unwrap();
+    let mut c = open(&settings, root.path());
+    sql(
+        &settings,
+        "UPDATE tl3_world SET value = value - 'name' WHERE table_name = 'repos'",
+    );
+    let snapshot = c.snapshot().unwrap();
+    let mut translator = adapters::mergify::Translator::new(Default::default()).unwrap();
+    let delivery = GitHubDelivery::CatchUp {
+        repository: boot().repos.remove(0),
+        changes: Box::new(tl3_github::RepoChanges {
+            repository: "owner/sandbox".into(),
+            issues: vec![],
+            comments: vec![],
+            labels: vec![],
+            closed: vec![],
+            pull_requests: vec![],
+            check_runs: vec![],
+            check_suites: vec![],
+        }),
+    };
+    let result = translator.translate(&delivery, &snapshot);
+    assert!(result.is_err());
+    assert!(
+        !matches!(result, Err(Error::Json(_))),
+        "stored repository decoding inside a translator must use a fatal error"
+    );
+}
