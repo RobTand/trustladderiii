@@ -117,6 +117,20 @@ pub struct WorkflowRun {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct CommitStatus {
+    pub id: u64,
+    pub context: String,
+    pub state: String,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RequiredChecks {
+    pub checks: Vec<RequiredStatusCheck>,
+    pub unavailable: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct RequiredStatusCheck {
     pub context: String,
     pub integration_id: Option<u64>,

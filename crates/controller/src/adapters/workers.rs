@@ -252,6 +252,11 @@ impl Supervisor {
             if !inputs.is_object() || !inputs["plan"].is_object() {
                 return Err(Error::Invalid("maker materials need a plan object"));
             }
+            if let Some(run) = &delivery.checks {
+                inputs["check_base_sha"] = json!(run.base_sha);
+            } else if let Some(base) = materials["check_run"].get("base_sha") {
+                inputs["check_base_sha"] = base.clone();
+            }
             if let Some(findings) = store.worker_document(&node, "maker_findings")? {
                 let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
                 feedback

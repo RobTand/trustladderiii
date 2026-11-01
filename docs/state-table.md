@@ -1,6 +1,6 @@
 # TL3 state table
 
-Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q48. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
+Version 5, 2026-10-30, amended the same day with Rob's decisions Q42 and Q43, and on 2026-10-31 with Q44, Q45, Q46 and Q29 amended, and on 2026-11-01 with Q47 and Q48. Version 4 came out of three rounds of adversarial review by Sol and Muse. Version 5 adds Rob's decisions from the grilling of 2026-10-29 and 30, numbered Q1 to Q41 in `docs/state-machine.md`. This file is the source of truth for the kernel. Where `docs/state-machine.md` disagrees with it, this file wins. `docs/state-machine.md` keeps the reasoning and Rob's decisions.
 
 **Changing the rules.** Any change to a rule in this file needs Rob's approval. That includes a new rule that comes from a bug Kani or a test finds. A clarification that changes no rule doesn't need it (Q27).
 
@@ -418,8 +418,12 @@ When the last step confirms, the leaf moves to Queued.
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | Conflict with current main | | Rebasing | Rebase onto main, in a new generation (Q46, Rob 2026-10-31) |
+| CI failed | A required check failed on the approved head before enqueue, because a test failed on the code | A failed round | Cancel the pending enqueue; remove `tl3-queue` if it was added (Q47, Rob, 2026-11-01) |
+| CI failed | The runner or its setup failed at the enqueue step | See "Failures" | Rerun the check, then enqueue when the failure rules allow (Q47, Rob, 2026-11-01) |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
+
+Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
 
 ### A failed round
 

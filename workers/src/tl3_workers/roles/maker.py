@@ -169,6 +169,8 @@ def run(model, request, worktree, emit):
         raise ValueError("accepted maker session history is missing")
     worktree.test_settings = TestSettings(**inputs["tests"])
     worktree.test_checkout = Path(request["worktree"])
+    worktree.check_base_sha = inputs.get("check_base_sha")
+    worktree.test_checks = inputs["plan"]["checks"]
     worktree.progress_emit = emit
 
     worktree.hindsight_endpoint = inputs.get("hindsight", {}).get("endpoint")

@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 
 import pytest
@@ -63,7 +65,7 @@ def call(submission, response, tests=None, override=None):
     with Worktree(root) as tree:
         tree.test_settings = TestSettings(IMAGE, scripts)
         tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
-        assert set(tool.args) == {"tests"}
+        assert set(tool.args) == {"tests", "base"}
         return tool.invoke({} if tests is None else {"tests": tests})
 
 
@@ -72,7 +74,12 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     summary = Summary()
     summary.add("tests/test_code.py::test_value", outcome, "fixture failure" if outcome == "failed" else "")
     result = call(submission, summary.result, ["tests/test_code.py::test_value"])
-    assert result == {**summary.result, "action_key": KEY}
+    expected = {**summary.result, "action_key": KEY}
+    if outcome in ("failed", "error"):
+        summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
+        expected["base"] = {key: value for key, value in infrastructure(
+            "The role did not supply a check base and checkout.").items() if key != "tests"}
+    assert result == expected
     args = json.loads((submission[1] / "submitted.json").read_text())
     assert "--detach" in args and "--anywhere" in args
     assert "--timeout-s" not in args
@@ -275,3 +282,201 @@ def test_scratch_setting_reaches_the_trusted_action(submission, enabled):
     args = json.loads((scripts / 'submitted.json').read_text())
     action = args[args.index('--') + 1:]
     assert ('--exec-scratch' in action) is enabled
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o664, 0o600, 0o700, 0o777, 0o750, 0o4750, 0o610])
+def test_staging_modes_match_commit_export(submission, tmp_path, mode):
+    from tl3_harness.trees import export
+    from tl3_workers.pb_tests import _stage
+
+    _, _, _, git = prepare_base_submission(submission)
+    source = submission[0] / "script"
+    source.write_text("#!/bin/sh\nexit 0\n")
+    source.chmod(mode)
+    git("add", "--force", "--all")
+    git("commit", "--quiet", "-m", "Same content as maker staging")
+    exported = tmp_path / "exported"
+    export(submission[0], git("rev-parse", "HEAD"), exported)
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    with Worktree(submission[0]) as tree:
+        _stage(tree, staged)
+    for path in exported.rglob("*"):
+        if path.is_file():
+            target = staged / "checkout" / path.relative_to(exported)
+            assert target.read_bytes() == path.read_bytes()
+            assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(path.stat().st_mode)
+    target = staged / "checkout/script"
+    assert stat.S_IMODE(target.stat().st_mode) == (0o755 if mode & 0o100 else 0o644)
+    assert os.access(target, os.X_OK) == bool(mode & 0o100)
+    if mode & 0o100:
+        assert subprocess.run([str(target)], check=False).returncode == 0
+    else:
+        with pytest.raises(PermissionError):
+            subprocess.run([str(target)], check=False)
+    indexed = subprocess.check_output(["git", "ls-files", "--stage", "checkout/script"], cwd=staged)
+    assert indexed.startswith(b"100755" if mode & 0o100 else b"100644")
+
+
+def prepare_base_submission(submission, base_value="base", head_value="head"):
+    root, scripts = submission
+
+    def git(*args):
+        return subprocess.check_output([
+            "git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args,
+        ], cwd=root, text=True).strip()
+
+    git("init", "--quiet", "--template=")
+    (root / "example_module.py").write_text(f"value = {base_value!r}\n")
+    test_source = ("from example_module import value\ndef test_value():\n"
+                   "    if value == 'error': raise RuntimeError('fixture error')\n"
+                   "    assert value == 'head'\n"
+                   "def test_other(): assert value == 'head'\ndef test_pass(): pass\n")
+    if base_value != "missing":
+        (root / "test_code.py").write_text(test_source)
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Check base")
+    base = git("rev-parse", "HEAD")
+    (root / "test_code.py").write_text(test_source)
+    (root / "example_module.py").write_text("value = 'earlier maker commit'\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "Earlier maker round")
+    head = git("rev-parse", "HEAD")
+    (root / "example_module.py").write_text(f"value = {head_value!r}\n")
+    before = git("status", "--porcelain")
+    script = scripts / "pbrun.py"
+    script.write_text(script.read_text().replace(
+        'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"\n', "",
+    ).replace(
+        'print(json.dumps({"schema":',
+        '''import subprocess
+sys.path.insert(0, str(root / "trusted"))
+from tl3_harness.test_tool import Summary
+selected = args[args.index("--") + 6]
+run = subprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py"),
+                      selected, str(root / "checkout"), "--summary"], capture_output=True, text=True)
+assert run.returncode in (0, 1, 4, 5), run.stdout + run.stderr
+summary = Summary()
+for line in run.stdout.splitlines():
+    record = json.loads(line)
+    if record["event"] == "result":
+        summary.add(record["test"], record["outcome"], record["message"])
+(here / "response.json").write_text(json.dumps(summary.result))
+record = here / "submissions.json"
+submissions = json.loads(record.read_text()) if record.exists() else []
+submissions.append(json.loads(selected))
+record.write_text(json.dumps(submissions))
+print(json.dumps({"schema":''',
+    ).replace('"action_key": "a" * 64', '"action_key": ("a" if len(submissions) == 1 else "c") * 64'))
+    waiter = scripts / "pbwait.py"
+    waiter.write_text(waiter.read_text().replace('"action_key": "a" * 64', '"action_key": sys.argv[-1]'))
+    return base, head, before, git
+
+
+def test_base_run_returns_base_outcomes_and_keeps_maker_tree(submission):
+    root, scripts = submission
+    base, head, before, git = prepare_base_submission(submission)
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = base
+        tool = make_test_tool(tree, TestSettings(IMAGE, scripts))
+        current = tool(["test_code.py::test_value"])
+        baseline = tool(["test_code.py::test_value"], base=True)
+    assert current["totals"]["passed"] == 1, current
+    assert baseline["totals"]["failed"] == 1, baseline
+    assert baseline["tests"][0]["test"] == "test_code.py::test_value"
+    assert baseline["action_key"] == "c" * 64
+    assert baseline["base_sha"] == base
+    assert git("rev-parse", "HEAD") == head
+    assert git("status", "--porcelain") == before
+    assert (root / "example_module.py").read_text() == "value = 'head'\n"
+
+
+@pytest.mark.parametrize("base_value,head_value,classification,actions", [
+    ("base", "broken", "pre-existing", 2),
+    ("head", "broken", "new", 2),
+    ("error", "error", "pre-existing", 2),
+    ("head", "error", "new", 2),
+    ("missing", "broken", "new", 2),
+    ("base", "head", None, 1),
+])
+def test_automatic_base_comparison(submission, base_value, head_value, classification, actions):
+    root, scripts = submission
+    base, head, before, git = prepare_base_submission(submission, base_value, head_value)
+    tests = ["test_code.py::test_value", "test_code.py::test_other", "test_code.py::test_pass"]
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = base
+        tree.test_checks = [{"kind": "regression", "tests": tests[:2]}]
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))(tests)
+    submitted = json.loads((scripts / "submissions.json").read_text())
+    assert len(submitted) == actions, result
+    assert result["action_key"] == KEY
+    if classification:
+        assert submitted[1] == tests[:2], "batch only failing tests into one base action"
+        failed = [test for test in result["tests"] if test["test"] in tests[:2]]
+        assert all(test["classification"] == classification for test in failed)
+        assert result["base"]["action_key"] == "c" * 64
+        assert result["base"]["base_sha"] == base
+    else:
+        assert "base" not in result
+    assert git("rev-parse", "HEAD") == head
+    assert git("status", "--porcelain") == before
+
+
+@pytest.mark.parametrize("kind", ["regression", "demonstrating", "reproducing", "behavior-preserving", None])
+@pytest.mark.parametrize("base_value", ["base", "error"])
+def test_base_failure_classification_respects_check_kind(submission, kind, base_value):
+    root, scripts = submission
+    base, _, _, _ = prepare_base_submission(submission, base_value, "broken")
+    test = "test_code.py::test_value"
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = base
+        tree.test_checks = [{"kind": kind, "tests": [test]}] if kind else []
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))([test])
+    assert result["tests"][0]["base_outcome"] == ("error" if base_value == "error" else "failed")
+    assert result["tests"][0]["classification"] == (
+        "pre-existing" if kind == "regression" else "fails-on-base"
+    )
+    assert len(json.loads((scripts / "submissions.json").read_text())) == 2
+
+
+@pytest.mark.parametrize("selector", ["test_code.py::test_value", "test_code.py::test_value[0]"])
+def test_regression_classification_matches_parametrized_selector(submission, selector):
+    root, scripts = submission
+    _, _, _, git = prepare_base_submission(submission)
+    (root / "test_code.py").write_text(
+        "import pytest\n@pytest.mark.parametrize('case', [0, 1])\n"
+        "def test_value(case): assert False\n"
+        "def test_value_extra(): assert False\n"
+    )
+    git("add", "--all")
+    git("commit", "--quiet", "-m", "Parametrized check base")
+    with Worktree(root) as tree:
+        tree.test_checkout = root
+        tree.check_base_sha = git("rev-parse", "HEAD")
+        tree.test_checks = [{"kind": "regression", "tests": [selector]}]
+        result = make_test_tool(tree, TestSettings(IMAGE, scripts))(["test_code.py"])
+    assert {item["test"]: item["classification"] for item in result["tests"]} == {
+        "test_code.py::test_value[0]": "pre-existing",
+        "test_code.py::test_value[1]": "pre-existing" if selector.endswith("test_value") else "fails-on-base",
+        "test_code.py::test_value_extra": "fails-on-base",
+    }
+
+
+def test_comparison_truncation_keeps_failures_before_passes(submission):
+    summary = Summary()
+    for i in range(60):
+        summary.add(f"test_code.py::test_pass_{i}", "passed", "p" * 90)
+    for i in range(30):
+        summary.add(f"test_code.py::test_fail_{i}", "failed", "f" * 90)
+    failures = [item["test"] for item in summary.result["tests"] if item["outcome"] == "failed"]
+    assert failures and not summary.result["note"], "start with a complete head summary"
+    result = call(submission, summary.result)
+    assert len(json.dumps(result).encode()) <= SUMMARY_BYTES
+    assert "Truncated" in result["note"]
+    assert [item["test"] for item in result["tests"] if item["outcome"] == "failed"] == failures
+    assert sum(item["outcome"] == "passed" for item in result["tests"]) < 60
+    assert result["totals"] == summary.result["totals"]

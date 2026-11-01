@@ -787,7 +787,7 @@ impl GitHub {
         &self,
         repo: &str,
         branch: &str,
-    ) -> Result<Vec<RequiredStatusCheck>, Error> {
+    ) -> Result<RequiredChecks, Error> {
         #[derive(Deserialize)]
         struct Rule {
             #[serde(rename = "type")]
@@ -799,19 +799,111 @@ impl GitHub {
             #[serde(default)]
             required_status_checks: Vec<RequiredStatusCheck>,
         }
-        let rules: Vec<Rule> = self
-            .list(
-                format!("{}/rules/branches/{}", repo_path(repo)?, segment(branch)?),
-                vec![],
-                None,
-            )
-            .await?;
-        Ok(rules
+        #[derive(Deserialize)]
+        struct ClassicCheck {
+            context: String,
+            app_id: Option<i64>,
+        }
+        #[derive(Deserialize)]
+        struct Protection {
+            #[serde(default)]
+            contexts: Vec<String>,
+            #[serde(default)]
+            checks: Vec<ClassicCheck>,
+        }
+        #[derive(Deserialize)]
+        struct Branch {
+            protection: Option<BranchProtection>,
+        }
+        #[derive(Deserialize)]
+        struct BranchProtection {
+            required_status_checks: Option<Protection>,
+        }
+        let mut unavailable = Vec::new();
+        let repo = repo_path(repo)?;
+        let branch = segment(branch)?;
+        let rules: Vec<Rule> = match self
+            .list(format!("{repo}/rules/branches/{branch}"), vec![], None)
+            .await
+        {
+            Ok(rules) => rules,
+            Err(Error::Http {
+                status: status @ (403 | 404),
+            }) => {
+                unavailable.push(format!(
+                    "Metadata: read for branch rules unavailable (HTTP {status})"
+                ));
+                vec![]
+            }
+            Err(error) => return Err(error),
+        };
+        let mut required: BTreeSet<_> = rules
             .into_iter()
             .filter(|rule| rule.kind == "required_status_checks")
             .filter_map(|rule| rule.parameters)
             .flat_map(|parameters| parameters.required_status_checks)
-            .collect())
+            .map(|check| (check.context, check.integration_id))
+            .collect();
+        let branch_summary: Option<Branch> = match self
+            .request(
+                Method::GET,
+                format!("{repo}/branches/{branch}"),
+                vec![],
+                None,
+            )
+            .await
+        {
+            Ok(protection) => Some(protection),
+            Err(Error::Http {
+                status: status @ (403 | 404),
+            }) => {
+                unavailable.push(format!(
+                    "Contents: read for branch protection summary unavailable (HTTP {status})"
+                ));
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(protection) = branch_summary
+            .and_then(|branch| branch.protection)
+            .and_then(|protection| protection.required_status_checks)
+        {
+            // GitHub repeats checks in contexts. Keep the App binding when present.
+            for context in protection.contexts {
+                if !protection
+                    .checks
+                    .iter()
+                    .any(|check| check.context == context)
+                {
+                    required.insert((context, None));
+                }
+            }
+            required.extend(protection.checks.into_iter().map(|check| {
+                (
+                    check.context,
+                    check.app_id.and_then(|id| u64::try_from(id).ok()),
+                )
+            }));
+        }
+        Ok(RequiredChecks {
+            checks: required
+                .into_iter()
+                .map(|(context, integration_id)| RequiredStatusCheck {
+                    context,
+                    integration_id,
+                })
+                .collect(),
+            unavailable,
+        })
+    }
+
+    pub async fn commit_statuses(&self, repo: &str, sha: &str) -> Result<Vec<CommitStatus>, Error> {
+        self.list(
+            format!("{}/commits/{}/statuses", repo_path(repo)?, segment(sha)?),
+            vec![],
+            None,
+        )
+        .await
     }
 
     pub async fn check_annotations(

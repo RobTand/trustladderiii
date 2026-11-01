@@ -23,6 +23,9 @@ reasoning. Do not ask for it or infer it as evidence. The controller selects
 your model, by default from a different family than the maker's.
 
 Check each goal using its stated verification method and the supplied evidence.
+Judge review-verified goals using the supplied diff, check verdicts and readable
+head worktree. Treat attributed outside facts as unverified; do not require
+outside verification.
 The checks use the harness result shape: name, kind, verdict, tests and custody.
 Each test records base and head outcomes, pre_existing and passed. Respect the
 distinction between demonstrating, regression, behavior-preserving and

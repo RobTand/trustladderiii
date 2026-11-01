@@ -1,3 +1,5 @@
+#[path = "mergify/classic_protection.rs"]
+mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
 mod dequeue_followups;
 #[path = "mergify/head_checks.rs"]
@@ -110,6 +112,11 @@ struct State {
     rerun_message: String,
     rerun_lost_response: bool,
     required: bool,
+    classic: bool,
+    restricted: Option<(String, u16)>,
+    classic_context_only: bool,
+    annotations: Value,
+    statuses: Value,
     queued_before_rerun: bool,
 }
 impl State {
@@ -155,7 +162,12 @@ impl State {
             rerun_status: 201,
             rerun_message: "Resource not accessible by integration".into(),
             rerun_lost_response: false,
-            required: true,
+            required: false,
+            classic: false,
+            restricted: None,
+            classic_context_only: false,
+            annotations: json!([]),
+            statuses: json!([]),
             queued_before_rerun: false,
         }
     }
@@ -248,15 +260,28 @@ impl Respond for Api {
         {
             return response;
         }
+        if method == "GET"
+            && let Some((read, status)) = &state.restricted
+            && (read == "branch" && path.contains("/branches/main") && !path.contains("/rules/")
+                || read == "rules" && path.contains("/rules/branches/")
+                || read == "status" && path.ends_with("/statuses"))
+        {
+            return ResponseTemplate::new(*status);
+        }
         match (method, path) {
+            ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
+                if state.classic { json!({"protection":{"required_status_checks":{
+                    "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
+                else { json!({"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}]) } else { json!([]) }),
+            ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {
                 assert!(request.url.query_pairs().any(|(key, value)| key == "head_sha" && value == state.pull["head"]["sha"].as_str().unwrap()));
                 ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":state.workflow.iter().collect::<Vec<_>>()}))
             }
             ("GET", "/repos/owner/sandbox/actions/runs/700") => ResponseTemplate::new(200).set_body_json(state.workflow.clone().unwrap()),
-            ("GET", "/repos/owner/sandbox/check-runs/900/annotations") => ResponseTemplate::new(200).set_body_json(json!([])),
+            ("GET", "/repos/owner/sandbox/check-runs/900/annotations" | "/repos/owner/sandbox/check-runs/901/annotations") => ResponseTemplate::new(200).set_body_json(state.annotations.clone()),
             ("POST", "/repos/owner/sandbox/actions/runs/700/rerun") => {
                 state.reruns += 1;
                 if state.rerun_status == 201 {
@@ -2482,6 +2507,15 @@ fn main() {
     }
     if let Some(mode) = std::env::args()
         .nth(1)
+        .and_then(|arg| arg.strip_prefix("--classic-head-").map(str::to_owned))
+    {
+        let mut database = support::Database::start();
+        classic_protection::scenario(&database.create("classic_head"), &mode);
+        database.stop();
+        return;
+    }
+    if let Some(mode) = std::env::args()
+        .nth(1)
         .and_then(|arg| arg.strip_prefix("--head-check-").map(str::to_owned))
     {
         let mut database = support::Database::start();
@@ -2632,12 +2666,22 @@ fn main() {
         database.stop();
         return;
     }
-    executor_recovery();
-    label_removed_before_confirmation();
-    applied_marker_waits_for_person_evidence();
+    let mut scenario_count = 0;
+    macro_rules! scenario {
+        ($call:expr) => {{
+            $call;
+            scenario_count += 1;
+        }};
+    }
+    scenario!(executor_recovery());
+    scenario!(label_removed_before_confirmation());
+    scenario!(applied_marker_waits_for_person_evidence());
     let mut database = support::Database::start();
     for status in [403, 429] {
-        rate_limited_read_defers_quota(&database.create(&format!("quota_{status}")), status);
+        scenario!(rate_limited_read_defers_quota(
+            &database.create(&format!("quota_{status}")),
+            status
+        ));
     }
     for (status, class) in [
         (401, "permission"),
@@ -2646,69 +2690,159 @@ fn main() {
         (410, "not_found"),
         (422, "invalid_request"),
     ] {
-        permanent_github_read(
+        scenario!(permanent_github_read(
             &database.create(&format!("permanent_{status}")),
             status,
             class,
             false,
-        );
+        ));
     }
-    failed_catch_up_retries_held_enqueue(&database.create("failed_catchup_wake"));
-    permanent_github_read(
+    scenario!(failed_catch_up_retries_held_enqueue(
+        &database.create("failed_catchup_wake")
+    ));
+    scenario!(permanent_github_read(
         &database.create("persistent_404_look"),
         404,
         "not_found",
         true,
-    );
-    in_progress_confirms_enqueue(&database.create("progress"));
-    late_merge_after_close(&database.create("late_webhook"), true);
-    late_merge_after_close(&database.create("late_catchup"), false);
-    translator_retries_after_api_failure(&database.create("translation_retry"));
-    outside_merge_checks(&database.create("outside_pass"), true, true, false);
-    outside_merge_checks(&database.create("outside_fail"), false, true, false);
-    outside_merge_checks(&database.create("outside_no_ci"), false, false, false);
-    outside_merge_checks(&database.create("stale_final_pass"), true, true, true);
-    outside_merge_checks(&database.create("stale_final_fail"), false, true, true);
+    ));
+    scenario!(in_progress_confirms_enqueue(&database.create("progress")));
+    scenario!(late_merge_after_close(
+        &database.create("late_webhook"),
+        true
+    ));
+    scenario!(late_merge_after_close(
+        &database.create("late_catchup"),
+        false
+    ));
+    scenario!(translator_retries_after_api_failure(
+        &database.create("translation_retry")
+    ));
+    scenario!(outside_merge_checks(
+        &database.create("outside_pass"),
+        true,
+        true,
+        false
+    ));
+    scenario!(outside_merge_checks(
+        &database.create("outside_fail"),
+        false,
+        true,
+        false
+    ));
+    scenario!(outside_merge_checks(
+        &database.create("outside_no_ci"),
+        false,
+        false,
+        false
+    ));
+    scenario!(outside_merge_checks(
+        &database.create("stale_final_pass"),
+        true,
+        true,
+        true
+    ));
+    scenario!(outside_merge_checks(
+        &database.create("stale_final_fail"),
+        false,
+        true,
+        true
+    ));
     for passed in [true, false] {
         for webhook in [true, false] {
-            delayed_merge(
+            scenario!(delayed_merge(
                 &database.create(&format!("delayed_{passed}_{webhook}")),
                 passed,
                 webhook,
-            );
+            ));
         }
     }
-    stalled_merge_progress(&database.create("stalled_progress"));
+    scenario!(stalled_merge_progress(&database.create("stalled_progress")));
     for path in ["webhook", "catchup", "watch", "current_unapproved"] {
-        unapproved_merge_does_not_wait(&database.create(&format!("unapproved_{path}")), path);
+        scenario!(unapproved_merge_does_not_wait(
+            &database.create(&format!("unapproved_{path}")),
+            path
+        ));
     }
-    retirement_does_not_block(&database.create("retire_error"), false);
-    retirement_does_not_block(&database.create("retire_missing_upstream"), true);
-    marker_retirement(&database.create("retire_confirmed"), true);
-    marker_retirement(&database.create("retire_uncertain"), false);
-    merged(&database.create("merged_webhook"), false, true, true);
-    merged(&database.create("merged_catchup"), false, false, true);
-    merged(&database.create("unapproved"), true, true, true);
-    merged(&database.create("missing_merge_ci"), false, true, false);
-    watched_merge(&database.create("watched"));
-    terminal_before_enqueue_ack(&database.create("late_enqueue_ack"));
+    scenario!(retirement_does_not_block(
+        &database.create("retire_error"),
+        false
+    ));
+    scenario!(retirement_does_not_block(
+        &database.create("retire_missing_upstream"),
+        true
+    ));
+    scenario!(marker_retirement(
+        &database.create("retire_confirmed"),
+        true
+    ));
+    scenario!(marker_retirement(
+        &database.create("retire_uncertain"),
+        false
+    ));
+    scenario!(merged(
+        &database.create("merged_webhook"),
+        false,
+        true,
+        true
+    ));
+    scenario!(merged(
+        &database.create("merged_catchup"),
+        false,
+        false,
+        true
+    ));
+    scenario!(merged(&database.create("unapproved"), true, true, true));
+    scenario!(merged(
+        &database.create("missing_merge_ci"),
+        false,
+        true,
+        false
+    ));
+    scenario!(watched_merge(&database.create("watched")));
+    scenario!(terminal_before_enqueue_ack(
+        &database.create("late_enqueue_ack")
+    ));
     for (generic, via_look) in [(false, false), (false, true), (true, false), (true, true)] {
         for titles in [false, true] {
-            terminal_without_enqueue_ack(
+            scenario!(terminal_without_enqueue_ack(
                 &database.create(&format!("terminal_{generic}_{via_look}_{titles}")),
                 generic,
                 via_look,
                 titles,
-            );
+            ));
         }
     }
     database.restart();
     for (dirty, lazy) in [(true, false), (false, false), (true, true)] {
-        generic_dequeue(
+        scenario!(generic_dequeue(
             &database.create(&format!("generic_{dirty}_{lazy}")),
             dirty,
             lazy,
-        );
+        ));
+    }
+    for mode in [
+        "pass",
+        "failure",
+        "stale-failure",
+        "runner",
+        "runner-code",
+        "missing",
+        "app",
+        "status",
+        "action_required",
+        "stale",
+        "restricted-branch403",
+        "restricted-branch404",
+        "restricted-rules403",
+        "restricted-rules404",
+        "restricted-status403",
+        "restricted-status404",
+    ] {
+        scenario!(classic_protection::scenario(
+            &database.create(&format!("classic_{mode}")),
+            mode
+        ));
     }
     for mode in [
         "cancelled",
@@ -2726,10 +2860,16 @@ fn main() {
         "grant-retry",
         "request-retry",
     ] {
-        head_checks::scenario(&database.create(&format!("head_{mode}")), mode);
+        scenario!(head_checks::scenario(
+            &database.create(&format!("head_{mode}")),
+            mode
+        ));
     }
     for lag in [false, true] {
-        head_checks::label_present(&database.create(&format!("head_label_{lag}")), lag);
+        scenario!(head_checks::label_present(
+            &database.create(&format!("head_label_{lag}")),
+            lag
+        ));
     }
     for mode in [
         "delayed-label",
@@ -2748,15 +2888,18 @@ fn main() {
         "reply-late",
         "reply-ignored",
     ] {
-        requeue::scenario(&database.create(&format!("requeue_{mode}")), mode);
+        scenario!(requeue::scenario(
+            &database.create(&format!("requeue_{mode}")),
+            mode
+        ));
     }
-    queue_failure(&database.create("failed"), false, false);
-    queue_failure(&database.create("infra"), false, true);
-    queue_failure(&database.create("conflict"), true, false);
+    scenario!(queue_failure(&database.create("failed"), false, false));
+    scenario!(queue_failure(&database.create("infra"), false, true));
+    scenario!(queue_failure(&database.create("conflict"), true, false));
     for action in ["unlabeled", "closed", "synchronize"] {
-        person_actions(&database.create(action), action);
+        scenario!(person_actions(&database.create(action), action));
     }
-    ignored_events(&database.create("ignored"));
+    scenario!(ignored_events(&database.create("ignored")));
     println!("test ignored events ... ok");
     for mode in [
         "settles",
@@ -2766,27 +2909,44 @@ fn main() {
         "permanent",
         "quota",
     ] {
-        observation_race(&database.create(&format!("race_{mode}")), mode);
+        scenario!(observation_race(
+            &database.create(&format!("race_{mode}")),
+            mode
+        ));
     }
     for generic in [false, true] {
-        reused_check_dequeues_twice(&database.create(&format!("reused_{generic}")), generic);
+        scenario!(reused_check_dequeues_twice(
+            &database.create(&format!("reused_{generic}")),
+            generic
+        ));
     }
     for lazy in [false, true] {
-        deferred_source_loop(&database.create(&format!("source_loop_{lazy}")), lazy);
+        scenario!(deferred_source_loop(
+            &database.create(&format!("source_loop_{lazy}")),
+            lazy
+        ));
     }
-    permanent_delivery_does_not_block(&database.create("permanent_delivery"));
+    scenario!(permanent_delivery_does_not_block(
+        &database.create("permanent_delivery")
+    ));
     for title in [false, true] {
-        command_dequeue_pauses(&database.create(&format!("manual_dequeue_{title}")), title);
+        scenario!(command_dequeue_pauses(
+            &database.create(&format!("manual_dequeue_{title}")),
+            title
+        ));
     }
-    legacy_intent_ignores_completed_at();
+    scenario!(legacy_intent_ignores_completed_at());
     for timeout_delivery in [false, true] {
-        dequeue_followups::source_loop(
+        scenario!(dequeue_followups::source_loop(
             &database.create(&format!("persistent_{timeout_delivery}")),
             timeout_delivery,
-        );
+        ));
     }
     for quota in [false, true] {
-        dequeue_followups::transient_bound(&database.create(&format!("transient_{quota}")), quota);
+        scenario!(dequeue_followups::transient_bound(
+            &database.create(&format!("transient_{quota}")),
+            quota
+        ));
     }
     for mode in [
         "quiet",
@@ -2796,11 +2956,17 @@ fn main() {
         "stop-restart",
         "closed-restart",
     ] {
-        held::scenario(&database.create(&format!("held_{mode}")), mode);
+        scenario!(held::scenario(
+            &database.create(&format!("held_{mode}")),
+            mode
+        ));
     }
     for mode in ["unlabeled", "closed", "queue-label", "pending", "normal"] {
-        merge_closure::scenario(&database.create(&format!("merge_closure_{mode}")), mode);
+        scenario!(merge_closure::scenario(
+            &database.create(&format!("merge_closure_{mode}")),
+            mode
+        ));
     }
     database.stop();
-    println!("118 Mergify scenarios passed; no skips; no live upstream calls");
+    println!("{scenario_count} Mergify scenarios passed; no skips; no live upstream calls");
 }
