@@ -297,6 +297,15 @@ impl support::github::Routes for State {
 }
 impl Respond for Api {
     fn respond(&self, r: &Request) -> ResponseTemplate {
+        if r.method == "POST" && r.url.path() == "/v1/default/banks/tl3/memories" {
+            let body: Value = serde_json::from_slice(&r.body).unwrap();
+            assert_eq!(body["async"], true);
+            assert_eq!(body["items"].as_array().unwrap().len(), 1);
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "success": true, "async": true, "operation_id": body["operation_id"],
+                "bank_id": "tl3", "items_count": 1,
+            }));
+        }
         let mut s = self.state.lock().unwrap();
         let method = r.method.as_str();
         let path = r.url.path();
@@ -697,7 +706,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             vec![primary, backup]
         };
     }
-    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    config.hindsight.endpoint = server.server.uri().parse().unwrap();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
     config.workers.command = vec![
