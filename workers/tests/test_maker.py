@@ -577,6 +577,26 @@ def test_check_base_reaches_maker_test_tool(maker_request):
         assert getattr(tree, "check_base_sha", None) == base
 
 
+def test_plan_check_kinds_reach_maker_test_tool(maker_request):
+    from tl3_workers.tools import Worktree
+
+    response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
+    with Worktree(maker_request["worktree"]) as tree:
+        maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
+        assert getattr(tree, "test_checks", None) == maker_request["inputs"]["plan"]["checks"]
+
+
+def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "pre-existing only for tests named in regression checks" in prompt
+    assert "fails-on-base does not excuse demonstrating, reproducing or behavior-preserving checks" in prompt
+    assert "Never edit unrelated code, pins or tests to make it pass" in prompt
+    assert "Name it and both runs in your self-check; it is not a reason for cant_meet" in prompt
+    assert "For a goal verified by review, give the change and your account" in prompt
+    assert "Name evidence your tools cannot reach as unverified; review decides" in prompt
+    assert "A failing check your change caused is never unverified." in prompt
+
+
 def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, maker_request, monkeypatch):
     observed = []
     settings = []
