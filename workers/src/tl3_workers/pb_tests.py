@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from tl3_harness import execution
+from tl3_harness.node_ids import selects
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, infrastructure
 from tl3_harness.trees import export
 
@@ -71,7 +72,8 @@ def _stage(worktree, root, base_sha=None):
                 else:
                     with worktree._file(name) as source, target.open("wb") as destination:
                         shutil.copyfileobj(source.buffer, destination)
-                        os.fchmod(destination.fileno(), os.fstat(source.fileno()).st_mode & 0o777)
+                        mode = os.fstat(source.fileno()).st_mode
+                        os.fchmod(destination.fileno(), 0o755 if mode & 0o100 else 0o644)
     trusted = root / "trusted"
     trusted.mkdir()
     shutil.copytree(harness, trusted / "tl3_harness",
@@ -156,6 +158,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
+    regressions = tuple(test for check in getattr(worktree, "test_checks", ())
+                        if check["kind"] == "regression" for test in check["tests"])
 
     def run(tests, base=False):
         selected = _selectors([] if tests is None else tests)
@@ -241,12 +245,17 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None)
                 if not before and baseline["note"]:
                     outcome = "unverified"
             item["base_outcome"] = outcome
-            item["classification"] = (
-                "pre-existing" if outcome in ("failed", "error") else
-                "new" if outcome in ("passed", "missing") else "unverified"
-            )
+            if outcome in ("failed", "error"):
+                item["classification"] = (
+                    "pre-existing" if any(selects(test, item["test"]) for test in regressions)
+                    else "fails-on-base"
+                )
+            else:
+                item["classification"] = "new" if outcome in ("passed", "missing") else "unverified"
         while len(json.dumps(result).encode()) > SUMMARY_BYTES and result["tests"]:
-            result["tests"].pop()
+            passing = next((i for i in reversed(range(len(result["tests"])))
+                            if result["tests"][i]["outcome"] == "passed"), -1)
+            result["tests"].pop(passing)
             result["note"] = "Truncated: test entries were cut. Totals include all head results."
         return result
 
