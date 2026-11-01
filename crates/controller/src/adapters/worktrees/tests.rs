@@ -55,7 +55,14 @@ fn github_installation_and_synchronous_token_bridge() {
         name: "repo".into(),
         installation: 1,
     };
-    let mut adapter = Real::new(scratch.path().join("worktrees"), 1).unwrap();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.github.repos[0].owner = identity.owner.clone();
+    config.github.repos[0].name = identity.name.clone();
+    let mut adapter = Real::new(scratch.path().join("worktrees"), 1)
+        .unwrap()
+        .with_repositories(&config.github.repos)
+        .unwrap();
     let mut mismatch = identity.clone();
     mismatch.installation = 2;
     assert!(matches!(

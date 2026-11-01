@@ -2,7 +2,6 @@
 mod worktree_fixture;
 
 use std::fs;
-use tl3_controller::adapters::worktrees::Real;
 use tl3_controller::{
     adapters::prismabuild::{Check, CheckRun, Kind},
     executor::{Executor, Observation},
@@ -249,7 +248,7 @@ fn publication_refuses_a_checked_head_that_does_not_contain_current_main() {
             &f.remote,
             &[
                 "for-each-ref",
-                &format!("refs/heads/{}", Real::branch(&push).unwrap().as_str())
+                &format!("refs/heads/{}", f.branch(&push).as_str())
             ]
         )
         .is_empty()
@@ -273,10 +272,7 @@ fn publication_allows_a_nonconflicting_main_advance_without_rewriting_the_checke
         "a clean main advance must not require Rob"
     );
     assert_eq!(
-        git(
-            &f.remote,
-            &["rev-parse", Real::branch(&push).unwrap().as_str()]
-        ),
+        git(&f.remote, &["rev-parse", f.branch(&push).as_str()]),
         head
     );
     assert_ne!(git(&checkout, &["merge-base", &head, &main]), main);

@@ -402,6 +402,18 @@ impl Server {
             .unwrap()
     }
 }
+fn repositories() -> Vec<tl3_config::Repository> {
+    bootstrap()
+        .repos
+        .into_iter()
+        .map(|repo| {
+            serde_json::from_value(json!({
+                "owner":repo.owner, "name":repo.name, "installation_id":repo.installation
+            }))
+            .unwrap()
+        })
+        .collect()
+}
 fn adapter(uri: &str, root: &Path) -> adapters::github::Adapter {
     adapter_with_client(client(uri), root)
 }
@@ -422,6 +434,8 @@ fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap()
 }
 fn controller(settings: &tl3_config::Store, root: &Path, uri: &str) -> Controller {
@@ -946,6 +960,8 @@ fn message_reconciliation() {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     current.execute(&newer).unwrap();
     assert!(matches!(
@@ -966,6 +982,8 @@ fn message_reconciliation() {
             number: 17,
         }),
     )
+    .unwrap()
+    .with_repositories(&repositories())
     .unwrap();
     assert!(restarted.execute(&note).is_err());
     adapter = current;

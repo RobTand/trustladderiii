@@ -686,7 +686,8 @@ The daemon still requires explicit simulation; production ingress and startup
 registration belong to their adapter tickets.
 
 The adapter uses each repository's `branch_template`, defaulting to `tl3/issue-N-node-M`.
-Configure both adapters with `with_repositories(&config.github.repos)`. Checkout paths beneath the
+Configure both adapters with `with_repositories(&config.github.repos)`. An unconfigured
+repository returns an error before Git or publication. Checkout paths beneath the
 configured root separate repositories and requests. `Real::branch_for` and
 `Real::checkout` expose those names for worker registration. One controller
 process and its Git children own each repository. Stop the whole service process
@@ -744,7 +745,7 @@ workspace verification script runs it, the mixed registry lifecycle, and the
 existing controller and store scenarios through PrismaBuild.
 
 Tickets #12 and #13 open `tl3_worktrees::Worktrees` for the served repository and
-call `branch_state(&Real::branch(delivery)?)` to read its recorded base and current
+call `branch_state(&real.branch_for(delivery)?)` to read its recorded base and current
 head. The tuple is `(head, base)`. `changed_files(&base, &head)` returns the changed
 paths for the check harness and publication footprint. After a clean rebase,
 read both values again: the base and head move together. `Delivery::head_sha`

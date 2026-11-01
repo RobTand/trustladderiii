@@ -485,6 +485,8 @@ impl Server {
             Some(operations()),
         )
         .unwrap()
+        .with_repositories(&self.api.fixture.repositories)
+        .unwrap()
     }
 }
 fn pb(root: &Path) -> adapters::prismabuild::Adapter {

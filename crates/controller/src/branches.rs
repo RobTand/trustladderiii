@@ -1,11 +1,8 @@
 //! Repository branch conventions shared by worktrees and publication.
 use crate::{Repository, Result, executor::Delivery};
-use tl3_worktrees::{
-    BranchName,
-    branch_template::{BranchTemplate, DEFAULT_BASE},
-};
+use tl3_worktrees::{BranchName, branch_template::BranchTemplate};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct Branches(Vec<(Repository, BranchTemplate, BranchName)>);
 
 impl Branches {
@@ -28,33 +25,33 @@ impl Branches {
         ))
     }
 
-    fn find(&self, repo: &Repository) -> Option<&(Repository, BranchTemplate, BranchName)> {
-        self.0.iter().find(|(identity, _, _)| {
-            identity.installation == repo.installation
-                && identity.owner.eq_ignore_ascii_case(&repo.owner)
-                && identity.name.eq_ignore_ascii_case(&repo.name)
-        })
+    fn find(&self, repo: &Repository) -> Result<&(Repository, BranchTemplate, BranchName)> {
+        self.0
+            .iter()
+            .find(|(identity, _, _)| {
+                identity.installation == repo.installation
+                    && identity.owner.eq_ignore_ascii_case(&repo.owner)
+                    && identity.name.eq_ignore_ascii_case(&repo.name)
+            })
+            .ok_or(crate::Error::Invalid(
+                "repository branch conventions are not configured",
+            ))
     }
 
     pub(crate) fn branch(&self, delivery: &Delivery) -> Result<BranchName> {
-        let default = BranchTemplate::default();
-        let template = self
-            .find(&delivery.repository)
-            .map_or(&default, |(_, template, _)| template);
-        Ok(template.format(delivery.issue, delivery.node().0)?)
+        Ok(self
+            .find(&delivery.repository)?
+            .1
+            .format(delivery.issue, delivery.node().0)?)
     }
 
-    pub(crate) fn matches(&self, delivery: &Delivery, branch: &str) -> bool {
-        let default = BranchTemplate::default();
-        self.find(&delivery.repository)
-            .map_or(&default, |(_, template, _)| template)
-            .parse(branch)
-            == Some((delivery.issue, delivery.node().0))
+    pub(crate) fn matches(&self, delivery: &Delivery, branch: &str) -> Result<bool> {
+        Ok(self.find(&delivery.repository)?.1.parse(branch)
+            == Some((delivery.issue, delivery.node().0)))
     }
 
-    pub(crate) fn base(&self, repo: &Repository) -> &str {
-        self.find(repo)
-            .map_or(DEFAULT_BASE, |(_, _, base)| base.as_str())
+    pub(crate) fn base(&self, repo: &Repository) -> Result<&str> {
+        Ok(self.find(repo)?.2.as_str())
     }
 }
 

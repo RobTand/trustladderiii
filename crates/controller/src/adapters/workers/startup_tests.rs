@@ -68,7 +68,12 @@ fn hostile_maker_head() {
                     checkout.to_str().unwrap(),
                 ],
             );
-            let branch = super::super::worktrees::Real::branch(&delivery).unwrap();
+            let branch = super::super::worktrees::Real::new(&config.worktrees_root, 0)
+                .unwrap()
+                .with_repositories(&config.github.repos)
+                .unwrap()
+                .branch_for(&delivery)
+                .unwrap();
             assert_eq!(branch.as_str(), "prismabuild-42-tl3-0");
             Worktrees::open(&checkout, &checkout)
                 .unwrap()

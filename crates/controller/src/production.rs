@@ -167,6 +167,7 @@ pub(crate) struct Materials {
 impl Materials {
     pub(crate) fn load(&self, delivery: &crate::executor::Delivery) -> Result<serde_json::Value> {
         use serde_json::json;
+        let base_branch = self.branches.base(&delivery.repository)?;
         let client = &self.clients[&delivery.repository.installation];
         let runtime = crate::executor::runtime()?;
         let name = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
@@ -174,7 +175,7 @@ impl Materials {
         let comments = runtime.block_on(client.comments(&name, delivery.issue))?;
         let path = repository_path(&self.worktrees, &delivery.repository);
         let mut git = tl3_worktrees::Worktrees::open(&path, &self.worktrees)?;
-        git.set_base_branch(self.branches.base(&delivery.repository))?;
+        git.set_base_branch(base_branch)?;
         let remote = tl3_worktrees::Remote::https(&format!("https://github.com/{name}.git"))?;
         let token =
             tl3_worktrees::InstallationToken::new(runtime.block_on(client.installation_token())?)?;
@@ -339,7 +340,7 @@ impl Materials {
     pub(crate) fn fixture(worktrees: std::path::PathBuf) -> Self {
         Self {
             clients: Default::default(),
-            branches: Default::default(),
+            branches: crate::branches::Branches::new(&[]).unwrap(),
             worktrees,
         }
     }
