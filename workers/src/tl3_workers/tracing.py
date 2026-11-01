@@ -324,7 +324,9 @@ def check_labelled(match, text):
         if match.start('v') - (text.rfind('\n', 0, match.start('v')) + 1) <= indent:
             return None
     after = text[match.end('v'):match.end('v') + 8]
-    line_start = text.rfind('\n', 0, match.start()) + 1
+    # Bounded scans keep a long line of labels linear.
+    line_start = text.rfind('\n', max(0, match.start() - 80), match.start()) + 1
+    line_start = max(line_start, match.start() - 80)
     if WORD.fullmatch(value) and len(re.findall(r'[A-Za-z]{2,}[ \t]', text[line_start:match.start()])) >= 2:
         return None  # "with the same attempt token: reports"
     # A quoted key, or spaces around =, mark code, where a bare name is a variable.
@@ -477,10 +479,10 @@ SECRET_DATA = re.compile(r'(?m)^kind:[ \t]*+Secret[ \t]*+$(?:\n(?!kind:)[^\n]*+)
 def near_spans(text):
     found = []
     for word in NEAR_WORD.finditer(text):
-        line_end = text.find('\n', word.end())
-        line_end = len(text) if line_end == -1 else line_end
+        line_end = text.find('\n', word.end(), word.end() + NEAR_CHARS + 256)
+        line_end = min(len(text), word.end() + NEAR_CHARS + 256) if line_end == -1 else line_end
         limit = min(word.end() + NEAR_CHARS, line_end)
-        for token in NEAR_TOKEN.finditer(text, word.end(), min(line_end, limit + 256)):
+        for token in NEAR_TOKEN.finditer(text, word.end(), line_end):
             if token.start() >= limit:
                 break
             if token['qv'] is not None and secretish(token['qv'], quoted=True):
