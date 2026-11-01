@@ -1654,13 +1654,28 @@ mod incident_tests {
 
     #[test]
     fn git_remote_failures_in_worktrees_are_upstream() {
-        for operation in ["fetch", "push", "ls-remote", "read remote branch"] {
-            let error: crate::Error = tl3_worktrees::Error::Git {
+        // The operation names crates/worktrees gives its network calls.
+        for operation in [
+            "fetch base",
+            "fetch pull head",
+            "fetch pinned pull commit",
+            "publish head",
+            "read remote branch",
+            "delete recorded remote branch",
+        ] {
+            let network: crate::Error = tl3_worktrees::Error::Network {
                 operation,
                 code: Some(128),
             }
             .into();
-            assert_eq!(failure_class(&error), "git_remote", "{operation}");
+            assert_eq!(failure_class(&network), "git_remote", "{operation}");
+            // Without a clear network message, the failure stays TL3-side (#309).
+            let ambiguous: crate::Error = tl3_worktrees::Error::Git {
+                operation,
+                code: Some(128),
+            }
+            .into();
+            assert_eq!(failure_class(&ambiguous), "transport", "{operation}");
         }
         let local: crate::Error = tl3_worktrees::Error::Git {
             operation: "abort superseded merge",

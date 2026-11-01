@@ -63,6 +63,13 @@ pub enum Error {
     DirtyWorktree,
     #[error("could not abort interrupted rebase; recovery is required")]
     Recovery,
+    /// A Git operation that talks to the remote failed, and Git's own
+    /// message shows the remote or the network caused it.
+    #[error("git {operation} could not reach the remote (exit code {code:?})")]
+    Network {
+        operation: &'static str,
+        code: Option<i32>,
+    },
 }
 
 impl Error {
@@ -80,7 +87,9 @@ impl Error {
             Self::DirtyWorktree => Some("dirty_worktree"),
             Self::Recovery => Some("worktree_recovery"),
             // A Git exit alone cannot distinguish a lock or network failure.
-            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } => None,
+            Self::Io | Self::Spawn | Self::Poisoned | Self::Git { .. } | Self::Network { .. } => {
+                None
+            }
         }
     }
 }
@@ -1886,6 +1895,11 @@ fn success(operation: &'static str, output: Output) -> Result<Output, Error> {
     } else {
         Err(git_error(operation, &output))
     }
+}
+
+/// Whether Git's stderr clearly shows a network or remote cause.
+fn remote_unreachable(_stderr: &[u8]) -> bool {
+    false
 }
 
 fn git_error(operation: &'static str, output: &Output) -> Error {

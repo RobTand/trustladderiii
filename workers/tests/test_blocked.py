@@ -148,3 +148,32 @@ def test_model_caused_os_errors_get_no_id(tmp_path: Path, name, args):
         assert message.status == "error"
         assert "tool-error" not in message.text
         assert not worktree.evidence.tool_errors
+
+
+def test_overlong_paths_are_rejected_without_an_id(tmp_path: Path):
+    # A 4.4 KB path would make the test tool's staging fail with ENAMETOOLONG.
+    path = "/".join(["d" * 200] * 22) + "/x.py"
+    with Worktree(tmp_path) as worktree:
+        tool, = build_tools(worktree, {"write": "Write."})
+        message = tool.invoke({"name": "write", "args": {"path": path, "content": "x"},
+                               "id": "write", "type": "tool_call"})
+        assert message.status == "error"
+        assert "tool-error" not in message.text
+        assert not worktree.evidence.tool_errors
+    assert not (tmp_path / ("d" * 200)).exists()
+
+
+def test_a_walk_too_deep_is_a_plain_tool_error(tmp_path: Path, monkeypatch):
+    def factory(worktree):
+        def glob(pattern: str) -> dict:
+            """Walk a tree deeper than Python's recursion limit."""
+            raise RecursionError("maximum recursion depth exceeded")
+        return glob
+
+    monkeypatch.setitem(TOOL_FACTORIES, "glob", factory)
+    with Worktree(tmp_path) as worktree:
+        tool, = build_tools(worktree, {"glob": "Glob."})
+        message = tool.invoke({"name": "glob", "args": {"pattern": "**"}, "id": "glob", "type": "tool_call"})
+        assert message.status == "error"
+        assert "tool-error" not in message.text
+        assert not worktree.evidence.tool_errors
