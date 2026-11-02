@@ -133,6 +133,31 @@ pub(super) fn inputs(
         fixes.as_object_mut().unwrap().remove("head_sha");
         inputs["review_fixes"] = fixes;
     }
+    // The run_tests receipts the maker cited for this head (#408). The worker attests each
+    // run's tree from the snapshot it staged; keep only runs on this head's tree, or on the
+    // check base's for base runs (#432).
+    if let Some(reply) = store.worker_document(&node, "maker_replies")?
+        && reply["head"] == head
+        && let Some(evidence) = reply["test_evidence"].as_array()
+    {
+        let head_tree = repository.tree(&head_id)?;
+        let base_tree = repository.tree(&run.base_sha)?;
+        let tested: Vec<Value> = evidence
+            .iter()
+            .filter(|entry| {
+                let expected = if entry["base"] == true {
+                    &base_tree
+                } else {
+                    &head_tree
+                };
+                entry["tree"].as_str() == Some(expected.as_str())
+            })
+            .cloned()
+            .collect();
+        if !tested.is_empty() {
+            inputs["test_evidence"] = json!(tested);
+        }
+    }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }
@@ -444,6 +469,76 @@ mod hostile_tests {
             !scope.contains("main-only.txt"),
             "main progress must not become scope evidence: {scope}"
         );
+    }
+
+    #[test]
+    fn review_inputs_carry_the_makers_test_evidence_for_this_head() {
+        // #408: receipts the maker cited reach the reviewer, for the head it made.
+        // #432: only runs whose tested tree is the head's tree, or the check base's for base runs.
+        let f = Repo::new();
+        let head_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.head)]);
+        let base_tree =
+            crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.base)]);
+        let run = |base: bool, tree: &str| {
+            json!({"tests": ["test_value.py::test_value"], "base": base, "repeat": 5,
+                "parallel": 0, "status": "completed", "tree": tree, "fresh": true,
+                "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+                "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
+                    "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]})
+        };
+        let all = json!([
+            run(false, &head_tree),
+            run(true, &base_tree),
+            run(false, &base_tree),
+            run(true, &head_tree)
+        ]);
+        let mut db = Database::start();
+        for (index, (head, evidence, expected)) in [
+            (
+                f.head.clone(),
+                all.clone(),
+                json!([run(false, &head_tree), run(true, &base_tree)]),
+            ),
+            ("d".repeat(40), all.clone(), Value::Null),
+            (f.head.clone(), json!([run(false, &base_tree)]), Value::Null),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // documents() commits under one event key, so each case needs its own store.
+            let mut store = Store::open(&db.create(&format!("review_evidence_{index}"))).unwrap();
+            store.put_worker_materials("0", &json!({})).unwrap();
+            let mut snapshot = documents(
+                &mut store,
+                &[
+                    (
+                        "goals",
+                        json!([{"description":"Run it five times", "verification":"review"}]),
+                    ),
+                    ("check_reports", json!({})),
+                    (
+                        "maker_replies",
+                        json!({"kind": "done", "head": head,
+                        "self_check": [{"goal_id": "g", "status": "met", "evidence": "five runs"}],
+                        "test_evidence": evidence}),
+                    ),
+                ],
+            );
+            let report = snapshot
+                .rows
+                .iter_mut()
+                .find(|r| r.table == "check_reports")
+                .unwrap();
+            report.id = format!("0:{}", f.head);
+            report.value = json!({"base_sha":f.base,"results":[]});
+            let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+            assert_eq!(
+                value.get("test_evidence").cloned().unwrap_or(Value::Null),
+                expected,
+                "case {index}"
+            );
+        }
     }
 
     #[test]

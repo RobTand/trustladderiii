@@ -88,3 +88,19 @@ def test_what_the_prompts_say_about_path_is_what_the_tools_do(tmp_path):
         # The pattern is a regular expression, and literal true searches the text as written.
         assert tools["grep"].invoke({"pattern": "need|hay"})["matches"][0]["path"] == "pkg/mod.py"
         assert tools["grep"].invoke({"pattern": "need|hay", "literal": True})["matches"] == []
+
+
+def test_run_tests_options_say_what_the_tool_enforces():
+    # #408: prompts and the tool description state the bounds pb_tests enforces.
+    from importlib.resources import files
+
+    def text(role):
+        return " ".join(files("tl3_workers").joinpath("prompts", f"{role}.md").read_text().split())
+
+    description = ROLES["maker"].tools["run_tests"]
+    for statement in ("repeat 1 to 10", "parallel 2 to 4", "priority -10 to 0"):
+        assert statement in description, statement
+        assert statement in text("maker"), statement
+    assert "receipts" in text("maker")
+    assert "repeat" in text("planner") and "parallel" in text("planner") and "receipts" in text("planner")
+    assert "test_evidence" in text("reviewer")

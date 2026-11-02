@@ -162,13 +162,16 @@ def describe(error):
 
 
 class Reporter:
-    def __init__(self, tests, descriptor, summary=False, patches=()):
+    def __init__(self, tests, descriptor, summary=False, parallel=False, patches=()):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
+        # Under xdist, workers run the tests and this plugin sees only their reports.
+        self.parallel = parallel
         self.patches = patches
         self.phases = {}
         self.collection_errors = []
+        self.reported = set()
         self.started = False
 
     @pytest.fixture(autouse=True)
@@ -237,6 +240,10 @@ class Reporter:
     def pytest_collectreport(self, report):
         if report.failed:
             if self.summary:
+                # Each xdist worker collects, so the same error can arrive more than once.
+                if report.nodeid in self.reported:
+                    return
+                self.reported.add(report.nodeid)
                 message = str(report.longrepr)
                 self.emit(event="collection-error", test=report.nodeid,
                           message=message[:1000], truncated=len(message) > 1000)
@@ -272,7 +279,20 @@ class Reporter:
         return report
 
     def pytest_runtest_logreport(self, report):
-        if not self.summary or report.when != "teardown":
+        if not self.summary:
+            return
+        if self.parallel:
+            # makereport ran in a worker. Its crash line tells an assertion from an error.
+            crash = getattr(getattr(report.longrepr, "reprcrash", None), "message", "") or ""
+            assertion = (report.when == "call" and report.failed
+                         and crash.startswith(("AssertionError", "assert ", "Failed")))
+            outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
+            message = str(report.longrepr) if report.failed else ""
+            self.phases.setdefault(report.nodeid, []).append(
+                (report.when, outcome, message[:1000], len(message) > 1000, assertion))
+        # xdist reports a crashed worker's test once, outside the three phases.
+        final = report.when == "teardown" or self.parallel and report.when not in ("setup", "call")
+        if not final:
             return
         phases = self.phases.pop(report.nodeid)
         failures = [phase for phase in phases if phase[1] == "failed"]
@@ -300,15 +320,28 @@ def main():
     with open(os.devnull, "wb") as sink:
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
-    summary = sys.argv[-1] == "--summary"
-    arguments = sys.argv[2:-1] if summary else sys.argv[2:]
+    flags = [argument for argument in sys.argv[2:] if argument.startswith("--")]
+    arguments = [argument for argument in sys.argv[2:] if not argument.startswith("--")]
+    summary = "--summary" in flags
+    parallel = next((int(flag.split("=", 1)[1]) for flag in flags if flag.startswith("--parallel=")), 0)
     checkout = arguments[0] if arguments else "/checkout"
     os.chdir(checkout)
     sys.path.insert(0, str(Path.cwd()))
-    reporter = Reporter(tests, descriptor, summary, tuple(forcing.get("patches", ())))
+    reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
+                        patches=tuple(forcing.get("patches", ())))
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
+    if summary and parallel:
+        # The image supplies xdist. Load it once, by name, in this process and its workers,
+        # as the container's disabled plugin autoload already requires.
+        os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        if importlib.util.find_spec("xdist") is None:
+            reporter.emit(event="unavailable", message="pytest-xdist is not installed in the test image")
+            reporter.pytest_sessionfinish(0)
+            return 0
+        return int(pytest.main(["--rootdir=.", "-p", "xdist.plugin", "-n", str(parallel),
+                                "--", *(tests or ["."])], plugins=[reporter]))
     if summary:
         return int(pytest.main(["--rootdir=.", "--", *(tests or ["."])], plugins=[reporter]))
     files = sorted({test.split("::")[0] for test in tests if Path(test.split("::")[0]).is_file()})

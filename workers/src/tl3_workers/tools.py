@@ -211,6 +211,13 @@ def _selectors(value):
     return (base, tuple(tests))
 
 
+# The newest completed run_tests calls a maker reply can carry.
+TEST_EVIDENCE = 10
+# Their JSON size together, and one entry's share, so a done reply stays small.
+TEST_EVIDENCE_BYTES = 65_536
+TEST_EVIDENCE_ENTRY_BYTES = TEST_EVIDENCE_BYTES // 4
+
+
 class Evidence:
     """Environment failures this run's tools recorded. A blocked reply must cite one (Q50)."""
 
@@ -218,6 +225,7 @@ class Evidence:
         self._lock = Lock()
         self.infrastructure_keys = {}
         self.tool_errors = {}
+        self.test_runs = []
 
     def tool_error(self, name, cls, selectors=None):
         with self._lock:
@@ -225,9 +233,27 @@ class Evidence:
             self.tool_errors[error] = {"tool": name, "class": cls, "selectors": selectors}
             return error
 
-    def test_result(self, result, selectors):
+    def test_result(self, result, selectors, options=None):
         if not isinstance(result, dict):
             return
+        if result.get("status") == "completed" and result.get("receipts") and isinstance(result.get("tree"), str):
+            # The maker's done reply carries these, so the reviewer sees what ran (#408), on
+            # which tree: the staged snapshot's, never model text (#432). A cache hit replayed a run.
+            entry = {"tests": list(selectors[1]), "base": selectors[0], **(options or {"repeat": 1, "parallel": 0}),
+                     "status": "completed", "tree": result["tree"],
+                     "fresh": all(receipt["status"] == "executed" for receipt in result["receipts"]),
+                     "totals": result["totals"], "receipts": result["receipts"]}
+            if "runs" in result:
+                entry["runs"] = [{key: run[key] for key in ("run", "status", "totals")} for run in result["runs"]]
+            selected = len(entry["tests"])
+            while entry["tests"] and len(json.dumps(entry).encode()) > TEST_EVIDENCE_ENTRY_BYTES:
+                entry["tests"].pop()
+                entry["tests_omitted"] = selected - len(entry["tests"])
+            with self._lock:
+                runs = [*self.test_runs, entry][-TEST_EVIDENCE:]
+                while len(runs) > 1 and len(json.dumps(runs).encode()) > TEST_EVIDENCE_BYTES:
+                    runs.pop(0)
+                self.test_runs = runs
         if result.get("status") == "completed":
             # A later complete run of the same tests shows the environment recovered.
             with self._lock:
@@ -251,7 +277,8 @@ class Evidence:
         with self._lock:
             return {"infrastructure_keys": [[key, _selectors_json(s)] for key, s in self.infrastructure_keys.items()],
                     "tool_errors": {name: {**error, "selectors": _selectors_json(error["selectors"])}
-                                    for name, error in self.tool_errors.items()}}
+                                    for name, error in self.tool_errors.items()},
+                    "test_runs": list(self.test_runs)}
 
     def restore(self, state):
         keys = {key: _selectors(value) for key, value in state["infrastructure_keys"]}
@@ -261,8 +288,12 @@ class Evidence:
                 isinstance(name, str) and isinstance(error.get("tool"), str) and isinstance(error.get("class"), str)
                 for name, error in errors.items()):
             raise ValueError("invalid evidence state")
+        runs = state.get("test_runs", [])
+        if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+            raise ValueError("invalid evidence state")
         with self._lock:
             self.infrastructure_keys, self.tool_errors = keys, errors
+            self.test_runs = runs[-TEST_EVIDENCE:]
 
     def detail(self, evidence):
         """The worker-recorded facts behind cited evidence, or None if this run has none."""
@@ -276,6 +307,11 @@ class Evidence:
 
     def cites(self, evidence):
         return self.detail(evidence) is not None
+
+    def test_evidence(self):
+        """This run's completed run_tests calls with their PrismaBuild receipts, newest last."""
+        with self._lock:
+            return list(self.test_runs)
 
 
 class Worktree:
@@ -558,7 +594,8 @@ def build_tools(worktree, descriptions):
                     result = _method(*args, **kwargs)
                     if _name == "run_tests":
                         selectors = (bool(kwargs.get("base")), tuple(sorted(set(kwargs.get("tests") or ()))))
-                        worktree.evidence.test_result(result, selectors)
+                        options = {"repeat": kwargs.get("repeat", 1), "parallel": kwargs.get("parallel", 0)}
+                        worktree.evidence.test_result(result, selectors, options)
                     if _summary is not None:
                         try:
                             _summary.tool(_name, kwargs, result)
