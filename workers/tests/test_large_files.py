@@ -124,3 +124,23 @@ def test_maker_tools_read_and_edit_a_large_python_module_by_range(tmp_path):
     content = (tmp_path / "pool.py").read_bytes()
     assert b"return job.run(35000, retry=True)" in content
     assert len(content) == len(POOL) + len(b", retry=True)") - 1
+
+
+def test_planner_fit_check_bounds_a_large_doc_in_a_small_plan(tmp_path, planner_request):  # noqa: F811
+    # Tessera #1464: a 716 KB docs/ARCHITECTURE.md with two small files forecast past the
+    # ~100k fit bound and asked Rob to narrow the request. A region edit must fit.
+    planner_request["inputs"]["forecast"]["fit_tokens"] = 100_000
+    worktree = tmp_path / "worktree"
+    (worktree / "docs").mkdir()
+    (worktree / "docs/ARCHITECTURE.md").write_bytes(
+        b"# Architecture\n\n" + b"Each stage hands its batch to the next queue.\n" * 15_900)
+    assert (worktree / "docs/ARCHITECTURE.md").stat().st_size > 716_000
+    (worktree / "notes.py").write_text("NOTE = 'small'\n")
+    leaf = copy.deepcopy(LEAF)
+    leaf["files"] = ["docs/ARCHITECTURE.md", "greeting.py", "notes.py"]
+    result = run_reply(tmp_path, planner_request, leaf)
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]["reply"]
+    assert reply["forecast"]["fits"] is True, reply["forecast"]
+    assert reply["forecast"]["tokens"] < 100_000
+    assert not any("does not fit" in violation for violation in reply["violations"])
