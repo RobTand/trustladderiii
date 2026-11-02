@@ -79,6 +79,30 @@ fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
         .sum())
 }
 
+/// The plan with its base moved forward to the checkout's recorded base when the
+/// head descends from it. A plan can keep an older base, as a restarted request
+/// once inherited its predecessor's; checks must compare the head with the base
+/// it actually sits on (#326). Rebases move the recorded base with the head.
+pub(super) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
+    let mut run = delivery
+        .checks
+        .clone()
+        .ok_or(Error::Invalid("missing check plan"))?;
+    let Some(head) = delivery.head_sha.as_deref() else {
+        return Ok(run);
+    };
+    let head = CommitId::new(head)?;
+    let checkout = Worktrees::open(&run.repository, &run.repository)?;
+    if let Some(base) = checkout.checked_out_base()?
+        && base != run.base_sha
+        && checkout.is_ancestor(&run.base_sha, &base)?
+        && checkout.is_ancestor(&base, &head)?
+    {
+        run.base_sha = base;
+    }
+    Ok(run)
+}
+
 pub(super) fn stage(
     root: &Path,
     harness: &Path,

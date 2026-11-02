@@ -1248,9 +1248,9 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
-        if completion.ack == Ack::Permanent
-            && let Some(class) = completion.failure_class.as_deref()
-        {
+        // A confirmed completion may still name its failure, such as a check
+        // action whose trusted harness rejected TL3's own input.
+        if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(&snapshot, key, class, &mut commit)?;
         }
         if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {

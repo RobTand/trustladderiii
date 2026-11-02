@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 
+class HarnessInputError(ValueError):
+    """TL3's own check input is malformed: TL3's error, never the repo's or PrismaBuild's (Q51)."""
+
+
 class Kind(StrEnum):
     DEMONSTRATING = "demonstrating"
     REGRESSION = "regression"
@@ -38,15 +42,15 @@ class Check:
 
     def __post_init__(self):
         if not self.name or not isinstance(self.kind, Kind) or not self.tests:
-            raise ValueError("a check needs a name, a kind and named tests")
+            raise HarnessInputError("a check needs a name, a kind and named tests")
         if len(set(self.tests)) != len(self.tests):
-            raise ValueError("a check repeats a test")
+            raise HarnessInputError("a check repeats a test")
         for test in self.tests:
             path, *names = test.split("::")
             if (not names or not all(names) or not path.endswith(".py")
                     or path.startswith(("/", "-")) or ".." in path.split("/")
                     or "\\" in path or "\x00" in test):
-                raise ValueError(f"not an exact pytest node id: {test!r}")
+                raise HarnessInputError(f"not an exact pytest node id: {test!r}")
 
 
 @dataclass(frozen=True)

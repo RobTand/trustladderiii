@@ -187,6 +187,92 @@ fn recorded_endings() {
         );
     }
 }
+fn harness_error_is_named_tl3_side() {
+    // #326: the trusted harness rejected TL3's own check input inside the action.
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "harness_error");
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    assert_eq!(ended.failure_class.as_deref(), Some("harness"));
+    assert!(!observed(ended).0, "no check report");
+    for mode in ["failed", "no_report", "infrastructure"] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut adapter = fixture(root.path(), mode);
+        adapter.execute(&delivery).unwrap();
+        assert_eq!(
+            completion(&mut adapter, &delivery).failure_class,
+            None,
+            "{mode}"
+        );
+    }
+}
+fn checks_use_the_base_the_head_descends_from() {
+    // #326: a restarted request's plan kept the replaced request's base B0, but its
+    // worktree branch starts at B1, after main changed conftest.py.
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let repo = root.path().join("restarted");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main", "--template="]);
+    fs::write(
+        repo.join("pyproject.toml"),
+        "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
+    )
+    .unwrap();
+    fs::write(repo.join("conftest.py"), "# version 1\n").unwrap();
+    fs::write(repo.join("value.py"), "def value(): return 1\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "--quiet", "-m", "pinned main"]);
+    let pinned = git(&repo, &["rev-parse", "HEAD"]);
+    fs::write(repo.join("conftest.py"), "# version 2\n").unwrap();
+    git(&repo, &["commit", "--quiet", "-am", "main moves"]);
+    let main = git(&repo, &["rev-parse", "HEAD"]);
+    git(
+        &repo,
+        &["checkout", "--quiet", "-b", "prismabuild-42-tl3-1"],
+    );
+    git(
+        &repo,
+        &["update-ref", "refs/tl3/bases/prismabuild-42-tl3-1", &main],
+    );
+    fs::write(repo.join("value.py"), "def value(): return 2\n").unwrap();
+    git(&repo, &["commit", "--quiet", "-am", "maker"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let run = delivery.checks.as_mut().unwrap();
+    run.repository = repo;
+    run.base_sha = tl3_worktrees::CommitId::new(&pinned).unwrap();
+    delivery.head_sha = Some(head.clone());
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&delivery).unwrap();
+    let staged: Vec<_> = fs::read_dir(root.path().join("queue"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "request"))
+        .collect();
+    assert_eq!(staged.len(), 1);
+    let request: serde_json::Value =
+        serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+    assert_eq!(
+        request["base"],
+        main.as_str(),
+        "stage the worktree's recorded base"
+    );
+    let ended = completion(&mut adapter, &delivery);
+    assert!(
+        ended.observations.iter().any(|observation| matches!(observation,
+            Observation::CheckPlan { sha, run, .. } if *sha == head && run.base_sha.as_str() == main)),
+        "record the corrected plan for the head"
+    );
+    assert!(
+        ended
+            .observations
+            .iter()
+            .any(|observation| matches!(observation,
+        Observation::Checks { base_sha, .. } if *base_sha == main))
+    );
+}
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1737,6 +1823,14 @@ fn main() {
             retirement_refuses_active_or_unreadable_jobs,
         ),
         ("bounded_failure_details", bounded_failure_details),
+        (
+            "harness_error_is_named_tl3_side",
+            harness_error_is_named_tl3_side,
+        ),
+        (
+            "checks_use_the_base_the_head_descends_from",
+            checks_use_the_base_the_head_descends_from,
+        ),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
         ("SIGKILL_reuses_seal", crash_reuses_seal),
@@ -1799,7 +1893,7 @@ fn main() {
     through_controller(&database.create("pb_cancel_sealed"), false, true, true);
     println!("test cancelling_never_published_seal_starts_no_work ... ok");
     database.stop();
-    println!("36 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("38 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {

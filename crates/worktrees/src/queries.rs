@@ -24,6 +24,22 @@ impl Worktrees {
         )
     }
 
+    /// The recorded base of the branch this checkout has checked out, if any.
+    pub fn checked_out_base(&self) -> Result<Option<CommitId>, Error> {
+        let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
+        let attached = self.execute(&self.repo, ["symbolic-ref", "--quiet", "HEAD"], None, None)?;
+        match attached.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(None),
+            _ => return Err(git_error("checked-out branch", &attached)),
+        }
+        let reference = std::str::from_utf8(&attached.stdout).map_err(|_| Error::BranchName)?;
+        let Some(name) = reference.trim_end().strip_prefix("refs/heads/") else {
+            return Ok(None);
+        };
+        self.resolve_optional(&BranchName::new(name)?.base_ref())
+    }
+
     pub fn is_ancestor(&self, base: &CommitId, head: &CommitId) -> Result<bool, Error> {
         let _guard = self.mutex.lock().map_err(|_| Error::Poisoned)?;
         let output = self.execute(

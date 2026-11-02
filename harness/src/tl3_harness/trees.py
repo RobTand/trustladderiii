@@ -23,6 +23,14 @@ def commit(repo: Path, ref: str) -> str:
     return git(repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").decode().strip()
 
 
+class UnsupportedEntry(ValueError):
+    """A tree entry checks never run: a symlink, a submodule or another special file."""
+
+    def __init__(self, name: str):
+        super().__init__(f"check trees must contain only regular files and directories: {name}")
+        self.name = name
+
+
 def export(repo: Path, revision: str, target: Path):
     target.mkdir()
     for entry in git(repo, "ls-tree", "-rz", revision).split(b"\x00"):
@@ -32,7 +40,7 @@ def export(repo: Path, revision: str, target: Path):
         mode, kind, oid = metadata.split()
         # A served checkout may contain a symlink to a host credential or socket.
         if mode not in (b"100644", b"100755") or kind != b"blob":
-            raise ValueError("check trees must contain only regular files and directories")
+            raise UnsupportedEntry(raw_name.decode(errors="backslashreplace"))
         path = target / raw_name.decode()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(git(repo, "cat-file", "blob", oid.decode()))
@@ -96,14 +104,22 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
     return frozenset(names(head) - names(base))
 
 
-def validate_configuration(base: Path, head: Path):
+def changed_configuration(base: Path, head: Path) -> list[str]:
+    """Protected test configuration files that differ between two trees."""
     protected = {"pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "noxfile.py"}
     protected |= {str(path.relative_to(tree)) for tree in (base, head)
                   for path in tree.rglob("conftest.py")}
-    for name in protected:
-        old, new = base / name, head / name
-        if (old.read_bytes() if old.exists() else None) != (new.read_bytes() if new.exists() else None):
-            raise ValueError(f"test configuration changed: {name}")
+    return sorted(name for name in protected
+                  if ((base / name).read_bytes() if (base / name).exists() else None)
+                  != ((head / name).read_bytes() if (head / name).exists() else None))
+
+
+def own_base(repo: Path, base: str, head: str) -> str:
+    """The commit head descends from: the base itself, or where it forked from base."""
+    try:
+        return git(repo, "merge-base", base, head).decode().strip()
+    except subprocess.CalledProcessError:
+        return base
 
 
 def test_function_source(source: str, node_id: str) -> str | None:

@@ -101,3 +101,12 @@ filegroup(
     ),
     visibility = ["//visibility:public"],
 )
+
+tl3_py_test(
+    name = "test_configuration_base",
+    srcs = ["test_configuration_base.py"],
+    deps = [
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)

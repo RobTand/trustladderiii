@@ -48,18 +48,19 @@ impl Executor for HeldMaker {
     }
 }
 
-/// PrismaBuild loses every check job: an upstream infrastructure failure.
-struct LostChecks(adapters::prismabuild::Fake);
+/// PrismaBuild loses every check job: an upstream infrastructure failure. With
+/// a failure class, the check action instead ended on TL3's own harness error.
+struct LostChecks(adapters::prismabuild::Fake, Option<&'static str>);
 impl Executor for LostChecks {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if starts(d, EffectKind::SubmitChecks) {
-            Ok(Completion::confirmed(vec![Observation::Kernel(
-                Event::Reply {
-                    node: d.node(),
-                    generation: d.generation,
-                    reply: Reply::RunFailed,
-                },
-            )]))
+            let mut completion = Completion::confirmed(vec![Observation::Kernel(Event::Reply {
+                node: d.node(),
+                generation: d.generation,
+                reply: Reply::RunFailed,
+            })]);
+            completion.failure_class = self.1.map(Into::into);
+            Ok(completion)
         } else {
             self.0.execute(d)
         }
@@ -86,11 +87,20 @@ fn open_with(
             upstream,
             HeldMaker(adapters::workers::Fake::new(root), unreadable),
         ),
-        Upstream::PrismaBuild => {
-            registry.register(upstream, LostChecks(adapters::prismabuild::Fake::new(root)))
-        }
+        Upstream::PrismaBuild => registry.register(
+            upstream,
+            LostChecks(adapters::prismabuild::Fake::new(root), None),
+        ),
         _ => unreachable!(),
     }
+    open_registry(settings, registry, release)
+}
+
+fn open_registry(
+    settings: &tl3_config::Store,
+    registry: tl3_controller::executor::Registry,
+    release: Option<&str>,
+) -> Controller {
     let mut c = Controller::open(
         Store::open(settings).unwrap(),
         registry,
@@ -419,4 +429,50 @@ fn release_identity_is_the_built_source_tree() {
             assert!(digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()));
         }
     }
+}
+
+#[test]
+fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
+    // #326: the trusted harness inside the PrismaBuild action rejected TL3's own
+    // check input. That is TL3's error under Q51, so a new release retries it.
+    let mut db = support::Database::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::PrismaBuild,
+        LostChecks(
+            adapters::prismabuild::Fake::new(root.path()),
+            Some("harness"),
+        ),
+    );
+    let mut c = open_registry(&db.create("harness_input"), registry, Some("release-1"));
+    assert!(c.world().unwrap().nodes[0].waiting_incident);
+    let incidents = open_incidents(&mut c);
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(incidents[0]["cause"], "tl3");
+    assert_eq!(incidents[0]["signature"]["class"], "harness");
+    assert!(
+        incidents[0]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("TL3's check harness"),
+        "{}",
+        incidents[0]["summary"]
+    );
+    let id = incidents[0]["id"].clone();
+    start(&mut c, "release-2");
+    // The new release clears it once and the checks retry. This fake fails every
+    // check, so the retry may raise a new incident; the original one is closed.
+    let cleared = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "incidents" && r.value["id"] == id)
+        .unwrap();
+    assert_eq!(
+        cleared.value["open"], false,
+        "a new release clears TL3's incident"
+    );
+    db.stop();
 }

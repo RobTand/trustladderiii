@@ -227,13 +227,27 @@ impl Supervisor {
             let checkout = super::worktrees::checkout_path(&self.worktrees, delivery);
             let base = if let Some(run) = &delivery.checks {
                 run.base_sha.clone()
-            } else if let Some(base) = materials["check_run"]["base_sha"].as_str() {
-                CommitId::new(base)?
             } else {
-                Worktrees::open(&checkout, &checkout)?
+                let worktree = Worktrees::open(&checkout, &checkout)?;
+                let recorded = worktree
                     .branch_state(&self.branches.branch(delivery)?)?
-                    .ok_or(Error::Invalid("maker checkout has no base"))?
-                    .1
+                    .map(|(_, base)| base);
+                let stored = materials["check_run"]["base_sha"]
+                    .as_str()
+                    .map(CommitId::new)
+                    .transpose()?;
+                match (stored, recorded) {
+                    // A stored base that main has since moved past would blame main's
+                    // changes on the maker (#326). The base only ever moves forward.
+                    (Some(stored), Some(recorded))
+                        if stored != recorded && worktree.is_ancestor(&stored, &recorded)? =>
+                    {
+                        recorded
+                    }
+                    (Some(stored), _) => stored,
+                    (None, Some(recorded)) => recorded,
+                    (None, None) => return Err(Error::Invalid("maker checkout has no base")),
+                }
             };
             let checks = materials["maker"]["plan"]["checks"]
                 .as_array()
@@ -484,6 +498,13 @@ impl Supervisor {
         let mut linked_issue: Option<tl3_github::Issue> = None;
         loop {
             if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
+                if ancestor != delivery.node()
+                    && let Some(materials) = materials.as_object_mut()
+                {
+                    // A check run belongs to its own request's worktree. A restarted or
+                    // replacement request checks against the base its worktree sits on.
+                    materials.remove("check_run");
+                }
                 if let Some(issue) = linked_issue {
                     materials["issue"] = json!({"number": issue.number, "title": issue.title,
                         "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});

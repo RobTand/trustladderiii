@@ -149,7 +149,7 @@ runs = "/srv/tl3/worker-runs"
 command = ["-m", "tl3_workers", "run"]
 
 [planning]
-protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
+protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
 
 # Calibration seam for future MLflow measurements. Code sums these estimates.
 [planning.overhead_tokens]
