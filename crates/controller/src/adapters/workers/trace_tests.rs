@@ -63,7 +63,7 @@ fn an_ended_attempt_ships_its_span_log() {
     fs::write(root.path().join("mlflow-up"), b"").unwrap();
     trace::sweep(
         &runs,
-        &[],
+        &none(),
         std::slice::from_ref(&attempt),
         trace::HELD_BYTES,
     )
@@ -90,7 +90,7 @@ fn an_ended_attempt_ships_its_span_log() {
     assert_eq!(fs::read(root.path().join("python.stdin")).unwrap(), LOGGED);
     trace::sweep(
         &runs,
-        &[],
+        &none(),
         std::slice::from_ref(&attempt),
         trace::HELD_BYTES,
     )
@@ -177,7 +177,7 @@ fn one_flusher_per_attempt_across_restarts() {
     .unwrap();
     trace::sweep(
         &runs,
-        &[],
+        &none(),
         std::slice::from_ref(&attempt),
         trace::HELD_BYTES,
     )
@@ -191,7 +191,7 @@ fn one_flusher_per_attempt_across_restarts() {
     write(&claim, &identity(gone.id(), 1)).unwrap();
     trace::sweep(
         &runs,
-        &[],
+        &none(),
         std::slice::from_ref(&attempt),
         trace::HELD_BYTES,
     )
