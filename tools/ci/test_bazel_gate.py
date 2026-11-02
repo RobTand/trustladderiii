@@ -211,6 +211,21 @@ class FailFastTests(unittest.TestCase):
                 self.assertFalse(watcher.should_cancel(1000))
                 self.assertIsNone(watcher.failure)
 
+    def test_bep_budget_marker_precedes_local_download_and_prevents_abort(self):
+        watcher = bazel_gate.FailFast('batch-draft')
+        event = self.result()
+        event['testResult']['testActionOutput'] = [
+            {'name': 'test.outputs/budget-overrun.txt', 'uri': 'bytestream://fixture/blobs/hash/5'}]
+        watcher.event(event, 0, lambda labels: set())
+        self.assertFalse(watcher.should_cancel(1000))
+        self.assertIsNone(watcher.failure)
+
+    def test_no_status_summary_does_not_count_as_a_test_that_ran(self):
+        watcher = bazel_gate.FailFast('pr')
+        watcher.event({'id': {'testSummary': {'label': '//a:pending'}},
+                       'testSummary': {'overallStatus': 'NO_STATUS'}}, 0, lambda labels: set())
+        self.assertEqual(watcher.observed, set())
+
     def test_pr_collects_failures_for_at_most_sixty_seconds(self):
         watcher = bazel_gate.FailFast('pr')
         watcher.event(self.result(), 10, lambda labels: set())
