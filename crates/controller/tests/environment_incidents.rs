@@ -439,7 +439,10 @@ fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
         Upstream::PrismaBuild,
-        LostChecks(adapters::prismabuild::Fake::new(root.path()), Some("harness")),
+        LostChecks(
+            adapters::prismabuild::Fake::new(root.path()),
+            Some("harness"),
+        ),
     );
     let mut c = open_registry(&db.create("harness_input"), registry, Some("release-1"));
     assert!(c.world().unwrap().nodes[0].waiting_incident);
@@ -466,6 +469,9 @@ fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
         .into_iter()
         .find(|r| r.table == "incidents" && r.value["id"] == id)
         .unwrap();
-    assert_eq!(cleared.value["open"], false, "a new release clears TL3's incident");
+    assert_eq!(
+        cleared.value["open"], false,
+        "a new release clears TL3's incident"
+    );
     db.stop();
 }

@@ -50,8 +50,8 @@ mod checks;
 mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
-pub(crate) use results::HARNESS;
 pub use checks::{Check, CheckRun, Kind};
+pub(crate) use results::HARNESS;
 pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};

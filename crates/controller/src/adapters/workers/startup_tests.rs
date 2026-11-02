@@ -270,11 +270,20 @@ fn restarted_maker_checks_against_its_own_worktree_base() {
             let before = store.load().unwrap();
             let mut commit = tl3_store::Commit::new("restart-fixture", json!(null), &before);
             let rows = [
-                ("briefs", json!({"brief":"Read the intended repo","goals":[{"description":"Read it","verification":"test"}]})),
-                ("plans", json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]})),
-                ("request_links", json!({"original": 0, "authorized_by": "fixture", "issue": {
+                (
+                    "briefs",
+                    json!({"brief":"Read the intended repo","goals":[{"description":"Read it","verification":"test"}]}),
+                ),
+                (
+                    "plans",
+                    json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+                ),
+                (
+                    "request_links",
+                    json!({"original": 0, "authorized_by": "fixture", "issue": {
                     "number": 42, "title": "Restarted", "body": "Restarted request", "state": "open",
-                    "updated_at": "2026-11-01T23:27:00Z", "labels": [], "pull_request": null}})),
+                    "updated_at": "2026-11-01T23:27:00Z", "labels": [], "pull_request": null}}),
+                ),
             ];
             commit.rows = rows
                 .into_iter()

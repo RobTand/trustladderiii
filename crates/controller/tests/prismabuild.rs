@@ -201,7 +201,11 @@ fn harness_error_is_named_tl3_side() {
         let delivery = run(root.path(), false);
         let mut adapter = fixture(root.path(), mode);
         adapter.execute(&delivery).unwrap();
-        assert_eq!(completion(&mut adapter, &delivery).failure_class, None, "{mode}");
+        assert_eq!(
+            completion(&mut adapter, &delivery).failure_class,
+            None,
+            "{mode}"
+        );
     }
 }
 fn checks_use_the_base_the_head_descends_from() {
@@ -225,8 +229,14 @@ fn checks_use_the_base_the_head_descends_from() {
     fs::write(repo.join("conftest.py"), "# version 2\n").unwrap();
     git(&repo, &["commit", "--quiet", "-am", "main moves"]);
     let main = git(&repo, &["rev-parse", "HEAD"]);
-    git(&repo, &["checkout", "--quiet", "-b", "prismabuild-42-tl3-1"]);
-    git(&repo, &["update-ref", "refs/tl3/bases/prismabuild-42-tl3-1", &main]);
+    git(
+        &repo,
+        &["checkout", "--quiet", "-b", "prismabuild-42-tl3-1"],
+    );
+    git(
+        &repo,
+        &["update-ref", "refs/tl3/bases/prismabuild-42-tl3-1", &main],
+    );
     fs::write(repo.join("value.py"), "def value(): return 2\n").unwrap();
     git(&repo, &["commit", "--quiet", "-am", "maker"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
@@ -244,15 +254,24 @@ fn checks_use_the_base_the_head_descends_from() {
     assert_eq!(staged.len(), 1);
     let request: serde_json::Value =
         serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
-    assert_eq!(request["base"], main.as_str(), "stage the worktree's recorded base");
+    assert_eq!(
+        request["base"],
+        main.as_str(),
+        "stage the worktree's recorded base"
+    );
     let ended = completion(&mut adapter, &delivery);
     assert!(
         ended.observations.iter().any(|observation| matches!(observation,
             Observation::CheckPlan { sha, run, .. } if *sha == head && run.base_sha.as_str() == main)),
         "record the corrected plan for the head"
     );
-    assert!(ended.observations.iter().any(|observation| matches!(observation,
-        Observation::Checks { base_sha, .. } if *base_sha == main)));
+    assert!(
+        ended
+            .observations
+            .iter()
+            .any(|observation| matches!(observation,
+        Observation::Checks { base_sha, .. } if *base_sha == main))
+    );
 }
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
@@ -1804,7 +1823,10 @@ fn main() {
             retirement_refuses_active_or_unreadable_jobs,
         ),
         ("bounded_failure_details", bounded_failure_details),
-        ("harness_error_is_named_tl3_side", harness_error_is_named_tl3_side),
+        (
+            "harness_error_is_named_tl3_side",
+            harness_error_is_named_tl3_side,
+        ),
         (
             "checks_use_the_base_the_head_descends_from",
             checks_use_the_base_the_head_descends_from,
