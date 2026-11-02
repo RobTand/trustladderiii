@@ -153,7 +153,7 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=N
     name = binary['name']
     command = list(binary['command'])
     if not custom:
-        command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1'])
+        command.extend(['-Z', 'unstable-options', '--format=json', '--report-time', '--test-threads=1', '--show-output'])
     command.extend(arguments)
     env = dict(os.environ)
     if not custom:
@@ -211,6 +211,9 @@ def execute_binary(binary, custom, arguments=(), cpu_seconds=None, cpu_details=N
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if postgres is not None:
+                for output_line in event.get('stdout', '').splitlines():
+                    postgres.observe(output_line)
             if event.get('type') == 'test':
                 key = f"{name}::{event['name']}"
                 if event['event'] in {'ignored', 'failed'}:
