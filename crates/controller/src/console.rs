@@ -8,6 +8,7 @@
 //! issue. Replaying the command after a crash finds that commit and changes
 //! nothing.
 
+use crate::sync::mpsc::Sender;
 use crate::{
     Controller, Error, Result,
     executor::{CommentKind, Delivery, Observation, Output},
@@ -17,10 +18,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{
-    sync::mpsc::Sender,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tl3_kernel::{NodeId, Phase, QKind, Question};
 use tl3_store::{Commit, Snapshot, Transaction};
 use ts_rs::TS;
