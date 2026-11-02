@@ -280,7 +280,7 @@ class GateTests(unittest.TestCase):
         peak = 0
         lock = threading.Lock()
 
-        def execute(binary, custom):
+        def execute(binary, custom, cpu_seconds=None):
             nonlocal active, peak
             with lock:
                 active += 1

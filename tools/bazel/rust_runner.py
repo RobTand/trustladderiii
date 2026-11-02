@@ -38,9 +38,10 @@ def use_worker_python(launcher):
     os.environ['TL3_TEST_UV'] = str(uv)
 
 
-def enforce_budget(results, config, runner, outputs, baseline=None):
+def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=None):
     try:
-        rust_gate.check_budget(results, config, baseline or config, runner_class=runner)
+        rust_gate.check_budget(results, config, baseline or config, runner_class=runner,
+                               cpu_seconds=cpu_seconds)
     except RuntimeError as error:
         if str(error).startswith('Per-test time budget exceeded'):
             # The gate reruns budget-only failures once; an executor can be contended.
@@ -57,19 +58,22 @@ def main():
     for repository in Path('..').glob('*postgres_linux_*'):
         os.environ['TL3_TEST_POSTGRES_DIR'] = str(repository.resolve())
     binary = {'name': name, 'command': [str(Path(executable).resolve())]}
-    results = rust_gate.execute_binary(binary, harness == 'custom', arguments)
+    cpu_seconds = {}
+    results = rust_gate.execute_binary(binary, harness == 'custom', arguments, cpu_seconds=cpu_seconds)
     check_workspace()
     # .bazelrc names the executor class; budgets stay strict without one.
     runner = os.environ.get('TL3_RUNNER_CLASS', 'baseline')
     names = [key.split('::', 1)[1] for key in results if not key.endswith('::__tail__')]
     # Written before the budget check so calibration also sees overruns.
     receipt = Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'inventory.json')
-    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'runner_class': runner}))
+    receipt.write_text(json.dumps({'rust': {name: names}, 'seconds': results, 'cpu_seconds': cpu_seconds, 'runner_class': runner,
+                                   'cpu_platform': sys.platform}))
     if os.environ.get('TL3_BUDGETS') == 'record':
         # Uncalibrated executors (arm64) keep the seconds in the receipt only.
         return
     config = json.loads(Path('tools/ci/rust-test-budget.json').read_text())
-    enforce_budget(results, config, runner, os.environ['TEST_UNDECLARED_OUTPUTS_DIR'])
+    enforce_budget(results, config, runner, os.environ['TEST_UNDECLARED_OUTPUTS_DIR'],
+                   cpu_seconds=cpu_seconds)
 
 
 if __name__ == '__main__':
