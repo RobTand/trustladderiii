@@ -47,6 +47,11 @@ fn main() {
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
         ("postmortem_records", postmortem_records),
+        (
+            "postmortem_migration_on_schema_12",
+            postmortem_migration_on_schema_12,
+        ),
+        ("settings_editor", settings_editor),
         ("console_commands", console_commands),
         ("prompt_seeding", prompt_seeding),
         ("prompt_builtin_updates", prompt_builtin_updates),
@@ -2190,5 +2195,148 @@ fn postmortem_records(settings: &tl3_config::Store) {
             )
             .is_err(),
         "the share stays between 0 and 1"
+    );
+}
+
+/// #403: migration 13 on a populated database keeps tl3_node_phases exact and
+/// starts the phase history from each node's current phase.
+fn postmortem_migration_on_schema_12(settings: &tl3_config::Store) {
+    let mut client = raw(settings);
+    client
+        .batch_execute(
+            "CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)",
+        )
+        .unwrap();
+    let schema_12 = [
+        include_str!("../migrations/0001_store.sql"),
+        include_str!("../migrations/0002_world_arrival.sql"),
+        include_str!("../migrations/0003_workers.sql"),
+        include_str!("../migrations/0004_ingress.sql"),
+        include_str!("../migrations/0005_worker_retirement.sql"),
+        include_str!("../migrations/0006_worker_wait.sql"),
+        include_str!("../migrations/0007_hindsight.sql"),
+        include_str!("../migrations/0008_memory_parking.sql"),
+        include_str!("../migrations/0009_memory_recovery.sql"),
+        include_str!("../migrations/0010_change_feed.sql"),
+        include_str!("../migrations/0011_console_commands.sql"),
+        include_str!("../migrations/0012_prompts.sql"),
+    ];
+    for (index, sql) in schema_12.iter().enumerate() {
+        client.batch_execute(sql).unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&((index + 1) as i32), sql],
+            )
+            .unwrap();
+    }
+    client
+        .batch_execute(
+            "INSERT INTO tl3_events (event_key, revision, epoch, payload, result, committed_at) VALUES
+                 ('first', 1, 0, '1', '1', '2026-10-01 10:00:00+00'),
+                 ('second', 2, 0, '2', '2', '2026-10-02 11:30:00+00');
+             INSERT INTO tl3_world (table_name, row_id, value, version) VALUES
+                 ('nodes', '0', '{\"phase\": {\"Closed\": \"Merged\"}}', 1),
+                 ('nodes', '1', '{\"phase\": \"Making\", \"attempt\": 2}', 2);
+             UPDATE tl3_meta SET revision = 2;",
+        )
+        .unwrap();
+    let phases = |client: &mut Client, table: &str| -> Vec<(String, serde_json::Value, String)> {
+        client
+            .query(
+                &format!("SELECT node_id, phase, to_char(since AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM {table} ORDER BY node_id, since"),
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2)))
+            .collect()
+    };
+    let before = phases(&mut client, "tl3_node_phases");
+    assert_eq!(before.len(), 2);
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(
+        phases(&mut client, "tl3_node_phases"),
+        before,
+        "the trigger swap changes no entry time"
+    );
+    assert_eq!(
+        phases(&mut client, "tl3_phase_history"),
+        before,
+        "history starts from each node's current phase"
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("same", json!("same"), &snapshot);
+    change.rows = vec![put("1", json!({"phase": "Making", "attempt": 3}))];
+    store.commit(&change).unwrap();
+    assert_eq!(
+        phases(&mut client, "tl3_node_phases"),
+        before,
+        "the same phase keeps its time"
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("next", json!("next"), &snapshot);
+    change.rows = vec![put("1", json!({"phase": "Checking"}))];
+    store.commit(&change).unwrap();
+    let now = phases(&mut client, "tl3_node_phases");
+    assert_eq!(now[0], before[0]);
+    assert_eq!(now[1].1, json!("Checking"));
+    let history = phases(&mut client, "tl3_phase_history");
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[2], now[1]);
+}
+
+/// #403, #333: the console's login may change the sample share within its
+/// bounds, and nothing else in the settings.
+fn settings_editor(settings: &tl3_config::Store) {
+    drop(Store::open(settings).unwrap());
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_settings_test", password).unwrap();
+    let mut reader = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user("tl3_settings_test")
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    let update = |client: &mut Client, value: &str| {
+        client.batch_execute(&format!(
+            "BEGIN READ WRITE;
+             UPDATE tl3_settings SET value = '{value}', updated_by = 'console', updated_at = now()
+                 WHERE key = 'postmortem_sample_share';
+             COMMIT;"
+        ))
+    };
+    update(&mut reader, "0.25").unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .postmortem_sample_share()
+            .unwrap(),
+        0.25
+    );
+    for value in ["1.5", "-0.1", "\"half\""] {
+        let error = update(&mut reader, value).unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::CHECK_VIOLATION),
+            "{value}: {error}"
+        );
+        reader.batch_execute("ROLLBACK").unwrap();
+    }
+    assert!(
+        reader
+            .batch_execute("BEGIN READ WRITE; UPDATE tl3_settings SET key = 'other'; COMMIT;")
+            .is_err(),
+        "the editor changes values only"
+    );
+    reader.batch_execute("ROLLBACK").unwrap();
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .postmortem_sample_share()
+            .unwrap(),
+        0.25
     );
 }

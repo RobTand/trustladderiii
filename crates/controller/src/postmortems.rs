@@ -19,6 +19,8 @@ pub(crate) struct History {
     pub incidents: Vec<(String, bool)>,
     /// A worker run failed and was retried.
     pub run_failure: bool,
+    /// Failed runs, effects and plans that were retried, from the retry ledger.
+    pub retries: u32,
     /// Times the queue sent it back: CI failures, conflicts and dequeues.
     pub dequeues: u32,
     /// It merged with failing checks.
@@ -361,6 +363,20 @@ mod tests {
         assert_eq!(
             reason(&clean(), Outcome::Merged, &retried),
             Some(Reason::Retry)
+        );
+        // The kernel zeroes its failure counters once a retry succeeds.
+        let recovered = History {
+            retries: 1,
+            ..History::default()
+        };
+        assert_eq!(
+            reason(&clean(), Outcome::Merged, &recovered),
+            Some(Reason::Retry),
+            "a retry that succeeded still needed a retry"
+        );
+        assert!(
+            graded(&clean(), Outcome::Merged, &recovered).contains(&("reliability", Some(4))),
+            "a retried merge is not a first-time merge"
         );
         let incident = History {
             incidents: vec![("transport".into(), false)],

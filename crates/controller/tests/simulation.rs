@@ -82,6 +82,10 @@ fn main() {
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
         ("postmortem_records", postmortem_records),
+        (
+            "postmortem_incident_needs_rob",
+            postmortem_incident_needs_rob,
+        ),
         ("repository_count_mismatch", |s| {
             repository_followups::corrupt_index(s, "count")
         }),
@@ -900,6 +904,23 @@ fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
         EffectState::Cancelled
     );
     assert!(calls.borrow().values().all(|count| *count == 1));
+    // #403: the kernel zeroes its failure counters after the retry succeeds,
+    // but the node still needed a retry.
+    let mut store = Store::open(settings).unwrap();
+    let owed = store.postmortems("0").unwrap();
+    assert_eq!(
+        owed.iter()
+            .map(|r| (r.trigger.as_str(), r.reason.as_str()))
+            .collect::<Vec<_>>(),
+        [("close", "retry")]
+    );
+    let reliability = store
+        .code_grades("0")
+        .unwrap()
+        .into_iter()
+        .find(|g| g.dimension == "reliability")
+        .unwrap();
+    assert!(reliability.grade.unwrap() < 5, "{reliability:?}");
 }
 
 fn controller_lock_barrier(settings: &tl3_config::Store) {
@@ -2714,9 +2735,35 @@ fn postmortem_records(settings: &tl3_config::Store) {
         .find(|g| g.dimension == "phase_time")
         .unwrap()
         .fact;
+    // Phase times are the phase history's own differences, in milliseconds;
+    // the phase that ends at close is left out, so grades are deterministic.
+    let history: Vec<(serde_json::Value, i64)> = raw(settings)
+        .query(
+            "SELECT phase, (extract(epoch FROM since) * 1000)::bigint FROM tl3_phase_history WHERE node_id = '0' ORDER BY since, id",
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    let mut expected = serde_json::Map::new();
+    for pair in history.windows(2).take(history.len().saturating_sub(2)) {
+        let name = match &pair[0].0 {
+            serde_json::Value::String(name) => name.clone(),
+            other => other.as_object().unwrap().keys().next().unwrap().clone(),
+        };
+        let total =
+            expected.get(&name).and_then(|v| v.as_i64()).unwrap_or(0) + pair[1].1 - pair[0].1;
+        expected.insert(name, json!(total));
+    }
+    assert_eq!(phases, &serde_json::Value::Object(expected));
     for phase in ["Making", "Checking", "Reviewing", "Publishing", "Queued"] {
         assert!(phases.get(phase).is_some(), "{phase}: {phases}");
     }
+    assert!(
+        phases.get("Stopping").is_none(),
+        "the phase that ends at close is open-ended"
+    );
     let row = raw(settings)
         .query_one(
             "SELECT repo, issue, title FROM tl3_postmortems WHERE node_id = '0'",
@@ -2746,5 +2793,59 @@ fn postmortem_records(settings: &tl3_config::Store) {
     assert_eq!(
         Store::open(settings).unwrap().code_grades("0").unwrap(),
         grades
+    );
+}
+
+struct PermanentWorker {
+    fake: adapters::workers::Fake,
+    first: bool,
+}
+impl tl3_controller::executor::Executor for PermanentWorker {
+    fn execute(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        if std::mem::take(&mut self.first) {
+            return Ok(tl3_controller::executor::Completion::permanent("fixture"));
+        }
+        tl3_controller::executor::Executor::execute(&mut self.fake, delivery)
+    }
+    fn reconcile(
+        &mut self,
+        delivery: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        tl3_controller::executor::Executor::reconcile(&mut self.fake, delivery)
+    }
+}
+
+/// #403: a kernel incident that needs Rob owes a postmortem in its own commit.
+fn postmortem_incident_needs_rob(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::Workers,
+        PermanentWorker {
+            fake: adapters::workers::Fake::new(root.path()),
+            first: true,
+        },
+    );
+    let mut controller =
+        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    controller.intake(labelled()).unwrap();
+    drain(&mut controller);
+    let incident = controller
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.table == "incidents" && row.value["needs_rob"] == true)
+        .expect("a permanent failure raises an incident that needs Rob");
+    let owed = Store::open(settings).unwrap().postmortems("0").unwrap();
+    assert!(
+        owed.iter().any(
+            |record| record.trigger == format!("incident:{}", incident.id)
+                && record.reason == "escalation"
+        ),
+        "{owed:?}"
     );
 }
