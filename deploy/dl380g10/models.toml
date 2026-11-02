@@ -26,3 +26,8 @@ rebaser = [{ name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "hig
 # Q15: an agent classifies Rob's issue comments.
 comment_classifier = [{ name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 8000 }]
 writer = [{ name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 8000 }]
+# #403: Opus writes each postmortem; Sonnet runs the rubric's grade judges.
+postmortem = [
+    { name = "claude-opus-5-5", family = "claude-opus", effort = "high", budget_tokens = 32000 },
+    { name = "claude-sonnet-5-5", family = "claude-sonnet", effort = "high", budget_tokens = 32000 },
+]

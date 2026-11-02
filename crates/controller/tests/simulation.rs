@@ -56,6 +56,8 @@ fn open(settings: &tl3_config::Store, root: &Path) -> Controller {
 
 #[path = "simulation/gate_migration.rs"]
 mod gate_migration;
+#[path = "simulation/postmortems.rs"]
+mod postmortems;
 #[path = "simulation/repository_followups.rs"]
 mod repository_followups;
 #[path = "simulation/repository_migration.rs"]
@@ -257,6 +259,18 @@ fn main() {
         (
             "postmortem_incident_needs_rob",
             postmortem_incident_needs_rob,
+        ),
+        (
+            "postmortem_exactly_once_across_crashes",
+            postmortems::exactly_once_across_crashes,
+        ),
+        (
+            "postmortem_running_rows_recover_at_startup",
+            postmortems::running_rows_recover_at_startup,
+        ),
+        (
+            "postmortem_failures_are_fixed_classes",
+            postmortems::failures_are_fixed_classes,
         ),
     ];
     let selected = args.iter().find_map(|arg| arg.strip_prefix("--case="));

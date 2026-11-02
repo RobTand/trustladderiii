@@ -280,6 +280,10 @@ pub struct Models {
     pub comment_classifier: Vec<Model>,
     #[serde(default)]
     pub writer: Vec<Model>,
+    /// #403: the first model writes postmortems; the second, if any, runs the
+    /// rubric's grade judges. Defaults to the reviewer's and the writer's first.
+    #[serde(default)]
+    pub postmortem: Vec<Model>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -464,6 +468,12 @@ impl Config {
         if config.models.writer.is_empty() {
             config.models.writer = config.models.ingest.clone();
         }
+        if config.models.postmortem.is_empty() {
+            config.models.postmortem = (config.models.reviewer.first().into_iter())
+                .chain(config.models.writer.first())
+                .cloned()
+                .collect();
+        }
         config.validate()?;
         Ok(config)
     }
@@ -643,6 +653,7 @@ impl Config {
             ("rebaser", &self.models.rebaser),
             ("comment_classifier", &self.models.comment_classifier),
             ("writer", &self.models.writer),
+            ("postmortem", &self.models.postmortem),
         ] {
             if ladder.is_empty() {
                 return Err(invalid(
@@ -664,6 +675,12 @@ impl Config {
                     ));
                 }
             }
+        }
+        if self.models.postmortem.len() > 2 {
+            return Err(invalid(
+                "models.postmortem",
+                "name at most two models: the postmortem's, then the grade judges' (#403)",
+            ));
         }
         if self.models.planner.len() < 2 {
             return Err(invalid(

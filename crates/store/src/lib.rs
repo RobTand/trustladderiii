@@ -108,6 +108,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (11, include_str!("../migrations/0011_console_commands.sql")),
     (12, include_str!("../migrations/0012_prompts.sql")),
     (13, include_str!("../migrations/0013_postmortems.sql")),
+    (
+        14,
+        include_str!("../migrations/0014_postmortem_results.sql"),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -613,8 +617,10 @@ impl Store {
                 &[&owed.node, &owed.trigger, &owed.reason, &owed.sample_share, &owed.repo, &owed.issue, &owed.title, &revision.get()])?;
         }
         for grade in &change.grades {
-            tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
-                &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision.get()])?;
+            insert_grade(&mut tx, grade, revision.get())?;
+        }
+        for update in &change.postmortem_updates {
+            apply_postmortem(&mut tx, update, revision.get())?;
         }
         boundary(
             &mut self.boundary_hook,
@@ -748,19 +754,30 @@ impl Store {
         Ok(self
             .client
             .query(
-                "SELECT id, node_id, trigger, reason, sample_share, status FROM tl3_postmortems WHERE node_id = $1 ORDER BY id",
+                &format!(
+                    "SELECT {POSTMORTEM_RECORD} FROM tl3_postmortems WHERE node_id = $1 ORDER BY id"
+                ),
                 &[&node],
             )?
             .iter()
-            .map(|row| PostmortemRecord {
-                id: row.get(0),
-                node: row.get(1),
-                trigger: row.get(2),
-                reason: row.get(3),
-                sample_share: row.get(4),
-                status: row.get(5),
-            })
+            .map(postmortem_record)
             .collect())
+    }
+
+    /// The oldest owed postmortem, which the runner claims next (#403).
+    pub fn owed_postmortem(&mut self) -> Result<Option<PostmortemRecord>> {
+        todo!("#403: the oldest owed postmortem")
+    }
+
+    /// Postmortems claimed by a runner and not yet finished.
+    pub fn running_postmortems(&mut self) -> Result<Vec<PostmortemRecord>> {
+        todo!("#403: running postmortems")
+    }
+
+    /// One postmortem with its stored result and recommendations.
+    pub fn postmortem(&mut self, id: i64) -> Result<Option<PostmortemDetail>> {
+        let _ = id;
+        todo!("#403: a postmortem's result")
     }
 
     /// A node's code grades, oldest first.
@@ -1040,6 +1057,37 @@ impl Reader {
         tx.commit()?;
         Ok(events)
     }
+}
+
+const POSTMORTEM_RECORD: &str = "id, node_id, trigger, reason, sample_share, status, run_key";
+
+fn postmortem_record(row: &Row) -> PostmortemRecord {
+    PostmortemRecord {
+        id: row.get(0),
+        node: row.get(1),
+        trigger: row.get(2),
+        reason: row.get(3),
+        sample_share: row.get(4),
+        status: row.get(5),
+        run_key: row.get(6),
+    }
+}
+
+fn insert_grade(tx: &mut Transaction<'_>, grade: &CodeGrade, revision: i64) -> Result<()> {
+    tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
+        &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision])?;
+    Ok(())
+}
+
+/// #403: a runner's claim, result, failure or release. Only a claim on an
+/// owed row and a finish under the claim's own run key change anything.
+fn apply_postmortem(
+    tx: &mut Transaction<'_>,
+    update: &PostmortemUpdate,
+    revision: i64,
+) -> Result<()> {
+    let _ = (tx, update, revision);
+    todo!("#403: apply a postmortem update")
 }
 
 /// Create or update a login that may read TL3's tables, now and after later

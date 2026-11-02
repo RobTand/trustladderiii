@@ -47,6 +47,7 @@ fn main() {
         ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
         ("reader_role", reader_role),
         ("postmortem_records", postmortem_records),
+        ("postmortem_results", postmortem_results),
         (
             "postmortem_migration_on_schema_12",
             postmortem_migration_on_schema_12,
@@ -695,7 +696,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     );
     for table in [
         "tl3_events",
@@ -2339,4 +2340,254 @@ fn settings_editor(settings: &tl3_config::Store) {
             .unwrap(),
         0.25
     );
+}
+
+fn recommendation(rank: i16) -> Recommendation {
+    Recommendation {
+        fingerprint: format!("rec-{rank:016x}"),
+        rank,
+        phase: "maker".into(),
+        kind: "prompt".into(),
+        target: "maker".into(),
+        operation: "add".into(),
+        before: String::new(),
+        after: format!("Run check {rank}."),
+        evidence: "The review.".into(),
+        effect: "Fewer fix rounds.".into(),
+    }
+}
+
+fn judged(recommendations: i16) -> PostmortemResult {
+    PostmortemResult {
+        cause: "tl3".into(),
+        summary: "The maker needed a fix round.".into(),
+        timeline: json!([{"at": "Making", "event": "The maker ran."}]),
+        process_failures: json!([{"phase": "maker", "kind": "code defect", "what": "x", "evidence": "y"}]),
+        grades: json!([{"dimension": "correctness", "grade": 4}]),
+        notes: "Cheaper with one check.".into(),
+        assessment_ids: json!(["a-1", "a-2"]),
+        recommendations: (1..=recommendations).map(recommendation).collect(),
+        code_grades: vec![CodeGrade {
+            node: "1".into(),
+            trigger: "postmortem:1".into(),
+            rubric_version: 1,
+            dimension: "tokens".into(),
+            grade: None,
+            fact: json!({"input_tokens": 10}),
+        }],
+        memory: Some((
+            "00000000-0000-5000-8000-000000000403".into(),
+            json!({"content": "lesson", "tags": ["postmortem"]}),
+        )),
+    }
+}
+
+/// #403: the runner claims an owed postmortem, and only the claim's run key
+/// can finish it. Results, recommendations, later grades and lessons commit
+/// together; a stale or second claim changes nothing.
+fn postmortem_results(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let owed = |trigger: &str| OwedPostmortem {
+        node: "1".into(),
+        trigger: trigger.into(),
+        reason: "needed_fix".into(),
+        sample_share: None,
+        repo: "owner/sandbox".into(),
+        issue: 12,
+        title: "Fix greeting".into(),
+    };
+    let mut change = seed(&mut store);
+    change.postmortems = vec![owed("close"), owed("question:3")];
+    store.commit(&change).unwrap();
+    let first = store.owed_postmortem().unwrap().unwrap();
+    assert_eq!(
+        (first.trigger.as_str(), first.status.as_str()),
+        ("close", "owed")
+    );
+    assert!(store.running_postmortems().unwrap().is_empty());
+    let mut listener = Listener::open(settings).unwrap();
+    let update = |store: &mut Store, key: &str, update: PostmortemUpdate| {
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new(key, json!(key), &snapshot);
+        change.rows = vec![RowChange::Put {
+            table: "postmortem_jobs".into(),
+            id: key.into(),
+            value: json!(key),
+        }];
+        change.postmortem_updates = vec![update];
+        store.commit(&change)
+    };
+    let claim = |id: i64, run_key: &str| PostmortemUpdate::Claim {
+        id,
+        run_key: run_key.into(),
+        rubric_version: 1,
+        model: "claude-opus-5-5".into(),
+    };
+    update(&mut store, "claim-1", claim(first.id, "postmortem:1:a")).unwrap();
+    assert!(listener.wait().unwrap().contains("tl3_postmortems"));
+    let running = store.running_postmortems().unwrap();
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0].run_key.as_deref(), Some("postmortem:1:a"));
+    assert_eq!(
+        store.owed_postmortem().unwrap().unwrap().trigger,
+        "question:3"
+    );
+    // A second claim of a running postmortem fails its whole commit.
+    assert!(update(&mut store, "claim-again", claim(first.id, "postmortem:1:b")).is_err());
+    assert!(
+        !store
+            .load()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "postmortem_jobs" && row.id == "claim-again"),
+        "the failed claim's rows rolled back"
+    );
+    // A result under another run key is stale and changes nothing.
+    update(
+        &mut store,
+        "stale",
+        PostmortemUpdate::Done {
+            id: first.id,
+            run_key: "postmortem:1:b".into(),
+            result: Box::new(judged(3)),
+        },
+    )
+    .unwrap();
+    let detail = store.postmortem(first.id).unwrap().unwrap();
+    assert_eq!(detail.record.status, "running");
+    assert!(detail.recommendations.is_empty());
+    assert!(store.code_grades("1").unwrap().is_empty());
+    update(
+        &mut store,
+        "done",
+        PostmortemUpdate::Done {
+            id: first.id,
+            run_key: "postmortem:1:a".into(),
+            result: Box::new(judged(3)),
+        },
+    )
+    .unwrap();
+    let detail = store.postmortem(first.id).unwrap().unwrap();
+    assert_eq!(detail.record.status, "done");
+    assert_eq!(detail.cause.as_deref(), Some("tl3"));
+    assert_eq!(
+        detail.summary.as_deref(),
+        Some("The maker needed a fix round.")
+    );
+    assert_eq!(detail.notes.as_deref(), Some("Cheaper with one check."));
+    assert_eq!(
+        detail.timeline,
+        Some(json!([{"at": "Making", "event": "The maker ran."}]))
+    );
+    assert_eq!(detail.assessment_ids, Some(json!(["a-1", "a-2"])));
+    assert_eq!(
+        detail.grades,
+        Some(json!([{"dimension": "correctness", "grade": 4}]))
+    );
+    assert_eq!(detail.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(detail.rubric_version, Some(1));
+    assert_eq!(
+        detail.recommendations,
+        (1..=3).map(recommendation).collect::<Vec<_>>()
+    );
+    let tokens = store.code_grades("1").unwrap();
+    assert_eq!(
+        tokens
+            .iter()
+            .map(|g| (g.trigger.as_str(), g.dimension.as_str()))
+            .collect::<Vec<_>>(),
+        [("postmortem:1", "tokens")]
+    );
+    let mut client = raw(settings);
+    let retained: Vec<serde_json::Value> = client
+        .query("SELECT item FROM tl3_memory_outbox", &[])
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        retained,
+        [json!({"content": "lesson", "tags": ["postmortem"]})]
+    );
+    let finished: bool = client
+        .query_one(
+            "SELECT finished_at IS NOT NULL AND started_at <= finished_at FROM tl3_postmortems WHERE id = $1",
+            &[&first.id],
+        )
+        .unwrap()
+        .get(0);
+    assert!(finished);
+    // The table refuses a fourth recommendation.
+    let second = store.owed_postmortem().unwrap().unwrap();
+    update(&mut store, "claim-2", claim(second.id, "postmortem:2:a")).unwrap();
+    assert!(
+        update(
+            &mut store,
+            "four",
+            PostmortemUpdate::Done {
+                id: second.id,
+                run_key: "postmortem:2:a".into(),
+                result: Box::new(judged(4)),
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(
+        store.postmortem(second.id).unwrap().unwrap().record.status,
+        "running"
+    );
+    // A failure keeps only its fixed class; a release makes it owed again.
+    update(
+        &mut store,
+        "failed",
+        PostmortemUpdate::Failed {
+            id: second.id,
+            run_key: "postmortem:2:a".into(),
+            failure: "worker_failed".into(),
+        },
+    )
+    .unwrap();
+    let failed = store.postmortem(second.id).unwrap().unwrap();
+    assert_eq!(
+        (failed.record.status.as_str(), failed.failure.as_deref()),
+        ("failed", Some("worker_failed"))
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("third", json!("third"), &snapshot);
+    change.postmortems = vec![owed("rob:7")];
+    store.commit(&change).unwrap();
+    let third = store.owed_postmortem().unwrap().unwrap();
+    update(&mut store, "claim-3", claim(third.id, "postmortem:3:a")).unwrap();
+    update(
+        &mut store,
+        "release-stale",
+        PostmortemUpdate::Release {
+            id: third.id,
+            run_key: "postmortem:3:z".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        store.postmortem(third.id).unwrap().unwrap().record.status,
+        "running"
+    );
+    update(
+        &mut store,
+        "release",
+        PostmortemUpdate::Release {
+            id: third.id,
+            run_key: "postmortem:3:a".into(),
+        },
+    )
+    .unwrap();
+    let released = store.postmortem(third.id).unwrap().unwrap();
+    assert_eq!(
+        (
+            released.record.status.as_str(),
+            released.record.run_key.as_deref()
+        ),
+        ("owed", None)
+    );
+    assert_eq!(store.owed_postmortem().unwrap().unwrap().id, third.id);
 }

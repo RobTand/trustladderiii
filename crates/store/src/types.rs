@@ -206,6 +206,94 @@ pub struct PostmortemRecord {
     pub sample_share: Option<f64>,
     /// owed, running, done or failed.
     pub status: String,
+    /// The claim that is running it, or ran it last.
+    pub run_key: Option<String>,
+}
+
+/// One of a postmortem's recommendations: an exact edit with its evidence (Q32).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Recommendation {
+    /// `rec-` and 16 hex digits over the normalised target, operation, before
+    /// and after, so the same change counts the same across postmortems.
+    pub fingerprint: String,
+    /// 1 to 3, the most valuable first.
+    pub rank: i16,
+    pub phase: String,
+    pub kind: String,
+    pub target: String,
+    /// add, remove or replace.
+    pub operation: String,
+    pub before: String,
+    pub after: String,
+    pub evidence: String,
+    pub effect: String,
+}
+
+/// What a judged postmortem stores, in the commit that consumes its reply.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PostmortemResult {
+    /// tl3 or outside.
+    pub cause: String,
+    pub summary: String,
+    pub timeline: Value,
+    pub process_failures: Value,
+    /// The judge's grades by rubric dimension, with their evidence.
+    pub grades: Value,
+    pub notes: String,
+    /// The MLflow assessments the judge logged on the node's traces.
+    pub assessment_ids: Value,
+    pub recommendations: Vec<Recommendation>,
+    /// Later code grades, such as tokens and cache rate read from MLflow.
+    pub code_grades: Vec<CodeGrade>,
+    /// The lessons for Hindsight: its operation id and outbox item.
+    pub memory: Option<(String, Value)>,
+}
+
+/// The runner's change to one postmortem, applied in the same transaction as
+/// the rest of its commit (#403).
+#[derive(Clone, Debug, PartialEq)]
+pub enum PostmortemUpdate {
+    /// owed -> running. The commit fails if the row is no longer owed.
+    Claim {
+        id: i64,
+        run_key: String,
+        rubric_version: i32,
+        model: String,
+    },
+    /// running -> done, only while the row is running under this run key.
+    Done {
+        id: i64,
+        run_key: String,
+        result: Box<PostmortemResult>,
+    },
+    /// running -> failed with a fixed failure class, only under this run key.
+    Failed {
+        id: i64,
+        run_key: String,
+        failure: String,
+    },
+    /// running -> owed: the claim's run is gone, so the postmortem is owed again.
+    Release { id: i64, run_key: String },
+}
+
+/// A postmortem with its stored result.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PostmortemDetail {
+    pub record: PostmortemRecord,
+    pub repo: String,
+    pub issue: i64,
+    pub title: String,
+    pub model: Option<String>,
+    pub rubric_version: Option<i32>,
+    pub failure: Option<String>,
+    pub cause: Option<String>,
+    pub summary: Option<String>,
+    pub timeline: Option<Value>,
+    pub process_failures: Option<Value>,
+    pub grades: Option<Value>,
+    pub notes: Option<String>,
+    pub assessment_ids: Option<Value>,
+    pub recommendations: Vec<Recommendation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -313,6 +401,8 @@ pub struct Commit {
     pub postmortems: Vec<OwedPostmortem>,
     /// Code grades this commit records. Grades are append-only.
     pub grades: Vec<CodeGrade>,
+    /// Postmortem claims, results and releases (#403).
+    pub postmortem_updates: Vec<PostmortemUpdate>,
     pub result: Value,
     /// Upgrade only: advance by one, after all active deliveries have drained.
     pub next_epoch: Option<Epoch>,
@@ -331,6 +421,7 @@ impl Commit {
             credit: Vec::new(),
             postmortems: Vec::new(),
             grades: Vec::new(),
+            postmortem_updates: Vec::new(),
             result: Value::Null,
             next_epoch: None,
         }

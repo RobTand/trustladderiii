@@ -51,18 +51,25 @@ fn sensitive_key(key: &str) -> bool {
         || key.ends_with("_token")
 }
 
-fn safe_text(text: &str) -> String {
-    static SECRET: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(
+static SECRET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
         r#"(?is)(?:bearer\s+\S+|-----BEGIN[^\r\n]*PRIVATE KEY-----.*?(?:-----END[^\r\n]*PRIVATE KEY-----|$)|\b(?:sk-|gh[pousr]_|github_pat_|hf_|glpat-|xox[a-z]-)[a-zA-Z0-9_-]+|AKIA[A-Z0-9]{16}|\b[a-fA-F0-9]{32,}\b|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|(?:https?|postgres(?:ql)?)://[^/\s:@]+:[^/\s@]+@|(?:[a-z0-9_]*_api_key|[a-z0-9_]*_secret[a-z0-9_]*|[a-z0-9_]*_token|api[_-]?key|password|passwd|secret|authorization|cookie)["']?\s*[=:]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*=\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)|\btoken["']?\s*:\s*(?:["'][^"']+["']|[a-zA-Z0-9_-]*[0-9_-][a-zA-Z0-9_-]*))"#
     ).expect("memory secret pattern")
-    });
-    let text = text.replace('\0', "");
-    let text = SECRET.replace_all(&text, "[redacted]");
+});
+
+/// Remove secret-shaped text without truncating it, for text TL3 stores whole.
+pub(crate) fn redact(text: &str) -> String {
+    SECRET
+        .replace_all(&text.replace('\0', ""), "[redacted]")
+        .into_owned()
+}
+
+fn safe_text(text: &str) -> String {
+    let text = redact(text);
     if text.len() > 2048 {
         format!("{} [truncated]", clip(&text, 2048))
     } else {
-        text.into_owned()
+        text
     }
 }
 

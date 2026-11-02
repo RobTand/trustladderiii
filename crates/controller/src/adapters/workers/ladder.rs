@@ -18,6 +18,7 @@ pub(crate) fn candidates<'a>(
         "maker" => &models.maker,
         "planner" => &models.planner,
         "reviewer" => &models.reviewer,
+        "postmortem" => &models.postmortem,
         _ => return Err(Error::Invalid("unsupported worker role")),
     };
     if ladder.is_empty() {

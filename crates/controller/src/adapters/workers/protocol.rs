@@ -26,6 +26,10 @@ pub(super) fn delivery_role(delivery: &crate::executor::Delivery) -> Option<&'st
             kind: CommentKind::Classify,
             ..
         } => Some("classifier"),
+        Output::Comment {
+            kind: CommentKind::Postmortem,
+            ..
+        } => Some("postmortem"),
         Output::Effect {
             kind: tl3_kernel::EffectKind::StartRun(r),
             ..

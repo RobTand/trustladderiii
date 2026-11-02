@@ -1027,6 +1027,10 @@ impl Controller {
         state.failure = Some(failure_class(&error).into());
         state.healthy = false;
         self.rearm(state);
+        // #403: a postmortem raises no incident; nothing waits on it.
+        if state.delivery.is_postmortem() {
+            return Ok(());
+        }
         let snapshot = self.store.load()?;
         if state.incident.as_ref().is_some_and(|id| {
             snapshot

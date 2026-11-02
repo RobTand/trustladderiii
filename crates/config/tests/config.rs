@@ -1064,18 +1064,52 @@ fn deployment_model_defaults_pass_validation() {
         "rebaser",
         "comment_classifier",
         "writer",
+        "postmortem",
     ] {
         let ladder = defaults
             .get(role)
             .unwrap_or_else(|| panic!("models.toml must set {role}"));
         models.insert(role.into(), ladder.clone());
     }
-    assert_eq!(defaults.len(), 8, "models.toml sets only the role ladders");
+    assert_eq!(defaults.len(), 9, "models.toml sets only the role ladders");
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     for maker in &config.models.maker {
         let reviewer = config.models.reviewer_for(&maker.family).unwrap();
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
     }
+    // #403: Opus writes postmortems and Sonnet grades; never Fable.
+    let postmortem: Vec<_> = config
+        .models
+        .postmortem
+        .iter()
+        .map(|model| model.name.as_str())
+        .collect();
+    assert_eq!(postmortem, ["claude-opus-5-5", "claude-sonnet-5-5"]);
+}
+
+#[test]
+fn postmortem_models_default_to_the_reviewer_and_the_writer() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let names: Vec<_> = config
+        .models
+        .postmortem
+        .iter()
+        .map(|model| model.name.clone())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            config.models.reviewer[0].name.clone(),
+            config.models.writer[0].name.clone()
+        ]
+    );
+    let three = EXAMPLE.replace(
+        "[models]\n",
+        "[models]\npostmortem = [{ name = \"a\", family = \"a\", budget_tokens = 1000 }, { name = \"b\", family = \"b\", budget_tokens = 1000 }, { name = \"c\", family = \"c\", budget_tokens = 1000 }]\n",
+    );
+    assert_ne!(three, EXAMPLE);
+    let error = Config::parse(&three).err().unwrap().to_string();
+    assert!(error.contains("models.postmortem"), "{error}");
 }
 
 #[test]

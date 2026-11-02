@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trustladderiii.invalid/workers/protocol-1/postmortem-input.json",
+  "description": "The case file the controller writes for one postmortem (#403). The worker redacts `case` before any judge reads it.",
+  "type": "object",
+  "properties": {
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "trigger": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "required": ["id", "trigger", "reason"],
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "properties": {
+        "request": {"type": "object"},
+        "outcome": {"type": "string", "minLength": 1},
+        "grades": {"type": "array"},
+        "phases": {"type": "array"},
+        "questions": {"type": "array"},
+        "incidents": {"type": "array"},
+        "plan": {},
+        "brief": {},
+        "audit": {},
+        "findings": {},
+        "release": {"type": "string"}
+      },
+      "required": ["request", "outcome", "grades", "phases", "questions", "incidents", "release"],
+      "additionalProperties": false
+    },
+    "rubric": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "dimensions": {"type": "object"}
+      },
+      "required": ["version", "dimensions"]
+    },
+    "release": {"type": "string"},
+    "grade_model": {"type": "string", "minLength": 1},
+    "trace_tags": {
+      "type": "object",
+      "properties": {
+        "node": {"type": "string", "pattern": "^[0-9]+$"},
+        "request": {"type": "string", "pattern": "^[0-9]+$"},
+        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "issue": {"type": "string", "pattern": "^[0-9]+$"}
+      },
+      "required": ["node", "request", "repo", "issue"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["record", "case", "rubric", "release", "grade_model", "trace_tags"],
+  "additionalProperties": false
+}

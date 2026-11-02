@@ -480,6 +480,8 @@ pub(super) fn parse_reply(
         }
         if delivery.is_classifier() {
             protocol::validate_classification(inputs, &value["reply"])?;
+        } else if delivery.is_postmortem() {
+            crate::postmortems::check_reply(&value["reply"])?;
         } else {
             protocol::map_reply(role, &value["reply"])?;
             if role == "reviewer" {
@@ -501,6 +503,13 @@ pub(super) fn parse_reply(
         return Ok(Observation::Classified {
             key: delivery.key.clone(),
             reply: Some(reply.ok_or(Error::Invalid("worker reply is missing"))?),
+        });
+    }
+    if delivery.is_postmortem() {
+        return Ok(Observation::Postmortem {
+            key: delivery.key.clone(),
+            reply: Some(reply.ok_or(Error::Invalid("worker reply is missing"))?),
+            failure: None,
         });
     }
     Ok(Observation::WorkerReply {
