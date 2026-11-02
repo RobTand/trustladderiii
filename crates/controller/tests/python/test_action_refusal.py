@@ -14,7 +14,7 @@ TEST = "tests/test_value.py::test_value"
 PLAN = [{"name": "value", "kind": "regression", "tests": [TEST]}]
 
 
-def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, link=False):
+def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, link=False, protected=None):
     """Stage the real action and trusted harness for a head that sets conftest.py."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
@@ -50,7 +50,8 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
                     ignore=shutil.ignore_patterns("__pycache__"))
     (staged / "request.json").write_text(json.dumps({
         "effect_key": "effect:89:7", "base": base, "head": head, "reviewed": None,
-        "plan": plan, "image": "sha256:" + "1" * 64, "exec_scratch": False}))
+        "plan": plan, "image": "sha256:" + "1" * 64, "exec_scratch": False,
+        **({} if protected is None else {"protected_paths": protected})}))
 
     # Admission is a PrismaBuild contract; a refusal must return before any container runs.
     shim = root / "bin/docker"
@@ -85,6 +86,15 @@ class ActionRefusalTests(unittest.TestCase):
             reports = lines(result.stdout, "TL3_CHECKS ")
             self.assertEqual([check["verdict"] for check in reports[0]["results"]], ["fail"])
             self.assertIn("secret", reports[0]["results"][0]["tests"][0]["message"])
+
+    def test_repository_protected_path_change_is_reported_not_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged, env = stage(Path(directory), protected=["README.md"])
+            result = act(staged, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            reports = lines(result.stdout, "TL3_CHECKS ")
+            self.assertEqual([check["verdict"] for check in reports[0]["results"]], ["fail"])
+            self.assertIn("README.md", reports[0]["results"][0]["tests"][0]["message"])
 
     def test_repository_configuration_error_stays_upstream(self):
         with tempfile.TemporaryDirectory() as directory:

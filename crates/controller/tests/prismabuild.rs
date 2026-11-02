@@ -376,6 +376,37 @@ fn base_moved_completion_keys_each_observation(
     }
 }
 
+/// #390: the harness refuses changes to the repository's protected paths, so the staged
+/// request carries the same list planning uses: the defaults, the global list and the
+/// repository's own additions.
+fn staged_request_carries_the_repository_protected_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].protected_paths = vec!["release/**".into()];
+    config.planning.protected_paths = vec!["GLOBAL.md".into()];
+    let mut adapter = fixture(root.path(), "done")
+        .with_repositories(&config.github.repos)
+        .with_protected_paths(&config.planning.protected_paths);
+    adapter.execute(&delivery).unwrap();
+    let staged: Vec<_> = fs::read_dir(root.path().join("queue"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "request"))
+        .collect();
+    let request: serde_json::Value =
+        serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+    let protected: BTreeSet<_> = request["protected_paths"]
+        .as_array()
+        .expect("the staged request names protected paths")
+        .iter()
+        .map(|path| path.as_str().unwrap())
+        .collect();
+    for expected in [".github/**", "**/conftest.py", "GLOBAL.md", "release/**"] {
+        assert!(protected.contains(expected), "{expected} in {protected:?}");
+    }
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1927,6 +1958,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "staged_request_carries_the_repository_protected_paths",
+            staged_request_carries_the_repository_protected_paths,
+        ),
+        (
             "harness_error_is_named_tl3_side",
             harness_error_is_named_tl3_side,
         ),
@@ -2001,7 +2036,7 @@ fn main() {
     );
     println!("test base_moved_completion_keys_each_observation ... ok");
     database.stop();
-    println!("39 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("40 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
