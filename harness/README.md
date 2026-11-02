@@ -101,8 +101,9 @@ Python file is affected, and so is any file that names a changed file of any
 type by a path literal: a string constant equal to its repository path or
 ending in `/` plus that path, or a suffix of the path with at least two
 components, including the joined string operands of a `/` chain or a call
-such as `os.path.join`. A bare file name doesn't count: in PrismaQuant it
-would match generic names such as `pyproject.toml` in many tests. A file that
+such as `os.path.join`. A bare file name doesn't count: it can't say which
+of several same-named files it means. For prismaquant#3213's changes, no
+PrismaQuant test file named a changed file only by its bare name. A file that
 imports an affected one is affected too, through production modules and test
 helpers alike. Every test
 file in that closure contributes its test functions and methods. Tests are
