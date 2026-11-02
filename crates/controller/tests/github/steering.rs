@@ -446,10 +446,18 @@ fn replacement_assertions(d: &mut Daemon) {
             .any(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
     });
     let requests = d.requests();
-    assert!(requests.iter().any(|r| r["role"] == "ingest"
-        && r["operation"]["node"] == 1
-        && r["inputs"]["issue"]["number"] == 12
-        && r["inputs"]["issue"]["body"] == "Return goodbye instead of hello."));
+    // #449: the answer is the scope and the original issue rides along as context.
+    let ingest = requests
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap();
+    assert_eq!(ingest["inputs"]["issue"]["number"], 12);
+    let body = ingest["inputs"]["issue"]["body"].as_str().unwrap();
+    assert!(body.starts_with(
+        "## Rob's answer (the new scope; it wins where it conflicts with the original issue)\n"
+    ));
+    assert!(body.contains("Return goodbye instead of hello."));
+    assert!(body.contains("## Original issue, narrowed by Rob's answer above\nTitle: Add a blue button\n\nReturn hello."));
     let snapshot = d.store.load().unwrap();
     assert!(
         snapshot
@@ -643,6 +651,7 @@ pub(super) fn linked_reconciliation() {
         revert: false,
         since: "2026-10-30T01:00:00Z".into(),
         comment_issue: 25,
+        question: None,
     });
     api.state.lock().unwrap().lose_issue_reply = true;
     assert!(adapter.execute(&correction).is_err());
@@ -884,6 +893,18 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
     d.send(21001, "Use a smaller request");
     d.classified(21001);
     replacement_assertions(&mut d);
+    let body = d
+        .requests()
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap()["inputs"]["issue"]["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        body.contains("## Question Rob answered\n"),
+        "an answer to a question names the question: {body}"
+    );
     println!("test steering_answer_change_request_reuses_issue ... ok");
 }
 

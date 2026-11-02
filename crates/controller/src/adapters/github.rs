@@ -159,6 +159,7 @@ impl Adapter {
             revert,
             since,
             comment_issue,
+            ..
         }) = &delivery.steering
         else {
             unreachable!()
