@@ -113,7 +113,7 @@ mod tests {
                 labels: vec!["tl3".into(), "P1".into()],
             })
             .unwrap();
-        let mut priority = |controller: &mut crate::Controller| {
+        let priority = |controller: &mut crate::Controller| {
             let world = controller.world().unwrap();
             assert_eq!(world.nodes.len(), 1);
             world.nodes[0].priority
