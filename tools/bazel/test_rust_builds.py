@@ -80,6 +80,7 @@ class TestSizingTests(unittest.TestCase):
                            for path in directory.glob(pattern) if path.is_file()})
 
         namespace = {
+            "package": lambda **kwargs: None,
             "native": SimpleNamespace(package_name=lambda: package, glob=glob,
                                       exports_files=lambda *args: None, filegroup=record,
                                       package_relative_label=lambda label: label),
