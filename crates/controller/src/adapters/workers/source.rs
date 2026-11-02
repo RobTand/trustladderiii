@@ -1,5 +1,5 @@
 use super::{
-    ActiveRuns, inspect, latest,
+    ActiveRuns, inspect_recorded, latest,
     process::{self, read},
     protocol, remove_ready, run_root, trace, watched_deliveries,
 };
@@ -450,7 +450,7 @@ impl WorkerOutputSource {
                 }
             }
         }
-        let ended = inspect(attempt, delivery)?;
+        let ended = inspect_recorded(attempt, delivery, store)?;
         if !matches!(ended, Reconciliation::Pending) {
             self.ended.push(attempt.clone());
         }

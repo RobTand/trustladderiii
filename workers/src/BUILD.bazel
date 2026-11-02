@@ -62,6 +62,7 @@ py_library(
         "tl3_workers/contracts.py",
         "tl3_workers/diff.py",
         "tl3_workers/exploration.py",
+        "tl3_workers/facts.py",
         "tl3_workers/forecast.py",
         "tl3_workers/memory.py",
         "tl3_workers/pb_tests.py",

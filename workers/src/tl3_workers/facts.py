@@ -1,8 +1,135 @@
 """Durable worker completion facts, independent of trace export."""
 from contextlib import contextmanager
+from contextvars import ContextVar
+import json
+import os
+from pathlib import Path
+import re
+from threading import Lock
+import time
+from uuid import uuid4
+
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks.manager import register_configure_hook
+
+
+current = ContextVar('tl3_worker_facts', default=None)
+register_configure_hook(current, inheritable=True)
+
+
+def boundary_failure(error, request):
+    """Attribute only the boundary we observed. Never retain exception text or bodies."""
+    from openai import APIError, APIStatusError
+    from tl3_workers.tracing import Redactor
+
+    origin = 'worker'
+    status, request_id = None, None
+    if isinstance(error, APIError):
+        # This client talks to CLIProxyAPI. Its HTTP failure cannot prove which
+        # upstream provider failed behind it.
+        origin = 'proxy'
+        if isinstance(error, APIStatusError):
+            status = error.status_code
+            request_id = error.response.headers.get('x-request-id')
+    elif isinstance(error, (ConnectionError, TimeoutError)):
+        origin = 'unknown'
+    redactor = Redactor(None)
+    from tl3_workers.tracing import model_key
+    if key := model_key.get():
+        redactor.secrets.add(key)
+    if not (isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', request_id)
+            and redactor.text(request_id) == request_id):
+        request_id = None
+    # Classes are library identifiers. Unrecognized classes become a fixed label.
+    name = type(error).__name__
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', name):
+        name = 'WorkerError'
+    return {'origin': origin, 'class': name, 'status': status, 'request_id': request_id}
+
+
+def publish(path, row):
+    temporary = path.with_name(path.name + '.' + uuid4().hex + '.tmp')
+    try:
+        with temporary.open('x') as output:
+            json.dump(row, output, allow_nan=False)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class Facts(BaseCallbackHandler):
+    """Count completed model calls and the last usage of an interrupted stream once."""
+    run_inline = True
+
+    def __init__(self, request):
+        self.request = request
+        self.started_ms = None
+        self.trace_id = None
+        self.lock = Lock()
+        self.pending = {}
+        self.totals = {key: None for key in ('input_tokens', 'cached_tokens', 'output_tokens')}
+
+    def row(self, outcome, finished_ms=None, failure=None):
+        return {
+            'started_ms': self.started_ms, 'finished_ms': finished_ms, 'outcome': outcome,
+            'release': self.request.get('trace', {}).get('release'),
+            'model': self.request['model']['name'], **self.totals,
+            'trace_id': self.trace_id, 'failure': failure,
+        }
+
+    def save(self, outcome, finished_ms=None, failure=None):
+        if path := self.request.get('trace', {}).get('completion'):
+            publish(Path(path), self.row(outcome, finished_ms, failure))
+
+    def on_llm_new_token(self, token, *, run_id, chunk=None, **kwargs):
+        if chunk is not None and (usage := getattr(chunk.message, 'usage_metadata', None)):
+            with self.lock:
+                self.pending[run_id] = usage
+
+    def add(self, usage):
+        values = {key: usage.get(key) for key in ('input_tokens', 'output_tokens')}
+        values['cached_tokens'] = usage.get('input_token_details', {}).get('cache_read')
+        for key, value in values.items():
+            if type(value) is int and value >= 0:
+                self.totals[key] = (self.totals[key] or 0) + value
+        self.save('running')
+
+    def on_llm_end(self, response, *, run_id, **kwargs):
+        with self.lock:
+            last = self.pending.pop(run_id, None)
+            message = response.generations[0][0].message if response.generations else None
+            usage = getattr(message, 'usage_metadata', None) or last
+            if usage:
+                self.add(usage)
+
+    def on_llm_error(self, error, *, run_id, **kwargs):
+        with self.lock:
+            if usage := self.pending.pop(run_id, None):
+                self.add(usage)
 
 
 @contextmanager
 def observe(request):
-    raise NotImplementedError("worker boundary facts")
-    yield
+    capture = Facts(request)
+    token = current.set(capture)
+    capture.started_ms = time.time_ns() // 1_000_000
+    outcome, failure = 'succeeded', None
+    try:
+        capture.save('running')
+        yield capture
+    except BaseException as error:
+        from tl3_workers.quota import reset_ms
+        outcome = 'quota' if reset_ms(error, time.time()) is not None else 'failed'
+        failure = boundary_failure(error, request)
+        raise
+    finally:
+        finished = time.time_ns() // 1_000_000
+        current.reset(token)
+        capture.save(outcome, finished, failure)

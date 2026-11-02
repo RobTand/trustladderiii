@@ -58,15 +58,18 @@ class ProxyChatOpenAI(ChatOpenAI):
 
     def _stream(self, *args, **kwargs):
         last_usage = None
-        for chunk in super()._stream(*args, **kwargs):
-            if chunk.message.usage_metadata is not None:
-                # CLIProxyAPI sends totals on finish and again on a trailing chunk.
-                last_usage = chunk.message.usage_metadata
-                chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
-                    update={"usage_metadata": None})})
-            yield chunk
-        if last_usage is not None:
-            yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
+        try:
+            for chunk in super()._stream(*args, **kwargs):
+                if chunk.message.usage_metadata is not None:
+                    # CLIProxyAPI sends totals on finish and again on a trailing chunk.
+                    last_usage = chunk.message.usage_metadata
+                    chunk = chunk.model_copy(update={"message": chunk.message.model_copy(
+                        update={"usage_metadata": None})})
+                yield chunk
+        finally:
+            # Keep measured usage even when the stream fails after its usage chunk.
+            if last_usage is not None:
+                yield ChatGenerationChunk(message=AIMessageChunk(content="", usage_metadata=last_usage))
 
 
 def session_identity(request):
@@ -174,7 +177,9 @@ def build_agent(model: BaseChatModel, role, worktree=None, *, reply_schema=None,
 def run(request, emit: Callable[[dict], None]):
     from tl3_workers.tracing import observe, record_reply
 
-    with observe(request):
+    from tl3_workers.facts import observe as observe_facts
+
+    with observe_facts(request), observe(request):
         summary = Summary(request)
         token = current.set(summary)
         prompt = run_prompt.set(request.get("prompt", {}).get("text"))

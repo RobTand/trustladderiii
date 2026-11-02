@@ -696,7 +696,7 @@ fn migrations_and_append_only(settings: &tl3_config::Store) {
             .iter()
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17]
     );
     for table in [
         "tl3_events",
@@ -2346,7 +2346,7 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
     let mut store = Store::open(settings).unwrap();
     let facts = WorkerRunFacts {
         started_ms: 1_000_000,
-        finished_ms: 9_666_000,
+        finished_ms: Some(9_666_000),
         outcome: "succeeded".into(),
         release: Some("release-fixture".into()),
         model: "fixture-model".into(),
@@ -2363,7 +2363,7 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
         .record_worker_facts("run:83:17", "83", 0, "maker", &facts)
         .unwrap();
     let mut second = facts.clone();
-    second.finished_ms = second.started_ms + 764_000;
+    second.finished_ms = Some(second.started_ms + 764_000);
     second.outcome = "failed".into();
     second.cached_tokens = None;
     second.failure = Some(WorkerBoundaryFailure {

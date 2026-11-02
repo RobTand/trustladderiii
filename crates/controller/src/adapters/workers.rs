@@ -4,6 +4,7 @@ use tl3_worktrees::{CommitId, Worktrees};
 pub mod writer;
 pub use writer::{FakeWriter, Writer};
 
+mod facts;
 mod fake;
 mod json;
 pub(crate) mod ladder;
@@ -144,7 +145,7 @@ impl Supervisor {
         for delivery in watched_deliveries(&mut store)? {
             let root = run_root(&config.workers.runs, &delivery.key);
             match latest(&root).and_then(|attempt| match attempt {
-                Some((_, path)) => inspect(&path, &delivery),
+                Some((_, path)) => inspect_recorded(&path, &delivery, &mut store),
                 None => Ok(Reconciliation::Absent),
             }) {
                 Ok(Reconciliation::Pending) => {
@@ -683,6 +684,7 @@ impl Supervisor {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
         if let Some(attempt) = stop_attempt(&self.root(key))? {
+            facts::record(&mut Store::open(&self.store)?, key, &attempt)?;
             trace::flush(&attempt, &self.flusher());
         }
         Ok(())
@@ -748,6 +750,7 @@ impl Supervisor {
                     .to_str()
                     .is_some_and(|name| name.starts_with("attempt-"))
                 {
+                    facts::record(store, key, &entry.path())?;
                     match crate::memory::queue_attempt(store, key, &entry.path()) {
                         Ok(()) => {}
                         Err(Error::Invalid(_) | Error::Json(_)) => {
@@ -801,11 +804,7 @@ fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
     if let Some((_, attempt)) = latest(root)? {
         // Q49: stopping a live worker is deliberate, so its trace closes as
         // stopped rather than crashed (#430).
-        if attempt.join(trace::LOG).try_exists()?
-            && (alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?)
-        {
-            write(&attempt.join("stopped.json"), &json!({}))?;
-        }
+        let stopping = alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?;
         // #372: the supervisor's own scope also holds every process the worker started.
         let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
@@ -815,6 +814,13 @@ fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        if stopping {
+            write(
+                &attempt.join("stopped.json"),
+                &json!({"finished_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64}),
+            )?;
+        }
         return Ok(Some(attempt));
     }
     Ok(None)
@@ -853,7 +859,7 @@ impl Supervisor {
         let root = self.root(&delivery.key);
         let previous = latest(&root)?;
         let result = match &previous {
-            Some((_, attempt)) => inspect(attempt, delivery)?,
+            Some((_, attempt)) => inspect_recorded(attempt, delivery, &mut store)?,
             None => Reconciliation::Absent,
         };
         match result {
@@ -922,6 +928,14 @@ impl Supervisor {
         request["trace"]["log"] = json!(attempt.join(trace::LOG));
         request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
+        request["trace"]["completion"] = json!(attempt.join("facts.json"));
+        request["trace"]["release"] = python
+            .ancestors()
+            .find(|path| path.file_name().is_some_and(|name| name == "workers"))
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .map(|name| json!(name.to_string_lossy()))
+            .unwrap_or(Value::Null);
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
         // launch; it never falls back to a supervisor tl3d's stop would kill.
@@ -1074,7 +1088,9 @@ impl Executor for Supervisor {
             self.active.remove(delivery, number);
         }
         let result = match latest(&self.root(&delivery.key))? {
-            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            Some((_, attempt)) => {
+                inspect_recorded(&attempt, delivery, &mut Store::open(&self.store)?)?
+            }
             None => Reconciliation::Absent,
         };
         Ok(match result {
@@ -1137,7 +1153,9 @@ impl Supervisor {
         }
 
         let result = match latest(&self.root(&delivery.key))? {
-            Some((_, attempt)) => inspect(&attempt, delivery)?,
+            Some((_, attempt)) => {
+                inspect_recorded(&attempt, delivery, &mut Store::open(&self.store)?)?
+            }
             None => Reconciliation::Absent,
         };
         if !matches!(result, Reconciliation::Pending)
@@ -1203,6 +1221,18 @@ pub(crate) fn failed(delivery: &Delivery) -> Completion {
         generation: delivery.generation,
         reply: Reply::RunFailed,
     })])
+}
+
+fn inspect_recorded(
+    attempt: &Path,
+    delivery: &Delivery,
+    store: &mut Store,
+) -> Result<Reconciliation> {
+    let result = inspect(attempt, delivery)?;
+    if !matches!(result, Reconciliation::Pending) {
+        facts::record(store, &delivery.key, attempt)?;
+    }
+    Ok(result)
 }
 
 /// Inspect one attempt directory, rather than the run root or historical attempts.
