@@ -463,7 +463,10 @@ impl Executor for Adapter {
     }
 }
 
-fn writer_input(
+/// The facts a notice's text is written from. Public so the operator console
+/// (RobTand/tl3-console) shows a question's options and a closing summary from
+/// the same facts, without calling GitHub or the writer.
+pub fn writer_input(
     delivery: &Delivery,
     notice: Option<Notice>,
     title: &str,
