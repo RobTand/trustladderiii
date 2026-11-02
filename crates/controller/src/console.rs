@@ -120,6 +120,11 @@ pub struct CardQuestion {
     pub reason: String,
     /// Why "Let TL3 decide" can't apply the recommendation; None when it can.
     pub defer_blocked: Option<String>,
+    /// The one decision the question asks, from the deciding worker's findings (#322).
+    pub decision: Option<String>,
+    /// The deciding worker's findings and evidence, as the writer received them (#322).
+    #[ts(type = "Record<string, unknown> | null")]
+    pub findings: Option<Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -283,7 +288,7 @@ fn detail_words(detail: Detail) -> &'static str {
 }
 
 /// The open question with its options, for the board.
-pub fn card_question(question: Question) -> CardQuestion {
+pub fn card_question(question: Question, _context: Option<&Value>) -> CardQuestion {
     let (prompt, options) = options(question.kind);
     let recommended = &options[RECOMMENDED];
     CardQuestion {
@@ -304,6 +309,8 @@ pub fn card_question(question: Question) -> CardQuestion {
         recommended: RECOMMENDED as u32,
         reason: RECOMMENDATION_REASON.into(),
         options,
+        decision: None,
+        findings: None,
     }
 }
 
@@ -641,7 +648,7 @@ fn steering_reply(
         }
         Action::Defer { question } => {
             let current = open_question(n, *question)?;
-            let card = card_question(current);
+            let card = card_question(current, None);
             if let Some(reason) = card.defer_blocked {
                 return refuse(reason);
             }
@@ -734,6 +741,22 @@ fn clear_incident(
     Ok(Ok(()))
 }
 
+/// Coalesces wakes: rung when a wake goes out, answered when the controller
+/// drains, so a burst of commands sends one wake.
+#[derive(Default)]
+pub(crate) struct Doorbell(std::sync::atomic::AtomicBool);
+
+impl Doorbell {
+    /// Whether to send a wake now.
+    pub(crate) fn ring(&self) -> bool {
+        todo!()
+    }
+
+    pub(crate) fn answer(&self) {
+        todo!()
+    }
+}
+
 /// Wakes tl3d when the console files a command. Commands filed while no
 /// listener was open are drained on the wake each new session sends first.
 pub struct Wakes {
@@ -748,6 +771,11 @@ impl Wakes {
 
     pub fn new(settings: tl3_config::Store) -> Self {
         Self { settings }
+    }
+
+    /// The controller is draining ingress; the next filed command wakes it again.
+    pub fn answered() {
+        todo!()
     }
 }
 

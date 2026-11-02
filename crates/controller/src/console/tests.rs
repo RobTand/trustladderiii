@@ -22,7 +22,7 @@ fn question(kind: QKind) -> Question {
 #[test]
 fn options_are_the_answers_the_classifier_accepts_in_order() {
     for kind in KINDS {
-        let card = card_question(question(kind));
+        let card = card_question(question(kind), None);
         let answers: Vec<_> = card
             .options
             .iter()
@@ -42,7 +42,7 @@ fn options_are_the_answers_the_classifier_accepts_in_order() {
 #[test]
 fn deferring_needs_a_recommendation_tl3_can_apply_alone() {
     for kind in KINDS {
-        let card = card_question(question(kind));
+        let card = card_question(question(kind), None);
         let expected = match kind {
             QKind::NeedsSplitting => Some(
                 "TL3's recommended option, \"Change the request\", needs your new request from you.",
@@ -60,7 +60,7 @@ fn deferring_needs_a_recommendation_tl3_can_apply_alone() {
     let mut clarified = question(QKind::EffectFailed);
     clarified.clarified = true;
     assert_eq!(
-        card_question(clarified).prompt,
+        card_question(clarified, None).prompt,
         "I could not tell which option you chose. Could you clarify your answer?"
     );
 }
@@ -115,4 +115,56 @@ fn commands_read_back_from_their_json() {
             "{action}"
         );
     }
+}
+
+#[test]
+fn options_read_as_the_github_question_does() {
+    // #365 changed these words; the card takes them from the same facts.
+    let audit = card_question(question(QKind::AuditDisagreement), None);
+    assert_eq!(
+        audit.options[0].outcome,
+        "I will continue with the original understanding of your request and set the check's open objections aside."
+    );
+    assert_eq!(audit.decision, None);
+    assert_eq!(audit.findings, None);
+}
+
+#[test]
+fn findings_and_the_decision_reach_the_card() {
+    let findings = json!({"source": "planner", "report": "docs/ARCHITECTURE.md alone is 170,542 tokens.",
+        "decision": "How would you like to narrow the request?"});
+    let context = json!({"node": 0, "question": 9, "findings": findings});
+    let card = card_question(question(QKind::CantMeet), Some(&context));
+    assert_eq!(card.findings, Some(findings));
+    assert_eq!(
+        card.decision.as_deref(),
+        Some("How would you like to narrow the request?")
+    );
+    assert_eq!(
+        card.options[0].outcome,
+        "I will try again using your answer to the question above and any guidance you provide."
+    );
+    // Context without findings shows none.
+    let bare = card_question(
+        question(QKind::CantMeet),
+        Some(&json!({"node": 0, "question": 9})),
+    );
+    assert_eq!(bare.findings, None);
+    assert_eq!(
+        bare.options[0].outcome,
+        "I will try again using the guidance you provide."
+    );
+}
+
+#[test]
+fn the_doorbell_rings_once_until_answered() {
+    let doorbell = Doorbell::default();
+    assert!(doorbell.ring(), "the first wake goes out");
+    assert!(!doorbell.ring(), "later ones wait for the drain");
+    assert!(!doorbell.ring());
+    doorbell.answer();
+    assert!(
+        doorbell.ring(),
+        "a command filed after the drain wakes again"
+    );
 }

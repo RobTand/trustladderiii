@@ -249,6 +249,8 @@ pub struct Request {
     pub incidents: Vec<StoredIncident>,
     /// The model the maker ran for this attempt, which its reviewer must differ from.
     pub maker_model: Option<String>,
+    /// The open question's stored context, with the deciding worker's findings.
+    pub question_context: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -439,7 +441,9 @@ fn card(
             .map(CardIncident::from)
             .collect(),
         badges: badges.into_iter().collect(),
-        question: node.question.map(crate::console::card_question),
+        question: node.question.map(|question| {
+            crate::console::card_question(question, request.question_context.as_ref())
+        }),
     }
 }
 
@@ -711,8 +715,12 @@ impl Rows {
         let mut failed_notices = Vec::new();
         let mut bindings = BTreeMap::new();
         let mut incidents = Vec::new();
+        let mut question_contexts = BTreeMap::new();
         for row in &snapshot.rows {
             match row.table.as_str() {
+                "question_context" => {
+                    question_contexts.insert(row.id.as_str(), &row.value);
+                }
                 "notice_failures" => {
                     failed_notices.push(crate::decode_stored::<FailedNotice>(row.value.clone())?)
                 }
@@ -782,6 +790,10 @@ impl Rows {
                     })
                     .and_then(|session| session["model"].as_str())
                     .map(str::to_owned),
+                question_context: node
+                    .question
+                    .and_then(|question| question_contexts.get(question.id.to_string().as_str()))
+                    .map(|context| (*context).clone()),
             });
         }
         rows.quota_resets = crate::adapters::workers::ladder::quota_resets(&snapshot);

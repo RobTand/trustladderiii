@@ -19,6 +19,7 @@ fn request(id: u64, phase: Phase) -> Request {
         worker_failure: None,
         incidents: vec![],
         maker_model: None,
+        question_context: None,
     }
 }
 

@@ -16,7 +16,7 @@ use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository, adapters,
     executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation, Upstream},
 };
-use tl3_kernel::{Outcome, Phase, QKind};
+use tl3_kernel::{Event, NodeId, Outcome, Phase, QKind, Reply};
 use tl3_store::{ConsoleCommands, SavePoint, Store};
 
 const ROB: u64 = 42;
@@ -64,35 +64,72 @@ struct World {
 }
 
 fn open(settings: &tl3_config::Store, root: &Path, workers: &Workers, store: Store) -> Controller {
+    open_clocked(settings, root, workers, store, false)
+}
+
+/// A clock an hour ahead at every reading, so each failed look counts (#356).
+struct Hours(Cell<u64>);
+
+impl tl3_controller::clock::Clock for Hours {
+    fn now(&self) -> std::time::SystemTime {
+        self.0.set(self.0.get() + 3_600_000);
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.0.get())
+    }
+}
+
+fn open_clocked(
+    settings: &tl3_config::Store,
+    root: &Path,
+    workers: &Workers,
+    store: Store,
+    hours: bool,
+) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(Upstream::Workers, workers.clone());
     let _ = settings;
-    Controller::open(
-        store,
-        registry,
-        Bootstrap {
-            repos: vec![repository()],
-            rob: ROB,
-            slots: 2,
-            pool: 2,
-            operations: None,
-        },
-    )
-    .unwrap()
+    let bootstrap = Bootstrap {
+        repos: vec![repository()],
+        rob: ROB,
+        slots: 2,
+        pool: 2,
+        operations: None,
+    };
+    if hours {
+        Controller::open_with_clock(
+            store,
+            registry,
+            bootstrap,
+            Hours(Cell::new(1_800_000_000_000)),
+        )
+        .unwrap()
+    } else {
+        Controller::open(store, registry, bootstrap).unwrap()
+    }
 }
 
 impl World {
     /// Requests for the given issues, each driven until its worker run waits.
     fn new(db: &mut support::Database, name: &str, issues: &[u64], fail: bool) -> Self {
+        Self::clocked(db, name, issues, fail, false)
+    }
+
+    fn clocked(
+        db: &mut support::Database,
+        name: &str,
+        issues: &[u64],
+        fail: bool,
+        hours: bool,
+    ) -> Self {
         let settings = db.create(name);
         let root = tempfile::tempdir().unwrap();
         let workers = Workers::default();
         workers.fail.set(fail);
-        let mut controller = open(
+        let mut controller = open_clocked(
             &settings,
             root.path(),
             &workers,
             Store::open(&settings).unwrap(),
+            hours,
         );
         for issue in issues {
             controller
@@ -236,11 +273,17 @@ fn effect(world: &mut World, node: u64) -> (tl3_kernel::Node, Vec<String>) {
         .into_iter()
         .chain(world.rows("replacement_pending"))
         .map(|(id, value)| {
-            let task = value
+            let (task, fields) = value
                 .as_object()
-                .and_then(|task| task.keys().next().cloned())
+                .and_then(|task| task.iter().next())
+                .map(|(task, fields)| (task.clone(), fields.clone()))
                 .unwrap_or_default();
-            format!("{id}:{task}")
+            // A changed request's text is its effect; a restart's quotes its trigger.
+            if task == "FileRequest" {
+                format!("{id}:{task}:{}", fields["text"])
+            } else {
+                format!("{id}:{task}")
+            }
         })
         .collect();
     (world.node(node), tasks)
@@ -492,7 +535,7 @@ fn clear_incident_matches_robs_comment() {
     let mut db = support::Database::start();
     let mut worlds = Vec::new();
     for name in ["comment_clear", "console_clear"] {
-        let mut world = World::new(&mut db, name, &[12], false);
+        let mut world = World::clocked(&mut db, name, &[12], false, true);
         // Two unreadable looks at the worker run open an incident on the request.
         let (key, _) = world
             .rows("allowances")
@@ -500,8 +543,16 @@ fn clear_incident_matches_robs_comment() {
             .find(|(key, _)| key.starts_with("effect:0:"))
             .expect("a worker run is in flight");
         world.workers.unreadable.set(true);
-        world.controller.look_key(&key).unwrap();
-        world.controller.look_key(&key).unwrap();
+        for _ in 0..10 {
+            world.controller.look_key(&key).unwrap();
+            if world
+                .rows("incidents")
+                .iter()
+                .any(|(_, value)| value["open"] == true)
+            {
+                break;
+            }
+        }
         world.workers.unreadable.set(false);
         world.settle();
         worlds.push(world);
@@ -777,5 +828,221 @@ fn tl3d_wakes_for_a_filed_command() {
     assert_eq!(phase(&settings)["paused"], true);
     daemon.kill().unwrap();
     daemon.wait().unwrap();
+    db.stop();
+}
+
+impl World {
+    /// Feed the request's worker replies until the kernel asks Rob `kind`.
+    fn ask(&mut self, node: u64, kind: QKind) -> u64 {
+        for step in 0..60 {
+            self.settle();
+            let n = self.node(node);
+            if let Some(question) = n.question {
+                assert_eq!(question.kind, kind, "{n:?}");
+                return question.id;
+            }
+            let generation = n.generation;
+            let key = format!("drive-{node}-{step}");
+            let reply = match n.phase {
+                // The smallest size leaves only the reserve, so credit runs out sooner.
+                Phase::Ingesting => Reply::IngestDone {
+                    size: u8::from(kind != QKind::OutOfCredit),
+                },
+                Phase::Auditing => Reply::AuditAgrees,
+                Phase::Planning { .. } if kind == QKind::NeedsSplitting => Reply::PlanSplit,
+                Phase::Planning { .. } if kind == QKind::CantMeet => Reply::PlanCantMeet,
+                Phase::Planning { .. } => {
+                    let plan = Observation::Plan {
+                        node: NodeId(node),
+                        generation,
+                        paths: vec!["src/greeting.py".into()],
+                        fits: true,
+                    };
+                    self.controller.observe(&key, plan).unwrap();
+                    continue;
+                }
+                // Each new head past the free rechecks, and each new attempt, costs credit.
+                Phase::Making => {
+                    let made = Observation::Made {
+                        node: NodeId(node),
+                        generation,
+                        sha: format!("{:040x}", 5000 + step),
+                    };
+                    self.controller.observe(&key, made).unwrap();
+                    continue;
+                }
+                Phase::Reviewing => Reply::ChangesRequested,
+                phase => panic!("no reply drives {phase:?} toward {kind:?}"),
+            };
+            let event = Event::Reply {
+                node: NodeId(node),
+                generation,
+                reply,
+            };
+            self.controller
+                .observe(&key, Observation::Kernel(event))
+                .unwrap();
+        }
+        panic!("the kernel never asked {kind:?}");
+    }
+}
+
+/// An answer with details, from a comment and from the console, in two stores
+/// that asked the same question.
+fn detail_matches_comment(name: &str, kind: QKind, choice: Value, reply: Value, note: &str) {
+    let mut db = support::Database::start();
+    let mut comment = World::new(&mut db, &format!("comment_{name}"), &[12], false);
+    let mut console = World::new(&mut db, &format!("console_{name}"), &[12], false);
+    let question = comment.ask(0, kind);
+    assert_eq!(console.ask(0, kind), question);
+    let before = effect(&mut console, 0);
+    let mut reply = reply;
+    reply["kind"] = json!("answer");
+    reply["question_id"] = json!(question.to_string());
+    comment.comment(2100, 12, &format!("Question {question}: my answer"), reply);
+    let id = uuid(2100);
+    assert!(console.console(
+        &id,
+        0,
+        json!({"kind": "answer", "question": question, "choice": choice})
+    ));
+    assert_eq!(console.outcome(&id), ("applied".into(), None));
+    let after = effect(&mut console, 0);
+    assert_ne!(after, before, "{name} changes the request");
+    assert_eq!(after, effect(&mut comment, 0), "{name} matches the comment");
+    assert_eq!(console.rows("findings"), comment.rows("findings"), "{name}");
+    let expected = format!("Rob answered question {question} from the TL3 console: {note}");
+    assert!(
+        console
+            .notes()
+            .iter()
+            .any(|text| text.starts_with(&expected)),
+        "{name}: {:?}",
+        console.notes()
+    );
+    db.stop();
+}
+
+#[test]
+fn try_again_with_guidance_matches_robs_comment() {
+    detail_matches_comment(
+        "try_again",
+        QKind::CantMeet,
+        json!({"answer": "try_again", "guidance": "Read the greeting from the config file"}),
+        json!({"answer": "try_again", "guidance": "Read the greeting from the config file"}),
+        "Try again with guidance:\n\n    Read the greeting from the config file",
+    );
+}
+
+#[test]
+fn a_changed_request_matches_robs_comment() {
+    detail_matches_comment(
+        "change_request",
+        QKind::CantMeet,
+        json!({"answer": "change_request", "text": "Return goodbye instead"}),
+        json!({"answer": "change_request", "new_text": "Return goodbye instead"}),
+        "Change the request:\n\n    Return goodbye instead",
+    );
+}
+
+#[test]
+fn added_credit_matches_robs_comment() {
+    detail_matches_comment(
+        "add_credit",
+        QKind::OutOfCredit,
+        json!({"answer": "add_credit", "amount": 3}),
+        json!({"answer": "add_credit", "amount": 3}),
+        "Add credit (3).",
+    );
+}
+
+/// Details Rob must give, and a recommendation only Rob can complete, are
+/// refused with the reason and change nothing.
+#[test]
+fn answers_missing_their_details_are_refused() {
+    let mut db = support::Database::start();
+    let mut world = World::new(&mut db, "missing_details", &[12, 13], false);
+    let cant_meet = world.ask(0, QKind::CantMeet);
+    let split = world.ask(1, QKind::NeedsSplitting);
+    let cases = [
+        (
+            0,
+            json!({"kind": "answer", "question": cant_meet, "choice": {"answer": "try_again", "guidance": "  "}}),
+            "This option needs your words.".to_string(),
+        ),
+        (
+            0,
+            json!({"kind": "answer", "question": cant_meet, "choice": {"answer": "add_credit", "amount": 3}}),
+            format!("Question {cant_meet} doesn't offer that option."),
+        ),
+        (
+            1,
+            json!({"kind": "answer", "question": split, "choice": {"answer": "change_request", "text": ""}}),
+            "This option needs your words.".to_string(),
+        ),
+        (
+            1,
+            json!({"kind": "defer", "question": split}),
+            "TL3's recommended option, \"Change the request\", needs your new request from you."
+                .to_string(),
+        ),
+        (
+            0,
+            json!({"kind": "defer", "question": cant_meet}),
+            "TL3's recommended option, \"Try again with guidance\", needs your guidance from you."
+                .to_string(),
+        ),
+    ];
+    for (index, (node, action, reason)) in cases.into_iter().enumerate() {
+        let before = world.controller.world().unwrap();
+        let replacements = world.rows("replacement");
+        let notes = world.notes().len();
+        let id = uuid(2200 + index as u32);
+        assert!(world.console(&id, node, action.clone()));
+        assert_eq!(
+            world.outcome(&id),
+            ("refused".into(), Some(reason)),
+            "{action}"
+        );
+        assert_eq!(world.controller.world().unwrap(), before, "{action}");
+        assert_eq!(world.rows("replacement"), replacements, "{action}");
+        assert_eq!(world.notes().len(), notes, "{action}");
+    }
+    db.stop();
+}
+
+/// tl3d drains on every wake its LISTEN session sends: once when the session
+/// opens, and again after the session is lost and reconnects.
+#[test]
+fn wakes_again_after_postgres_restarts() {
+    use std::{sync::mpsc, time::Duration};
+    use tl3_controller::ingress::Source;
+    let mut db = support::Database::start();
+    let settings = db.create("wake_reconnect");
+    Store::open(&settings).unwrap();
+    let (sender, wakes) = mpsc::channel();
+    let source = tl3_controller::console::Wakes::new(settings.clone());
+    std::thread::spawn(move || source.run(sender));
+    let wake = |what: &str| {
+        wakes
+            .recv_timeout(Duration::from_secs(60))
+            .unwrap_or_else(|_| panic!("no wake {what}"))
+    };
+    assert!(matches!(
+        wake("when the session opens"),
+        tl3_controller::cli::Input::Wake
+    ));
+    // The controller drains, which answers the doorbell; a filed command rings again.
+    tl3_controller::console::Wakes::answered();
+    assert!(
+        ConsoleCommands::open(&settings)
+            .unwrap()
+            .submit(&uuid(2300), 0, &json!({"kind": "pause"}))
+            .unwrap()
+    );
+    wake("for a filed command");
+    while wakes.try_recv().is_ok() {}
+    db.restart();
+    wake("after Postgres restarts");
     db.stop();
 }

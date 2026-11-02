@@ -1423,13 +1423,22 @@ fn console_commands(settings: &tl3_config::Store) {
         .password("tl3-disposable-test-password")
         .connect(NoTls)
         .unwrap();
+    // The login can't write any table itself: each attempt is a privilege error.
     for sql in [
-        "BEGIN READ WRITE; INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ('github-webhook', 'x', 'issues', '')",
-        "BEGIN READ WRITE; INSERT INTO tl3_console_commands (id, node_id, action) VALUES ('x', 1, '{}')",
-        "BEGIN READ WRITE; UPDATE tl3_console_commands SET status = 'applied'",
-        "BEGIN READ WRITE; UPDATE tl3_meta SET revision = revision",
+        "INSERT INTO tl3_ingress (source, delivery_key, event_name, payload) VALUES ('github-webhook', 'x', 'issues', '')",
+        "INSERT INTO tl3_console_commands (id, node_id, action) VALUES ('x', 1, '{}')",
+        "UPDATE tl3_console_commands SET status = 'applied'",
+        "UPDATE tl3_meta SET revision = revision",
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
+        "INSERT INTO tl3_events (event_key, revision, epoch, payload, result) VALUES ('console:x', 99, 0, '{}', '{}')",
     ] {
-        assert!(client.batch_execute(sql).is_err(), "{sql}");
+        client.batch_execute("BEGIN READ WRITE").unwrap();
+        let error = client.batch_execute(sql).unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "{sql}: {error}"
+        );
         client.batch_execute("ROLLBACK").unwrap();
     }
     // Only the console login and the owner may file commands.
@@ -1445,13 +1454,16 @@ fn console_commands(settings: &tl3_config::Store) {
         .password("tl3-disposable-test-password")
         .connect(NoTls)
         .unwrap();
-    assert!(
-        stranger
-            .query_one(
-                "SELECT tl3_console_command('2b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11', 1, '{\"kind\":\"stop\"}')",
-                &[]
-            )
-            .is_err()
+    let error = stranger
+        .query_one(
+            "SELECT tl3_console_command('2b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11', 1, '{\"kind\":\"stop\"}')",
+            &[],
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.code(),
+        Some(&postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+        "{error}"
     );
     let status = |client: &mut Client| {
         client
@@ -1488,4 +1500,62 @@ fn console_commands(settings: &tl3_config::Store) {
         .commit(&Commit::new("console-unrelated", json!(1), &snapshot))
         .unwrap();
     assert_eq!(status(&mut client).0, "refused");
+    console_command_caps(settings, &mut commands, &mut store);
+}
+
+/// Nothing oversized reaches ingress, the command table or the event log,
+/// and a backlog tl3d isn't draining stops growing. Each refusal has its own
+/// SQLSTATE so the console can say which.
+fn console_command_caps(
+    settings: &tl3_config::Store,
+    commands: &mut ConsoleCommands,
+    store: &mut Store,
+) {
+    let ingress = |store: &mut Store| store.pending_ingress().unwrap().len();
+    let before = ingress(store);
+    let code = |error: Error| match error {
+        Error::Database(error) => error.code().cloned(),
+        other => panic!("{other}"),
+    };
+    let big = "3b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a11";
+    let fits = "3b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a12";
+    // The cap is on the action's jsonb text, as the function measures it.
+    let comment = |chars: usize| json!({"kind": "comment", "text": "a".repeat(chars)});
+    let overhead: i32 = raw(settings)
+        .query_one("SELECT octet_length($1::jsonb::text)", &[&comment(0)])
+        .unwrap()
+        .get(0);
+    let at = comment(65_536 - overhead as usize);
+    let over = comment(65_537 - overhead as usize);
+    assert_eq!(
+        code(commands.submit(big, 1, &over).unwrap_err()),
+        Some(postgres::error::SqlState::STRING_DATA_RIGHT_TRUNCATION)
+    );
+    assert!(commands.submit(fits, 1, &at).unwrap());
+    assert_eq!(
+        ingress(store),
+        before + 1,
+        "only the command that fits is filed"
+    );
+    // tl3d isn't draining: at most 1,000 commands wait unsettled.
+    raw(settings)
+        .batch_execute(
+            "INSERT INTO tl3_console_commands (id, node_id, action)
+             SELECT 'backlog-' || n, 1, '{\"kind\":\"pause\"}' FROM generate_series(1, 1000 - (SELECT count(*) FROM tl3_console_commands WHERE status = 'pending')::int) n",
+        )
+        .unwrap();
+    let late = "3b9f3c3e-5f43-4a8e-9d1c-2f0e7c1d9a13";
+    let error = commands
+        .submit(late, 1, &json!({"kind": "pause"}))
+        .unwrap_err();
+    let message = error.to_string();
+    assert_eq!(
+        code(error),
+        Some(postgres::error::SqlState::CONFIGURATION_LIMIT_EXCEEDED),
+        "{message}"
+    );
+    raw(settings)
+        .batch_execute("UPDATE tl3_console_commands SET status = 'applied' WHERE id = 'backlog-1'")
+        .unwrap();
+    assert!(commands.submit(late, 1, &json!({"kind": "pause"})).unwrap());
 }

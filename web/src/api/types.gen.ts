@@ -96,7 +96,15 @@ recommended: number, reason: string,
 /**
  * Why "Let TL3 decide" can't apply the recommendation; None when it can.
  */
-defer_blocked: string | null, };
+defer_blocked: string | null, 
+/**
+ * The one decision the question asks, from the deciding worker's findings (#322).
+ */
+decision: string | null, 
+/**
+ * The deciding worker's findings and evidence, as the writer received them (#322).
+ */
+findings: Record<string, unknown> | null, };
 
 export type QuestionOption = { answer: AnswerKind, label: string, outcome: string, detail: Detail | null, };
 
