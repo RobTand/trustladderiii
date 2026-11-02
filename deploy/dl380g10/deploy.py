@@ -510,13 +510,21 @@ def collect_releases(home, introduced=False):
     print("Releases: removed the pre-#372 app/ directory")
 
 
-def launcher_works():
+def _tl3d_state():
+    return "unknown"
+
+
+def _kill_cgroup(scope):
+    raise NotImplementedError
+
+
+def launcher_works(home):
     """The user manager accepts the scope launch tl3d uses for each worker run (#372)."""
     bus = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "bus"
     if not bus.is_socket():
-        return False
+        return False, ""
     result = subprocess.run([*LAUNCHER, "/bin/true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return result.returncode == 0
+    return result.returncode == 0, ""
 
 
 def stop_runs(home):
@@ -677,7 +685,7 @@ def check(home):
             ok = False
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok
-    ok = launcher_works()
+    ok, _ = launcher_works(home)
     print(f"{'OK' if ok else 'MISSING'} worker launcher: user bus and systemd-run --user --scope")
     missing += not ok
     ready = (config / "production-ready").exists()
