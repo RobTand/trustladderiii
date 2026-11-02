@@ -1151,7 +1151,7 @@ def failure_tags(error):
         "done requires code changes", "could not inspect staged changes",
         "maker requires the worktree root", "missing final maker reply",
         "missing final model reply", "reply cites a memory it was not given",
-        "reply flags a memory it did not cite",
+        "reply flags a memory it did not cite", "a flag's claim is not in the memory it flags",
         "only code may supply a forecast", "sized briefs must declare their root files",
         "duplicate JSON key", "non-finite JSON number",
         "reply is not one JSON object", "reply has more than one JSON object",

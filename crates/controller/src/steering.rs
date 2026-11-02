@@ -554,11 +554,7 @@ impl Controller {
                     source: "rob",
                     repo: &format!("{}/{}", repository.owner, repository.name),
                     topic: None,
-                    text: &format!(
-                        "Question: {asked}\nRob's answer: {}\nHis reason, in his words: {}",
-                        reply["answer"].as_str().unwrap_or("unknown"),
-                        origin.text
-                    ),
+                    text: &crate::memory::decision(asked, reply, origin.text),
                     identity: origin.key,
                 },
             )?;

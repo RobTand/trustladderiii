@@ -147,6 +147,12 @@
                 "minLength": 1,
                 "maxLength": 256
               },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
               "reason": {
                 "type": "string",
                 "minLength": 1,
@@ -186,6 +192,7 @@
             },
             "required": [
               "id",
+              "claim",
               "reason",
               "evidence"
             ],
@@ -336,6 +343,12 @@
                 "minLength": 1,
                 "maxLength": 256
               },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
               "reason": {
                 "type": "string",
                 "minLength": 1,
@@ -375,6 +388,7 @@
             },
             "required": [
               "id",
+              "claim",
               "reason",
               "evidence"
             ],
@@ -491,6 +505,12 @@
                 "minLength": 1,
                 "maxLength": 256
               },
+              "claim": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1000,
+                "description": "The memory's own words that the evidence contradicts, quoted verbatim from its content."
+              },
               "reason": {
                 "type": "string",
                 "minLength": 1,
@@ -530,6 +550,7 @@
             },
             "required": [
               "id",
+              "claim",
               "reason",
               "evidence"
             ],

@@ -157,10 +157,10 @@ impl Store {
         curation: &MemoryCuration,
     ) -> Result<()> {
         self.client.execute(
-            "INSERT INTO tl3_memory_curations (operation_id, memory_id, state, verdict, source, request, run, reason, evidence) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (operation_id) DO NOTHING",
+            "INSERT INTO tl3_memory_curations (operation_id, memory_id, state, verdict, source, request, run, claim, reason, evidence) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (operation_id) DO NOTHING",
             &[&operation_id, &curation.memory_id, &curation.state, &curation.verdict, &curation.source,
-              &curation.request, &curation.run, &curation.reason, &curation.evidence],
+              &curation.request, &curation.run, &curation.claim, &curation.reason, &curation.evidence],
         )?;
         Ok(())
     }
@@ -169,9 +169,9 @@ impl Store {
     pub fn memory_curations(&mut self) -> Result<Vec<serde_json::Value>> {
         Ok(self.client.query(
             "SELECT json_build_object('sequence', sequence, 'memory_id', memory_id, 'state', state, \
-             'verdict', verdict, 'source', source, 'request', request, 'run', run, 'reason', reason, \
-             'evidence', evidence, 'recorded_at', recorded_at, 'delivered_at', delivered_at, \
-             'http_status', http_status)::jsonb FROM tl3_memory_curations ORDER BY sequence",
+             'verdict', verdict, 'source', source, 'request', request, 'run', run, 'claim', claim, \
+             'reason', reason, 'evidence', evidence, 'recorded_at', recorded_at, 'delivered_at', delivered_at, \
+             'http_status', http_status, 'announced_at', announced_at)::jsonb FROM tl3_memory_curations ORDER BY sequence",
             &[],
         )?
         .into_iter()
@@ -184,7 +184,8 @@ impl Store {
     pub fn pending_memory_curations(&mut self) -> Result<Vec<(i64, String, String, String)>> {
         Ok(self.client.query(
             "SELECT sequence, memory_id, state, reason FROM tl3_memory_curations \
-             WHERE verdict = 'accepted' AND delivered_at IS NULL AND http_status IS NULL ORDER BY sequence LIMIT 64",
+             WHERE verdict = 'accepted' AND state <> 'hidden' AND delivered_at IS NULL AND http_status IS NULL \
+             ORDER BY sequence LIMIT 64",
             &[],
         )?
         .into_iter()
@@ -214,21 +215,65 @@ impl Store {
         Ok(())
     }
 
-    /// Of `ids`, those whose latest accepted decision is an invalidation that
-    /// Hindsight hasn't acknowledged yet. Delivered ones Hindsight filters itself.
-    pub fn undelivered_invalidations(
+    /// Of `ids`, those TL3 keeps out of recall: the latest accepted decision hides
+    /// the memory, or retires it before Hindsight has acknowledged. Delivered
+    /// retirements Hindsight filters itself.
+    pub fn withheld_memories(
         &mut self,
         ids: &[String],
     ) -> Result<std::collections::BTreeSet<String>> {
         Ok(self.client.query(
             "SELECT memory_id FROM (SELECT DISTINCT ON (memory_id) memory_id, state, delivered_at \
              FROM tl3_memory_curations WHERE verdict = 'accepted' AND memory_id = ANY($1) \
-             ORDER BY memory_id, sequence DESC) latest WHERE state = 'invalidated' AND delivered_at IS NULL",
+             ORDER BY memory_id, sequence DESC) latest \
+             WHERE state = 'hidden' OR (state = 'invalidated' AND delivered_at IS NULL)",
             &[&ids],
         )?
         .into_iter()
         .map(|row| row.get(0))
         .collect())
+    }
+
+    /// Accepted decisions about one memory since its last revert, oldest first:
+    /// (state, source, request).
+    pub fn memory_signals(
+        &mut self,
+        memory_id: &str,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(self.client.query(
+            "SELECT state, source, request FROM tl3_memory_curations WHERE verdict = 'accepted' \
+             AND memory_id = $1 AND sequence > COALESCE((SELECT max(sequence) FROM tl3_memory_curations \
+             WHERE verdict = 'accepted' AND memory_id = $1 AND state = 'valid'), 0) ORDER BY sequence",
+            &[&memory_id],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    /// Hides and retirements not yet posted on the operations issue:
+    /// (sequence, operation id, row as in `memory_curations`).
+    pub fn unannounced_memory_curations(
+        &mut self,
+    ) -> Result<Vec<(i64, String, serde_json::Value)>> {
+        Ok(self.client.query(
+            "SELECT sequence, operation_id, json_build_object('memory_id', memory_id, 'state', state, \
+             'source', source, 'request', request, 'run', run, 'claim', claim, 'evidence', evidence)::jsonb \
+             FROM tl3_memory_curations WHERE verdict = 'accepted' AND state <> 'valid' AND announced_at IS NULL \
+             ORDER BY sequence LIMIT 64",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect())
+    }
+
+    pub fn announce_memory_curation(&mut self, sequence: i64) -> Result<()> {
+        self.client.execute(
+            "UPDATE tl3_memory_curations SET announced_at = CURRENT_TIMESTAMP WHERE sequence = $1",
+            &[&sequence],
+        )?;
+        Ok(())
     }
 
     /// A cursor bounds each read without retaining the history of sent records.

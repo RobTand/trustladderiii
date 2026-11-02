@@ -112,15 +112,15 @@ pub fn status() -> Result<()> {
     }
 }
 
-/// `tl3 memory {list | invalidate ID | revert ID} [--reason TEXT] --config FILE`:
-/// the audit trail of TL3's memory curations, and Rob's own corrections (#422).
+/// `tl3 memory {list | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE`:
+/// the audit trail of TL3's memory curations, and Rob's own decisions (#422).
 pub fn memory() -> Result<()> {
-    const USAGE: &str =
-        "usage: tl3 memory {list | invalidate ID | revert ID} [--reason TEXT] --config FILE";
+    const USAGE: &str = "usage: tl3 memory {list | confirm ID | invalidate ID | revert ID} [--reason TEXT] --config FILE";
     let mut args = std::env::args().skip(2);
     let action = args.next().ok_or(Error::Invalid(USAGE))?;
     let state = match action.as_str() {
         "list" => None,
+        "confirm" => Some(crate::memory::RobCuration::Confirm),
         "invalidate" => Some(crate::memory::RobCuration::Invalidate),
         "revert" => Some(crate::memory::RobCuration::Revert),
         _ => return Err(Error::Invalid(USAGE)),

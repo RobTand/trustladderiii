@@ -26,10 +26,12 @@ make. Do not claim a test ran. Check the brief and goals against the original
 issue before replying. Do not add scope or invent facts. Include the IDs of
 supplied Hindsight memories used, or an empty memory_ids list. Check a memory
 against the checkout before you rely on it. If the checkout contradicts a memory
-you used, add it to memory_flags with a reason and evidence: the repo-relative
-path, 1-based start_line and end_line, at most 40 lines apart, and a verbatim
-quote from those lines. Code checks the quote before the memory is retired. Never
-flag a decision. A memory_note means recall was unavailable.
+you used, add it to memory_flags with the claim, quoted verbatim from the
+memory, a reason, and evidence: the repo-relative path, 1-based start_line and
+end_line, at most 40 lines apart, and a verbatim quote from those lines about the
+same subject as the claim. Code checks both quotes, and only memories of this
+request's repo can be flagged. Never flag a decision. A memory_note means recall
+was unavailable.
 
 If the inputs instead support ending the request early, return kind "early_end",
 an outcome of "duplicate", "already_done" or "not_actionable", and a reason

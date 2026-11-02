@@ -126,6 +126,8 @@ pub struct Supervisor {
     images: super::images::Images,
     hindsight: tl3_config::Hindsight,
     memory: crate::memory::Feed,
+    recall_breaker: crate::memory::Breaker,
+    announcer: crate::memory::Announcer,
 }
 
 impl Supervisor {
@@ -149,6 +151,8 @@ impl Supervisor {
                 Err(error) => eprintln!("worker startup skipped {}: {error}", delivery.key),
             }
         }
+        let recall_breaker = crate::memory::Breaker::default();
+        let announcer = crate::memory::Announcer::default();
         Ok(Self {
             branches: crate::branches::Branches::new(&config.github.repos)?,
             active,
@@ -164,8 +168,22 @@ impl Supervisor {
             tests: config.prismabuild.clone(),
             images: super::images::Images::new(&config.github.repos),
             hindsight: config.hindsight.clone(),
-            memory: crate::memory::Feed::start(config.store.clone(), config.hindsight.clone()),
+            memory: crate::memory::Feed::start(
+                config.store.clone(),
+                config.hindsight.clone(),
+                recall_breaker.clone(),
+                announcer.clone(),
+            ),
+            recall_breaker,
+            announcer,
         })
+    }
+
+    /// Post memory hides and retirements on the operations issue (#439).
+    pub(crate) fn with_operations(self, issue: crate::memory::OperationsIssue) -> Self {
+        *self.announcer.lock().unwrap() = Some(Box::new(issue));
+        self.memory.wake();
+        self
     }
 
     pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
@@ -403,12 +421,8 @@ impl Supervisor {
             } else {
                 crate::memory::Recall::Context { repo: &repo, query }
             };
-            let recalled = crate::memory::recall(
-                store,
-                &self.hindsight,
-                &crate::memory::Breaker::default(),
-                recall,
-            )?;
+            let recalled =
+                crate::memory::recall(store, &self.hindsight, &self.recall_breaker, recall)?;
             for (field, value) in recalled.as_object().into_iter().flatten() {
                 inputs[field] = value.clone();
             }

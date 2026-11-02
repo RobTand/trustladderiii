@@ -22,6 +22,12 @@
               "other"
             ]
           },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The memory's repo tag. A run can flag only memories of its own repo."
+          },
           "content": {
             "type": "string"
           }

@@ -354,6 +354,7 @@ pub const MEMORY_CHARS: usize = 1500;
 pub const MEMORIES_CHARS: usize = 8000;
 const RECALL_NOTE: &str =
     "Hindsight recall was unavailable, so no memories were supplied. Work from the other inputs.";
+const RECALL_PAUSED: &str = "Hindsight recall is paused after a failed recall, so no memories were supplied. Work from the other inputs.";
 const RECALL_RESPONSE_BYTES: usize = 256 * 1024;
 const CURATED_KINDS: [&str; 3] = ["kind:lesson", "kind:decision", "kind:convention"];
 /// Flags and conventions read per run; more are ignored.
@@ -469,6 +470,19 @@ fn memory_kind(tags: &Value) -> &'static str {
     }
 }
 
+/// The memory's single `repo:` tag. A run can retire only memories of its own repo.
+fn memory_repo(tags: &Value) -> Option<String> {
+    let mut repos = tags
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tag| tag.as_str()?.strip_prefix("repo:"));
+    match (repos.next(), repos.next()) {
+        (Some(repo), None) if !repo.is_empty() && repo.len() <= 256 => Some(safe_text(repo)),
+        _ => None,
+    }
+}
+
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
@@ -486,9 +500,12 @@ fn memory_id(value: &Value) -> Option<&str> {
 pub fn recall(
     store: &mut Store,
     settings: &tl3_config::Hindsight,
-    _breaker: &Breaker,
+    breaker: &Breaker,
     recall: Recall<'_>,
 ) -> Result<Value> {
+    if breaker.is_open() {
+        return Ok(json!({"memories": [], "memory_note": RECALL_PAUSED}));
+    }
     let (repo, query) = match recall {
         Recall::Context { repo, query } | Recall::Conventions { repo, query } => (repo, query),
     };
@@ -521,6 +538,7 @@ pub fn recall(
             Err(error) => {
                 // One failure is enough: a second call would only double the wait.
                 eprintln!("Hindsight recall degraded to no memories: {error}");
+                breaker.open();
                 unavailable = true;
                 break;
             }
@@ -533,11 +551,11 @@ pub fn recall(
         .filter(|(id, item)| item["text"].is_string() && seen.insert(*id))
         .collect();
     let ids: Vec<String> = found.iter().map(|(id, _)| (*id).to_owned()).collect();
-    let retired = store.undelivered_invalidations(&ids)?;
+    let withheld = store.withheld_memories(&ids)?;
     let mut memories = Vec::new();
     let mut total = 0;
     for (id, item) in found {
-        if retired.contains(id) {
+        if withheld.contains(id) {
             continue;
         }
         let content =
@@ -546,7 +564,11 @@ pub fn recall(
         if memories.len() == MAX_MEMORIES || total > MEMORIES_CHARS {
             break;
         }
-        memories.push(json!({"content": content, "id": id, "kind": memory_kind(&item["tags"])}));
+        let mut memory = json!({"content": content, "id": id, "kind": memory_kind(&item["tags"])});
+        if let Some(repo) = memory_repo(&item["tags"]) {
+            memory["repo"] = json!(repo);
+        }
+        memories.push(memory);
     }
     let mut value = json!({"memories": memories});
     if unavailable {
@@ -565,17 +587,35 @@ pub enum RobCuration {
     Revert,
 }
 
-/// Recall stays off after a failure until a delivery to Hindsight succeeds.
+/// Recall stays off after a failed recall, so a hung Hindsight costs one launch
+/// rather than every launch. It closes again on evidence, never on a clock: the
+/// next delivery Hindsight acknowledges.
 #[derive(Clone, Default)]
 pub struct Breaker(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
+impl Breaker {
+    fn is_open(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn open(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn close(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Flush, then let recall try again if Hindsight acknowledged anything.
 pub fn deliver(
-    _store: &mut Store,
-    _settings: &tl3_config::Hindsight,
-    _breaker: &Breaker,
+    store: &mut Store,
+    settings: &tl3_config::Hindsight,
+    breaker: &Breaker,
 ) -> Result<usize> {
-    todo!("#439 review")
+    let count = flush(store, settings)?;
+    if count > 0 {
+        breaker.close();
+    }
+    Ok(count)
 }
 
 /// Posts one line about a curation on the TL3 operations issue.
@@ -584,67 +624,152 @@ pub trait Announce: Send + Sync {
     fn post(&self, key: &str, body: &str) -> Result<()>;
 }
 
-/// Post every hide and retire not yet announced.
-pub fn announce(_store: &mut Store, _announcer: &dyn Announce) -> Result<usize> {
-    todo!("#439 review")
+/// The configured operations issue, through the GitHub App.
+pub struct OperationsIssue {
+    pub client: tl3_github::GitHub,
+    pub repo: String,
+    pub issue: u64,
 }
 
-/// A decision memory: the question, Rob's choice and his words for it.
-pub fn decision(_asked: &str, _reply: &Value, _comment: &str) -> String {
-    todo!("#439 review")
+impl Announce for OperationsIssue {
+    fn post(&self, key: &str, body: &str) -> Result<()> {
+        crate::executor::runtime()?
+            .block_on(self.client.post_comment(&self.repo, self.issue, key, body))?;
+        Ok(())
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CurationState {
-    Invalidated,
-    Valid,
+/// Untrusted text inside a one-line code span: no backticks, line breaks or mentions.
+fn inline(text: &str, limit: usize) -> String {
+    let text: String = clip_chars(text, limit)
+        .chars()
+        .map(|c| match c {
+            '`' => '\'',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    format!("`{}`", text.replace('@', "(at)"))
 }
 
-impl CurationState {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Invalidated => "invalidated",
-            Self::Valid => "valid",
+/// Post every hide and retirement not yet announced, oldest first.
+pub fn announce(store: &mut Store, announcer: &dyn Announce) -> Result<usize> {
+    let mut count = 0;
+    loop {
+        let pending = store.unannounced_memory_curations()?;
+        if pending.is_empty() {
+            return Ok(count);
+        }
+        for (sequence, operation, row) in pending {
+            let done = if row["state"] == "hidden" {
+                "hidden from TL3's recall (one signal; a second request's flag or `tl3 memory confirm` retires it)"
+            } else {
+                "retired in Hindsight"
+            };
+            let evidence = &row["evidence"];
+            let mut body = format!(
+                "Memory {} {done}. Claim: {}.",
+                inline(row["memory_id"].as_str().unwrap_or(""), 256),
+                inline(row["claim"].as_str().unwrap_or("not quoted"), 300)
+            );
+            if evidence["path"].is_string() {
+                body += &format!(" Evidence: {}.", inline(&cite(evidence), 400));
+            }
+            body += &format!(
+                " Source: {}, run {}, request {}. Undo: `tl3 memory revert`.",
+                inline(row["source"].as_str().unwrap_or(""), 64),
+                inline(row["run"].as_str().unwrap_or("none"), 64),
+                inline(row["request"].as_str().unwrap_or("none"), 128)
+            );
+            announcer.post(&format!("memory-curation:{operation}"), &body)?;
+            store.announce_memory_curation(sequence)?;
+            count += 1;
         }
     }
 }
 
-/// Rob's own correction or revert of one memory. Each call is its own decision.
+/// A decision memory: the question, Rob's choice and his words for that answer.
+/// The classifier's guidance or new text is the answer's own words; otherwise
+/// the comment's first paragraph is.
+pub fn decision(asked: &str, reply: &Value, comment: &str) -> String {
+    let words = ["guidance", "new_text"]
+        .iter()
+        .find_map(|field| reply[field].as_str())
+        .unwrap_or_else(|| comment.trim().split("\n\n").next().unwrap_or(""));
+    format!(
+        "Question: {}\nRob chose: {}\nHis words: {}",
+        clip_chars(asked.trim(), 500),
+        reply["answer"].as_str().unwrap_or("unknown"),
+        clip_chars(words.trim(), 300)
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RobCuration {
+    /// Retire a memory in Hindsight on Rob's word.
+    Invalidate,
+    /// Second signal for a memory a run hid: retire it in Hindsight.
+    Confirm,
+    /// Make a hidden or retired memory valid again.
+    Revert,
+}
+
+/// Rob's own decision about one memory. Each call is its own decision.
 pub fn rob_curation(
     store: &mut Store,
     memory_id: &str,
     action: RobCuration,
     reason: &str,
 ) -> Result<()> {
-    let state = match action {
-        RobCuration::Invalidate => CurationState::Invalidated,
-        RobCuration::Revert => CurationState::Valid,
-        RobCuration::Confirm => todo!("#439 review"),
-    };
     if !valid_id(memory_id) {
         return Err(Error::Invalid("invalid memory id"));
     }
-    let id = memory_id;
     let reason = safe_text(clip_chars(reason.trim(), 1000));
     if reason.is_empty() {
         return Err(Error::Invalid("a curation needs a reason"));
     }
+    let signals = store.memory_signals(memory_id)?;
+    let state = match action {
+        RobCuration::Invalidate => "invalidated",
+        RobCuration::Revert => "valid",
+        RobCuration::Confirm if signals.last().is_some_and(|(state, ..)| state == "hidden") => {
+            "invalidated"
+        }
+        RobCuration::Confirm => {
+            return Err(Error::Invalid(
+                "this memory is not hidden; nothing to confirm",
+            ));
+        }
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let operation = uuid(&json!(["rob", id, state.as_str(), reason, now.to_string()]));
+    let operation = uuid(&json!(["rob", memory_id, state, reason, now.to_string()]));
+    // A confirmation carries the hiding flag's claim and evidence onto the trail.
+    let hidden = if action == RobCuration::Confirm {
+        store
+            .memory_curations()?
+            .into_iter()
+            .rev()
+            .find(|row| row["memory_id"] == memory_id && row["state"] == "hidden")
+    } else {
+        None
+    };
     store.record_memory_curation(
         &operation,
         &tl3_store::MemoryCuration {
-            memory_id: id.into(),
-            state: state.as_str(),
+            memory_id: memory_id.into(),
+            state,
             verdict: "accepted",
             source: "rob".into(),
             request: None,
             run: None,
+            claim: hidden
+                .as_ref()
+                .and_then(|row| row["claim"].as_str().map(str::to_owned)),
             reason: format!("Rob: {reason}"),
-            evidence: json!({}),
+            evidence: hidden.map_or_else(|| json!({}), |row| row["evidence"].clone()),
         },
     )?;
     Ok(())
@@ -751,6 +876,50 @@ fn verify(worktree: &Path, evidence: &Value) -> std::result::Result<Value, &'sta
         "quote": clip_chars(&safe_text(quote), 500)}))
 }
 
+/// Words that name no subject, so sharing one ties nothing together.
+const COMMON_WORDS: &[&str] = &[
+    "the", "and", "for", "not", "but", "are", "was", "were", "has", "have", "had", "its", "this",
+    "that", "these", "those", "with", "from", "into", "onto", "than", "then", "when", "where",
+    "which", "what", "who", "how", "why", "all", "any", "each", "every", "some", "can", "could",
+    "will", "would", "should", "must", "may", "might", "does", "did", "done", "use", "uses",
+    "used", "using", "via", "per", "only", "also", "always", "never", "now", "new", "old", "one",
+    "two", "def", "fn", "let", "var", "const", "return", "returns", "returned", "true", "false",
+    "none", "null", "self", "import", "from", "class", "pub", "mut", "else", "elif", "while",
+    "pass", "raise", "raises", "async", "await", "yield", "lambda", "print", "earlier", "file",
+    "files", "line", "lines", "code", "value", "values", "test", "tests", "function", "method",
+];
+
+fn subject_words(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| word.chars().count() >= 3)
+        .map(str::to_lowercase)
+        .filter(|word| !COMMON_WORDS.contains(&word.as_str()))
+        .collect()
+}
+
+/// A flag shows a memory wrong only when it quotes the memory's own claim and the
+/// repo evidence is about that claim: a real but unrelated line proves nothing.
+fn contradicts(
+    memory: &Value,
+    claim: &str,
+    worktree: &Path,
+    evidence: &Value,
+) -> std::result::Result<Value, &'static str> {
+    let wanted = normalized(claim);
+    if wanted.chars().count() < 8 {
+        return Err("the flag does not quote the memory's claim");
+    }
+    if !normalized(memory["content"].as_str().unwrap_or("")).contains(&wanted) {
+        return Err("the claim is not in the memory");
+    }
+    let evidence = verify(worktree, evidence)?;
+    if subject_words(&wanted).is_disjoint(&subject_words(evidence["quote"].as_str().unwrap_or("")))
+    {
+        return Err("the evidence is not about the claim's subject");
+    }
+    Ok(evidence)
+}
+
 fn cite(evidence: &Value) -> String {
     format!(
         "{}:{}-{} \"{}\"",
@@ -778,11 +947,11 @@ fn review_memories(
     reply: &Value,
     worktree: &Path,
 ) -> Result<()> {
-    let supplied: std::collections::BTreeMap<&str, &str> = inputs["memories"]
+    let supplied: std::collections::BTreeMap<&str, &Value> = inputs["memories"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|m| Some((m["id"].as_str()?, m["kind"].as_str().unwrap_or("other"))))
+        .filter_map(|m| Some((m["id"].as_str()?, m)))
         .collect();
     let cited: std::collections::BTreeSet<&str> = reply["memory_ids"]
         .as_array()
@@ -803,41 +972,62 @@ fn review_memories(
             flag["reason"].as_str().unwrap_or("").trim(),
             1000,
         ));
+        let claim = flag["claim"].as_str().unwrap_or("").trim();
         let checked = match supplied.get(memory_id) {
             None => Err("the run was not given this memory"),
             Some(_) if !cited.contains(memory_id) => Err("the run did not cite this memory"),
-            Some(&"decision") => Err("only Rob retires a decision"),
+            Some(memory) if memory["kind"] == "decision" => Err("only Rob retires a decision"),
+            Some(memory) if memory["repo"].as_str() != Some(run.repo) => {
+                Err("the memory is not tagged with this run's repo")
+            }
             Some(_) if reason.is_empty() => Err("the flag gives no reason"),
-            Some(_) => verify(worktree, &flag["evidence"]),
+            Some(memory) => contradicts(memory, claim, worktree, &flag["evidence"]),
         };
-        let (verdict, recorded, evidence) = match checked {
-            Ok(evidence) => (
-                "accepted",
-                format!(
-                    "TL3 {} run {} ({} request {}): {reason} Evidence: {}",
-                    run.role,
-                    run.id,
-                    run.repo,
-                    run.request,
-                    cite(&evidence)
-                ),
-                evidence,
-            ),
+        // A replayed retirement reuses the operation id, so its first decision stands.
+        let operation = uuid(&json!([run.id, "flag", memory_id]));
+        let (verdict, state, recorded, evidence) = match checked {
+            Ok(evidence) => {
+                // One flag hides; another request's flag, or Rob, is the second signal.
+                let independent =
+                    store
+                        .memory_signals(memory_id)?
+                        .iter()
+                        .any(|(state, source, request)| {
+                            state != "valid"
+                                && (source == "rob" || request.as_deref() != Some(run.request))
+                        });
+                (
+                    "accepted",
+                    if independent { "invalidated" } else { "hidden" },
+                    format!(
+                        "TL3 {} run {} ({} request {}): {reason} Claim: \"{}\". Evidence: {}",
+                        run.role,
+                        run.id,
+                        run.repo,
+                        run.request,
+                        clip_chars(claim, 500),
+                        cite(&evidence)
+                    ),
+                    evidence,
+                )
+            }
             Err(why) => (
                 "rejected",
-                format!("Not invalidated: {why}. The flag said: {reason}"),
+                "hidden",
+                format!("Not hidden: {why}. The flag said: {reason}"),
                 section(&flag["evidence"]),
             ),
         };
         store.record_memory_curation(
-            &uuid(&json!([run.id, "flag", memory_id])),
+            &operation,
             &tl3_store::MemoryCuration {
                 memory_id: memory_id.into(),
-                state: "invalidated",
+                state,
                 verdict,
                 source: run.role.into(),
                 request: Some(run.request.into()),
                 run: Some(run.id.into()),
+                claim: (!claim.is_empty()).then(|| safe_text(clip_chars(claim, 1000))),
                 reason: clip_chars(&recorded, 4000).into(),
                 evidence,
             },
@@ -919,18 +1109,35 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
     Ok(count)
 }
 
+/// The memory feed's announcer, set once production knows the operations issue.
+pub(crate) type Announcer = std::sync::Arc<std::sync::Mutex<Option<Box<dyn Announce>>>>;
+
 #[derive(Clone)]
 pub(crate) struct Feed(SyncSender<()>);
 impl Feed {
-    pub(crate) fn start(store: tl3_config::Store, settings: tl3_config::Hindsight) -> Self {
+    pub(crate) fn start(
+        store: tl3_config::Store,
+        settings: tl3_config::Hindsight,
+        breaker: Breaker,
+        announcer: Announcer,
+    ) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             while receiver.recv().is_ok() {
-                if let Err(error) = Store::open(&store)
-                    .map_err(Error::from)
-                    .and_then(|mut store| flush(&mut store, &settings))
-                {
+                let mut store = match Store::open(&store) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        eprintln!("Hindsight memory retained for retry: {error}");
+                        continue;
+                    }
+                };
+                if let Err(error) = deliver(&mut store, &settings, &breaker) {
                     eprintln!("Hindsight memory retained for retry: {error}");
+                }
+                if let Some(announcer) = announcer.lock().unwrap().as_deref()
+                    && let Err(error) = announce(&mut store, announcer)
+                {
+                    eprintln!("memory curation notes retained for retry: {error}");
                 }
             }
         });
