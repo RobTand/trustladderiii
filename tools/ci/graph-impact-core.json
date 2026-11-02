@@ -1,5 +1,5 @@
 {
-  "sha256": "af07c62a1bd54c9fcacb698481f6b333d1c0bf399932e568fbc8b9fb422fcf60",
-  "source": "RobTand/prismaquant@e29127ae55d78e486266340db2d4a43c22d06e42:tools/ci/graph_impact.py",
-  "contract": "tests, edges, loc; byte-identical shared core"
+  "sha256": "50dd4ca0b6d77a5fee57e06ea2a435b75a8a7e473e80bd6863bdda9bb7c4c16b",
+  "source": "RobTand/prismaquant@fb6555514e2f43727ab73d056f82d8ad34ab64e3:tools/ci/graph_impact.py",
+  "contract": "tests, edges, loc; test_packages, base_package_max_reach, typed edge_diff; byte-identical shared core"
 }

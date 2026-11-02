@@ -226,7 +226,6 @@ py_binary(
     deps = [
         ":bazel_gate",
         ":bazel_graph_impact",
-        ":graph_impact",
     ],
 )
 
@@ -237,6 +236,5 @@ py_binary(
     deps = [
         ":bazel_gate",
         ":bazel_graph_impact",
-        ":graph_impact",
     ],
 )

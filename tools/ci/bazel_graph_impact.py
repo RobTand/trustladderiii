@@ -119,8 +119,6 @@ def write_baseline(graph, previous=None):
     if previous is None:
         return baseline(graph)
     errors = graph_impact.regressions(graph, previous)
-    if graph['reach_p90'] > previous['reach_budget']:
-        errors.append('reach budget may not grow')
     if errors:
         raise ValueError('baseline writer refuses losses: ' + '; '.join(errors))
     return graph_impact.baseline_record(graph, previous)

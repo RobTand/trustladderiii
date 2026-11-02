@@ -25,25 +25,28 @@ The log reports these figures:
 
 - U is the mean source fan-out divided by the number of runnable tests. It estimates
   the fraction of tests selected by editing one uniformly chosen production file.
-- LOC U weights each production file by its physical line count. It uses the same
-  0.1 percentage point tolerance as U.
+- LOC U weights each production file by its physical line count.
 - Reach reports median, nearest-rank p90, and maximum production source counts.
 - SCC reports cycles in the exported graph, with their members. The crate report
   separately checks direct Rust library dependencies for crate cycles.
 - Crate fan-out counts every test whose closure includes that Rust library or its
   `sources` filegroup. This includes tests that read crate sources as data.
 
-The baseline records the initial p90 as a test reach budget. New tests and changed
-tests above that budget fail. A test counts as changed when its direct rule hash
-changes or a test source in its package changes. Existing broad tests remain
-permitted when their test declarations and test sources do not change.
+New and changed tests use the maximum base reach of sibling tests in their Bazel
+package. For Rust this is the crate. An edited test may keep its own base reach.
+New packages fall back to the baseline's global p90 budget. A test counts as
+changed when its direct rule hash changes or a test source in its package changes.
+The failure names extra sources and their dependency path.
 
-U and LOC U may vary by 0.1 percentage points from the smaller of base and the recorded
-minimum. Larger regressions fail and larger gains must be recorded. The baseline
-writer refuses increases beyond tolerance in U or LOC U, any increase in maximum SCC
-size, and any increase in the reach budget. A lower p90
-must also be recorded. A growing or merged SCC fails even if another, larger cycle
-keeps the global maximum unchanged.
+U and LOC U are informational. The baseline preserves their minimum values without
+failing ordinary population growth. Structural checks compare existing sources'
+fan-out among existing tests and existing tests' reach. Added edges that grow
+these counts fail and appear in the diagnostic. New tests do not inflate the
+structural fan-out comparison. New sources may inherit existing package fan-out;
+the summary reports them. The adapter supplies each test's package, package base
+maximum reach, and typed added and removed rule-to-rule and rule-to-source edges.
+Maximum SCC size and forbidden-edge limits still fail the check. The baseline
+writer refuses those losses and preserves the global budget's minimum.
 
 New test-to-test rule dependencies and new conftest dependencies on production
 code fail. This uses declared Bazel dependencies. An import missing from BUILD
@@ -71,9 +74,19 @@ subgraphs, which the GitHub job puts in its summary.
 
 `tools/ci/graph_impact_proof.py --range PR:BASE:HEAD` compares historical ranges.
 It generates independent hash pairs with v42 and v70.0.2 and fails if their impacted
-rule sets differ. It also plants broad reach, forbidden dependencies, U growth,
-a cycle, and an unrecorded gain into the exported graph and checks each failure.
+rule sets differ. It plants broad reach, forbidden dependencies, existing-source
+expansion, and a cycle into the exported graph and checks each failure. It also
+checks that a new sibling test, three new hub sources, and a U improvement pass.
 Run it with `bb remote --timeout=10m --git_fetch_depth=0 --script='...'`.
+
+`graph_impact_replay.py --harvest graph-impact-replay-ranges.json` exports the last
+30 merged ranges using queries, sharing immutable snapshots at consecutive
+revisions. Its compressed BuildBuddy artifact can be replayed with `--graphs`.
+The replay records old and revised rule outcomes, every failure reason, package
+ceilings, and typed edge differences in `graph-impact-replay.json`.
+Historical proofs reject production source labels absent from the requested
+revision's Git tree. This catches untracked proof files entering Bazel data globs.
+The recorded [30-range replay](graph-impact-replay.md) lists each failure reason.
 
 The crate cut report removes one real crate or crate-source edge at a time and
 counts lost reach nodes across affected tests. These are candidates for narrowing

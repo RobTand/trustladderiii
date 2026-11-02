@@ -14,7 +14,6 @@ import urllib.request
 
 import bazel_gate
 import bazel_graph_impact
-import graph_impact
 
 OLD_URL = 'https://github.com/Tinder/bazel-diff/releases/download/v42.0.0/bazel-diff_deploy.jar'
 OLD_SHA256 = '0170b70fe2f24477ab056c11f5c3240d8b45a1dca5ab73ad252c096679c5500c'
@@ -31,8 +30,8 @@ def planted(workspace):
         'test-to-test': ({**deps, tests[0]: deps[tests[0]] + [tests[-1]]}, tests, set(), 'new test_to_test edge'),
         'conftest import': ({**deps, '//graph-impact-proof:conftest.py': [sources[0]]},
                             tests, set(), 'new conftest_source edge'),
-        'uniform regression': ({**deps, **{test: deps[test] + sources for test in tests}},
-                               tests, set(), 'u_pct rose'),
+        'existing source expansion': ({**deps, **{test: deps[test] + sources for test in tests}},
+                                     tests, set(), 'existing source fanout grew'),
         'cycle': ({**deps, '//graph-impact-proof:a': ['//graph-impact-proof:b'],
                    '//graph-impact-proof:b': ['//graph-impact-proof:a']}, tests, set(), 'SCC grew or merged'),
     }
@@ -43,15 +42,33 @@ def planted(workspace):
         if not any(message in error for error in result['errors']):
             raise RuntimeError(f'planted {name} did not fail as expected: {result["errors"]}')
         records[name] = {'summary': result['summary'], 'errors': result['errors']}
-    head = {**base, **graph_impact.measure({test: set() for test in tests}, base['edges'], base['loc'])}
-    head['edge_groups'] = base['edge_groups']
+    detached = {node: [dep for dep in values if dep not in sources] for node, values in deps.items()}
+    head = bazel_graph_impact.from_deps(detached, tests, sources, base['loc'])
     result = bazel_graph_impact.check(base, head, set(), policy)
-    if not any('record the gain' in error for error in result['errors']):
-        raise RuntimeError('unrecorded gain did not fail')
-    records['unrecorded gain'] = {'summary': result['summary'], 'errors': result['errors']}
+    if result['errors']:
+        raise RuntimeError(f'informational U gain failed: {result["errors"]}')
+    records['informational U gain'] = {'summary': result['summary'], 'errors': result['errors']}
+    sibling = max(tests, key=lambda test: len(base['reach'][test]))
+    new_test = sibling.split(':')[0] + ':graph_impact_proof_new'
+    head = bazel_graph_impact.from_deps({**deps, new_test: deps[sibling]},
+                                      tests + [new_test], sources, base['loc'])
+    result = bazel_graph_impact.check(base, head, {new_test}, policy)
+    if result['errors']:
+        raise RuntimeError(f'inherited package reach failed: {result["errors"]}')
+    records['inherited package reach'] = {'summary': result['summary'], 'errors': result['errors']}
+    peer = next(source for source in sources if source.startswith('//crates/controller:'))
+    new_sources = [peer.split(':')[0] + f':graph_impact_proof_new{i}.rs' for i in range(3)]
+    enlarged = {node: values + new_sources if peer in values else values for node, values in deps.items()}
+    enlarged.update({source: [] for source in new_sources})
+    head = bazel_graph_impact.from_deps(enlarged, tests, sources + new_sources,
+                                      {**base['loc'], **dict.fromkeys(new_sources, 1)})
+    result = bazel_graph_impact.check(base, head, set(), policy)
+    if result['errors']:
+        raise RuntimeError(f'inherited hub sources failed: {result["errors"]}')
+    records['inherited hub sources'] = {'summary': result['summary'], 'errors': result['errors']}
     for name, result in records.items():
         print(f'PLANTED {name}: {result["summary"]}', flush=True)
-        print(result['errors'][0], flush=True)
+        print(result['errors'][0] if result['errors'] else 'PASS', flush=True)
     return records
 
 
@@ -59,6 +76,11 @@ def historical(workspace, name, base, head):
     for sha in (base, head):
         workspace.ensure_commit(sha)
     workspace.prepare_diff(base, head)
+    for sha, graph in ((base, workspace._graphs['base']), (head, workspace._graphs['head'])):
+        tracked = set(workspace.run('git', 'ls-tree', '-r', '--name-only', sha).splitlines())
+        unexpected = {bazel_graph_impact.path(source) for source in graph['loc']} - tracked
+        if unexpected:
+            raise ValueError(f'{sha} exports sources absent from its Git tree: {sorted(unexpected)}')
     native = workspace.bazel_diff(base, head)
     old, new = workspace._graphs['base'], workspace._graphs['head']
     changed, deleted = workspace.changes(base, head)
