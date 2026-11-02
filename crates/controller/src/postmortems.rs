@@ -216,7 +216,7 @@ impl crate::Controller {
             {
                 continue;
             }
-            let id = NodeId(index as u32);
+            let id = NodeId(index as u64);
             let history = self.history(snapshot, id, commit)?;
             for (dimension, grade, fact) in close_grades(node, outcome, &history) {
                 commit.grades.push(CodeGrade {

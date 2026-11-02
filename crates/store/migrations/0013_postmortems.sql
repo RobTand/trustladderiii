@@ -73,6 +73,8 @@ CREATE TABLE tl3_code_grades (
     UNIQUE (node_id, trigger, rubric_version, dimension)
 );
 CREATE INDEX tl3_code_grades_node ON tl3_code_grades (node_id);
+CREATE TRIGGER tl3_code_grades_append_only BEFORE UPDATE OR DELETE OR TRUNCATE
+    ON tl3_code_grades FOR EACH STATEMENT EXECUTE FUNCTION tl3_append_only();
 
 -- Every phase a node enters, from now on. Earlier phases left no record.
 CREATE TABLE tl3_phase_history (
@@ -82,6 +84,8 @@ CREATE TABLE tl3_phase_history (
     since timestamptz NOT NULL
 );
 CREATE INDEX tl3_phase_history_node ON tl3_phase_history (node_id, since);
+CREATE TRIGGER tl3_phase_history_append_only BEFORE UPDATE OR DELETE OR TRUNCATE
+    ON tl3_phase_history FOR EACH STATEMENT EXECUTE FUNCTION tl3_append_only();
 -- In-flight nodes start from their current phase's entry time.
 INSERT INTO tl3_phase_history (node_id, phase, since)
 SELECT node_id, phase, since FROM tl3_node_phases;
