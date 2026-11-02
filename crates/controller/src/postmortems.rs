@@ -399,6 +399,29 @@ mod tests {
     }
 
     #[test]
+    fn a_stop_for_tl3_review_owes_needed_fix() {
+        // Q54 (#440): a planner cant_meet stop has a plan retry and no fix
+        // round, and a maker cant_meet stop may have neither.
+        let retried = History {
+            retries: 1,
+            ..History::default()
+        };
+        for step in [
+            tl3_kernel::ReviewStop::PlanCantMeet,
+            tl3_kernel::ReviewStop::MakerCantMeet,
+        ] {
+            let mut stopped = clean();
+            stopped.plan_retries = 1;
+            stopped.review_stop = Some(step);
+            assert_eq!(
+                reason(&stopped, Outcome::Stopped, &retried),
+                Some(Reason::NeededFix),
+                "{step:?}"
+            );
+        }
+    }
+
+    #[test]
     fn selection_follows_q32() {
         let quiet = History::default();
         assert_eq!(reason(&clean(), Outcome::Merged, &quiet), None);

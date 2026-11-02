@@ -256,6 +256,11 @@ fn an_open_request_stops_for_tl3_review_after_fail_fast_is_turned_on() {
         "{outcome}"
     );
     assert_operations_note(&posted, "changes_requested");
+    let owed = Store::open(&settings).unwrap().postmortems("0").unwrap();
+    assert!(
+        owed.iter().any(|p| p.reason == "needed_fix"),
+        "a postmortem is owed as needed_fix: {owed:?}"
+    );
 }
 
 #[test]
@@ -327,4 +332,9 @@ fn plan_cant_meet_stops_with_the_planners_report_and_no_rerun() {
         "The goal needs a schema change outside the plan."
     );
     assert_operations_note(&posted, "plan_cant_meet");
+    let owed = Store::open(&settings).unwrap().postmortems("0").unwrap();
+    assert!(
+        owed.iter().any(|p| p.reason == "needed_fix"),
+        "a postmortem is owed as needed_fix: {owed:?}"
+    );
 }
