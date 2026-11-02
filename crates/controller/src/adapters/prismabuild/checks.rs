@@ -23,6 +23,10 @@ pub struct Check {
     pub name: String,
     pub kind: Kind,
     pub tests: Vec<String>,
+    /// A demonstrating check's forced reproduction (#393). The plan's declarative forcing,
+    /// passed through untouched: the trusted harness bounds it and applies it in the container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forcing: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,15 +57,24 @@ pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
     let mut result_bytes =
         65536 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12 + 2;
     for check in plan {
-        result_bytes += ascii_json_bytes(&serde_json::json!({
+        let mut header = serde_json::json!({
             "name":check.name, "kind":check.kind, "custody":"in-process",
             "verdict":"infrastructure-failure", "tests":[],
-        }))? + 1;
+        });
+        if let Some(forcing) = &check.forcing {
+            // A forced check's result echoes its forcing, and each test gains head_forced (#393).
+            header["forcing"] = forcing.clone();
+        }
+        result_bytes += ascii_json_bytes(&header)? + 1;
         for test in &check.tests {
-            result_bytes += ascii_json_bytes(&serde_json::json!({
+            let mut case = serde_json::json!({
                 "test":test, "base":"uncollected", "head":"uncollected",
                 "pre_existing":false, "passed":false, "message":"",
-            }))? + 1;
+            });
+            if check.forcing.is_some() {
+                case["head_forced"] = "uncollected".into();
+            }
+            result_bytes += ascii_json_bytes(&case)? + 1;
         }
         if result_bytes > super::results::MAX_RESULT_BYTES {
             return Err(Error::Invalid(

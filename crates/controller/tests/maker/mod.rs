@@ -213,6 +213,7 @@ fn observe(
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_greeting.py::test_hello".into()],
+                            forcing: None,
                         }],
                     },
                 },

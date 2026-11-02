@@ -19,10 +19,15 @@ def validate_check_plan(plan):
     for check in plan:
         header = {'name': check.name, 'kind': check.kind, 'custody': 'in-process',
                   'verdict': 'infrastructure-failure', 'tests': []}
+        if getattr(check, 'forcing', None) is not None:
+            # A forced check's result echoes its forcing, and each test gains head_forced (#393).
+            header['forcing'] = check.forcing.as_json()
         size += len(json.dumps(header, separators=(',', ':'))) + 1
         for test in check.tests:
             case = {'test': test, 'base': 'uncollected', 'head': 'uncollected',
                     'pre_existing': False, 'passed': False, 'message': ''}
+            if 'forcing' in header:
+                case['head_forced'] = 'uncollected'
             size += len(json.dumps(case, separators=(',', ':'))) + 1
         if size > MAX_RESULT_BYTES:
             raise ValueError(RESULT_SIZE_ERROR)

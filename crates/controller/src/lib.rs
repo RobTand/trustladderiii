@@ -29,6 +29,7 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;
@@ -2242,6 +2243,30 @@ impl Controller {
                         }
                         return Ok(None);
                     }
+                    Evidence::QueueBlocked {
+                        head,
+                        conditions,
+                        failed,
+                    } => {
+                        let waiting = current.phase == tl3_kernel::Phase::Queued
+                            || current.phase == tl3_kernel::Phase::Publishing
+                                && current.effect.is_some_and(|effect| {
+                                    effect.kind == tl3_kernel::EffectKind::Enqueue
+                                        && !effect.cancelling
+                                });
+                        if waiting && commit_sha(snapshot, current.approved) == Some(&head) {
+                            self.queue_blocked_incident(
+                                snapshot,
+                                commit,
+                                node,
+                                &head,
+                                &conditions,
+                                &failed,
+                            )?;
+                            commit.rows.push(put("queue_facts", identity, value));
+                        }
+                        return Ok(None);
+                    }
                     Evidence::CheckReported { head, required } => {
                         let id = looks::missing_check_incident_id(node, &head, &required);
                         if let Some(row) = snapshot.rows.iter().find(|row| {
@@ -2562,6 +2587,7 @@ impl Controller {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
+                                forcing: check.get("forcing").cloned(),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;

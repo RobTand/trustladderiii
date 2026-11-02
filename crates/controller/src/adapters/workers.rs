@@ -258,7 +258,13 @@ impl Supervisor {
                 .as_array()
                 .ok_or(Error::Invalid("maker plan needs checks"))?
                 .iter()
-                .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
+                .map(|c| {
+                    let mut check = json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]});
+                    if let Some(forcing) = c.get("forcing") {
+                        check["forcing"] = forcing.clone();
+                    }
+                    check
+                })
                 .collect::<Vec<_>>();
             materials["check_run"] =
                 json!({"repository":checkout,"base_sha":base.as_str(),"plan":checks});
