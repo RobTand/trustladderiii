@@ -219,12 +219,29 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             )
         })
         .collect();
+    let now = chrono::Utc::now().timestamp_millis();
+    let quota_models = snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "model_quotas")
+        .filter_map(|row| {
+            let reset = row.value["reset_ms"]
+                .as_i64()
+                .filter(|reset| *reset > now)?;
+            let reset = chrono::DateTime::from_timestamp_millis(reset)?;
+            Some(format!(
+                "{} is out of quota until {}. Its steps use the next model in their ladder.",
+                row.id,
+                reset.format("%Y-%m-%d %H:%M:%S UTC")
+            ))
+        })
+        .collect();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
         requests,
         memory,
         unassigned_incidents,
-        quota_models: vec![],
+        quota_models,
     })
 }
 
@@ -266,6 +283,9 @@ pub fn render_text(status: &Status) -> String {
             writeln!(output, "{}", plain(incident)).expect("write to string");
         }
     }
+    for note in &status.quota_models {
+        writeln!(output, "{}", plain(note)).expect("write to string");
+    }
     output
 }
 
@@ -294,6 +314,9 @@ pub fn render_html(status: &Status) -> String {
             write!(output, "<li>{}</li>", escape_html(&plain(incident))).expect("write to string");
         }
         output.push_str("</ul>");
+    }
+    for note in &status.quota_models {
+        write!(output, "<p>{}</p>", escape_html(&plain(note))).expect("write to string");
     }
     writeln!(
         output,

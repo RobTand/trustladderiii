@@ -1957,8 +1957,12 @@ impl Controller {
                 self.progress_allowance(snapshot, &key, checkpoint, commit)?;
                 return Ok(None);
             }
-            Observation::Quota { key, reset_ms } => {
-                self.quota_allowance(snapshot, &key, reset_ms, commit)?;
+            Observation::Quota {
+                key,
+                reset_ms,
+                model,
+            } => {
+                self.quota_allowance(snapshot, &key, reset_ms, model.as_deref(), commit)?;
                 return Ok(None);
             }
             Observation::Classified { key, reply } => {
@@ -2272,6 +2276,7 @@ impl Controller {
                 generation,
                 role,
                 mut reply,
+                model,
             } => {
                 let n = world
                     .nodes
@@ -2578,7 +2583,8 @@ impl Controller {
                         node.0.to_string(),
                         json!({
                             "attempt": n.attempt, "replanned": n.replanned, "generation": generation,
-                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true
+                            "needs_files": reply["kind"] == "needs_files" && reply["fits"] == true,
+                            "model": model,
                         }),
                     ));
                 }

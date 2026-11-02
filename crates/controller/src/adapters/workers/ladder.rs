@@ -5,18 +5,73 @@ use tl3_config::{Model, Models};
 /// The step's models in fallback order, its configured model first. A reviewer
 /// only gets models from a different family than the maker that made the head.
 pub(super) fn candidates<'a>(
-    _models: &'a Models,
-    _role: &str,
-    _rung: usize,
-    _review_restarted: bool,
-    _maker: Option<&str>,
+    models: &'a Models,
+    role: &str,
+    rung: usize,
+    review_restarted: bool,
+    maker: Option<&str>,
 ) -> Result<Vec<&'a Model>> {
-    Err(Error::Invalid("model ladder not implemented"))
+    let ladder: &[Model] = match role {
+        "classifier" => &models.comment_classifier,
+        "ingest" => &models.ingest,
+        "audit" => &models.audit,
+        "maker" => &models.maker,
+        "planner" => &models.planner,
+        "reviewer" => &models.reviewer,
+        _ => return Err(Error::Invalid("unsupported worker role")),
+    };
+    if ladder.is_empty() {
+        return Err(Error::Invalid("worker role has no configured model"));
+    }
+    if role != "reviewer" {
+        return Ok(ordered(ladder, rung.min(ladder.len() - 1)));
+    }
+    let configured = &models.maker[rung.min(models.maker.len() - 1)];
+    // A maker model no longer configured can't name its family; use the attempt's own.
+    let maker = maker
+        .and_then(|name| models.maker.iter().find(|model| model.name == name))
+        .unwrap_or(configured);
+    let different = |model: &Model| !model.family.eq_ignore_ascii_case(&maker.family);
+    let first = ladder
+        .iter()
+        .position(different)
+        .ok_or(Error::Invalid("reviewer needs a different model family"))?;
+    let start = (first + usize::from(review_restarted)).min(ladder.len() - 1);
+    let mut models = ordered(ladder, start);
+    let configured = models[0];
+    models.retain(|model| std::ptr::eq(*model, configured) || different(model));
+    Ok(models)
+}
+
+/// The ladder from `start` onward, then the models before it, each name once.
+fn ordered(ladder: &[Model], start: usize) -> Vec<&Model> {
+    let mut models: Vec<&Model> = Vec::new();
+    for model in ladder[start..].iter().chain(&ladder[..start]) {
+        if !models.iter().any(|seen| seen.name == model.name) {
+            models.push(model);
+        }
+    }
+    models
 }
 
 /// Q53: the first model that hasn't reported quota, else the configured one.
-pub(super) fn choose<'a>(candidates: &[&'a Model], _limited: impl Fn(&str) -> bool) -> &'a Model {
-    candidates[0]
+pub(super) fn choose<'a>(candidates: &[&'a Model], limited: impl Fn(&str) -> bool) -> &'a Model {
+    candidates
+        .iter()
+        .find(|model| !limited(&model.name))
+        .unwrap_or(&candidates[0])
+}
+
+/// Models that reported quota, by name, with their announced resets.
+pub(crate) fn quota_resets(
+    snapshot: &tl3_store::Snapshot,
+) -> std::collections::BTreeMap<String, u64> {
+    snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "model_quotas")
+        .filter_map(|row| Some((row.id.clone(), row.value["reset_ms"].as_u64()?)))
+        .collect()
 }
 
 #[cfg(test)]

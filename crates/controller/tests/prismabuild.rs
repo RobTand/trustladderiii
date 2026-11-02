@@ -2188,7 +2188,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
                         serde_json::json!({"kind":"cant_meet", "files":["value.py"],
                             "report":"No smaller selection is available.", "violations":[], "forecast":forecast})
                     };
-                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply};
+                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "planner".into(), reply, model: None};
                 }
             }
         }));

@@ -633,6 +633,21 @@ fn worker_simulation(
         fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
             self.0.retire(store)
         }
+        // Quota waits only arise from the real worker runs this wrapper forwards.
+        fn resume_after_quota(
+            &mut self,
+            delivery: &Delivery,
+        ) -> tl3_controller::Result<Option<tl3_controller::executor::Completion>> {
+            self.0.resume_after_quota(delivery)
+        }
+        fn quota_resume_ms(
+            &mut self,
+            delivery: &Delivery,
+            announced: u64,
+            now: u64,
+        ) -> tl3_controller::Result<u64> {
+            self.0.quota_resume_ms(delivery, announced, now)
+        }
         fn execute(
             &mut self,
             delivery: &Delivery,

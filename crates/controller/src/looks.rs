@@ -19,6 +19,8 @@ pub(crate) struct AllowanceState {
     quota_ms: Option<u64>,
     #[serde(default)]
     last_quota_ms: Option<u64>,
+    #[serde(default)]
+    last_quota_model: Option<String>,
     stopping: bool,
     pub incident: Option<String>,
     #[serde(default)]
@@ -46,6 +48,7 @@ impl AllowanceState {
             progress_ms: now,
             quota_ms: None,
             last_quota_ms: None,
+            last_quota_model: None,
             stopping: false,
             incident: None,
             healthy: false,
@@ -529,10 +532,18 @@ impl Controller {
                 return Ok(());
             }
         }
-        if state.quota_ms.is_some_and(|reset| reset > now) {
-            state.due_ms = state.quota_ms;
-            self.save_allowance(state)?;
-            return Ok(());
+        if let Some(announced) = state.quota_ms {
+            self.expire_model_quotas(now)?;
+            let resume = self.adapters.adapter(&state.delivery)?.quota_resume_ms(
+                &state.delivery,
+                announced,
+                now,
+            )?;
+            if resume > now {
+                state.due_ms = Some(resume);
+                self.save_allowance(state)?;
+                return Ok(());
+            }
         }
         if state.quota_ms.is_some() {
             let effect = self
@@ -1219,23 +1230,66 @@ impl Controller {
         snapshot: &Snapshot,
         key: &str,
         reset_ms: u64,
+        model: Option<&str>,
         commit: &mut Commit,
     ) -> Result<()> {
+        // Q53: record the model's quota so every step's ladder can skip it.
+        if let Some(model) = model
+            && snapshot
+                .rows
+                .iter()
+                .find(|r| r.table == "model_quotas" && r.id == model)
+                .and_then(|r| r.value["reset_ms"].as_u64())
+                .is_none_or(|old| old < reset_ms)
+        {
+            commit.rows.push(put(
+                "model_quotas",
+                model.into(),
+                json!({"reset_ms": reset_ms}),
+            ));
+        }
         if let Some(row) = snapshot
             .rows
             .iter()
             .find(|r| r.table == "allowances" && r.id == key)
         {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
-            if state.last_quota_ms.is_some_and(|old| old >= reset_ms) {
+            // A replayed ending of the same model never restarts its wait.
+            if state.last_quota_ms.is_some_and(|old| old >= reset_ms)
+                && state.last_quota_model.as_deref() == model
+            {
                 return Ok(());
             }
             state.last_quota_ms = Some(reset_ms);
+            state.last_quota_model = model.map(str::to_owned);
             state.quota_ms = Some(reset_ms);
-            state.due_ms = Some(reset_ms.max(self.now_ms()));
+            // The look asks the adapter whether another model can take the step now.
+            state.due_ms = Some(self.now_ms());
             commit
                 .rows
                 .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+
+    /// A model's quota ends at its announced reset; later steps may use it again.
+    fn expire_model_quotas(&mut self, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("model-quota-reset:{}", snapshot.revision.get()),
+            json!({"model_quota_reset": now}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "model_quotas" && row.value["reset_ms"].as_u64().is_none_or(|r| r <= now)
+        }) {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
         }
         Ok(())
     }
