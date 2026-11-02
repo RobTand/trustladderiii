@@ -270,7 +270,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(
             Upstream::Mergify,
-            api.adapter(&root.path().join("mergify"), 0),
+            api.adapter(&root.path().join("mergify"), 0)
+                .with_store(settings.clone()),
         );
         controller =
             Controller::open(Store::open(settings).unwrap(), registry, config.clone()).unwrap();
