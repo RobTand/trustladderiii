@@ -6,6 +6,7 @@ pub use writer::{FakeWriter, Writer};
 
 mod fake;
 mod json;
+mod ladder;
 mod process;
 pub(crate) mod protocol;
 pub(crate) mod reproducing;
@@ -318,7 +319,6 @@ impl Supervisor {
             self.root(&delivery.key).join("worktree")
         };
         let forecast = json!({"fit_tokens": self.limits.fit_tokens, "context_tokens": self.limits.context_tokens, "overhead_tokens": self.planning.overhead_tokens});
-        let mut rung = usize::from(delivery.attempt.saturating_sub(1));
         if role == "reviewer" {
             inputs = review::inputs(
                 delivery,
@@ -330,7 +330,6 @@ impl Supervisor {
         } else if role == "planner" {
             let world = crate::snapshot::decode(snapshot)?;
             let n = &world.nodes[delivery.node().0 as usize];
-            rung = usize::from(n.plan_retries);
             let ingest = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("planner needs a brief"))?;
@@ -364,25 +363,14 @@ impl Supervisor {
             }
         }
         protocol::validate_inputs(role, &inputs)?;
-        let ladder: &[tl3_config::Model] = match role {
-            "classifier" => &self.models.comment_classifier,
-            "ingest" => &self.models.ingest,
-            "audit" => &self.models.audit,
-            "maker" => &self.models.maker,
-            "planner" => &self.models.planner,
-            "reviewer" => &self.models.reviewer,
-            _ => return Err(Error::Invalid("unsupported worker role")),
-        };
-        let model = if role == "reviewer" {
-            let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
-            let first = ladder
-                .iter()
-                .position(|model| !model.family.eq_ignore_ascii_case(&maker.family))
-                .ok_or(Error::Invalid("reviewer needs a different model family"))?;
-            &ladder[(first + usize::from(review_restarted)).min(ladder.len() - 1)]
-        } else {
-            &ladder[rung.min(ladder.len() - 1)]
-        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let resets = ladder::quota_resets(snapshot);
+        let model = ladder::choose(&self.candidates(delivery, role, store, snapshot)?, |name| {
+            resets.get(name).is_some_and(|reset| *reset > now)
+        });
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
@@ -442,6 +430,46 @@ impl Supervisor {
             request["resume_session"] = json!(resume_review);
         }
         Ok(request)
+    }
+
+    /// The step's models in Q53 fallback order, configured model first.
+    fn candidates(
+        &self,
+        delivery: &Delivery,
+        role: &str,
+        store: &mut Store,
+        snapshot: &Snapshot,
+    ) -> Result<Vec<&tl3_config::Model>> {
+        // Only planners and reviewers need the world; other roles may run before it exists.
+        let node = if matches!(role, "planner" | "reviewer") {
+            let world = crate::snapshot::decode(snapshot)?;
+            Some(world.nodes[delivery.node().0 as usize])
+        } else {
+            None
+        };
+        let rung = match &node {
+            Some(n) if role == "planner" => usize::from(n.plan_retries),
+            _ => usize::from(delivery.attempt.saturating_sub(1)),
+        };
+        // Review stays a different family from the maker that actually ran.
+        let maker = if role == "reviewer" {
+            store
+                .worker_document(&delivery.node().0.to_string(), "maker_session")?
+                .filter(|session| {
+                    session["attempt"] == delivery.attempt
+                        && session["replanned"] == delivery.replanned
+                })
+                .and_then(|session| session["model"].as_str().map(str::to_owned))
+        } else {
+            None
+        };
+        ladder::candidates(
+            &self.models,
+            role,
+            rung,
+            role == "reviewer" && node.is_some_and(|n| n.review_restarted),
+            maker.as_deref(),
+        )
     }
 
     fn materials(
@@ -748,6 +776,39 @@ impl Executor for Supervisor {
         self.launch(delivery, true).map(Some)
     }
 
+    fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
+        let role =
+            protocol::delivery_role(delivery).ok_or(Error::Invalid("unsupported worker role"))?;
+        let mut store = Store::open(&self.store)?;
+        let snapshot = store.load()?;
+        let mut resets = ladder::quota_resets(&snapshot);
+        // Waits recorded before Q53 name their model only in the attempt itself.
+        if let Some((_, attempt)) = latest(&self.root(&delivery.key))?
+            && let Some(request) = read(&attempt.join("request.json"))?
+            && let Some(model) = request["model"]["name"].as_str()
+        {
+            let reset = resets.entry(model.to_owned()).or_default();
+            *reset = (*reset).max(announced);
+        }
+        let candidates = self.candidates(delivery, role, &mut store, &snapshot)?;
+        let limited: Vec<u64> = candidates
+            .iter()
+            .map(|model| {
+                resets
+                    .get(&model.name)
+                    .copied()
+                    .filter(|reset| *reset > now)
+            })
+            .collect::<Option<_>>()
+            .unwrap_or_default();
+        // Wait only when every model is out, and then for the earliest reset.
+        Ok(if limited.len() < candidates.len() {
+            now
+        } else {
+            limited.into_iter().min().unwrap_or(announced)
+        })
+    }
+
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
         if !matches!(delivery.output, Out::Effect { kind: EffectKind::StartRun(role), .. } if protocol::role(role).is_some())
         {
@@ -955,7 +1016,15 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
     let observation = match fs::read(attempt.join("stdout.jsonl")) {
         Ok(bytes) => read(&attempt.join("request.json"))?
             .ok_or(Error::Invalid("worker request is missing"))
-            .and_then(|request| source::parse_reply(&bytes, delivery, &request["inputs"])),
+            .and_then(|request| {
+                let mut observation = source::parse_reply(&bytes, delivery, &request["inputs"])?;
+                if let Observation::Quota { model, .. } | Observation::WorkerReply { model, .. } =
+                    &mut observation
+                {
+                    *model = request["model"]["name"].as_str().map(str::to_owned);
+                }
+                Ok(observation)
+            }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Err(Error::Invalid("worker output is missing"))
         }

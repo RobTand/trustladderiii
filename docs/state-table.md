@@ -256,7 +256,7 @@ A job that produces no report never ran its tests, so it is an infrastructure fa
 - An operation's first incident clears when a probe of the upstream succeeds, or when Rob clears it.
 - Only Rob can clear an operation's later incidents, and he gets a plain-language note asking him to.
 - A leaf whose operation waits on an incident gives back its slot and files. It waits in Ready, and resumes at the same step.
-- When quota runs out, the operation waits for the reset time the provider announced. That isn't a failure.
+- When a model reports quota, the step moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset. This spends no credit and counts no failure. Each model's quota-limited state is recorded with its reset time. The step waits only when every model in its ladder is out, and then for the earliest announced reset. A wait for a model no longer configured for that step ends when tl3d opens with the new config (Q53, approved by Rob, 2026-11-01).
 
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
@@ -382,6 +382,8 @@ The attempt picks the model and budget from the maker's ladder in config (Q22):
 - attempt 1 uses the default model and budget;
 - attempt 2 uses the same model at maximum effort and budget;
 - attempt 3 runs on the strongest model from a different family.
+
+Under quota (Q53), an attempt moves to the next eligible model in the maker's ladder. Attempts 1 and 2 share a model, so a quota-limited attempt 1 or 2 moves to the next different model, and the status view notes the limited model. The reviewer stays a different family from the model the maker actually ran on.
 
 The exact models come from what CLIProxyAPI serves. They are set in config, and model trials adjust them.
 
@@ -675,7 +677,7 @@ From slice two on:
 
 - Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39).
 - Postmortem runs come after every delivery run, so they use only spare capacity. Under constant load they wait (Q39).
-- A quota reset the provider announces is a wake-up event.
+- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
 
 ## Looks and stalls
 
