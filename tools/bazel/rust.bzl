@@ -88,6 +88,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/hindsight.rs": ["README.md"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
     "tests/mergify.rs": ["tests/support/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
@@ -267,7 +268,7 @@ def _crate_test(kind, package, name, source, harness, options):
              ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else [])) +
             _CONTROLLER_TEST_SOURCES.get(source, []),
             allow_empty = True,
-        ) + ["README.md"]
+        )
         native.filegroup(name = kind + "_sources_" + name, srcs = sources)
         sources = [":" + kind + "_sources_" + name]
         compile_data = compile_data + _CONTROLLER_TEST_DATA
