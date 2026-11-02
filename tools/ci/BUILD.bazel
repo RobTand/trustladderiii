@@ -1,3 +1,4 @@
+# gazelle:resolve py rust_runner //tools/bazel:rust_runner
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
