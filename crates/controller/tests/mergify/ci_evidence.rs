@@ -17,6 +17,7 @@ pub(super) const MODES: &[&str] = &[
     "renamed",
     "logs-unavailable",
     "missing-plan",
+    "multiple-drafts",
 ];
 const TEST: &str = "//tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards";
 const URL: &str =
@@ -62,6 +63,12 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
     } else {
         "2026-11-02T21:09:00Z"
     });
+    if mode == "multiple-drafts" {
+        check["output"]["summary"] = json!(format!(
+            "Previous failed attempt: draft #9999\n{}",
+            check["output"]["summary"].as_str().unwrap()
+        ));
+    }
     state.checks = json!([check]);
     state.queue_rule["completed_at"] = json!("2026-11-02T21:30:00Z");
     let mut draft = state.pull.clone();
@@ -177,7 +184,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
     observe(&mut controller, &api, &config);
-    if matches!(mode, "outside" | "repeat" | "aggregate") {
+    if matches!(mode, "outside" | "repeat" | "aggregate" | "multiple-drafts") {
         let after = controller.world().unwrap().nodes[0];
         assert_ne!(
             after.phase,
