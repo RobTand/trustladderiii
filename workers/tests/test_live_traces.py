@@ -405,3 +405,19 @@ def test_one_flusher_per_attempt(tmp_path, mlflow_server):
     assert flush(log).returncode == 0
     assert mlflow_server.only()['tags']['outcome'] == 'crashed'
     assert not claim.exists(), 'a flusher releases its claim when it ends'
+
+
+def test_a_moved_log_is_marked_where_it_now_lives(tmp_path, mlflow_server):
+    """Retirement can move a log while its flusher runs; the marker follows the
+    open log, so the held copy isn't sent again."""
+    log = crafted_log(tmp_path / 'attempt', mlflow_server.uri)
+    held = tmp_path / 'held'
+    held.mkdir()
+    moved = held / 'trace.jsonl'
+    with log.open('rb') as records:
+        log.rename(moved)
+        result = subprocess.run([sys.executable, '-m', 'tl3_workers.tracing', 'flush', str(log)],
+                                stdin=records, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert Path(str(moved) + '.shipped').exists()
+    assert not Path(str(log) + '.shipped').exists()

@@ -270,3 +270,70 @@ fn held_logs_beyond_the_cap_drop_oldest_first() {
     assert!(runs.join(".traces/a-attempt-00000000").exists());
     assert!(runs.join(".traces/c-attempt-00000000").exists());
 }
+
+/// A crash between moving files and publishing the held directory leaves them
+/// staged in the attempt; retirement's retry finishes the hold.
+#[test]
+fn an_interrupted_hold_finishes_on_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let (runs, attempt) = ended_attempt(root.path());
+    let staging = attempt.join(".held");
+    fs::create_dir(&staging).unwrap();
+    fs::rename(attempt.join("trace.jsonl"), staging.join("trace.jsonl")).unwrap();
+    trace::hold(&attempt, &runs).unwrap();
+    let held = held(&runs);
+    assert_eq!(fs::read(held.join("trace.jsonl")).unwrap(), LOGGED);
+    assert!(held.join("exit.json").exists() && held.join("launch.json").exists());
+    assert!(!staging.exists());
+}
+
+/// #448 re-check: the outage-then-recovery trigger, end to end through the
+/// worker source's inotify watch on `.traces`.
+#[test]
+fn a_wake_write_sweeps_held_logs_through_the_source() {
+    use crate::git_tests::support::Database;
+    let root = tempfile::tempdir().unwrap();
+    let mut db = Database::start();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.store = db.create("trace_wake");
+    config.workers.runs = root.path().join("runs");
+    let supervisor = Supervisor::new(&config, &root.path().join("records")).unwrap();
+    let held = held(&config.workers.runs);
+    fs::create_dir_all(&held).unwrap();
+    write(
+        &held.join("launch.json"),
+        &json!({"python": fake_python(root.path())}),
+    )
+    .unwrap();
+    fs::write(held.join("trace.jsonl"), LOGGED).unwrap();
+    let mut source = supervisor.source();
+    let mut store = Store::open(&config.store).unwrap();
+    let (sender, _receiver) = crate::sync::mpsc::channel();
+    // tl3d opens while MLflow is down: the held log's flush fails.
+    source.poll_once(&mut store, &sender).unwrap();
+    assert!(!flushed(&held).expect("opening flushes held logs").success());
+    source.poll_once(&mut store, &sender).unwrap();
+    assert!(flushed(&held).is_none(), "no event, no flush");
+    // MLflow answers a shipper, which writes the wake file.
+    fs::write(root.path().join("mlflow-up"), b"").unwrap();
+    let wake = config.workers.runs.join(".traces/.wake");
+    drop(
+        File::options()
+            .write(true)
+            .create(true)
+            .open(&wake)
+            .unwrap(),
+    );
+    source.poll_once(&mut store, &sender).unwrap();
+    assert!(flushed(&held).expect("the wake starts a flusher").success());
+    drop(File::options().write(true).open(&wake).unwrap());
+    source.poll_once(&mut store, &sender).unwrap();
+    assert!(
+        !held.exists(),
+        "the next event removes the shipped held log"
+    );
+    drop(source);
+    drop(supervisor);
+    db.stop();
+}
