@@ -322,6 +322,7 @@ fn a_wake_write_sweeps_held_logs_through_the_source() {
         File::options()
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&wake)
             .unwrap(),
     );
