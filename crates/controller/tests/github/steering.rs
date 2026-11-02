@@ -1621,6 +1621,7 @@ pub(super) fn dropped_change_quote() {
             "change": "The old version merged before your change could start. Please file it again.",
             "change_quote": "Fix the leaf in workers/src/agent_job.rs."}),
         violations: vec![],
+        request: None,
     };
     let text = "The old version merged before your change could start. Please file it again.";
     let body = checked_draft(

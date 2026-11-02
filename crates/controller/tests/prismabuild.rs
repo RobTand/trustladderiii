@@ -1612,6 +1612,7 @@ fn quiet_alive_job_is_not_a_failed_read(settings: &tl3_config::Store, unreadable
             title: "PrismaBuild fixture".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     while controller.drive_once().unwrap() {}
@@ -1713,6 +1714,7 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
             title: "PrismaBuild fixture".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..100 {
@@ -1976,6 +1978,7 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
                 title: "Retirement fixture".into(),
                 actor: 1,
                 label: "tl3".into(),
+                labels: Vec::new(),
             })
             .unwrap();
         while controller.drive_once().unwrap() {}
@@ -2703,6 +2706,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
             title: "Plan budget".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     for _ in 0..100 {

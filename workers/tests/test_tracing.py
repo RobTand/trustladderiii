@@ -77,10 +77,11 @@ def exporters(monkeypatch):
         child.wait(timeout=15)
 
 
-def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='sk-fixture296secretvalue0123456789', wait=True):
+def run_fake(request_doc, monkeypatch, exporters, uri, *, secret='sk-fixture296secretvalue0123456789', wait=True,
+             trace=None):
     request_doc['mlflow'] = {'tracking_uri': uri, 'experiment': 'tl3-test'}
-    request_doc['trace'] = {'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7',
-                            'attempt': 2, 'round': 1}
+    request_doc['trace'] = trace or {'repo': 'RobTand/tl3-sandbox', 'issue': 101, 'request': '7',
+                                     'attempt': 2, 'round': 1}
     request_doc['inputs']['issue']['body'] = secret
     reply = {**BRIEF, 'brief': secret}
     model = FakeMessagesListChatModel(responses=[AIMessage(
@@ -130,6 +131,19 @@ def test_run_produces_tagged_trace(request_doc, monkeypatch, exporters, receiver
     assert InMemoryTraceManager.get_instance().get_mlflow_trace_id_from_otel_id(
         int.from_bytes(root.trace_id, 'big')) is None, 'raw spans must leave the SDK cache after export'
 
+
+
+def test_a_run_for_no_request_is_tagged_none_not_unknown(request_doc, monkeypatch, exporters, receiver):
+    # #427: the live shape the controller sends for a write that belongs to no request.
+    uri, packets = receiver
+    request_doc['operation'] = {**request_doc['operation'], 'node': 0, 'generation': 0}
+    run_fake(request_doc, monkeypatch, exporters, uri,
+             trace={key: 'none' for key in ('repo', 'issue', 'request', 'attempt', 'round')})
+    root = next(span for span in decode(packets) if not span.parent_span_id)
+    attrs = {attr.key: attr.value.string_value for attr in root.attributes}
+    for key in ('repo', 'issue', 'request', 'attempt', 'round'):
+        assert attrs['mlflow.traceTag.' + key] == 'none'
+    assert attrs['mlflow.traceTag.node'] == '0'
 
 
 def test_trace_names_the_prompt_version_the_run_used(request_doc, monkeypatch, exporters, receiver):

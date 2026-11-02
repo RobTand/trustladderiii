@@ -107,6 +107,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (10, include_str!("../migrations/0010_change_feed.sql")),
     (11, include_str!("../migrations/0011_console_commands.sql")),
     (12, include_str!("../migrations/0012_prompts.sql")),
+    (13, include_str!("../migrations/0013_postmortems.sql")),
     (14, include_str!("../migrations/0014_memory_curations.sql")),
 ];
 
@@ -734,6 +735,14 @@ impl Store {
                 }
             }
         }
+        for owed in &change.postmortems {
+            tx.execute("INSERT INTO tl3_postmortems (node_id, trigger, reason, sample_share, repo, issue, title, revision, owed_at) SELECT $1, $2, $3, $4, $5, $6, $7, revision, committed_at FROM tl3_events WHERE revision = $8 ON CONFLICT (node_id, trigger) DO NOTHING",
+                &[&owed.node, &owed.trigger, &owed.reason, &owed.sample_share, &owed.repo, &owed.issue, &owed.title, &revision.get()])?;
+        }
+        for grade in &change.grades {
+            tx.execute("INSERT INTO tl3_code_grades (node_id, trigger, rubric_version, dimension, grade, fact, revision, recorded_at) SELECT $1, $2, $3, $4, $5, $6, revision, committed_at FROM tl3_events WHERE revision = $7 ON CONFLICT (node_id, trigger, rubric_version, dimension) DO NOTHING",
+                &[&grade.node, &grade.trigger, &grade.rubric_version, &grade.dimension, &grade.grade, &grade.fact, &revision.get()])?;
+        }
         boundary(
             &mut self.boundary_hook,
             SavePoint::CreditWritten,
@@ -848,6 +857,70 @@ impl Store {
                 &[&document, &node],
             )?
             .map(|r| r.get(0)))
+    }
+
+    /// The share of clean merges sampled for a postmortem: a stored setting (#403).
+    pub fn postmortem_sample_share(&mut self) -> Result<f64> {
+        Ok(self
+            .client
+            .query_opt(
+                "SELECT (value #>> '{}')::double precision FROM tl3_settings WHERE key = 'postmortem_sample_share'",
+                &[],
+            )?
+            .map_or(0.0, |row| row.get(0)))
+    }
+
+    /// A node's postmortems, oldest first.
+    pub fn postmortems(&mut self, node: &str) -> Result<Vec<PostmortemRecord>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT id, node_id, trigger, reason, sample_share, status FROM tl3_postmortems WHERE node_id = $1 ORDER BY id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| PostmortemRecord {
+                id: row.get(0),
+                node: row.get(1),
+                trigger: row.get(2),
+                reason: row.get(3),
+                sample_share: row.get(4),
+                status: row.get(5),
+            })
+            .collect())
+    }
+
+    /// A node's code grades, oldest first.
+    pub fn code_grades(&mut self, node: &str) -> Result<Vec<CodeGrade>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT node_id, trigger, rubric_version, dimension, grade, fact FROM tl3_code_grades WHERE node_id = $1 ORDER BY id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| CodeGrade {
+                node: row.get(0),
+                trigger: row.get(1),
+                rubric_version: row.get(2),
+                dimension: row.get(3),
+                grade: row.get(4),
+                fact: row.get(5),
+            })
+            .collect())
+    }
+
+    /// The phases a node entered, with milliseconds since the Unix epoch, oldest first.
+    pub fn phase_history(&mut self, node: &str) -> Result<Vec<(serde_json::Value, i64)>> {
+        Ok(self
+            .client
+            .query(
+                "SELECT phase, (extract(epoch FROM since) * 1000)::bigint FROM tl3_phase_history WHERE node_id = $1 ORDER BY since, id",
+                &[&node],
+            )?
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
     }
 
     /// Context committed with the kernel question and its notice delivery.
@@ -1141,6 +1214,8 @@ pub fn grant_reader(
          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
          DO $editor$ BEGIN CREATE ROLE tl3_prompt_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
          GRANT tl3_prompt_editor TO {role};
+         DO $editor$ BEGIN CREATE ROLE tl3_settings_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
+         GRANT tl3_settings_editor TO {role};
          ALTER ROLE {role} SET default_transaction_read_only = on;
          DO $grant$ BEGIN
              IF to_regprocedure('tl3_console_command(text, bigint, jsonb)') IS NOT NULL THEN

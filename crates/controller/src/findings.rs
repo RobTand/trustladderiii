@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FailedTest {
@@ -125,6 +126,99 @@ pub(crate) fn current_review<'a>(
     CurrentReview { head, findings }
 }
 
+pub(crate) const TITLE_CHARS: usize = 120;
+
+fn reviewed(item: &Value) -> Option<&str> {
+    if item["kind"] == "review_finding" {
+        item["reviewed_sha"].as_str()
+    } else {
+        None
+    }
+}
+
+// The round of the first later event that superseded the item at `index`: a review with
+// another commit supersedes a review, and any later review or check failure supersedes a
+// check failure.
+fn superseded_in(feedback: &[Value], rounds: &[u64], index: usize) -> u64 {
+    let sha = reviewed(&feedback[index]);
+    feedback[index + 1..]
+        .iter()
+        .zip(&rounds[index + 1..])
+        .find(|(later, _)| match sha {
+            Some(sha) => reviewed(later).is_some_and(|other| other != sha),
+            None => reviewed(later).is_some() || later["kind"] == "failed_check",
+        })
+        .map_or(rounds[index], |(_, round)| *round)
+}
+
+/// What a maker fix round is sent of the accumulated feedback (#316). Findings that a
+/// later review or check superseded shrink to a one-line record: kind, id, title and the
+/// round of the event that superseded them. The latest review, the reviewed head's
+/// findings and the check failure no later review has superseded keep their full text.
+/// The store keeps it all.
+///
+/// A round is one feedback event: a review (all its findings) or a check failure. The
+/// order is the append order of `maker_findings`, which only ever pushes.
+pub(crate) fn bounded_feedback(feedback: Vec<Value>, head: Option<&str>) -> Vec<Value> {
+    let last_review = feedback.iter().rposition(|item| reviewed(item).is_some());
+    let last_sha = last_review.and_then(|index| reviewed(&feedback[index]));
+    let last_check = feedback
+        .iter()
+        .rposition(|item| item["kind"] == "failed_check");
+    let mut review_rounds: Vec<(&str, u64)> = Vec::new();
+    let mut round = 0u64;
+    let rounds: Vec<u64> = feedback
+        .iter()
+        .map(|item| match reviewed(item) {
+            Some(sha) => match review_rounds.iter().find(|(seen, _)| *seen == sha) {
+                Some((_, round)) => *round,
+                None => {
+                    round += 1;
+                    review_rounds.push((sha, round));
+                    round
+                }
+            },
+            None => {
+                round += u64::from(item["kind"] == "failed_check");
+                round
+            }
+        })
+        .collect();
+    feedback
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let open = match reviewed(item) {
+                Some(sha) => Some(sha) == last_sha || Some(sha) == head,
+                None => {
+                    item["kind"] != "failed_check"
+                        || last_check == Some(index) && last_check > last_review
+                }
+            };
+            if open {
+                return item.clone();
+            }
+            let title = item["report"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty());
+            let mut record = serde_json::json!({
+                "kind": item["kind"], "goal_ids": item["goal_ids"],
+                "report": clipped(title.unwrap_or("(no text)"), TITLE_CHARS),
+                "resolved_round": superseded_in(&feedback, &rounds, index),
+            });
+            for field in ["id", "reviewed_sha"] {
+                if !item[field].is_null() {
+                    record[field] = item[field].clone();
+                }
+            }
+            record
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod selection_defects {
     use super::*;
@@ -145,5 +239,119 @@ mod selection_defects {
         let current = current_review(&feedback, 1, Some("a"));
         assert_eq!(current.head, Some("a"));
         assert_eq!(current.findings, vec![&feedback[0]]);
+    }
+}
+
+#[cfg(test)]
+mod bounded_feedback_defects {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn review(id: &str, sha: &str, report: &str) -> Value {
+        json!({"kind":"review_finding", "id":id, "reviewed_sha":sha, "report":report, "goal_ids":["g"]})
+    }
+    fn failed(report: &str) -> Value {
+        json!({"kind":"failed_check", "report":report, "goal_ids":[]})
+    }
+    fn long(tag: &str) -> String {
+        format!("{tag} problem: {}", "evidence ".repeat(200))
+    }
+    fn one_line(item: &Value, kind: &str, round: u64) {
+        assert_eq!(item["kind"], kind, "{item}");
+        assert_eq!(item["resolved_round"], round, "{item}");
+        assert!(
+            item["report"].as_str().unwrap().chars().count() <= 120,
+            "{item}"
+        );
+        assert!(item.get("failed_tests").is_none() && item.get("outside_paths").is_none());
+    }
+
+    #[test]
+    fn earlier_reviews_shrink_to_one_line_records_and_the_latest_stays_whole() {
+        let feedback = vec![
+            review("review-1-0", "a", &long("first")),
+            review("review-1-1", "a", &long("second")),
+            review("review-3-0", "b", &long("third")),
+            review("review-5-0", "c", &long("fourth")),
+        ];
+        let sent = bounded_feedback(feedback.clone(), Some("c"));
+        assert_eq!(sent.len(), 4, "no finding is dropped");
+        assert_eq!(sent[3], feedback[3], "the open finding keeps its full text");
+        for (item, id, sha, round, title) in [
+            (&sent[0], "review-1-0", "a", 2, "first problem"),
+            (&sent[1], "review-1-1", "a", 2, "second problem"),
+            (&sent[2], "review-3-0", "b", 3, "third problem"),
+        ] {
+            one_line(item, "review_finding", round);
+            assert_eq!(item["id"], id);
+            assert_eq!(item["reviewed_sha"], sha, "the id keeps its commit");
+            assert_eq!(item["goal_ids"], json!(["g"]));
+            assert!(
+                item["report"].as_str().unwrap().starts_with(title),
+                "{item}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_check_failure_before_a_later_review_is_resolved() {
+        let feedback = vec![
+            failed(&long("old check")),
+            review("review-2-0", "a", &long("review")),
+            failed(&long("new check")),
+        ];
+        let sent = bounded_feedback(feedback.clone(), None);
+        one_line(&sent[0], "failed_check", 2);
+        assert!(sent[0].get("id").is_none());
+        assert_eq!(sent[1], feedback[1], "the latest review is still open");
+        assert_eq!(sent[2], feedback[2], "a check failure after it is open");
+    }
+
+    #[test]
+    fn only_the_latest_check_failure_keeps_full_text() {
+        let feedback = vec![
+            failed(&long("same")),
+            failed(&long("same")),
+            failed(&long("last")),
+        ];
+        let sent = bounded_feedback(feedback.clone(), None);
+        one_line(&sent[0], "failed_check", 2);
+        one_line(&sent[1], "failed_check", 3);
+        assert_eq!(sent[2], feedback[2]);
+    }
+
+    #[test]
+    fn the_head_under_review_is_open_whatever_the_order() {
+        let feedback = vec![
+            review("review-1-0", "a", &long("head")),
+            review("review-3-0", "b", &long("later")),
+        ];
+        let sent = bounded_feedback(feedback.clone(), Some("a"));
+        assert_eq!(
+            sent, feedback,
+            "both are open: the reviewed head and the latest review"
+        );
+    }
+
+    #[test]
+    fn short_feedback_with_nothing_to_resolve_is_unchanged() {
+        let feedback = vec![
+            review("review-1-0", "a", "short"),
+            review("review-1-1", "a", "also short"),
+        ];
+        assert_eq!(bounded_feedback(feedback.clone(), Some("a")), feedback);
+        assert!(bounded_feedback(vec![], None).is_empty());
+    }
+
+    #[test]
+    fn a_title_is_the_first_line_clipped() {
+        let feedback = vec![
+            failed(&format!("{}\nsecond line", "x".repeat(300))),
+            failed("Checks failed.\nmore detail"),
+            failed("last"),
+        ];
+        let sent = bounded_feedback(feedback, None);
+        assert_eq!(sent[0]["report"].as_str().unwrap().chars().count(), 120);
+        assert_eq!(sent[1]["report"], "Checks failed.");
     }
 }

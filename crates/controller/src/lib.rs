@@ -27,6 +27,8 @@ pub mod looks;
 mod loom_tests;
 pub mod memory;
 mod notices;
+mod postmortems;
+pub mod priority;
 pub mod production;
 pub mod prompts;
 mod question_findings;
@@ -204,6 +206,10 @@ pub struct LabelledIssue {
     pub title: String,
     pub actor: u64,
     pub label: String,
+    /// The issue's labels when it was labelled, for its priority (#416, #417).
+    /// Omitted when empty, so stored inputs keep their older shape (#375).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Request {
@@ -216,6 +222,10 @@ struct Request {
     source: Option<String>,
     #[serde(default)]
     proposed: Option<adoption::ProposedPullRequest>,
+    /// P0–P3 from the issue, read once at intake (#416); `None` for unranked
+    /// and older rows, and omitted then so the row keeps its older shape (#375).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    priority: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -234,6 +244,8 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
+    /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
+    priority_reserve: BTreeMap<u8, u8>,
 }
 impl Controller {
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
@@ -299,6 +311,7 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
+            priority_reserve: BTreeMap::new(),
         };
         controller.reconcile_capacity()?;
         controller.cleanup_ended_looks()?;
@@ -419,6 +432,13 @@ impl Controller {
     }
     pub fn world(&mut self) -> Result<World> {
         snapshot::decode(&self.store.load()?)
+    }
+
+    /// The starting credit reserve by priority (#416). Off by default.
+    pub fn set_priority_credit_reserve(&mut self, limits: &tl3_config::Limits) {
+        self.priority_reserve = (0..=3)
+            .filter_map(|priority| Some((priority, limits.credit_reserve_for(Some(priority))?)))
+            .collect();
     }
 
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
@@ -597,6 +617,7 @@ impl Controller {
                     issue_id,
                     source,
                     proposed,
+                    priority: priority::issue_priority(&issue.title, &issue.labels),
                 }),
             ));
             return Ok(Some(event));
@@ -1449,6 +1470,7 @@ impl Controller {
             .extend(snapshot::changes(&before, snapshot::encode(&world)?));
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
+        self.record_postmortems(snapshot, &previous, &world, commit)?;
         self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
@@ -1568,7 +1590,15 @@ impl Controller {
                             .find(|r| r.table == "plans" && r.id == node.0.to_string())
                             .map(|r| r.value.clone())
                     });
-                let mut context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                let mut context = json!({"node": node, "question": question, "kind": n.question.map(|q| q.kind), "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                // #403: every question to Rob owes a postmortem.
+                commit.postmortems.push(postmortems::owed(
+                    snapshot,
+                    node,
+                    format!("question:{question}"),
+                    postmortems::Reason::Escalation,
+                    None,
+                )?);
                 // #322: Rob sees the deciding worker's findings, not only the question kind.
                 let written = |table: &str| {
                     commit.rows.iter().rev().find_map(|row| match row {
@@ -1759,6 +1789,16 @@ impl Controller {
                                 .unwrap_or("worker run failed")
                         ));
                     }
+                }
+                if needs_rob {
+                    // #403: an incident that needs Rob owes a postmortem.
+                    commit.postmortems.push(postmortems::owed(
+                        snapshot,
+                        node,
+                        format!("incident:{id}"),
+                        postmortems::Reason::Escalation,
+                        None,
+                    )?);
                 }
                 commit.rows.push(put(
                     "incidents",
@@ -2965,7 +3005,39 @@ impl Controller {
                 .rows
                 .push(put("maker_findings", node.0.to_string(), findings));
         }
-        Ok(Some(event))
+        Ok(Some(self.priority_reserve(snapshot, event)?))
+    }
+
+    /// #416: the kernel starts credit at the ingest size plus its reserve of 3.
+    /// A configured priority reserve adds its excess to the size, so the kernel
+    /// stays unchanged; it reads the size only for starting credit.
+    fn priority_reserve(&self, snapshot: &Snapshot, event: Event) -> Result<Event> {
+        let Event::Reply {
+            node,
+            generation,
+            reply: Reply::IngestDone { size },
+        } = event
+        else {
+            return Ok(event);
+        };
+        if self.priority_reserve.is_empty() {
+            return Ok(event);
+        }
+        let Some(reserve) = request(snapshot, node)?
+            .priority
+            .and_then(|priority| self.priority_reserve.get(&priority))
+        else {
+            return Ok(event);
+        };
+        let extra = u8::try_from(u32::from(*reserve).saturating_sub(tl3_kernel::RESERVE))
+            .unwrap_or(u8::MAX);
+        Ok(Event::Reply {
+            node,
+            generation,
+            reply: Reply::IngestDone {
+                size: size.saturating_add(extra),
+            },
+        })
     }
     fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
         tl3_worktrees::CommitId::new(sha)?;
@@ -3177,3 +3249,37 @@ mod git_tests;
 #[allow(dead_code)]
 #[path = "../../store/tests/support/mod.rs"]
 mod store_support;
+
+#[cfg(test)]
+mod stored_shape_tests {
+    use super::*;
+
+    // #375: persisted rows replay across releases. #416's new fields appear only
+    // when set, so a request or input written today matches the old shape.
+    #[test]
+    fn old_request_rows_decode_and_new_fields_serialize_only_when_set() {
+        let old = json!({
+            "repo": {"owner": "owner", "name": "sandbox", "installation": 3},
+            "issue": 12, "title": "Fix", "issue_id": 99, "source": null, "proposed": null,
+        });
+        let request: Request = decode_stored(old.clone()).unwrap();
+        assert_eq!(request.priority, None);
+        assert_eq!(json!(request), old);
+        let ranked = Request {
+            priority: Some(1),
+            ..request
+        };
+        assert_eq!(json!(ranked)["priority"], 1);
+    }
+
+    #[test]
+    fn labelled_issues_serialize_labels_only_when_present() {
+        let old = json!({
+            "delivery": "label", "owner": "owner", "repo": "sandbox", "installation": 3,
+            "number": 12, "title": "Fix", "actor": 42, "label": "tl3",
+        });
+        let issue: LabelledIssue = serde_json::from_value(old.clone()).unwrap();
+        assert!(issue.labels.is_empty());
+        assert_eq!(json!(issue), old);
+    }
+}
