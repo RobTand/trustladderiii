@@ -18,6 +18,7 @@ fn draft() -> Draft {
         recommended_option: Some(0),
         recommendation_reason: "The free image avoids a licensing delay.".into(),
         how_to_answer: "Reply with option one or two in this conversation.".into(),
+        decision: None,
     }
 }
 
@@ -720,4 +721,52 @@ fn request_vocabulary_does_not_exempt_other_words_or_rules() {
             .contains(&Violation::InternalVocabulary)
     );
     assert!(check_prose("For \"Fix the Leaf\", work can continue.", &policy).is_err());
+}
+
+#[test]
+fn decision_is_rendered_as_one_question_after_the_cause() {
+    // #322: Rob sees why work stopped, then the one decision it needs.
+    let mut draft = draft();
+    draft.decision = Some("May I use a free image in place of your artwork?".into());
+    let message = check(&draft, &Policy::default()).unwrap();
+    let text = message.as_str();
+    let obstacle = text.find(&draft.obstacle).unwrap();
+    let decision = text
+        .find("May I use a free image in place of your artwork?")
+        .expect("the decision is part of the question");
+    assert!(obstacle < decision && decision < text.find("1. ").unwrap());
+}
+
+#[test]
+fn decision_must_be_one_plain_question() {
+    for decision in [
+        "Choose the free image.",
+        "May I use a free image? Or wait?",
+        "   ",
+        "May I edit tests/test_artwork_loader.py as well?",
+    ] {
+        let mut draft = draft();
+        draft.decision = Some(decision.into());
+        assert!(
+            check(&draft, &Policy::default()).is_err(),
+            "{decision:?} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn the_question_body_has_a_hard_size_cap() {
+    // #322: findings are summarised, never pasted, even in one long sentence.
+    let mut long_obstacle = draft();
+    long_obstacle.obstacle = format!("The design {} needs permission.", "really ".repeat(100));
+    assert!(
+        check(&long_obstacle, &Policy::default()).is_err(),
+        "long obstacle"
+    );
+    let mut long_decision = draft();
+    long_decision.decision = Some(format!("May I use {} free image?", "a very ".repeat(70)));
+    assert!(
+        check(&long_decision, &Policy::default()).is_err(),
+        "long decision"
+    );
 }
