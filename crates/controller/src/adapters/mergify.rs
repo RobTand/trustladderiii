@@ -564,9 +564,21 @@ impl Adapter {
             // The checks read before the edit are stale; the next read decides.
             return Ok((state, Vec::new()));
         }
+        let snapshot = self
+            .store
+            .as_ref()
+            .map(|store| tl3_store::Store::open(store)?.load())
+            .transpose()?;
         let facts = self
             .runtime
-            .block_on(queue_facts(github, &delivery.repository, &state, head, &[]))?
+            .block_on(queue_facts(
+                github,
+                &delivery.repository,
+                &state,
+                head,
+                &[],
+                snapshot.as_ref(),
+            ))?
             .into_iter()
             .map(Observation::Queue)
             .collect();
@@ -1143,6 +1155,7 @@ async fn queue_facts(
     state: &tl3_mergify::Observation,
     expected_head: &str,
     open: &[RequiredCheck],
+    snapshot: Option<&Snapshot>,
 ) -> Result<Vec<QueueFact>> {
     let pull = &state.pull_request;
     if is_merge_queue_pr(pull) {
@@ -1239,15 +1252,23 @@ async fn queue_facts(
                     },
                 }),
         );
-        if let Some(mut evidence) = checks.evidence(pull) {
-            if let Evidence::CiFailed { details, .. } = &mut evidence {
-                *details = ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
-            }
-            facts.push(QueueFact {
+        if let Some(evidence) = checks.evidence(pull) {
+            let mut fact = QueueFact {
                 repository: repo.clone(),
                 number: pull.number,
                 evidence,
-            });
+            };
+            if !snapshot
+                .map(|snapshot| fact.recorded(snapshot))
+                .transpose()?
+                .unwrap_or(false)
+            {
+                if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
+                    *details =
+                        ci_evidence::read_checks(github, &repo_name, &state.check_runs).await;
+                }
+                facts.push(fact);
+            }
             return Ok(facts);
         }
     }
@@ -1312,15 +1333,23 @@ async fn queue_facts(
         }),
         _ => None,
     };
-    let mut evidence = evidence;
-    if let Some(Evidence::CiFailed { details, .. }) = &mut evidence {
-        *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
+    if let Some(evidence) = evidence {
+        let mut fact = QueueFact {
+            repository: repo.clone(),
+            number: pull.number,
+            evidence,
+        };
+        if !snapshot
+            .map(|snapshot| fact.recorded(snapshot))
+            .transpose()?
+            .unwrap_or(false)
+        {
+            if let Evidence::CiFailed { details, .. } = &mut fact.evidence {
+                *details = ci_evidence::read_queue(github, &full_name(repo), state).await;
+            }
+            facts.push(fact);
+        }
     }
-    facts.extend(evidence.into_iter().map(|evidence| QueueFact {
-        repository: repo.clone(),
-        number: pull.number,
-        evidence,
-    }));
     Ok(facts)
 }
 fn checks_passed(checks: &[CheckRun], sha: &str) -> bool {
@@ -1538,6 +1567,7 @@ impl Translator {
                         &state,
                         &head,
                         &[],
+                        Some(snapshot),
                     ))?);
                 }
             }
@@ -1572,7 +1602,7 @@ impl Translator {
                             .runtime
                             .block_on(github.pull_request(&full_name(repo), pull_request.number))?;
                         if current.merged_at.is_some() {
-                            facts.extend(self.look(github, repo, item)?);
+                            facts.extend(self.look(github, repo, item, snapshot)?);
                         } else {
                             facts.extend(person_facts(repo, pull_request.number, &events, false));
                         }
@@ -1613,7 +1643,7 @@ impl Translator {
                 }) {
                     let pending = pending_enqueues(snapshot, repo, item.number)?;
                     if queue_event || !pending.is_empty() && item.approved == check_run.head_sha {
-                        facts.extend(self.look(github, repo, item)?);
+                        facts.extend(self.look(github, repo, item, snapshot)?);
                         if !queue_event {
                             wake.extend(pending);
                         }
@@ -1632,14 +1662,14 @@ impl Translator {
                 }) {
                     let pending = pending_enqueues(snapshot, repo, item.number)?;
                     if !pending.is_empty() {
-                        facts.extend(self.look(github, repo, item)?);
+                        facts.extend(self.look(github, repo, item, snapshot)?);
                         wake.extend(pending);
                     }
                 }
             }
             Event::MergeGroup { .. } => {
                 for item in &open {
-                    facts.extend(self.look(github, repo, item)?);
+                    facts.extend(self.look(github, repo, item, snapshot)?);
                 }
             }
             _ => {}
@@ -1647,7 +1677,13 @@ impl Translator {
         wake.extend(facts.into_iter().map(QueueFact::input));
         Ok(wake)
     }
-    fn look(&self, github: &GitHub, repo: &Repository, item: &Tracked) -> Result<Vec<QueueFact>> {
+    fn look(
+        &self,
+        github: &GitHub,
+        repo: &Repository,
+        item: &Tracked,
+        snapshot: &Snapshot,
+    ) -> Result<Vec<QueueFact>> {
         let state = self.runtime.block_on(read_queue(
             github,
             &full_name(repo),
@@ -1660,6 +1696,7 @@ impl Translator {
             &state,
             &item.approved,
             &item.missing,
+            Some(snapshot),
         ))
     }
     pub fn catch_up(
@@ -1702,12 +1739,13 @@ impl Translator {
                     &state,
                     &head,
                     &[],
+                    Some(snapshot),
                 ))?);
             }
         }
         for item in tracked(snapshot, repo, false)? {
             // Reread tracked PRs even when their updated_at is outside the catch-up window.
-            facts.extend(self.look(github, repo, &item)?);
+            facts.extend(self.look(github, repo, &item, snapshot)?);
             let pull = self
                 .runtime
                 .block_on(github.pull_request(&full_name(repo), item.number))?;

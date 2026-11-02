@@ -825,7 +825,7 @@ impl GitHub {
 
     /// Read only a bounded tail. GitHub redirects job logs to a signed blob;
     /// that second request carries no installation credential.
-    pub async fn job_log_tail(&self, repo: &str, job: u64) -> Result<String, Error> {
+    pub async fn job_log_tail(&self, repo: &str, job: u64) -> Result<JobLogTail, Error> {
         const CAP: usize = 64 * 1024;
         let token = self.installation_token().await?;
         let path = format!("{}/actions/jobs/{job}/logs", repo_path(repo)?);
@@ -892,6 +892,21 @@ impl GitHub {
                 status: response.status().as_u16(),
             });
         }
+        let full_range = || -> Option<bool> {
+            let range = response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)?
+                .to_str()
+                .ok()?;
+            let (bounds, total) = range.strip_prefix("bytes ")?.split_once('/')?;
+            let (start, end) = bounds.split_once('-')?;
+            Some(
+                start.parse::<u64>().ok()? == 0
+                    && end.parse::<u64>().ok()?.checked_add(1) == Some(total.parse::<u64>().ok()?),
+            )
+        };
+        let partial =
+            response.status() == StatusCode::PARTIAL_CONTENT && full_range() != Some(true);
         let mut tail = Vec::new();
         let mut read = 0;
         while let Some(chunk) = response.chunk().await.map_err(|_| Error::Transport)? {
@@ -904,13 +919,19 @@ impl GitHub {
                 tail.drain(..tail.len() - CAP);
             }
         }
+        let truncated = partial || read > CAP;
         // A partial first line cannot establish a failing test ID.
-        if read > CAP
-            && let Some(newline) = tail.iter().position(|byte| *byte == b'\n')
-        {
-            tail.drain(..=newline);
+        if truncated {
+            let first_line = tail
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(tail.len(), |newline| newline + 1);
+            tail.drain(..first_line);
         }
-        Ok(String::from_utf8_lossy(&tail).into_owned())
+        Ok(JobLogTail {
+            text: String::from_utf8_lossy(&tail).into_owned(),
+            truncated,
+        })
     }
 
     pub async fn required_status_checks(

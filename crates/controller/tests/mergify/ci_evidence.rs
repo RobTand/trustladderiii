@@ -49,10 +49,18 @@ impl Fixture {
             }
             "/repos/owner/sandbox/actions/jobs/125550020549/logs" => {
                 if self.log == "range-truncated" {
+                    let log = format!(
+                        "old fragment\n{}",
+                        include_str!("../fixtures/mergify/pb2625/gate.log")
+                    );
+                    let total = 90000 + log.len();
                     return Some(
                         ResponseTemplate::new(206)
-                            .insert_header("content-range", "bytes 90000-99999/100000")
-                            .set_body_string(include_str!("../fixtures/mergify/pb2625/gate.log")),
+                            .insert_header(
+                                "content-range",
+                                format!("bytes 90000-{}/{}", total - 1, total),
+                            )
+                            .set_body_string(log),
                     );
                 }
                 if self.log == "unavailable" {

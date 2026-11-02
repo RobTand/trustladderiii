@@ -3,8 +3,61 @@ use crate::findings::{self, CiFailure, FailedTest, QueueCiEvidence};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 
+fn terminal_text(text: &str) -> String {
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        String,
+        StringEscape,
+    }
+    let mut state = State::Text;
+    let mut clean = String::with_capacity(text.len());
+    for ch in text.chars() {
+        state = match state {
+            State::Text => match ch {
+                '\x1b' => State::Escape,
+                '\u{009b}' => State::Csi,
+                '\u{0090}' | '\u{0098}' | '\u{009d}' | '\u{009e}' | '\u{009f}' => State::String,
+                _ => {
+                    if ch == '\r' {
+                        clean.push('\n');
+                    } else if !ch.is_control() || matches!(ch, '\n' | '\t') {
+                        clean.push(ch);
+                    }
+                    State::Text
+                }
+            },
+            State::Escape => match ch {
+                '[' => State::Csi,
+                ']' | 'P' | 'X' | '^' | '_' => State::String,
+                '\x1b' | ' '..='/' => State::Escape,
+                _ => State::Text,
+            },
+            State::Csi => {
+                if ('@'..='~').contains(&ch) {
+                    State::Text
+                } else {
+                    State::Csi
+                }
+            }
+            State::String => match ch {
+                '\x07' | '\u{009c}' => State::Text,
+                '\x1b' => State::StringEscape,
+                _ => State::String,
+            },
+            State::StringEscape => match ch {
+                '\\' | '\u{009c}' => State::Text,
+                '\x1b' => State::StringEscape,
+                _ => State::String,
+            },
+        };
+    }
+    clean
+}
+
 fn safe(text: &str, cap: usize) -> String {
-    findings::clipped(&crate::memory::redact_text(text), cap)
+    findings::clipped(&crate::memory::redact_text(&terminal_text(text)), cap)
 }
 
 pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
@@ -111,8 +164,12 @@ pub(super) async fn read_checks(
             // used to build a fixed API endpoint; external URLs are evidence.
             match github.job_log_tail(repo, check.id).await {
                 Ok(log) => {
+                    details.complete &= !log.truncated;
                     text.push('\n');
-                    text.push_str(&log);
+                    text.push_str(&log.text);
+                    if log.truncated {
+                        text.push_str("\nJob log truncated; earlier failures may be missing.");
+                    }
                 }
                 Err(error) => {
                     details.complete = false;
@@ -120,8 +177,9 @@ pub(super) async fn read_checks(
                 }
             }
         }
+        let text = terminal_text(&text);
         let parsed = failures(&text);
-        details.complete &= parsed.len() <= findings::MAX_FAILED_TESTS;
+        details.complete &= !parsed.is_empty() && parsed.len() <= findings::MAX_FAILED_TESTS;
         let log_lines = parsed
             .iter()
             .map(|test| test.message.as_str())

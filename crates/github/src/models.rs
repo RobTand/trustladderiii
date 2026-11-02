@@ -103,6 +103,12 @@ pub struct CheckRun {
     pub check_suite: Option<CheckSuiteId>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobLogTail {
+    pub text: String,
+    pub truncated: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckSuiteId {
     pub id: u64,
