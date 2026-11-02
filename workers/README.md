@@ -296,6 +296,15 @@ The worker asks for a JSON object directly and validates it against the schema.
 It does not use structured-output tool calls or model repair loops, so no
 implicit output tool or extra model turn can change the declared role tools.
 
+Every role prompt says: "Reply with one JSON object only: no prose, no code
+fences." Claude models still sometimes wrap the object in prose or a fence
+(tl3-sandbox#229, #230). The reply is parsed as strict JSON first. Otherwise
+the worker takes the one closed ``` or ```json block, or else the one
+outermost object in the text. The extracted text goes through the same strict
+parser, so duplicate keys and non-finite numbers still fail. Two candidates fail
+as "reply has more than one JSON object", and no candidate fails as "reply is
+not one JSON object". Both are reply-level diagnostics, not "invalid worker data".
+
 ## Add a role
 
 The runtime and CLI look up `roles.ROLES`. A `Role` declares its prompt filename,

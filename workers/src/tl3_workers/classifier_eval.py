@@ -13,7 +13,7 @@ import tomllib
 from langchain_core.messages import AIMessage, HumanMessage
 
 from tl3_workers import runtime
-from tl3_workers.contracts import read_json, validate
+from tl3_workers.contracts import read_json, read_reply, validate
 from tl3_workers.roles.classifier import ROLE, check_reply
 
 
@@ -103,7 +103,7 @@ def _score(case, message):
     row = {**case, 'reply': None, 'usage': _usage(message), 'error': None,
            'correct': False, 'destructive': False}
     try:
-        row['reply'] = read_json(message.text)
+        row['reply'] = read_reply(message.text)
     except Exception:
         row['error'] = 'invalid_json'
         return row

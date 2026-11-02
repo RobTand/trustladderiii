@@ -90,7 +90,7 @@ class SchemaFollowingModel(FakeMessagesListChatModel):
         message = result.generations[0].message
         reply = json.loads(message.content)
         prompt = next(m.content for m in messages if m.type == 'system')
-        proposal = json.loads(prompt.rsplit('Reply with one JSON object matching this schema:\\n', 1)[1])
+        proposal = json.loads(prompt.rsplit('Reply with one JSON object only: no prose, no code fences. It must match this schema:\\n', 1)[1])
         variant = next(v for v in proposal['oneOf']
                        if v['properties']['kind']['const'] == reply['kind'])
         for name, value in FIELDS.items():

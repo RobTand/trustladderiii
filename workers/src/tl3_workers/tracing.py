@@ -127,6 +127,7 @@ def failure_tags(error):
         "missing final model reply", "reply cites a memory it was not given",
         "only code may supply a forecast", "sized briefs must declare their root files",
         "duplicate JSON key", "non-finite JSON number",
+        "reply is not one JSON object", "reply has more than one JSON object",
         "ingest input exceeds exploration budget", "audit input exceeds exploration budget",
         "maker input exceeds exploration budget",
         "declared files must use canonical relative paths",
