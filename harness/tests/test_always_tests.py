@@ -189,3 +189,20 @@ def test_harness_also_bounds_always_tests_before_execution(repo):
     entries = tuple(f'tests/test_rule_{n}.py' for n in range(21))
     with pytest.raises(HarnessInputError, match='always_tests.*at most 20'):
         execution.run_checks(repo, base, base, PLAN, container=CONTAINER, always_tests=entries)
+
+
+@pytest.mark.parametrize('head_removes_test', [False, True])
+def test_collection_budget_refusal_is_not_evidence_of_a_stale_node(repo, head_removes_test):
+    (repo / RULE).write_text(
+        'import pytest\n@pytest.mark.parametrize("value", [1], ids=["x" * (4 * 1024 * 1024)])\n'
+        'def test_rule(value):\n    assert value == 1\n')
+    base = save(repo)
+    if head_removes_test:
+        (repo / RULE).write_text('def test_replacement():\n    assert True\n')
+    head = save(repo) if head_removes_test else base
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER,
+                                   always_tests=(RULE + '::test_rule',))
+    test, = results[1].tests
+    assert results[1].verdict == Verdict.FAIL and not test.passed
+    assert 'stale' not in test.message
+    assert ('Restore the existing test' if head_removes_test else '4194304') in test.message
