@@ -7,12 +7,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+from jsonschema import ValidationError
 from langchain_openai import ChatOpenAI
 
 from tl3_workers.contracts import read_json, read_reply, validate
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import build_tools
+from tl3_workers.turns import TurnControl, repaired
 
 
 def check_reply(inputs, reply):
@@ -53,7 +55,8 @@ def run(model, request, worktree, emit):
 
     if isinstance(model, ChatOpenAI):
         model.stream_usage = True
-    agent = build_agent(model, ROLE, worktree)
+    control = TurnControl()
+    agent = build_agent(model, ROLE, worktree, control=control)
     characters = ContextCharacters()
     session = Path(request["session_file"]) if "session_file" in request else None
     saved = read_json(session.read_text()) if session and session.exists() else None
@@ -88,46 +91,65 @@ def run(model, request, worktree, emit):
             save(session, state)
         for message in results:
             emit({"event": "progress", "unit": "tool_result"})
-    stream = agent.stream({"messages": history}, config={"callbacks": [characters]},
-                          stream_mode="updates")
-    reply = None
+    def ask():
+        stream = agent.stream({"messages": list(history)}, config={"callbacks": [characters]},
+                              stream_mode="updates")
+        last_message = None
+        try:
+            for update in stream:
+                messages = [message for result in update.values() if isinstance(result, dict)
+                            for message in result.get("messages", [])]
+                history.extend(messages)
+                for message in messages:
+                    if isinstance(message, AIMessage) and out_of_room(
+                            message, request["inputs"].get("context_size", 150_000), characters.prompt):
+                        state["out_of_room"] = True
+                        state["messages"] = messages_to_dict(history)
+                        if session:
+                            save(session, state)
+                        raise _OutOfRoom()
+                    if isinstance(message, AIMessage) and session is None:
+                        emit({"event": "progress", "unit": "model_turn"})
+                    if isinstance(message, AIMessage) and not message.tool_calls:
+                        if message.invalid_tool_calls:
+                            raise ValueError("invalid reviewer tool calls")
+                        last_message = message
+                        # Save a valid reply with its turn, so a crash after it costs no model call.
+                        try:
+                            state["reply"] = checked[message.text] = check(message.text)
+                        except (ValueError, ValidationError):
+                            pass
+                state["messages"] = messages_to_dict(history)
+                if session:
+                    save(session, state)
+                for message in messages:
+                    if isinstance(message, AIMessage) and session is not None:
+                        emit({"event": "progress", "unit": "model_turn"})
+                    elif isinstance(message, ToolMessage):
+                        emit({"event": "progress", "unit": "tool_result"})
+        finally:
+            stream.close()
+        if last_message is None:
+            raise ValueError("missing final reviewer reply")
+        return last_message.text
+
+    def check(text):
+        reply = read_reply(text)
+        validate("reviewer-reply", reply)
+        if reply["verdict"] == "out_of_room":
+            raise ValueError("model cannot report reviewer exhaustion")
+        check_reply(request["inputs"], reply)
+        return reply
+
+    checked = {}
     try:
-        for update in stream:
-            messages = [message for result in update.values() if isinstance(result, dict)
-                        for message in result.get("messages", [])]
-            history.extend(messages)
-            for message in messages:
-                if isinstance(message, AIMessage) and out_of_room(
-                        message, request["inputs"].get("context_size", 150_000), characters.prompt):
-                    state["out_of_room"] = True
-                    state["messages"] = messages_to_dict(history)
-                    if session:
-                        save(session, state)
-                    return {"verdict": "out_of_room"}
-                if isinstance(message, AIMessage) and session is None:
-                    emit({"event": "progress", "unit": "model_turn"})
-                if isinstance(message, AIMessage) and not message.tool_calls:
-                    if message.invalid_tool_calls:
-                        raise ValueError("invalid reviewer tool calls")
-                    reply = read_reply(message.text)
-                    validate("reviewer-reply", reply)
-                    if reply["verdict"] == "out_of_room":
-                        raise ValueError("model cannot report reviewer exhaustion")
-                    check_reply(request["inputs"], reply)
-                    state["reply"] = reply
-            state["messages"] = messages_to_dict(history)
-            if session:
-                save(session, state)
-            for message in messages:
-                if isinstance(message, AIMessage) and session is not None:
-                    emit({"event": "progress", "unit": "model_turn"})
-                elif isinstance(message, ToolMessage):
-                    emit({"event": "progress", "unit": "tool_result"})
-    finally:
-        stream.close()
-    if reply is None:
-        raise ValueError("missing final reviewer reply")
-    return reply
+        return repaired(control, history, ask, lambda text: checked.get(text) or check(text))
+    except _OutOfRoom:
+        return {"verdict": "out_of_room"}
+
+
+class _OutOfRoom(Exception):
+    pass
 
 
 ROLE = Role(

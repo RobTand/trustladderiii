@@ -1125,6 +1125,12 @@ def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limi
 
 
 def failure_tags(error):
+    from tl3_workers.turns import InvalidReply, Unrepairable
+
+    if isinstance(error, InvalidReply):
+        first, second = (failure_tags(item)["failure_message"] for item in error.errors)
+        return {"failure_class": "InvalidReply",
+                "failure_message": f"invalid reply: {first}; repaired reply: {second}"[:512]}
     # Only fixed diagnostics may accompany the exception class. Provider errors
     # and validation errors can embed credentials, repository text or replies.
     safe_messages = {
@@ -1152,7 +1158,7 @@ def failure_tags(error):
         message = f"schema validation failed: {error.validator} at schema {path}"
     elif isinstance(error, ValueError):
         message = "invalid worker data"
-        if (type(error) is ValueError and len(error.args) == 1
+        if (type(error) in (ValueError, Unrepairable) and len(error.args) == 1
                 and isinstance(error.args[0], str) and error.args[0] in safe_messages):
             message = error.args[0]
     elif isinstance(error, OSError):

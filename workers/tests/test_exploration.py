@@ -65,8 +65,11 @@ def test_failed_run_summary_keeps_safe_diagnostic(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="reply cites a memory it was not given"):
         runtime.run({"role": "ingest", "worktree": str(tmp_path), "inputs": {},
                      "memory": {"summary_file": str(path)}}, lambda _: None)
+    # The reply is invalid again after its repair turn, so both checks are kept.
     assert json.loads(path.read_text())["reason"] == {
-        "failure_class": "ValueError", "failure_message": "reply cites a memory it was not given"}
+        "failure_class": "InvalidReply",
+        "failure_message": ("invalid reply: reply cites a memory it was not given; "
+                            "repaired reply: reply cites a memory it was not given")}
 
 
 @pytest.mark.parametrize("role,reply", [("ingest", BRIEF), ("audit", AGREE)])

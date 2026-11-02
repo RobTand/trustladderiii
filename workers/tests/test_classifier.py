@@ -105,7 +105,8 @@ def test_restart_needs_a_restartable_request(tmp_path, request_doc, state, reply
     request_doc["inputs"]["state"].update(state)
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 @pytest.mark.parametrize("kind,answers,body,answer,data", [
@@ -155,7 +156,8 @@ def test_invalid_classification_never_leaves_worker(tmp_path, request_doc, state
     request_doc["inputs"]["state"].update(state)
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
     assert result.stderr.strip().endswith("tl3_workers: run failed")
 
 
@@ -196,7 +198,8 @@ def test_invalid_payload_rejected_through_protocol(tmp_path, request_doc, reply)
     request_doc["inputs"]["state"]["closed"] = reply["kind"] == "complaint"
     result = start_worker(tmp_path, request_doc, [{"content": json.dumps(reply)}])
     assert result.exit_code == 1
-    assert result.events == [{"event": "progress", "unit": "model_turn"}]
+    # The invalid reply gets one repair turn, which the fake answers the same way.
+    assert result.events == [{"event": "progress", "unit": "model_turn"}] * 2
 
 
 def test_unsure_question_at_length_limit_through_protocol(tmp_path, request_doc):
