@@ -12,6 +12,21 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_a_live_server_cannot_hide_another_fixture_that_disappeared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary, 'tl3-store-pg-live')
+            (fixture / 'data').mkdir(parents=True)
+            (fixture / 'fixture.pid').write_text('42')
+            (fixture / 'data/postmaster.pid').write_text('99')
+            with patch.dict(os.environ, {'TMPDIR': temporary}):
+                sampler = rust_gate.PostgresCpu()
+            with patch.object(rust_gate, 'process_cpu_sample', return_value=(1.0, 100)):
+                self.assertEqual(sampler.sample(42), (1.0, ''))
+                sampler.observe('embedded Postgres cached setup (fsync=true): 0.01s')
+                delta, reason = sampler.sample(42)
+            self.assertEqual(delta, 0)
+            self.assertTrue(reason, 'a missing second postmaster must force a wall fallback')
+
     def test_captured_libtest_output_reports_a_missing_postgres_server(self):
         with tempfile.TemporaryDirectory() as temporary:
             executable = Path(temporary, 'fixture.py')
