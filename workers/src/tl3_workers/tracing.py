@@ -1291,7 +1291,8 @@ class SpanLog:
         if path:
             self.fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o600)
         else:
-            self.fd = os.dup(tempfile.TemporaryFile().fileno())
+            self.file = tempfile.TemporaryFile()
+            self.fd = self.file.fileno()
         self.wake = self.shipper = None
 
     def append(self, record):
@@ -1455,8 +1456,8 @@ def ship(fd, path):
                 signal.signal(signal.SIGALRM, expired)
                 signal.alarm(5)
             size = os.fstat(fd).st_size
-            sent, final = shipper.send(os.pread(fd, size - offset, offset))
-            offset += sent
+            sent, finished = shipper.send(os.pread(fd, size - offset, offset))
+            offset, final = offset + sent, final or finished
             if ended:
                 break
         if final:
