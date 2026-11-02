@@ -757,10 +757,16 @@ fn decision_must_be_one_plain_question() {
 #[test]
 fn the_question_body_has_a_hard_size_cap() {
     // #322: findings are summarised, never pasted, even in one long sentence.
-    let mut draft = draft();
-    draft.obstacle = format!("The design {} needs permission.", "really ".repeat(100));
-    assert!(check(&draft, &Policy::default()).is_err(), "long obstacle");
-    let mut draft = draft();
-    draft.decision = Some(format!("May I use {} free image?", "a very ".repeat(70)));
-    assert!(check(&draft, &Policy::default()).is_err(), "long decision");
+    let mut long_obstacle = draft();
+    long_obstacle.obstacle = format!("The design {} needs permission.", "really ".repeat(100));
+    assert!(
+        check(&long_obstacle, &Policy::default()).is_err(),
+        "long obstacle"
+    );
+    let mut long_decision = draft();
+    long_decision.decision = Some(format!("May I use {} free image?", "a very ".repeat(70)));
+    assert!(
+        check(&long_decision, &Policy::default()).is_err(),
+        "long decision"
+    );
 }
