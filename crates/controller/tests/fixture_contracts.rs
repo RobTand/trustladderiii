@@ -1,3 +1,5 @@
+#[path = "support/scenario_shard.rs"]
+mod scenario_shard;
 mod support;
 
 use std::{
@@ -254,4 +256,29 @@ fn assert_delivery_methods(
         .map(|method| (selected, method, d.key.clone()))
     );
     calls.lock().unwrap().clear();
+}
+
+#[test]
+fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups() {
+    let mut groups = vec![2, 6, 4, 4, 2, 9, 8, 3, 4, 5, 7];
+    groups.extend([1; 29]);
+    let mut owners = vec![0; groups.len()];
+    let mut loads = Vec::new();
+    for index in 0..4 {
+        let mut shard = scenario_shard::Shard::new(index, 4);
+        let mut load = 0;
+        for (group, markers) in groups.iter().copied().enumerate() {
+            shard.run(markers, || {
+                owners[group] += 1;
+                load += markers;
+            });
+        }
+        loads.push(load);
+    }
+    assert!(owners.iter().all(|owners| *owners == 1), "{owners:?}");
+    assert_eq!(loads.iter().sum::<usize>(), 83);
+    assert!(
+        loads.iter().max().unwrap() - loads.iter().min().unwrap() <= 1,
+        "fixture group sizes must inform the partition: {loads:?}"
+    );
 }

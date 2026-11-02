@@ -21,10 +21,16 @@ impl Shard {
             total > 0 && index < total,
             "invalid Bazel shard index/count"
         );
+        Self::new(index, total)
+    }
+
+    pub fn new(index: usize, total: usize) -> Self {
         Self {
             index,
             total,
-            ..Self::unsharded()
+            next: 0,
+            planned: 0,
+            selected: 0,
         }
     }
 
