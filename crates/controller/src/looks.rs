@@ -560,7 +560,11 @@ impl Controller {
                 self.save_allowance(state)?;
                 return Ok(());
             }
-            if incident.effect.as_deref() == Some(&state.delivery.key) {
+            // A stall isn't an outage: a reachable upstream doesn't end it. The
+            // look runs, and only progress clears its incident (#373).
+            if incident.effect.as_deref() == Some(&state.delivery.key)
+                && incident.signature.class != STALLED
+            {
                 if !incident.needs_rob {
                     match self
                         .adapters
@@ -662,6 +666,8 @@ impl Controller {
         }
         match result {
             Ok(Look::Found(mut completion)) => {
+                // A found record is progress, which ends a stall incident too.
+                self.probe_passed(state)?;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
@@ -766,15 +772,22 @@ impl Controller {
             }
             Ok(Look::Alive { progress }) => {
                 let changed = state.progress.as_ref() != Some(&progress);
-                // An unacknowledged effect that stopped moving keeps its failure
-                // count, so a stall past the allowance can escalate (#356).
+                // An unacknowledged effect that stopped moving past its allowance
+                // keeps its failure count, so the stall can escalate (#356).
+                // Inside the allowance an alive look is a successful read (#373).
+                let within = now.saturating_sub(state.progress_ms)
+                    < u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000;
                 if changed
+                    || within
                     || !self
                         .store
                         .effect(&state.delivery.key)?
                         .is_some_and(|effect| effect.state.is_pending())
                 {
                     state.read_failures = 0;
+                }
+                if changed {
+                    self.probe_passed(state)?;
                 }
                 state.progress = Some(progress);
                 if self.look_alive(state, changed)? {
@@ -852,7 +865,7 @@ impl Controller {
                 .map(|r| crate::decode_stored::<Incident>(r.value))
                 .transpose()?;
             if let Some(incident) = incident.filter(|i| i.open) {
-                if !incident.needs_rob {
+                if !incident.needs_rob && incident.signature.class != STALLED {
                     match self
                         .adapters
                         .adapter(&state.delivery)?
@@ -963,7 +976,7 @@ impl Controller {
                         self.look_failed(
                             state,
                             crate::Error::Permanent {
-                                class: "queue_unfinished",
+                                class: STALLED,
                                 source: "the upstream never acknowledged the request".into(),
                             },
                         )?;
@@ -1554,6 +1567,9 @@ pub(crate) fn quota_waiting(snapshot: &Snapshot, key: &str, _now: u64) -> Result
 /// The hold class of an enqueue that is waiting for required checks.
 pub(crate) const CHECKS_PENDING: &str = "checks_pending";
 
+/// The class of an operation alive but unacknowledged past its allowance.
+const STALLED: &str = "queue_unfinished";
+
 pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
     match error {
         crate::Error::ChecksPending => CHECKS_PENDING,
@@ -1563,6 +1579,17 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
+        // Mergify's own read errors aren't GitHub errors or outages (#373).
+        crate::Error::Adapter(error) if error.is::<tl3_mergify::Error>() => {
+            match error.downcast_ref::<tl3_mergify::Error>() {
+                Some(tl3_mergify::Error::ChangedDuringRead) => "inconsistent_read",
+                Some(tl3_mergify::Error::MergeabilityPending) => "mergeability_pending",
+                Some(tl3_mergify::Error::HeadChanged) => "head_changed",
+                Some(tl3_mergify::Error::PullRequestClosed) => "pull_request_closed",
+                Some(tl3_mergify::Error::GitHub(error)) => error.failure_class().as_str(),
+                None => "transport",
+            }
+        }
         crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
             // Git's own message showed a network or remote cause.
             Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
@@ -1627,6 +1654,10 @@ pub(crate) fn incident_summary(
         "worktree_occupied" => "found a path or branch owned by another checkout",
         "worktree_recovery" => "needs recovery after an interrupted rebase",
         "transport" => "could not be reached",
+        "inconsistent_read" => "kept changing while TL3 read it",
+        "mergeability_pending" => "has not yet worked out whether the pull request can merge",
+        "head_changed" => "shows a different head from the approved one",
+        "pull_request_closed" => "shows the pull request closed or merged",
         "upstream_server" => "reported a service error",
         "invalid_response" => "returned an unreadable response",
         "quota" => "reached its usage allowance",
