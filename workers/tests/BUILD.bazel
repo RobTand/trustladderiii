@@ -290,3 +290,16 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_large_files",
+    srcs = ["test_large_files.py"],
+    deps = [
+        ":conftest",
+        ":test_planner",
+        ":test_workers",
+        ":worker_process",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
