@@ -11,6 +11,7 @@ pub mod findings;
 
 pub mod adapters;
 mod blocked;
+pub mod board;
 mod branches;
 pub mod cli;
 pub mod clock;

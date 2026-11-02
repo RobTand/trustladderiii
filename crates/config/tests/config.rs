@@ -1016,3 +1016,31 @@ fn repository_exec_scratch_is_an_optional_boolean() {
         .insert("exec_scratch".into(), Value::String("true".into()));
     assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
 }
+
+#[test]
+fn console_is_optional_and_needs_a_fixed_unicast_port_and_absolute_assets() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let console = config.console.as_ref().unwrap();
+    assert_eq!(console.listen, "127.0.0.1:8034".parse().unwrap());
+    assert_eq!(console.assets, Path::new("/srv/tl3/console"));
+    let start = EXAMPLE.find("[console]").unwrap();
+    let end = start + EXAMPLE[start..].find("\n\n").unwrap();
+    assert!(
+        Config::parse(&format!("{}{}", &EXAMPLE[..start], &EXAMPLE[end..]))
+            .unwrap()
+            .console
+            .is_none()
+    );
+    for (field, from, to) in [
+        ("console.listen", "127.0.0.1:8034", "127.0.0.1:0"),
+        ("console.listen", "127.0.0.1:8034", "0.0.0.0:8034"),
+        ("console.listen", "127.0.0.1:8034", "224.0.0.1:8034"),
+        ("console.assets", "/srv/tl3/console", "relative/console"),
+    ] {
+        let error = Config::parse(&EXAMPLE.replace(from, to))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains(field), "{to}: {error}");
+    }
+}

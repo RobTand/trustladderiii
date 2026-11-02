@@ -284,6 +284,68 @@ class DeployTests(unittest.TestCase):
         self.assertIn("KillMode=control-group", unit)
         self.assertIn("ConditionPathExists=%h/.config/tl3/production-ready", unit)
 
+    def test_generated_config_serves_the_console_on_the_lan(self):
+        _, data = self.config()
+        self.assertEqual(data["console"]["listen"], "192.168.1.107:8034")
+        self.assertEqual(data["console"]["assets"], str(self.home / ".local/share/tl3/console"))
+        with self.assertRaises(RuntimeError):
+            deploy.render_config(self.home, "192.168.1.107:8033", console_listen="127.0.0.1:8034")
+
+    def test_config_migration_adds_the_console_and_keeps_operator_values(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        text = config.read_text()
+        start = text.index("[console]")
+        without = text[:start] + text[text.index("\n[", start) + 1:]
+        for original, listen in ((without, "192.168.1.107:8034"),
+                                 (text.replace('"192.168.1.107:8034"', '"192.168.1.107:9000"'), "192.168.1.107:9000")):
+            with self.subTest(listen=listen):
+                deploy.write_file(destination, original.encode())
+                deploy.configure(self.home, "192.168.1.107:8033", {})
+                actual = tomllib.loads(destination.read_text())["console"]
+                self.assertEqual(actual["listen"], listen)
+                self.assertEqual(actual["assets"], str(self.home / ".local/share/tl3/console"))
+                parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
+
+    def test_console_unit_runs_the_console_service(self):
+        unit = (deploy.HERE / "units/tl3-console.service").read_text().splitlines()
+        self.assertIn("ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service console", unit)
+        self.assertIn("Requires=tl3-postgres.service", unit)
+        self.assertIn("LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password", unit)
+
+    def test_console_service_execs_the_console_with_runtime_config(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        runtime = self.home / "runtime"
+        credentials = self.home / "credentials"
+        with patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
+             patch.object(os, "execv") as execv:
+            deploy.service(self.home, "console")
+        root = deploy.paths(self.home)[0]
+        execv.assert_called_once_with(root / "bin/tl3-console",
+                                      ["tl3-console", "--config", str(runtime / "tl3.toml")])
+        written = tomllib.loads((runtime / "tl3.toml").read_text())
+        self.assertEqual(written["store"]["password_file"], str(credentials / "postgres-password"))
+
+    def test_console_assets_build_with_npm_and_replace_the_installed_app(self):
+        source = self.home / "source"
+        (source / "web/dist/assets").mkdir(parents=True)
+        (source / "web/dist/index.html").write_text("<!doctype html>new")
+        (source / "web/dist/assets/app.js").write_text("app")
+        installed = deploy.paths(self.home)[0] / "console"
+        installed.mkdir(parents=True)
+        (installed / "stale.js").write_text("old")
+        calls = []
+        with patch.object(deploy, "run", side_effect=lambda command, **kwargs: calls.append((command, kwargs.get("cwd")))):
+            deploy.install_console_assets(self.home, source)
+        self.assertEqual(calls, [(["npm", "ci", "--no-audit", "--no-fund"], source / "web"),
+                                 (["npm", "run", "build"], source / "web")])
+        self.assertEqual((installed / "index.html").read_text(), "<!doctype html>new")
+        self.assertEqual((installed / "assets/app.js").read_text(), "app")
+        self.assertFalse((installed / "stale.js").exists())
+
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             with self.assertRaisesRegex(RuntimeError, "output suppressed"):

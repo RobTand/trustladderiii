@@ -42,6 +42,8 @@ fn main() {
         ("reader_schema_versions", reader_schema_versions),
         ("arrival_within_transaction", arrival_within_transaction),
         ("ingress_retirement", ingress_retirement),
+        ("change_feed", change_feed),
+        ("phase_entry_times", phase_entry_times),
     ];
     let selected: Vec<_> = cases
         .iter()
@@ -1116,5 +1118,71 @@ fn wait_resets_on_generation(settings: &tl3_config::Store) {
             .external_wait
             .is_none(),
         "new generation has no inherited wait"
+    );
+}
+
+fn change_feed(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let mut listener = Listener::open(settings).unwrap();
+    let change = seed(&mut store);
+    store.commit(&change).unwrap();
+    assert!(listener.wait().unwrap() >= 1, "a commit notifies");
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("run:1", "1", epoch, 1).unwrap();
+    assert!(listener.wait().unwrap() >= 1, "a new worker run notifies");
+    store
+        .record_worker_progress("run:1", 1, 5, "tool_result", None)
+        .unwrap();
+    assert!(listener.wait().unwrap() >= 1, "worker progress notifies");
+    // Notifications queue on the session until the listener takes them.
+    for index in 0..3 {
+        let snapshot = store.load().unwrap();
+        let mut next = Commit::new(format!("event-{}", index + 2), json!(index), &snapshot);
+        next.rows = vec![put("2", json!([index]))];
+        store.commit(&next).unwrap();
+    }
+    assert!(listener.wait().unwrap() >= 1);
+}
+
+fn phase_entry_times(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let change = seed(&mut store);
+    store.commit(&change).unwrap();
+    let since = |client: &mut Client| {
+        client
+            .query_one(
+                "SELECT phases.phase, phases.since = events.committed_at, events.revision
+                 FROM tl3_node_phases phases JOIN tl3_events events ON events.committed_at = phases.since
+                 WHERE phases.node_id = '1'",
+                &[],
+            )
+            .map(|row| (row.get::<_, serde_json::Value>(0), row.get::<_, bool>(1), row.get::<_, i64>(2)))
+            .unwrap()
+    };
+    let mut client = raw(settings);
+    assert_eq!(since(&mut client), (json!("Making"), true, 1));
+    let mut commit = |key: &str, value: serde_json::Value| {
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new(key, json!(key), &snapshot);
+        change.rows = vec![put("1", value)];
+        store.commit(&change).unwrap();
+    };
+    commit("same-phase", json!({"phase": "Making", "attempt": 2}));
+    assert_eq!(since(&mut client), (json!("Making"), true, 1), "same phase keeps its entry time");
+    commit("next-phase", json!({"phase": {"Closed": "Merged"}}));
+    assert_eq!(since(&mut client), (json!({"Closed": "Merged"}), true, 3));
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("removed", json!("removed"), &snapshot);
+    change.rows = vec![RowChange::Delete {
+        table: "nodes".into(),
+        id: "1".into(),
+    }];
+    store.commit(&change).unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM tl3_node_phases WHERE node_id = '1'", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0
     );
 }

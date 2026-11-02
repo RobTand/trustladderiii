@@ -938,6 +938,27 @@ impl Reader {
     }
 }
 
+/// A read-only session that waits for committed changes on the change feed.
+/// It blocks on the socket, so a waiting reader never polls.
+pub struct Listener {
+    client: Client,
+}
+
+impl Listener {
+    pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        let _ = settings;
+        todo!()
+    }
+
+    /// Block until at least one change commits, then take every notification
+    /// already received. Returns how many arrived. An error means the session
+    /// ended, and changes after it may be missed until a new listener opens.
+    pub fn wait(&mut self) -> Result<usize> {
+        let _ = &mut self.client;
+        todo!()
+    }
+}
+
 fn load_effects(client: &mut impl postgres::GenericClient) -> Result<Vec<Effect>> {
     client.query("SELECT effect_key, epoch, kind, payload, state::text, created_revision, updated_revision FROM tl3_effects ORDER BY created_revision, effect_key", &[])?
             .into_iter().map(decode_effect).collect()

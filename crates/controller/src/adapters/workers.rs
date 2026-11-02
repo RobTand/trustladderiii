@@ -364,25 +364,14 @@ impl Supervisor {
             }
         }
         protocol::validate_inputs(role, &inputs)?;
-        let ladder: &[tl3_config::Model] = match role {
-            "classifier" => &self.models.comment_classifier,
-            "ingest" => &self.models.ingest,
-            "audit" => &self.models.audit,
-            "maker" => &self.models.maker,
-            "planner" => &self.models.planner,
-            "reviewer" => &self.models.reviewer,
-            _ => return Err(Error::Invalid("unsupported worker role")),
-        };
-        let model = if role == "reviewer" {
-            let maker = &self.models.maker[rung.min(self.models.maker.len() - 1)];
-            let first = ladder
-                .iter()
-                .position(|model| !model.family.eq_ignore_ascii_case(&maker.family))
-                .ok_or(Error::Invalid("reviewer needs a different model family"))?;
-            &ladder[(first + usize::from(review_restarted)).min(ladder.len() - 1)]
-        } else {
-            &ladder[rung.min(ladder.len() - 1)]
-        };
+        let model = self
+            .models
+            .run_model(role, rung, review_restarted)
+            .ok_or(Error::Invalid(if role == "reviewer" {
+                "reviewer needs a different model family"
+            } else {
+                "unsupported worker role"
+            }))?;
         let mut request = json!({
             "protocol": 1,
             "operation": {"node": delivery.node().0, "generation": delivery.generation, "kind": role},
