@@ -133,7 +133,16 @@ impl Fixture {
     }
     /// A finished run laid out as the supervisor leaves it: attempt beside its base worktree.
     fn attempt(&self, role: &str, memories: Value, reply: Value) -> std::path::PathBuf {
-        let root = self.scratch.path().join(role);
+        self.attempt_in(role, role, memories, reply)
+    }
+    fn attempt_in(
+        &self,
+        directory: &str,
+        role: &str,
+        memories: Value,
+        reply: Value,
+    ) -> std::path::PathBuf {
+        let root = self.scratch.path().join(directory);
         let worktree = root.join("worktree");
         fs::create_dir_all(worktree.join("src")).unwrap();
         fs::write(
@@ -430,7 +439,7 @@ fn unverified_flags_are_recorded_as_rejected_and_never_sent() {
             "lesson",
             json!(["wrong-1"]),
             "wrong-1",
-            json!({"path": "../planner/worktree/greeting.py", "start_line": 1, "end_line": 1, "quote": QUOTE}),
+            json!({"path": "../not-supplied/worktree/greeting.py", "start_line": 1, "end_line": 1, "quote": QUOTE}),
         ),
         (
             "git-metadata",
@@ -455,9 +464,10 @@ fn unverified_flags_are_recorded_as_rejected_and_never_sent() {
         ),
     ];
     let count = cases.len();
-    for (role, kind, cited, flagged, evidence) in cases {
-        let attempt = f.attempt(
-            role,
+    for (case, kind, cited, flagged, evidence) in cases {
+        let attempt = f.attempt_in(
+            case,
+            "planner",
             supplied("wrong-1", kind),
             json!({"kind": "brief", "brief": "b", "goals": [], "memory_ids": cited,
                    "memory_flags": [flag(flagged, evidence)]}),
@@ -471,7 +481,7 @@ fn unverified_flags_are_recorded_as_rejected_and_never_sent() {
             worktree.join(".git/greeting.py"),
         )
         .unwrap();
-        memory::queue_attempt(&mut f.store(), &format!("run:{role}"), &attempt).unwrap();
+        memory::queue_attempt(&mut f.store(), &format!("run:{case}"), &attempt).unwrap();
     }
     let curations = f.curations();
     assert_eq!(curations.len(), count);
