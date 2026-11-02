@@ -43,10 +43,13 @@ class Summary:
         self.result = {"status": "completed", "tests": [],
                        "totals": dict.fromkeys(OUTCOMES, 0), "note": ""}
         self.omitted = False
+        # Every test's outcome, including entries the size bound drops; repeats aggregate these.
+        self.outcomes = {}
 
     def add(self, test, outcome, message="", truncated=False):
         self.result["totals"][outcome] += 1
         item = {"test": test, "outcome": outcome, "message": message[:MESSAGE_CHARS]}
+        self.outcomes[test] = item
         clipped = truncated or len(message) > MESSAGE_CHARS
         self.result["tests"].append(item)
         # Leave space for totals, the action key and the truncation notice.
@@ -57,9 +60,9 @@ class Summary:
             self.result["note"] = "Truncated: test entries or failure messages were cut. Totals include all results."
 
 
-def run_current(tree, container, tests, parallel=0):
+def run_current(tree, container, tests, parallel=0, summary=None):
     require_admission()
-    summary = Summary()
+    summary = Summary() if summary is None else summary
     missing = {test for test in tests if not (tree / test.split("::", 1)[0]).exists()}
     if missing:
         for test in sorted(missing):
@@ -147,15 +150,16 @@ def run(tree, container, tests, *, repeat=1, parallel=0):
         return {**run_current(tree, container, tests, parallel), **extra}
     runs, worst, notes = [], {}, []
     for number in range(1, repeat + 1):
-        result = run_current(tree, container, tests, parallel)
+        outcomes = Summary()
+        result = run_current(tree, container, tests, parallel, outcomes)
         if result["status"] != "completed":
             # No verdict from this run, so none for the repeat.
             result["message"] = f"Run {number} of {repeat}: {result['message']}"
             return {**result, "repeat": repeat, **extra, "runs": runs}
-        failed = [item["test"] for item in result["tests"] if item["outcome"] in ("failed", "error")]
+        failed = [item["test"] for item in outcomes.outcomes.values() if item["outcome"] in ("failed", "error")]
         runs.append({"run": number, "status": "completed", "totals": result["totals"],
                      "failed": failed[:RUN_FAILURES]})
-        for item in result["tests"]:
+        for item in outcomes.outcomes.values():
             if item["test"] not in worst or WORST.index(item["outcome"]) > WORST.index(worst[item["test"]]["outcome"]):
                 worst[item["test"]] = item
         notes.append(result["note"])
@@ -184,6 +188,8 @@ def main():
     parser.add_argument("--exec-scratch", action="store_true")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=0)
+    # A per-call value that only makes the PrismaBuild action key unique, so repeats run fresh.
+    parser.add_argument("--fresh")
     args = parser.parse_args()
     try:
         result = run(Path("checkout").resolve(), Container(args.image, exec_scratch=args.exec_scratch),

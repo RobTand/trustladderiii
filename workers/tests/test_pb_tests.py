@@ -82,7 +82,7 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     log = (submission[1] / "action.log").read_bytes()
     expected = {**summary.result, "action_key": KEY, "receipts": [{
         "action_key": KEY, "status": "executed", "exit_code": 0, "receipt_sha256": "b" * 64,
-        "log_sha256": hashlib.sha256(log).hexdigest()}]}
+        "log_sha256": hashlib.sha256(log).hexdigest()}], "tree": (submission[1] / "tree.txt").read_text()}
     if outcome in ("failed", "error"):
         summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
         expected["base"] = {key: value for key, value in infrastructure(
@@ -261,7 +261,7 @@ def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_pa
         if command[0] == "git":
             # Ask the real Git process for its effective policy with the same
             # global arguments, cwd and environment as the staging operation.
-            operation = next(i for i, arg in enumerate(command) if arg in ("init", "fetch", "add", "commit", "update-ref"))
+            operation = next(i for i, arg in enumerate(command) if arg in ("init", "fetch", "add", "commit", "update-ref", "write-tree"))
             probe = original([*command[:operation], "config", "--get", "protocol.allow"],
                 cwd=kwargs["cwd"], env=kwargs["env"], capture_output=True)
             policies.append(probe.stdout.strip())

@@ -118,12 +118,30 @@ pub(super) fn inputs(
         fixes.as_object_mut().unwrap().remove("head_sha");
         inputs["review_fixes"] = fixes;
     }
-    // The run_tests receipts the maker cited for this head (#408).
+    // The run_tests receipts the maker cited for this head (#408). The worker attests each
+    // run's tree from the snapshot it staged; keep only runs on this head's tree, or on the
+    // check base's for base runs (#432).
     if let Some(reply) = store.worker_document(&node, "maker_replies")?
         && reply["head"] == head
-        && let Some(evidence) = reply.get("test_evidence")
+        && let Some(evidence) = reply["test_evidence"].as_array()
     {
-        inputs["test_evidence"] = evidence.clone();
+        let head_tree = repository.tree(&head_id)?;
+        let base_tree = repository.tree(&run.base_sha)?;
+        let tested: Vec<Value> = evidence
+            .iter()
+            .filter(|entry| {
+                let expected = if entry["base"] == true {
+                    &base_tree
+                } else {
+                    &head_tree
+                };
+                entry["tree"].as_str() == Some(expected.as_str())
+            })
+            .cloned()
+            .collect();
+        if !tested.is_empty() {
+            inputs["test_evidence"] = json!(tested);
+        }
     }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)

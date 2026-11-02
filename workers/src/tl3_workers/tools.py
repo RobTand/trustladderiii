@@ -213,6 +213,9 @@ def _selectors(value):
 
 # The newest completed run_tests calls a maker reply can carry.
 TEST_EVIDENCE = 10
+# Their JSON size together, and one entry's share, so a done reply stays small.
+TEST_EVIDENCE_BYTES = 65_536
+TEST_EVIDENCE_ENTRY_BYTES = TEST_EVIDENCE_BYTES // 4
 
 
 class Evidence:
@@ -233,14 +236,24 @@ class Evidence:
     def test_result(self, result, selectors, options=None):
         if not isinstance(result, dict):
             return
-        if result.get("status") == "completed" and result.get("receipts"):
-            # The maker's done reply carries these, so the reviewer sees what ran (#408).
+        if result.get("status") == "completed" and result.get("receipts") and isinstance(result.get("tree"), str):
+            # The maker's done reply carries these, so the reviewer sees what ran (#408), on
+            # which tree: the staged snapshot's, never model text (#432). A cache hit replayed a run.
             entry = {"tests": list(selectors[1]), "base": selectors[0], **(options or {"repeat": 1, "parallel": 0}),
-                     "status": "completed", "totals": result["totals"], "receipts": result["receipts"]}
+                     "status": "completed", "tree": result["tree"],
+                     "fresh": all(receipt["status"] == "executed" for receipt in result["receipts"]),
+                     "totals": result["totals"], "receipts": result["receipts"]}
             if "runs" in result:
                 entry["runs"] = [{key: run[key] for key in ("run", "status", "totals")} for run in result["runs"]]
+            selected = len(entry["tests"])
+            while entry["tests"] and len(json.dumps(entry).encode()) > TEST_EVIDENCE_ENTRY_BYTES:
+                entry["tests"].pop()
+                entry["tests_omitted"] = selected - len(entry["tests"])
             with self._lock:
-                self.test_runs = [*self.test_runs, entry][-TEST_EVIDENCE:]
+                runs = [*self.test_runs, entry][-TEST_EVIDENCE:]
+                while len(runs) > 1 and len(json.dumps(runs).encode()) > TEST_EVIDENCE_BYTES:
+                    runs.pop(0)
+                self.test_runs = runs
         if result.get("status") == "completed":
             # A later complete run of the same tests shows the environment recovered.
             with self._lock:

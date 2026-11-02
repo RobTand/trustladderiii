@@ -68,8 +68,11 @@ reported, and a test counts at its worst outcome across runs. Use parallel 2 to
 not_available, which is neither a pass nor an infrastructure error. Use
 priority -10 to 0 only to queue lower than PrismaBuild's default; omit it
 otherwise. Every completed result carries receipts: the PrismaBuild action key,
-exit status, receipt and log digests. Cite the action key from the receipts in
-your self-check. Your done reply carries those receipts for review.
+exit status, receipt and log digests. A cache_hit status replays an earlier run
+of identical input; repeat above 1 always runs fresh. Cite the action key from
+the receipts in your self-check. Your done reply carries the receipts of runs
+on your final files for review; an edit after a run drops that run, so run the
+tests again after your last edit.
 
 Before replying done, self-check every goal exactly once by goal_id. Every goal
 must be met, with concrete evidence such as test names, the action key and the

@@ -192,6 +192,11 @@ def _load_visit(progress, visit):
         return None
 
 
+def _tree(request, commit):
+    result = _git(request, "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}", check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def _commit(request, starting_head, merge_target=None, merge_files=None):
     _git(request, "merge-base", "--is-ancestor", starting_head, "HEAD")
     merge = _merge_head(request)
@@ -294,7 +299,8 @@ def run(model, request, worktree, emit):
         if len(pending) == 1 and pending[0]["name"] == "run_tests" and saved["inflight"].get(pending[0]["id"]):
             # Wait on the test action the interrupted call submitted instead of submitting it again.
             inflight = {pending[0]["id"]: saved["inflight"][pending[0]["id"]]}
-            worktree.pb_reattach = {item["base"]: item["key"] for item in inflight[pending[0]["id"]]}
+            worktree.pb_reattach = {item["base"]: (item["key"], item.get("tree"))
+                                    for item in inflight[pending[0]["id"]]}
         else:
             history, interrupted = _resumable(history, start)
             if interrupted:
@@ -320,10 +326,10 @@ def run(model, request, worktree, emit):
             "allowance": allowance.state() if allowance else None, "inflight": inflight,
             "worktree": {"evidence": worktree.evidence.state()}})
 
-    def submitted(key, base):
+    def submitted(key, base, tree):
         for call in _pending_calls(history, start):
             if call["name"] == "run_tests":
-                inflight.setdefault(call["id"], []).append({"base": base, "key": key})
+                inflight.setdefault(call["id"], []).append({"base": base, "key": key, "tree": tree})
         checkpoint()
 
     worktree.pb_submitted = submitted
@@ -402,8 +408,13 @@ def run(model, request, worktree, emit):
             break
         if head is not None:
             reply["head"] = head
-            # The reviewer sees the receipts behind this head (#408).
-            if evidence := worktree.evidence.test_evidence():
+            # The reviewer sees the receipts behind this head (#408): runs that tested its
+            # tree, and base runs that tested the check base's (#432).
+            trees = {False: _tree(request, head)}
+            if worktree.check_base_sha:
+                trees[True] = _tree(request, worktree.check_base_sha)
+            if evidence := [entry for entry in worktree.evidence.test_evidence()
+                            if entry["tree"] == trees.get(entry["base"])]:
                 reply["test_evidence"] = evidence
             break
         if completion == 1 or budget_exhausted:
