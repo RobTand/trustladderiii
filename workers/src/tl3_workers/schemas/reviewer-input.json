@@ -62,6 +62,25 @@
       },
       "minItems": 1
     },
+    "issue": {
+      "type": "object",
+      "description": "The request's issue, bounded; supplied when a check carries a forcing (#393).",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ],
+      "additionalProperties": false
+    },
     "checks": {
       "type": "array",
       "items": {

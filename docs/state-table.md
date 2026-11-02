@@ -242,7 +242,7 @@ TL3 owns the check harness, and the code under test can't change it:
 - The harness selects the named tests itself. It collects and parses the report outside the container.
 - A named test that is missing, skipped or not collected fails its check.
 - One check job runs both trees, and the reviewed commit as a third when the round has reproducing checks. A forced check adds a run of the base and a run of the leaf's commit under its forcing.
-- A forcing is data from the plan: environment variables, and patches that give a module or class attribute inside the served repository a JSON value, a returned JSON value, a raised builtin exception other than `AssertionError`, or a delay of up to 5 seconds. It reaches the read-only runner with the test selection, and only the test container applies it.
+- A forcing is data from the plan: environment variables, and patches that give a module or class attribute inside the served repository a JSON value, a returned JSON value, a raised builtin exception other than `AssertionError`, or a delay of up to 5 seconds per call and 10 seconds per test. It reaches the read-only runner with the test selection, and only the test container applies it.
 - The harness commits progress to PrismaBuild after each test, so a long suite stays visibly alive.
 
 A job that produces no report never ran its tests, so it is an infrastructure failure. A demonstrating test that errors on the base for any other reason shows nothing, so the round fails.

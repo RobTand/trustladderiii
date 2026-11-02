@@ -121,6 +121,7 @@ def forcing_owner(target):
     return owner, parts[-1]
 
 
+# A forcing's delays add up to at most this per test; later calls run undelayed.
 MAX_TOTAL_DELAY_SECONDS = 10
 
 
@@ -141,8 +142,13 @@ def forced_value(owner, name, mode, argument, sleep=time.sleep, budget=None):
     if not callable(original):
         raise ForcingError(f"delay_seconds needs a callable target, not {type(original).__name__}")
 
+    budget = [MAX_TOTAL_DELAY_SECONDS] if budget is None else budget
+
     def delayed(*args, **kwargs):
-        sleep(argument)
+        wait = min(argument, budget[0])
+        budget[0] -= wait
+        if wait:
+            sleep(wait)
         return original(*args, **kwargs)
     return delayed
 
@@ -188,12 +194,13 @@ class Reporter:
     def _tl3_forcing(self):
         # Applied before the test's own fixtures and undone after them, so the test's own
         # monkeypatches take precedence while it runs (#393).
+        budget = [MAX_TOTAL_DELAY_SECONDS]
         with pytest.MonkeyPatch.context() as patch:
             for forcing in self.patches:
                 target = forcing["target"]
                 (mode, argument), = ((key, value) for key, value in forcing.items() if key != "target")
                 owner, name = forcing_owner(target)
-                patch.setattr(owner, name, forced_value(owner, name, mode, argument))
+                patch.setattr(owner, name, forced_value(owner, name, mode, argument, budget=budget))
             yield
 
     def emit(self, **record):

@@ -112,6 +112,21 @@ pub(super) fn inputs(
             inputs["scope_diff"] = json!(scope_diff);
         }
     }
+    // #393: review judges a forcing against the issue's own symptom, not only the
+    // planner's description of it. The issue is the text ingest read, bounded.
+    let forced = report["results"]
+        .as_array()
+        .is_some_and(|results| results.iter().any(|r| r.get("forcing").is_some()));
+    if forced
+        && let Some(issue) = store
+            .worker_materials(&node)?
+            .and_then(|materials| materials.get("issue").cloned())
+    {
+        inputs["issue"] = json!({
+            "title": crate::findings::clipped(issue["title"].as_str().unwrap_or_default(), 1_000),
+            "body": crate::findings::clipped(issue["body"].as_str().unwrap_or_default(), 16_000),
+        });
+    }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
     {

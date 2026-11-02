@@ -194,7 +194,8 @@ A forcing has a symptom of up to 1,000 characters and at least one of these:
 - up to 8 patches. Each names a dotted `target` and exactly one of `value` (a
   JSON literal), `returns` (a callable returning one), `raises` (a builtin
   `Exception` subclass other than `AssertionError`), or `delay_seconds` (above
-  0 and at most 5, which wraps the original callable).
+  0 and at most 5, which wraps the original callable). Delays add up to at
+  most 10 seconds per test; later calls run undelayed.
 
 Literals are limited to 4 KiB of JSON. Only demonstrating checks take a forcing.
 

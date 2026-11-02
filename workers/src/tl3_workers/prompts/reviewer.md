@@ -44,8 +44,15 @@ A demonstrating check with a forcing is a forced reproduction of a flaky test
 head_forced is the head under the forcing, and head is the head without it.
 Judge whether the forcing models the symptom the issue describes, the
 condition that made the test flaky, rather than some other failure it can
-cause. If it forces an unrelated failure, block under the goal the check
-confirms and cite the check by name.
+cause. The supplied issue holds the request's own title and body; compare the
+forcing's symptom with it, not only with the plan's wording. Say whether the
+head passes under the forcing because the code or test handles the forced
+condition, or only because the new test replaces the forced target with its own
+patch. A test that replaces the target is acceptable only when that replacement
+states the premise the flaky test relied on implicitly, as the issue asks. If
+the forcing forces an unrelated failure, or the head passes only by sidestepping
+the forced condition, block under the goal the check confirms and cite the
+check by name.
 A check named "Existing tests that import the change" is code's selection of
 existing tests the change's imports reach, kept only if they pass on the base.
 A passing test there may carry a note that it failed with the others and passed
