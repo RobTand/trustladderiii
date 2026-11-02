@@ -85,6 +85,7 @@ py_library(
     deps = [
         "//harness/src/tl3_harness",
         "@tl3_pip//deepagents",
+        "@tl3_pip//google_re2",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain",

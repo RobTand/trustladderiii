@@ -1,6 +1,6 @@
 import json
 
-from .model import Outcome
+from .model import Failure, Outcome
 from .node_ids import selects
 
 
@@ -24,6 +24,7 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         if messages is not None:
             messages.update(dict.fromkeys(tests, records[1]["message"]))
         return dict.fromkeys(tests, Outcome.UNCOLLECTED)
+    details = getattr(messages, "details", None)
     phases = {}
     selected = None
     collection_errors = {}
@@ -41,7 +42,10 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         message = record.get("message", "")
         if not isinstance(message, str) or len(message) > 1000:
             raise InvalidReport("invalid failure message")
-        record = {key: value for key, value in record.items() if key != "message"}
+        exception = record.get("exception", "")
+        if not isinstance(exception, str) or len(exception) > 300:
+            raise InvalidReport("invalid failure exception")
+        record = {key: value for key, value in record.items() if key not in ("message", "exception")}
         match record:
             case {"event": "collection", "tests": list(names)} if set(record) == {"event", "tests"}:
                 if (selected is not None or not all(isinstance(name, str) for name in names)
@@ -49,11 +53,11 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     raise InvalidReport("invalid test population")
                 selected = names
             case {"event": "collection-error"} if len(record) == 1:
-                collection_errors[""] = (Outcome.ERROR, message)
+                collection_errors[""] = (Outcome.ERROR, message, exception)
             case {"event": "collection-error", "test": str(file), "missing": name} if len(record) == 3:
                 if file in collection_errors or not any(test.split("::")[0] == file for test in tests):
                     raise InvalidReport("invalid collection error file")
-                collection_errors[file] = (Outcome.ADDED_NAME if added(name) else Outcome.ERROR, message)
+                collection_errors[file] = (Outcome.ADDED_NAME if added(name) else Outcome.ERROR, message, exception)
             case {"event": "phase", "test": str(test), "when": str(when),
                   "outcome": str(outcome), "assertion": bool(assertion), "missing": name} if len(record) == 6:
                 if (selected is None or test not in selected or when not in ("setup", "call", "teardown")
@@ -68,6 +72,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 phases[test, when] = (outcome, assertion, missing_added)
                 if messages is not None and outcome == "failed" and message:
                     messages[test] = (messages.get(test, "") + "\n" + message).strip()[:1000]
+                if details is not None and outcome == "failed":
+                    details.setdefault(test, Failure(when, exception, message))
             case _:
                 raise InvalidReport("unknown report event")
     def case_outcome(test):
@@ -95,6 +101,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
             outcomes[test] = error[0]
             if messages is not None and error[1]:
                 messages[test] = error[1]
+            if details is not None:
+                details[test] = Failure("collection", error[2], error[1])
         elif selected is None:
             raise InvalidReport("missing collection report")
         else:
@@ -104,6 +112,8 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                               Outcome.PASSED if matches else Outcome.UNCOLLECTED)
             if messages is not None and failing is not None and failing in messages:
                 messages[test] = messages[failing]
+            if details is not None and failing in details:
+                details[test] = details[failing]
     if exit_code != 0 and all(value == Outcome.PASSED for value in outcomes.values()):
         raise InvalidReport("pytest failed outside the named tests")
     if exit_code == 0 and any(value in (Outcome.ASSERTION, Outcome.ADDED_NAME, Outcome.ERROR) for value in outcomes.values()):

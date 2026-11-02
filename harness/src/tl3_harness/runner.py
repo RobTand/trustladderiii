@@ -86,6 +86,14 @@ def missing_name(error):
     return None
 
 
+def describe(error):
+    """`Type: first line` of the exception, kept apart from the traceback the 1,000-char limit cuts."""
+    if isinstance(error, pytest.Collector.CollectError) and error.__cause__ is not None:
+        error = error.__cause__
+    line = next((line.strip() for line in str(error).splitlines() if line.strip()), "")
+    return (f"{type(error).__name__}: {line}" if line else type(error).__name__).replace("`", "'")[:200]
+
+
 class Reporter:
     def __init__(self, tests, descriptor, summary=False):
         self.tests = tests
@@ -143,6 +151,7 @@ class Reporter:
 
     def pytest_exception_interact(self, node, call, report):
         report.tl3_missing = missing_name(call.excinfo.value)
+        report.tl3_exception = describe(call.excinfo.value)
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -158,6 +167,7 @@ class Reporter:
         for report in self.collection_errors:
             self.emit(event="collection-error", test=report.nodeid,
                       missing=getattr(report, "tl3_missing", None),
+                      exception=getattr(report, "tl3_exception", ""),
                       message=str(report.longrepr)[:1000])
         self.collection_errors.clear()
 
@@ -176,6 +186,7 @@ class Reporter:
             return report
         self.emit(event="phase", test=item.nodeid, when=report.when,
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
+                  exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
                   message=str(report.longrepr)[:1000] if report.failed else "")
         return report
 

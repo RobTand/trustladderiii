@@ -5,6 +5,7 @@ PQ #2602 and #2629 stalled because planner.md still said declared files over
 """
 
 from importlib.resources import files
+import inspect
 import re
 
 import pytest
@@ -37,16 +38,24 @@ def test_every_stated_byte_limit_is_one_the_code_enforces(name):
 
 # What the code does with `path` (see test_file_tools.py), as prompts and tool descriptions say it.
 GREP_PATH = "grep's path may be a file or a directory"
+GREP_PATTERN = "grep's pattern is an RE2 regular expression, with no backreferences or lookarounds"
+GREP_LITERAL = "set literal to true to search text as written"
 GLOB_PATH = "glob's path must be a directory"
 SHARED_TOOLS = ("grep", "glob")
+# Every grep argument that is not self-explanatory must be named wherever grep is described.
+GREP_OPTIONS = sorted(set(inspect.signature(Worktree.grep).parameters) - {"self", "pattern", "path", "offset"})
 
 
 @pytest.mark.parametrize("name", ["maker.md", "planner.md", "reviewer.md"])
 def test_prompts_describe_the_path_argument_of_grep_and_glob(name):
     prompt = prompt_text(name)
     assert GREP_PATH in prompt
+    assert GREP_PATTERN in prompt
+    assert GREP_LITERAL in prompt
     assert GLOB_PATH in prompt
-    assert "literal text, not a regular expression" in prompt
+    assert "Python" not in GREP_PATTERN and "not a regular expression" not in prompt
+    for option in GREP_OPTIONS:
+        assert option in prompt
 
 
 @pytest.mark.parametrize("role", sorted(ROLES))
@@ -55,8 +64,12 @@ def test_role_tool_descriptions_describe_the_path_argument(role):
     if "grep" not in tools:
         pytest.skip(f"{role} has no file tools")
     assert "path may be a file or a directory" in tools["grep"]
-    assert "literal text, not a regular expression" in tools["grep"]
+    assert "pattern is an RE2 regular expression, with no backreferences or lookarounds" in tools["grep"]
+    assert "set literal to true to search text as written" in tools["grep"]
+    assert "not a regular expression" not in tools["grep"]
     assert "path must be a directory" in tools["glob"]
+    for option in GREP_OPTIONS:
+        assert option in tools["grep"]
 
 
 def test_what_the_prompts_say_about_path_is_what_the_tools_do(tmp_path):
@@ -72,5 +85,6 @@ def test_what_the_prompts_say_about_path_is_what_the_tools_do(tmp_path):
         failed = tools["glob"].invoke({"name": "glob", "id": "x", "type": "tool_call",
                                        "args": {"pattern": "*.py", "path": "pkg/mod.py"}})
         assert failed.status == "error"
-        # A pattern with regular-expression syntax is searched as text.
-        assert tools["grep"].invoke({"pattern": "need|hay"})["matches"] == []
+        # The pattern is a regular expression, and literal true searches the text as written.
+        assert tools["grep"].invoke({"pattern": "need|hay"})["matches"][0]["path"] == "pkg/mod.py"
+        assert tools["grep"].invoke({"pattern": "need|hay", "literal": True})["matches"] == []
