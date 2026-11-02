@@ -4,6 +4,11 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ci'))
+from child_env import child_env  # noqa: E402
+
+
 ROOT = Path(__file__).resolve().parents[2]
 PROJECTS = [
     ('workers', 'requirements.txt', ['--no-emit-package', 'tl3-harness']),
@@ -21,7 +26,7 @@ def main():
             subprocess.run(['uv', 'export', '--project', str(ROOT / project), '--locked',
                             '--no-emit-project', '--no-header', '--no-annotate',
                             '--format', 'requirements-txt', *extra, '--output-file', str(output)],
-                           check=True, stdout=subprocess.DEVNULL)
+                           check=True, stdout=subprocess.DEVNULL, env=child_env())
             committed = ROOT / 'tools/bazel' / name
             if args.check:
                 if committed.read_bytes() != output.read_bytes():

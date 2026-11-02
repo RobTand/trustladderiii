@@ -1,5 +1,6 @@
 from dataclasses import asdict
 from importlib.resources import files
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -82,6 +83,17 @@ def git(root, *args):
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
         cwd=root, env=env, check=True, capture_output=True, text=True,
     ).stdout.strip()
+
+
+@pytest.fixture(scope="session")
+def cache_tokenizer(tmp_path_factory):
+    from tiktoken.load import read_file_cached
+    from tl3_workers.forecast import TOKENIZER_URL, TOKENIZER_SHA256
+
+    data = read_file_cached(TOKENIZER_URL, TOKENIZER_SHA256)
+    cache = tmp_path_factory.mktemp("maker-tokenizer")
+    (cache / hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()).write_bytes(data)
+    return str(cache)
 
 
 @pytest.fixture
@@ -744,14 +756,42 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
 
 
 @pytest.mark.parametrize('fit_tokens,linked,expected', [(100000, False, True), (1, False, False), (100000, True, False)])
-def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, fit_tokens, linked, expected):
+def test_requested_file_fit_is_computed_by_worker_code(tmp_path, maker_request, cache_tokenizer, fit_tokens, linked, expected):
     maker_request['inputs']['fit_tokens'] = fit_tokens
     root = Path(maker_request['worktree'])
     if linked:
         (root / 'helper.py').symlink_to(root / 'greeting.py')
-    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})])
+    result = start_worker(tmp_path, maker_request, [turn({'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'A shared helper is needed.'}]})],
+                          env_overrides={'TIKTOKEN_CACHE_DIR': cache_tokenizer})
     assert result.exit_code == 0, result.stderr
     assert result.events[-1]['reply']['fits'] is expected
+
+
+@pytest.mark.parametrize('content_source', ['brief', 'file'])
+@pytest.mark.parametrize('cache', ['available', 'disabled', 'empty', 'corrupt'])
+def test_requested_file_fit_counts_tokens_with_byte_fallback(tmp_path, maker_request, cache_tokenizer, content_source, cache):
+    maker_request['inputs']['fit_tokens'] = 100000
+    if content_source == 'brief':
+        maker_request['inputs']['brief'] = 'token ' * 18000
+    else:
+        root = Path(maker_request['worktree'])
+        for name in ('greeting.py', 'helper.py'):
+            (root / name).write_text('token ' * 6000)
+    directory = cache_tokenizer
+    if cache == 'disabled':
+        directory = ''
+    elif cache in ('empty', 'corrupt'):
+        directory = tmp_path / 'unavailable-tokenizer'
+        directory.mkdir()
+        if cache == 'corrupt':
+            (directory / 'fb374d419588a4632f3f557e76b4b70aebbca790').write_bytes(b'bad cache')
+        directory = str(directory)
+    result = start_worker(tmp_path, maker_request, [turn({
+        'kind': 'needs_files', 'files': [{'path': 'helper.py', 'why': 'Needed.'}],
+    })], env_overrides={'TIKTOKEN_CACHE_DIR': directory})
+    assert result.exit_code == 0, result.stderr
+    assert result.events[-1]['reply']['fits'] is (cache == 'available')
+    assert result.stderr == ''
 
 
 def test_model_cannot_claim_that_requested_files_fit(tmp_path, maker_request):
@@ -1457,3 +1497,20 @@ def test_test_evidence_is_bounded():
     assert kept[-1]["tests"][0].startswith("test_9_"), "the newest run is kept"
     assert kept[-1]["tests_omitted"] == 256 - len(kept[-1]["tests"]) > 0
     validate("maker-reply", {**done, "test_evidence": kept})
+
+
+def test_maker_input_carries_a_forced_check(maker_request):
+    # #393: the maker sees the forcing its deflake must survive.
+    check = maker_request['inputs']['plan']['checks'][0]
+    check['forcing'] = {"symptom": "A real, unrelated process holds PID 4242.", "environment": {},
+                        "patches": [{"target": "sampler.process_in_scope", "raises": "ValueError"}]}
+    validate('maker-input', maker_request['inputs'])
+    check['forcing']['code'] = 'print(1)'
+    with pytest.raises(ValidationError):
+        validate('maker-input', maker_request['inputs'])
+
+
+def test_maker_prompt_explains_forced_checks():
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/maker.md").read_text().split())
+    assert "forcing" in prompt
+    assert "both with and without the forcing" in prompt

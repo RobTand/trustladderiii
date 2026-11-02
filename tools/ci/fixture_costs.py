@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 
+
 import rust_gate
+from child_env import child_env
 
 
 def main():
@@ -35,7 +37,7 @@ def main():
         if target != 'tl3_controller':
             command.append(target)
         result = subprocess.run([*command, '--no-run', '--message-format=json'],
-                                text=True, stdout=subprocess.PIPE, check=True)
+                                text=True, stdout=subprocess.PIPE, check=True, env=child_env())
         for line in result.stdout.splitlines():
             row = json.loads(line)
             if (row.get('reason') == 'compiler-artifact' and row.get('executable')
@@ -48,14 +50,18 @@ def main():
     for repeat in range(args.repeats):
         for binary, custom, arguments in binaries:
             try:
-                times = rust_gate.execute_binary(binary, custom, arguments)
+                cpu_seconds, cpu_details = {}, {}
+                times = rust_gate.execute_binary(binary, custom, arguments, cpu_seconds=cpu_seconds,
+                                                 cpu_details=cpu_details)
                 if binary['name'] == 'tl3-controller/looks':
                     expected = {f'tl3-controller/looks::closed_looks_{case}' for case in (
                         'permanent', 'startup', 'held', 'healthy', 'closing', 'stopping',
                         'pending-cancel', 'closed-pending')}
                     assert expected <= times.keys(), f'unbudgeted closed look cases: {expected - times.keys()}'
-                rust_gate.check_budget(times, policy, policy)
-                row = {'repeat': repeat + 1, 'binary': binary['name'], 'tests': times}
+                rust_gate.check_budget(times, policy, policy, cpu_seconds=cpu_seconds,
+                                       cpu_fallbacks=cpu_details['cpu_fallbacks'])
+                row = {'repeat': repeat + 1, 'binary': binary['name'], 'tests': times,
+                       'cpu_seconds': cpu_seconds, **cpu_details}
                 reports.append(row)
                 print(json.dumps({'fixture_costs': row}), flush=True)
             except (AssertionError, RuntimeError) as error:

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from child_env import child_env
+
 import graph_impact
 
 POLICY = 'tools/ci/graph-impact-baseline.json'
@@ -274,6 +276,6 @@ def changed_tests(base, head, base_hashes, head_hashes, changed_files):
 
 
 def policy_at(root, sha, file, default):
-    result = subprocess.run(['git', 'show', f'{sha}:{file}'], cwd=root, capture_output=True, text=True)
+    result = subprocess.run(['git', 'show', f'{sha}:{file}'], cwd=root, capture_output=True, text=True, env=child_env())
     return json.loads(result.stdout) if not result.returncode else default
 

@@ -60,7 +60,11 @@ pub fn respond(
         ("PATCH", "/pulls/100") => {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
             let pull = state.pull_mut()?;
-            pull["state"] = body["state"].clone();
+            for field in ["state", "body"] {
+                if let Some(value) = body.get(field) {
+                    pull[field] = value.clone();
+                }
+            }
             let response = pull.clone();
             state.pull_patched(&body);
             response

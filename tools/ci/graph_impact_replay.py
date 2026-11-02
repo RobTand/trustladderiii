@@ -12,11 +12,13 @@ import os
 from pathlib import Path
 import re
 import subprocess
+
 import tarfile
 import tempfile
 
 import bazel_gate
 import bazel_graph_impact as adapter
+from child_env import child_env
 
 OLD_CORE_SHA = '81fe2fec027f2f91aa433a10e8206904e38d86c2'
 
@@ -91,7 +93,7 @@ def harvest(ranges, output):
 
 def old_core(root):
     file = root / 'old_graph_impact.py'
-    file.write_bytes(subprocess.check_output(['git', 'show', f'{OLD_CORE_SHA}:tools/ci/graph_impact.py']))
+    file.write_bytes(subprocess.check_output(['git', 'show', f'{OLD_CORE_SHA}:tools/ci/graph_impact.py'], env=child_env()))
     spec = importlib.util.spec_from_file_location('tl3_graph_impact_before_review_1', file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -1,0 +1,32 @@
+{
+  "kind": "cant_meet",
+  "report": "I can't plan this as a leaf or a split. Most of the goals need changes to tools/ci/bazel_gate.py, and that file is protected: it matches the controller's `tools/ci/**` pattern. Leaves and split pieces both have to avoid protected paths, and the controller rejects any declaration that includes one. I confirmed the file is at tools/ci/bazel_gate.py: `verdict_of` at line 124, `test_statuses` at 130, `module_from` at 146, `class Workspace` at 153, `gate_pr` at 295 and `gate_main` at 324.\n\nThe goals that need the gate change are 2, 3, 4, 5 and 6. They cover:\n- importing BUDGET_MARKER into the gate\n- `Workspace.budget_only` and the sharded rule\n- `rerun_budget_only` in `gate_pr` and per architecture in `gate_main`, with `--nocache_test_results` and a distinct log_name\n- `budget_reruns` and the verdict, failed and missed values worked out after the rerun\n- the ordering of each architecture's check against the shared bazel-testlogs symlink\n\nGoal 7's gate tests and goal 8's docs paragraph describe gate behaviour that would not exist without that change.\n\nThe runner-only part is in unprotected files and could be done alone. That covers goals 0 and 1 and the runner half of goal 7. I checked tools/bazel/python_runner.py: `budget_overruns` is at line 49 and the `status = 1 if overruns else 0` branch is at line 96, so the marker would be written there. That part would be tests/test_bazel_inputs.py, or a new runner test file with a tests/BUILD.bazel target. But it doesn't meet the issue on its own. It would write a marker that nothing reads, and goals 2\u20138 would stay unmet. A split doesn't help, because the gate piece would still have to declare the protected file.\n\nThere is also an unresolved risk from the brief that is not checked here. If .bazelrc sets remote-download-minimal options, test.outputs/ may never appear locally, so the marker path could never trigger.\n\nRob needs to decide one of these:\n1. Grant a protected-path exception for tools/ci/bazel_gate.py. Then the whole job fits one leaf: tools/bazel/python_runner.py, tools/ci/bazel_gate.py, tests/test_bazel_gate.py, tests/test_bazel_inputs.py or a new tests/test_python_runner_budget_marker.py, docs/bazel.md, and tests/BUILD.bazel if a new target or data entry is needed.\n2. Accept a runner-marker-only change for goals 0 and 1, with the gate work left to someone allowed to edit tools/ci.\n\nThe outside facts are the issue author's claims as the brief gives them, from PrismaBuild issue #2636. They are unverified: the 138 s vs 20 s overrun, the 6.3 s recorded duration, the 1-in-6 TIMEOUT rate, the 49.8 s / 300 s figures, and RobTand/trustladderiii#364 as the model to follow.",
+  "files": [
+    "tools/bazel/python_runner.py",
+    "tools/ci/bazel_gate.py",
+    "tests/test_bazel_gate.py",
+    "tests/test_bazel_inputs.py",
+    "tests/BUILD.bazel",
+    "docs/bazel.md",
+    ".bazelrc"
+  ],
+  "forecast": {
+    "tokenizer": "o200k_base",
+    "brief_tokens": 3320,
+    "file_tokens": {
+      ".bazelrc": 715,
+      "docs/bazel.md": 2296,
+      "tests/BUILD.bazel": 16384,
+      "tests/test_bazel_gate.py": 2507,
+      "tests/test_bazel_inputs.py": 1685,
+      "tools/bazel/python_runner.py": 1212,
+      "tools/ci/bazel_gate.py": 4419
+    },
+    "overhead_tokens": 30000,
+    "tokens": 62538,
+    "fit_tokens": 100000,
+    "context_tokens": 150000,
+    "fits": true
+  },
+  "violations": []
+}

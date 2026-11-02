@@ -14,6 +14,9 @@ pub(crate) mod review;
 mod source;
 #[cfg(test)]
 mod startup_tests;
+mod trace;
+#[cfg(test)]
+mod trace_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
@@ -126,6 +129,8 @@ pub struct Supervisor {
     images: super::images::Images,
     hindsight: tl3_config::Hindsight,
     memory: crate::memory::Feed,
+    recall_breaker: crate::memory::Breaker,
+    announcer: crate::memory::Announcer,
 }
 
 impl Supervisor {
@@ -149,6 +154,8 @@ impl Supervisor {
                 Err(error) => eprintln!("worker startup skipped {}: {error}", delivery.key),
             }
         }
+        let recall_breaker = crate::memory::Breaker::default();
+        let announcer = crate::memory::Announcer::default();
         Ok(Self {
             branches: crate::branches::Branches::new(&config.github.repos)?,
             active,
@@ -164,8 +171,22 @@ impl Supervisor {
             tests: config.prismabuild.clone(),
             images: super::images::Images::new(&config.github.repos),
             hindsight: config.hindsight.clone(),
-            memory: crate::memory::Feed::start(config.store.clone(), config.hindsight.clone()),
+            memory: crate::memory::Feed::start(
+                config.store.clone(),
+                config.hindsight.clone(),
+                recall_breaker.clone(),
+                announcer.clone(),
+            ),
+            recall_breaker,
+            announcer,
         })
+    }
+
+    /// Post memory hides and retirements on the operations issue (#439).
+    pub(crate) fn with_operations(self, issue: crate::memory::OperationsIssue) -> Self {
+        *self.announcer.lock().unwrap() = Some(Box::new(issue));
+        self.memory.wake();
+        self
     }
 
     pub(crate) fn with_materials(mut self, provider: crate::production::Materials) -> Self {
@@ -179,6 +200,7 @@ impl Supervisor {
             self.store.clone(),
             self.active.clone(),
         )
+        .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -254,7 +276,13 @@ impl Supervisor {
                 .as_array()
                 .ok_or(Error::Invalid("maker plan needs checks"))?
                 .iter()
-                .map(|c| json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]}))
+                .map(|c| {
+                    let mut check = json!({"name":c["name"],"kind":c["kind"],"tests":c["tests"]});
+                    if let Some(forcing) = c.get("forcing") {
+                        check["forcing"] = forcing.clone();
+                    }
+                    check
+                })
                 .collect::<Vec<_>>();
             materials["check_run"] =
                 json!({"repository":checkout,"base_sha":base.as_str(),"plan":checks});
@@ -383,6 +411,44 @@ impl Supervisor {
         // A narrowed request keeps the pristine issue for a later narrowing; no role reads it.
         if let Some(inputs) = inputs.as_object_mut() {
             inputs.remove("original_issue");
+        }
+        // #422: recall upfront. Ingest reads the issue, the planner its brief and
+        // goals, and the reviewer the repo's conventions. An outage degrades to none.
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        let goals = |goals: &Value| {
+            goals
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|goal| goal["description"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let query = match role {
+            "ingest" => Some(format!(
+                "{}\n{}",
+                inputs["issue"]["title"].as_str().unwrap_or(""),
+                inputs["issue"]["body"].as_str().unwrap_or("")
+            )),
+            "planner" => Some(format!(
+                "{}\n{}",
+                inputs["ingest"]["brief"].as_str().unwrap_or(""),
+                goals(&inputs["ingest"]["goals"])
+            )),
+            "reviewer" => Some(goals(&inputs["goals"])),
+            _ => None,
+        };
+        if let Some(query) = &query {
+            let recall = if role == "reviewer" {
+                crate::memory::Recall::Conventions { repo: &repo, query }
+            } else {
+                crate::memory::Recall::Context { repo: &repo, query }
+            };
+            let recalled =
+                crate::memory::recall(store, &self.hindsight, &self.recall_breaker, recall)?;
+            for (field, value) in recalled.as_object().into_iter().flatten() {
+                inputs[field] = value.clone();
+            }
         }
         if matches!(role, "ingest" | "audit") {
             inputs["protected_paths"] = json!(
@@ -616,8 +682,17 @@ impl Supervisor {
         if Store::open(&self.store)?.load()?.epoch.get() != epoch {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
-        stop_attempt(&self.root(key))?;
+        if let Some(attempt) = stop_attempt(&self.root(key))? {
+            trace::flush(&attempt, &self.flusher());
+        }
         Ok(())
+    }
+
+    fn flusher(&self) -> trace::Flusher<'_> {
+        trace::Flusher {
+            launcher: &self.settings.launcher,
+            python: &self.settings.python,
+        }
     }
 
     fn retire_sessions(&self, store: &mut Store) -> Result<()> {
@@ -682,6 +757,8 @@ impl Supervisor {
                         }
                         Err(error) => return Err(error),
                     }
+                    // #430: an unshipped span log outlives the run root.
+                    trace::hold(&entry.path(), &self.settings.runs)?;
                 }
             }
         }
@@ -720,8 +797,15 @@ impl Supervisor {
     }
 }
 
-fn stop_attempt(root: &Path) -> Result<()> {
+fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
     if let Some((_, attempt)) = latest(root)? {
+        // Q49: stopping a live worker is deliberate, so its trace closes as
+        // stopped rather than crashed (#430).
+        if attempt.join(trace::LOG).try_exists()?
+            && (alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?)
+        {
+            write(&attempt.join("stopped.json"), &json!({}))?;
+        }
         // #372: the supervisor's own scope also holds every process the worker started.
         let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
@@ -731,8 +815,9 @@ fn stop_attempt(root: &Path) -> Result<()> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        return Ok(Some(attempt));
     }
-    Ok(())
+    Ok(None)
 }
 
 impl Supervisor {
@@ -834,6 +919,8 @@ impl Supervisor {
             "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
         });
+        request["trace"]["log"] = json!(attempt.join(trace::LOG));
+        request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the

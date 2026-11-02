@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import time
 
+from child_env import child_env
+
 
 def commands(metadata, mode):
     if mode not in {'features', 'kani'}:
@@ -39,14 +41,14 @@ def main():
     parser.add_argument('mode', choices=['features', 'kani'])
     args = parser.parse_args()
     metadata = json.loads(subprocess.check_output(
-        ['cargo', 'metadata', '--no-deps', '--locked', '--format-version=1'], text=True))
+        ['cargo', 'metadata', '--no-deps', '--locked', '--format-version=1'], text=True, env=child_env()))
     timings = []
     started = time.monotonic()
     try:
         for command in commands(metadata, args.mode):
             print(json.dumps({'compile_only': command}), flush=True)
             before = time.monotonic()
-            result = subprocess.run(command, check=False)
+            result = subprocess.run(command, check=False, env=child_env())
             timings.append({'command': command, 'seconds': time.monotonic() - before,
                             'returncode': result.returncode})
             result.check_returncode()
