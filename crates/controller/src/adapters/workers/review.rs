@@ -103,6 +103,13 @@ pub(super) fn inputs(
         fixes.as_object_mut().unwrap().remove("head_sha");
         inputs["review_fixes"] = fixes;
     }
+    // The run_tests receipts the maker cited for this head (#408).
+    if let Some(reply) = store.worker_document(&node, "maker_replies")?
+        && reply["head"] == head
+        && let Some(evidence) = reply.get("test_evidence")
+    {
+        inputs["test_evidence"] = evidence.clone();
+    }
     super::protocol::validate_inputs("reviewer", &inputs)?;
     Ok(inputs)
 }

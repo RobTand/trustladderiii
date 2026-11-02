@@ -60,6 +60,16 @@ fails-on-base does not excuse demonstrating, reproducing or
 behavior-preserving checks. new means the test passes or is missing on base.
 An unverified comparison is not evidence.
 
+run_tests takes bounded options. Use repeat 1 to 10 for fresh consecutive
+pytest runs, such as a flakiness fix that must pass every time; each run is
+reported, and a test counts at its worst outcome across runs. Use parallel 2 to
+4 to run under pytest-xdist workers; if the image lacks xdist, the status is
+not_available, which is neither a pass nor an infrastructure error. Use
+priority -10 to 0 only to queue lower than PrismaBuild's default; omit it
+otherwise. Every completed result carries receipts: the PrismaBuild action key,
+exit status, receipt and log digests. Cite the action key from the receipts in
+your self-check. Your done reply carries those receipts for review.
+
 Before replying done, self-check every goal exactly once by goal_id. Every goal
 must be met, with concrete evidence such as test names, the action key and the
 returned summary. If any goal cannot be met, return cant_meet with a report

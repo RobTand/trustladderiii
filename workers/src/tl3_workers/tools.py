@@ -157,6 +157,10 @@ def _selectors(value):
     return (base, tuple(tests))
 
 
+# The newest completed run_tests calls a maker reply can carry.
+TEST_EVIDENCE = 10
+
+
 class Evidence:
     """Environment failures this run's tools recorded. A blocked reply must cite one (Q50)."""
 
@@ -164,6 +168,7 @@ class Evidence:
         self._lock = Lock()
         self.infrastructure_keys = {}
         self.tool_errors = {}
+        self.test_runs = []
 
     def tool_error(self, name, cls, selectors=None):
         with self._lock:
@@ -171,9 +176,17 @@ class Evidence:
             self.tool_errors[error] = {"tool": name, "class": cls, "selectors": selectors}
             return error
 
-    def test_result(self, result, selectors):
+    def test_result(self, result, selectors, options=None):
         if not isinstance(result, dict):
             return
+        if result.get("status") == "completed" and result.get("receipts"):
+            # The maker's done reply carries these, so the reviewer sees what ran (#408).
+            entry = {"tests": list(selectors[1]), "base": selectors[0], **(options or {"repeat": 1, "parallel": 0}),
+                     "status": "completed", "totals": result["totals"], "receipts": result["receipts"]}
+            if "runs" in result:
+                entry["runs"] = [{key: run[key] for key in ("run", "status", "totals")} for run in result["runs"]]
+            with self._lock:
+                self.test_runs = [*self.test_runs, entry][-TEST_EVIDENCE:]
         if result.get("status") == "completed":
             # A later complete run of the same tests shows the environment recovered.
             with self._lock:
@@ -197,7 +210,8 @@ class Evidence:
         with self._lock:
             return {"infrastructure_keys": [[key, _selectors_json(s)] for key, s in self.infrastructure_keys.items()],
                     "tool_errors": {name: {**error, "selectors": _selectors_json(error["selectors"])}
-                                    for name, error in self.tool_errors.items()}}
+                                    for name, error in self.tool_errors.items()},
+                    "test_runs": list(self.test_runs)}
 
     def restore(self, state):
         keys = {key: _selectors(value) for key, value in state["infrastructure_keys"]}
@@ -207,8 +221,12 @@ class Evidence:
                 isinstance(name, str) and isinstance(error.get("tool"), str) and isinstance(error.get("class"), str)
                 for name, error in errors.items()):
             raise ValueError("invalid evidence state")
+        runs = state.get("test_runs", [])
+        if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+            raise ValueError("invalid evidence state")
         with self._lock:
             self.infrastructure_keys, self.tool_errors = keys, errors
+            self.test_runs = runs[-TEST_EVIDENCE:]
 
     def detail(self, evidence):
         """The worker-recorded facts behind cited evidence, or None if this run has none."""
@@ -224,7 +242,9 @@ class Evidence:
         return self.detail(evidence) is not None
 
     def test_evidence(self):
-        raise NotImplementedError("#408")
+        """This run's completed run_tests calls with their PrismaBuild receipts, newest last."""
+        with self._lock:
+            return list(self.test_runs)
 
 
 class Worktree:
@@ -490,7 +510,8 @@ def build_tools(worktree, descriptions):
                     result = _method(*args, **kwargs)
                     if _name == "run_tests":
                         selectors = (bool(kwargs.get("base")), tuple(sorted(set(kwargs.get("tests") or ()))))
-                        worktree.evidence.test_result(result, selectors)
+                        options = {"repeat": kwargs.get("repeat", 1), "parallel": kwargs.get("parallel", 0)}
+                        worktree.evidence.test_result(result, selectors, options)
                     if _summary is not None:
                         try:
                             _summary.tool(_name, kwargs, result)

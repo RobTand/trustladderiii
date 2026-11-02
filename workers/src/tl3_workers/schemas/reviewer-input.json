@@ -147,6 +147,11 @@
         "additionalProperties": false
       }
     },
+    "test_evidence": {
+      "type": "array", "minItems": 1, "maxItems": 10,
+      "description": "The maker's completed run_tests calls behind head_sha, with their PrismaBuild receipts.",
+      "items": {"$ref": "maker-reply.json#/$defs/test_run"}
+    },
     "review_fixes": {
       "type": "object",
       "properties": {

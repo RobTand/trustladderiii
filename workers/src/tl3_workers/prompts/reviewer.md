@@ -42,6 +42,11 @@ A regression's pre-existing failure is not a new regression. Missing, skipped
 or uncollected named tests are not passes. An infrastructure-failure is not
 evidence that the code passed or that the code is wrong. In-process custody is
 accepted for slice one; do not invent a stronger custody requirement.
+When supplied, test_evidence lists the maker's completed run_tests calls for
+head_sha: tests, repeat, parallel, totals, per-run totals and PrismaBuild
+receipts. It is the maker's evidence, not a check verdict. Use it to judge a
+claim the maker cites, such as passing every repeated run, and to see whether
+a cited action key matches a receipt.
 
 Block only on a supplied goal or standing rule. Each blocking finding must
 cite its exact id and kind, explain the problem, and give concrete evidence

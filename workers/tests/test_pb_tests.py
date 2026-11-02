@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import stat
@@ -74,7 +75,10 @@ def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, 
     summary = Summary()
     summary.add("tests/test_code.py::test_value", outcome, "fixture failure" if outcome == "failed" else "")
     result = call(submission, summary.result, ["tests/test_code.py::test_value"])
-    expected = {**summary.result, "action_key": KEY}
+    log = (submission[1] / "action.log").read_bytes()
+    expected = {**summary.result, "action_key": KEY, "receipts": [{
+        "action_key": KEY, "status": "executed", "exit_code": 0, "receipt_sha256": "b" * 64,
+        "log_sha256": hashlib.sha256(log).hexdigest()}]}
     if outcome in ("failed", "error"):
         summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
         expected["base"] = {key: value for key, value in infrastructure(
@@ -526,8 +530,10 @@ def test_repeat_parallel_and_priority_reach_the_action_and_reservation(submissio
     {"priority": 1}, {"priority": -11},
 ])
 def test_options_are_bounded(submission, arguments):
-    with pytest.raises(Exception, match="repeat|parallel|priority"):
-        invoke(submission, Summary().result, arguments)
+    with Worktree(submission[0]) as tree:
+        tool = make_test_tool(tree, TestSettings(IMAGE, submission[1]))
+        with pytest.raises(ValueError, match="repeat|parallel|priority"):
+            tool(**arguments)
     assert not (submission[1] / "submitted.json").exists()
 
 
@@ -540,7 +546,7 @@ def test_results_carry_receipts(submission):
     assert result["receipts"] == [{
         "action_key": KEY, "status": "executed", "exit_code": 0,
         "receipt_sha256": "b" * 64,
-        "log_sha256": __import__("hashlib").sha256(log).hexdigest(),
+        "log_sha256": hashlib.sha256(log).hexdigest(),
     }]
     # The maker cites them and the reviewer sees them.
     evidence = tree.evidence.test_evidence()
