@@ -471,6 +471,41 @@
         ]
       },
       "after": {
+        "invocation": "419c494b-02a7-4cca-876b-3650d56777d3",
+        "label": "//crates/controller:test_test_workers",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/dd2e0923-959c-4417-b81e-666c166bd6a2/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/419c494b-02a7-4cca-876b-3650d56777d3",
+        "verified": false,
+        "head": "8e1d5d977e284c821a26b071722f8259881943a8",
+        "outcome": "Unsharded target run alone with jobs=16. Remote Bazel ten-minute deadline expired before verdict. Remaining execution cancelled and terminal; no allocation metadata. Checker exit 1. Workers proof remains required before merge."
+      },
+      "previous_after_attempt": {
         "invocation": "02bb5f9b-e74d-40df-ab7a-c9f168f4a568",
         "label": "//crates/controller:test_test_workers",
         "receipts": [
@@ -687,14 +722,67 @@
         "url": "https://app.buildbuddy.io/invocation/ec92ab37-9842-4948-8f82-1ab9f4abbf50",
         "verified": true
       }
+    },
+    "workers_nested_pytest": {
+      "label": "//workers/tests:test_pb_tests",
+      "properties": {
+        "EstimatedComputeUnits": "1",
+        "EstimatedCPU": "2",
+        "EstimatedMemory": "0.5GB"
+      },
+      "before": {
+        "invocation": "e6b25f43-11c2-495a-87fb-f11c8794cf56",
+        "url": "https://app.buildbuddy.io/invocation/e6b25f43-11c2-495a-87fb-f11c8794cf56",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "dbe3b8e5624b83a14ab971951a399246dfbba0796ee74369b89fe54ef3919473",
+              "sizeBytes": "360"
+            },
+            "execution_id": "/uploads/61475dac-7269-4a94-ab05-c56ca51509a2/blobs/dbe3b8e5624b83a14ab971951a399246dfbba0796ee74369b89fe54ef3919473/360",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {},
+            "exit_code": 0,
+            "requested": {},
+            "effective": {
+              "estimatedMemoryBytes": "358338560",
+              "estimatedMilliCpu": "1000"
+            },
+            "predicted": null,
+            "measured": {
+              "estimatedMemoryBytes": "358338560",
+              "estimatedMilliCpu": "1000"
+            },
+            "cgroup": {
+              "cpuWeight": "39",
+              "cpuQuotaLimitUsec": "3000000",
+              "cpuQuotaPeriodUsec": "100000",
+              "pidsMax": "8192",
+              "memoryOomGroup": true,
+              "cpusetCpus": [
+                8,
+                21,
+                22
+              ],
+              "numaNode": 0
+            },
+            "isolation": "oci",
+            "started": "2026-11-02T22:29:55.394885926Z",
+            "completed": "2026-11-02T22:31:34.462533994Z",
+            "cpu_seconds": 54.207676,
+            "peak_memory_bytes": "420798464",
+            "sampled_peak_cpu": 0.998
+          }
+        ]
+      }
     }
   },
   "gate_concurrency": {
-    "before_jobs": 80,
-    "after_jobs": 16,
+    "gate_jobs": 80,
+    "agent_jobs": 16,
     "quota_cores": 30,
-    "basis": "Bound client concurrency to the standing development limit; explicit reservations prevent 30 one-CPU predictions from packing multi-process actions.",
-    "gate_wall_time_comparison": "Pending PR Gate. No full development suite or 80-job experiment was authorized under the load limit; no speedup is claimed."
+    "basis": "Gate concurrency is unchanged. A measured jobs change can follow separately."
   },
   "controller_memory": {
     "invocation": "8be061d6-7e36-49f9-91bc-e7ffcfc80865",

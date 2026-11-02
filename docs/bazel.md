@@ -51,7 +51,7 @@ the fix: `tools/bazel/generate.sh`.
 ## Configurations
 
 - `--config=remote`: BuildBuddy cache, remote execution on the pinned
-  Ubuntu 24.04 image, BES, `--jobs=16`.
+  Ubuntu 24.04 image, BES, `--jobs=80`. Development runs override this with `--jobs=16`.
 - `--config=remote-arm64`: the same, but every action, including compiles
   and tools, runs on BuildBuddy's linux/arm64 executors. Remote Bazel runners
   are amd64 only, so the client stays on amd64. The post-merge run uses it.
@@ -80,7 +80,13 @@ and memory override the compute unit defaults of one CPU and 2.5 GB per unit.
 network properties from `nonhermetic()`. Rust sizing covers every controller
 runner and every package in `_POSTGRES`, including each worker shard. The
 harness package default also covers new tests that start nested pytest suites.
-Other Python packages keep dynamic sizing.
+`workers/tests:test_pb_tests` also starts a nested harness runner and has its own
+measured reservation. Static parity examines every discovered Python module for
+subprocess pytest/unittest commands, harness runner paths and harness execution
+calls, including scripts written by tests. A newly detected nested suite fails
+parity until its measured reservation supplies all three positive properties.
+Other Python tests keep dynamic sizing. The sizing helper takes the package as
+an argument and loads without Bazel or recorder globals.
 
 The baseline 2026-11-02 execution receipts give these sizing inputs. CPU bursts are the
 largest CPU-millisecond delta divided by its wall-millisecond interval in
@@ -95,6 +101,7 @@ scenario totals are not instantaneous CPU demand.
 | Workers, per shard | 2.240 | 524,288,000 | 3 / 1 GiB |
 | Store/Postgres | 0.912 | 721,035,264 | 2 / 1 GiB |
 | Harness/nested pytest | 0.994 | 106,151,936 | 2 / 512 MiB |
+| Workers nested pytest, `test_pb_tests` | 0.998 | 420,798,464 | 2 / 512 MiB |
 
 CPU rounds up to a whole core after 25% headroom. Memory gets at least 25%
 headroom, rounds up to whole GiB, and has a 512 MiB minimum. The controller
@@ -137,17 +144,17 @@ requested 4000m and 8 GiB but received 1000m and 491,680,192 bytes. Worker
 shards in [0a78d9d0](https://app.buildbuddy.io/invocation/0a78d9d0-37f1-41a2-9f4e-17df84f37ba2)
 also received 1000m despite their 4000m requests. Before/after receipts are
 recorded in `docs/bazel-test-sizing.json`. The worker verification attempt was
-cancelled after exceeding the ten-minute window, and its after-sizing receipt
-is unverified. Repeat that check after #483 shards the worker target.
+repeated alone on reviewed head `8e1d5d97`, without #483's shards, in
+[419c494b](https://app.buildbuddy.io/invocation/419c494b-02a7-4cca-876b-3650d56777d3).
+The Remote Bazel runner reached its ten-minute deadline before a test verdict.
+The remaining action was cancelled and is terminal. Its receipt contains no
+allocation metadata, so workers after-sizing proof remains a merge prerequisite.
 
 OCI receipts show the account's shared 30-core quota, not a per-test hard CPU
-limit. Sizes control scheduling and CPU weight. Remote configurations now cap
-client concurrency at 16 jobs, matching the development load limit. At four
-CPUs per controller action, the quota admits at most seven such actions at
-once. Gate wall-time comparisons must come from Gate runs, with load and cache
-state recorded. Targeted receipts prove allocation; they do not prove that
-16 jobs is the fastest Gate setting. Do not launch development full-suite
-comparisons on the shared executors.
+limit. Sizes control scheduling and CPU weight. Remote configurations retain
+80 jobs. Agent development runs explicitly use 16. A measured Gate concurrency
+change can follow separately. Do not launch development full-suite comparisons
+on the shared executors.
 
 ## CI
 
