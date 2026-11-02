@@ -217,6 +217,9 @@ pub struct Limits {
     pub w: u32,
     #[serde(default = "default_agent_pool")]
     pub agent_pool: u8,
+    /// Q54 (#440): stop for TL3 review instead of retrying the work.
+    #[serde(default)]
+    pub fail_fast: bool,
 }
 
 fn default_agent_pool() -> u8 {

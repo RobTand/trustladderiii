@@ -29,6 +29,8 @@ free_rechecks = 3
 w = 1
 # Q39, docs/state-machine.md: simultaneous agent runs.
 agent_pool = 1
+# Q54, docs/state-machine.md: stop for TL3 review instead of retrying the work.
+fail_fast = false
 
 [github]
 # deploy/github-app/README.md: existing JSON with id, slug, pem, webhook_secret.

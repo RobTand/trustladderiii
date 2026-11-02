@@ -52,7 +52,7 @@ if mode == "manifest":
             memory = 44
         elif name.startswith("progress_from_"):
             memory = 24
-        elif name in replies:
+        elif name in replies or name.startswith("fail_fast_"):
             memory = 44
         else:
             memory = 10

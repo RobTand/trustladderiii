@@ -153,6 +153,8 @@ pub struct Bootstrap {
     pub operations: Option<tl3_config::OperationsIssue>,
     pub slots: u8,
     pub pool: u8,
+    /// Q54: `limits.fail_fast`, set on the stored world at every open.
+    pub fail_fast: bool,
 }
 impl Bootstrap {
     pub fn github_repositories(&self) -> Vec<Repository> {
@@ -189,6 +191,7 @@ impl Bootstrap {
                 .try_into()
                 .map_err(|_| Error::Invalid("slot count exceeds kernel range"))?,
             pool: config.limits.agent_pool,
+            fail_fast: config.limits.fail_fast,
         })
     }
 }

@@ -256,6 +256,26 @@ pub enum QKind {
     CleanupFailed,
 }
 
+/// The step whose failure stopped a request for TL3 review under `fail_fast`
+/// (Q54, Rob, 2026-11-02).
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum ReviewStop {
+    ChecksFailed,
+    ChangesRequested,
+    CiFailed,
+    MakerCantMeet,
+    MakerNeedsFiles,
+    MakerOutOfRoom,
+    ReviewerOutOfRoom,
+    PlanCantMeet,
+    PlanBrokeRule,
+}
+
 /// Where a node goes when Rob says carry on.
 #[cfg_attr(
     all(feature = "serde", not(kani)),
@@ -388,6 +408,10 @@ pub struct Node {
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
+    /// Set when `fail_fast` stopped the node for TL3 review instead of
+    /// retrying (Q54). A postmortem for it is owed as `needed_fix`.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub review_stop: Option<ReviewStop>,
 }
 
 impl Node {
@@ -439,6 +463,7 @@ impl Node {
                 spent: 0,
                 merge_credited: false,
             },
+            review_stop: None,
         }
     }
 
@@ -555,6 +580,11 @@ pub struct World {
     pub next_ticket: u64,
     pub next_question: u64,
     file_sets: Vec<Vec<FileId>>,
+    /// Q54: a step that would retry the work stops the request for TL3
+    /// review instead. Config sets it at every open, so it applies to open
+    /// requests too.
+    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    pub fail_fast: bool,
 }
 
 #[cfg_attr(
@@ -932,6 +962,7 @@ impl World {
             next_ticket: 0,
             next_question: 0,
             file_sets: Vec::new(),
+            fail_fast: false,
         }
     }
 

@@ -148,6 +148,7 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
         rob: 1,
         slots: 1,
         pool: 1,
+        fail_fast: false,
         operations: None,
     };
     let mut c = Controller::open(Store::open(&settings).unwrap(), registry(), bootstrap()).unwrap();

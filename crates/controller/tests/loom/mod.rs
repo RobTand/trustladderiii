@@ -12,6 +12,8 @@ pub(super) fn bootstrap() -> Bootstrap {
         rob: 42,
         slots: 1,
         pool: 1,
+        fail_fast: false,
+        fail_fast: false,
         operations: None,
     }
 }

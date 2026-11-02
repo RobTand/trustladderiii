@@ -92,6 +92,7 @@ fn open_clocked(
         rob: ROB,
         slots: 2,
         pool: 2,
+        fail_fast: false,
         operations: None,
     };
     if hours {
