@@ -263,7 +263,6 @@ class Workspace:
         try:
             if write:
                 policy = bazel_graph_impact.write_baseline(new, previous)
-                policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + '\n')
             else:
                 policy = json.loads(policy_path.read_text())
             allowlist = json.loads((self.root / bazel_graph_impact.ALLOWLIST).read_text())
@@ -271,7 +270,10 @@ class Workspace:
             changed, deleted = self.changes(base, head)
             changed_tests = bazel_graph_impact.changed_tests(old, new, self._typed_hashes['base'],
                                                            self._typed_hashes['head'], changed | deleted)
-            result = bazel_graph_impact.check(old, new, changed_tests, policy, allowlist, prior_allowlist, previous)
+            result = bazel_graph_impact.check(old, new, changed_tests, policy, allowlist, prior_allowlist, previous,
+                                              record_gains=write)
+            if write and not result['errors']:
+                policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + '\n')
             result['crates'] = bazel_graph_impact.crate_report(self._deps['head'], new['reach'], self._crates['head'])
             result['mermaid'] = {}
             for target in result['explain_targets'][:5]:

@@ -199,22 +199,33 @@ tl3_py_test(
 py_library(
     name = "graph_impact",
     srcs = ["graph_impact.py"],
+    visibility = ["//visibility:public"],
 )
 
 py_library(
     name = "bazel_graph_impact",
     srcs = ["bazel_graph_impact.py"],
+    visibility = ["//visibility:public"],
     deps = [":graph_impact"],
 )
 
 py_binary(
     name = "graph_impact_check",
     srcs = ["graph_impact_check.py"],
-    deps = [":bazel_gate", ":bazel_graph_impact"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+    ],
 )
 
 py_binary(
     name = "graph_impact_proof",
     srcs = ["graph_impact_proof.py"],
-    deps = [":bazel_gate", ":bazel_graph_impact", ":graph_impact"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bazel_gate",
+        ":bazel_graph_impact",
+        ":graph_impact",
+    ],
 )

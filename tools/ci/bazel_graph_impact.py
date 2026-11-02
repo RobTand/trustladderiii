@@ -62,9 +62,11 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     growth = sorted(((source, n - base['dependents'].get(source, 0))
                      for source, n in head['dependents'].items() if n > base['dependents'].get(source, 0)),
                     key=lambda row: (-row[1], row[0]))
+    broad = {test for test in targets if any(f'{test} reach ' in error for error in errors)}
     return {'summary': graph_impact.summary(base, head, policy['reach_budget']), 'errors': errors,
             'base': base, 'head': head, 'added_edges': [list(edge) for edge in sorted(added)],
-            'fanout_growth': [list(row) for row in growth], 'explain_targets': sorted(targets)}
+            'fanout_growth': [list(row) for row in growth],
+            'explain_targets': sorted(targets, key=lambda test: (test not in broad, test))}
 
 
 def write_baseline(graph, previous=None):
@@ -142,7 +144,12 @@ def load(deps_file, hashes_file, tests, root):
     source_hashes = json.loads(Path(hashes_file).read_text())
     sources = source_labels(source_hashes)
     loc = {label: len((Path(root) / path(label)).read_bytes().splitlines()) for label in sources}
-    graph = from_deps(deps, tests, sources, loc)
+    reaches, edges, weights = graph_impact.read_deps(deps_file, tests, sources, loc=loc)
+    graph = graph_impact.measure(reaches, edges, weights)
+    conftests = {node for node in deps if node.endswith((':conftest', ':conftest.py', '/conftest.py'))}
+    graph['edge_groups']['conftest_source'] = sorted(
+        f'{consumer} -> {dependency}' for consumer, dependency in edges
+        if consumer in conftests and closure(deps, dependency) & sources)
     if not any(graph['reach'].values()):
         raise ValueError('no test reaches any production source; missing rule-to-source edges')
     return graph, deps, hashes(source_hashes)

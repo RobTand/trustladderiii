@@ -184,6 +184,15 @@ def explain(result, prs):
     graph = result.get('graph_impact', {})
     if graph:
         lines.append(graph['summary'])
+        if graph.get('head'):
+            measured = graph['head']
+            lines.append(f'LOC U {measured["loc_u_pct"]:.3f}%, reach median/p90/max '
+                         f'{measured["reach_median"]}/{measured["reach_p90"]}/{measured["reach_max"]}')
+        if graph.get('crates'):
+            crates = graph['crates']
+            lines.append('Largest crate cycle: ' + (', '.join(crates['largest_cycle']) or 'none'))
+            lines.append('Crate fan-out: ' + ', '.join(f'{label} {count}' for label, count in
+                         sorted(crates['fanout'].items(), key=lambda item: (-item[1], item[0]))))
         lines.extend(graph.get('errors', []))
     if result['mode'] == 'pr':
         lines.append(f"Selection: {result.get('selection')}, {len(result.get('selected', []))} tests")

@@ -24,7 +24,7 @@ def main():
     output = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
     if output:
         (Path(output) / 'graph-impact-result.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
-        if args.write_baseline:
+        if args.write_baseline and not result['errors']:
             (Path(output) / 'graph-impact-baseline.json').write_bytes((workspace.root / bazel_graph_impact.POLICY).read_bytes())
     print(json.dumps(result, indent=2, sort_keys=True))
     return int(bool(result['errors']))
