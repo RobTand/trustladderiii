@@ -533,6 +533,14 @@ def test_prompt_states_how_existing_tests_are_named():
     assert "A test file path on its own is not a node ID" in prompt
 
 
+def test_prompt_requires_deterministic_reproduction_for_determinism_work():
+    # #340: a flaky test can pass on the base, so it cannot demonstrate a determinism fix.
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
+    assert "must name a test that reproduces the race deterministically" in prompt
+    assert "a flaky test can pass on the base" in prompt
+    assert "regression or behavior-preserving checks that fit the evidence" in prompt
+
+
 def test_oversized_check_plan_is_a_planner_violation(planner_request, monkeypatch):
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
