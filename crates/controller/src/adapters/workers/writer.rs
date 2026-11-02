@@ -278,6 +278,7 @@ pub fn checked_draft(
         .ok_or(Error::Invalid("writer needs the original issue title"))?
         .to_owned();
     let blocker = blocker_anchors(&input);
+    let actions = proposed_actions(&input);
     let policy = Policy {
         request_title: Some(title.clone()),
         blocker_paths: blocker
@@ -307,6 +308,17 @@ pub fn checked_draft(
             input.violations = vec![
                 "The obstacle must name the reported blocker: include at least one full file path or named rule from facts.findings.report in one or two plain sentences. Preserve the worker's proposed decisions in the options' outcomes.".into(),
             ];
+            continue;
+        }
+        if let WriterReply::Question(question) = &reply
+            && !actions.is_empty()
+            && !question.options.iter().any(|option| {
+                let text = format!("{} {}", option.action, option.outcome);
+                (!blocker.is_empty() && names_blocker(&text, &blocker))
+                    || names_blocker(&text, &actions)
+            })
+        {
+            input.violations = vec!["At least one option must name a reported blocker or a proposed action from facts.findings.report, so Rob can choose what to do about it.".into()];
             continue;
         }
         if input.kind == MessageKind::Clarification
@@ -378,7 +390,7 @@ pub fn checked_draft(
     Err(Error::MessageRejected)
 }
 
-/// The controller's own question, without findings, for when every draft fails.
+/// The controller's own question for when every draft fails.
 pub fn fixed_question(
     input: &WriteRequest,
     decision: Option<&str>,
@@ -391,10 +403,8 @@ pub fn fixed_question(
             .to_owned())
     };
     let title = text("issue_title")?;
-    if !names_blocker(&text("obstacle")?, &blocker_anchors(input)) {
-        return Err(Error::MessageRejected);
-    }
-    let draft = Draft {
+    let anchors = blocker_anchors(input);
+    let mut draft = Draft {
         issue_title: title.clone(),
         request_quote: title.clone(),
         obstacle: text("obstacle")?,
@@ -408,28 +418,81 @@ pub fn fixed_question(
     };
     let policy = Policy {
         request_title: Some(title),
+        blocker_paths: anchors
+            .iter()
+            .filter(|anchor| anchor.contains('/'))
+            .cloned()
+            .collect(),
         ..policy.clone()
     };
+    if let Some(report) = cant_meet_report(input) {
+        // The worker normally redacts findings. This fallback never enters it.
+        let sentence = sentences(report)
+            .find(|sentence| names_blocker(sentence, &anchors))
+            .unwrap_or_else(|| sentences(report).next().unwrap_or_default());
+        let obstacle: String = crate::memory::redact_text(sentence)
+            .trim()
+            .chars()
+            .take(message::MAX_OBSTACLE_CHARS)
+            .collect();
+        let safe_anchor = anchors
+            .iter()
+            .filter(|anchor| names_blocker(sentence, &BTreeSet::from([(*anchor).clone()])))
+            .chain(anchors.iter())
+            .find(|anchor| {
+                anchor.chars().count() <= 200
+                    && message::check_prose(
+                        &format!("The reported restriction concerns {anchor}."),
+                        &policy,
+                    )
+                    .is_ok()
+            });
+        if !proposed_actions(input).is_empty()
+            && let (Some(anchor), Some(option)) = (safe_anchor, draft.options.first_mut())
+        {
+            option
+                .outcome
+                .push_str(&format!(" Your guidance must address {anchor}."));
+        }
+        draft.obstacle = obstacle;
+        if names_blocker(&draft.obstacle, &anchors)
+            && let Ok(checked) = message::check(&draft, &policy)
+        {
+            return Ok(checked.as_str().to_owned());
+        }
+        // Unsafe prose must not suppress the question or bypass the message checks.
+        draft.obstacle = safe_anchor.map_or_else(
+            || "The worker reported a restriction that needs your decision.".into(),
+            |anchor| format!("I cannot finish because the reported restriction concerns {anchor}."),
+        );
+    }
     message::check(&draft, &policy)
         .map(|checked| checked.as_str().to_owned())
         .map_err(|_| Error::MessageRejected)
 }
 
-fn blocker_anchors(input: &WriteRequest) -> BTreeSet<String> {
+fn cant_meet_report(input: &WriteRequest) -> Option<&str> {
     let findings = &input.facts["findings"];
     if input.kind != MessageKind::Question
         || findings["outcome"] != "cant_meet"
         || !matches!(findings["source"].as_str(), Some("planner" | "maker"))
     {
-        return BTreeSet::new();
+        return None;
     }
-    let report = findings["report"].as_str().unwrap_or_default();
-    let mut anchors = message::paths_in(report);
+    findings["report"].as_str()
+}
+
+fn blocker_anchors(input: &WriteRequest) -> BTreeSet<String> {
+    let Some(report) = cant_meet_report(input) else {
+        return BTreeSet::new();
+    };
+    let report = crate::memory::redact_text(report);
+    let mut anchors = message::paths_in(&report);
     static RULE: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r#"\b[Rr]ule\s+(?:[`'"]([A-Za-z0-9_-]+)[`'"]|([A-Z][A-Z0-9_]+)\b)"#)
             .unwrap()
     });
-    for capture in RULE.captures_iter(report) {
+    for capture in RULE.captures_iter(&report) {
         anchors.insert(
             capture
                 .get(1)
@@ -446,7 +509,108 @@ fn blocker_anchors(input: &WriteRequest) -> BTreeSet<String> {
     {
         anchors.insert("protected-path".into());
     }
+    if anchors.is_empty() {
+        anchors = sentences(&report)
+            .next()
+            .unwrap_or_default()
+            .split(|c: char| !c.is_alphabetic())
+            .map(str::to_lowercase)
+            .filter(|word| {
+                const STOP_WORDS: &[&str] = &[
+                    "about",
+                    "above",
+                    "after",
+                    "again",
+                    "against",
+                    "approach",
+                    "asked",
+                    "because",
+                    "before",
+                    "being",
+                    "below",
+                    "between",
+                    "cannot",
+                    "could",
+                    "doing",
+                    "during",
+                    "every",
+                    "finish",
+                    "first",
+                    "further",
+                    "having",
+                    "itself",
+                    "might",
+                    "other",
+                    "ought",
+                    "please",
+                    "report",
+                    "request",
+                    "should",
+                    "since",
+                    "something",
+                    "still",
+                    "their",
+                    "theirs",
+                    "there",
+                    "therefore",
+                    "these",
+                    "thing",
+                    "those",
+                    "through",
+                    "tried",
+                    "under",
+                    "until",
+                    "using",
+                    "where",
+                    "whether",
+                    "which",
+                    "while",
+                    "without",
+                    "would",
+                    "yourself",
+                ];
+                word.chars().count() >= 5 && !STOP_WORDS.contains(&word.as_str())
+            })
+            .collect();
+    }
     anchors
+}
+
+fn proposed_actions(input: &WriteRequest) -> BTreeSet<String> {
+    static ACTION: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(?:grant|narrow|accept|approve|authorize|permit|waive|exclude)\b")
+            .unwrap()
+    });
+    cant_meet_report(input)
+        .into_iter()
+        .flat_map(|report| {
+            ACTION
+                .find_iter(report)
+                .map(|action| action.as_str().to_lowercase())
+        })
+        .collect()
+}
+
+fn sentences(mut report: &str) -> impl Iterator<Item = &str> {
+    std::iter::from_fn(move || {
+        report = report.trim_start();
+        if report.is_empty() {
+            return None;
+        }
+        let end = report
+            .char_indices()
+            .find(|&(index, c)| {
+                matches!(c, '.' | '!' | '?')
+                    && report[index + c.len_utf8()..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)
+            })
+            .map_or(report.len(), |(index, c)| index + c.len_utf8());
+        let (sentence, rest) = report.split_at(end);
+        report = rest;
+        Some(sentence)
+    })
 }
 
 fn names_blocker(obstacle: &str, anchors: &BTreeSet<String>) -> bool {

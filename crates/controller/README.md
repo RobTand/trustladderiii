@@ -931,11 +931,16 @@ the decision at 400. Explicit planner and maker refusals carry
 rule in the obstacle. Those exact paths are allowed in that question, while
 other paths and internal vocabulary remain subject to the usual checks. The
 writer explains the worker's proposed decisions within the three standard
-answers, including any required permission and a smaller request.
+answers, including any required permission and a smaller request. When the report
+names no path or rule, the obstacle must share a distinctive word of at least
+five letters with its first sentence. When the report proposes an action, at
+least one option must name a reported blocker or proposed action.
 
-If every draft is rejected, a fixed question can still post when its obstacle
-names the blocker, or when the source names no path or rule. A generic fallback
-cannot replace a named blocker. It fails with `message_rejected` instead.
+If every draft is rejected, the controller still posts a fixed question. For a
+can't-meet report, it redacts secrets and clips the first sentence naming the
+blocker to the obstacle's limit. If that sentence fails the message checks, the
+controller uses a fixed sentence naming a safe reported blocker. Unsafe details
+cannot suppress the question or bypass the message checks.
 
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and

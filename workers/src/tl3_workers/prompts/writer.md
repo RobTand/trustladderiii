@@ -45,7 +45,9 @@ that decision. Keep the supplied options' order and meaning.
 When facts.findings.outcome is "cant_meet", the report is the planner's or
 maker's reason it cannot meet the request. The obstacle must name the blocker
 in one or two plain sentences, including its full file path or named rule. This
-is the exception to leaving out full paths above. Preserve the worker's proposed
+is the exception to leaving out full paths above. If neither is named, use
+concrete words from the report's first sentence to explain the restriction.
+Preserve the worker's proposed
 decisions in the options' outcomes, within the supplied answers: guidance for
 trying again, a changed request, or stopping. For a protected-path refusal,
 explain that a protected-path exception for the named file needs Rob's decision;

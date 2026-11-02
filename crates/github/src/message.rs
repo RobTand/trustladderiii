@@ -287,8 +287,17 @@ static PATH_TOKEN: LazyLock<Regex> =
 pub fn paths_in(text: &str) -> BTreeSet<String> {
     PATH_TOKEN
         .find_iter(text)
-        .map(|token| token.as_str().trim_end_matches('.').to_owned())
+        .filter_map(|token| path_token(text, token).map(str::to_owned))
         .collect()
+}
+
+fn path_token<'a>(text: &str, token: regex::Match<'a>) -> Option<&'a str> {
+    let path = token.as_str().trim_end_matches('.');
+    let last = path.rsplit('/').next()?;
+    let reference = text[token.end()..]
+        .strip_prefix('#')
+        .is_some_and(|suffix| suffix.starts_with(|c: char| c.is_ascii_digit()));
+    (!reference && last.contains(['.', '*', '_'])).then_some(path)
 }
 
 fn without_blocker_paths(text: &str, policy: &Policy) -> String {
@@ -298,8 +307,9 @@ fn without_blocker_paths(text: &str, policy: &Policy) -> String {
     PATH_TOKEN
         .replace_all(text, |capture: &regex::Captures<'_>| {
             let token = &capture[0];
-            let path = token.trim_end_matches('.');
-            if policy.blocker_paths.contains(path) {
+            if let Some(path) = path_token(text, capture.get(0).unwrap())
+                && policy.blocker_paths.contains(path)
+            {
                 format!("the file{}", &token[path.len()..])
             } else {
                 token.to_owned()

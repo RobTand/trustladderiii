@@ -1248,21 +1248,28 @@ mod question_findings_tests {
 
     #[test]
     fn fallback_redacts_secrets_and_clips_report_sentences() {
-        let report = format!(
-            "The controller forbids tools/ci/bazel_gate.py with password=secret123. {}",
-            "Extra detail. ".repeat(100)
-        );
-        let delivery = ask(
-            QKind::CantMeet,
-            Cont::Planning { must_split: false },
-            json!({"source":"planner", "outcome":"cant_meet", "report":report,
-                "decision":"May I edit the protected file?"}),
-        );
-        let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
-        let message =
-            question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
-        assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
-        assert!(!message.contains("secret123"), "{message}");
-        assert!(!message.contains("Extra detail"), "{message}");
+        for report in [
+            format!(
+                "The controller forbids tools/ci/bazel_gate.py with password=secret123. {}",
+                "Extra detail. ".repeat(100)
+            ),
+            "The leaf cannot edit tools/ci/bazel_gate.py because of owner/repo#42 with password=secret123.".into(),
+            format!("The controller forbids {} tools/ci/bazel_gate.py.", "changes ".repeat(100)),
+        ] {
+            let delivery = ask(
+                QKind::CantMeet,
+                Cont::Planning { must_split: false },
+                json!({"source":"planner", "outcome":"cant_meet", "report":report,
+                    "decision":"May I edit the protected file?"}),
+            );
+            let mut writer = Scripted(vec![Some("What should I change?"); 3], vec![]);
+            let message =
+                question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+            assert!(message.contains("tools/ci/bazel_gate.py"), "{message}");
+            for omitted in ["secret123", "Extra detail", "owner/repo#42", "leaf"] {
+                assert!(!message.contains(omitted), "{message}");
+            }
+            assert!(message.chars().count() < 2_000);
+        }
     }
 }
