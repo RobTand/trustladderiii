@@ -344,6 +344,10 @@ fn incidents_store_structured_signature() {
             ..Default::default()
         },
     );
+    // #356: failed looks count once per silence allowance; let each look count.
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.agent_worker.silence_secs = 0;
+    c.set_allowances(allowances);
     let key = worker_key(&mut c);
     c.look_key(&key).unwrap();
     c.look_key(&key).unwrap();

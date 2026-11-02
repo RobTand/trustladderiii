@@ -928,6 +928,22 @@ impl Controller {
                             fact: Fact::UpstreamStalled,
                         }),
                     )?;
+                    // The kernel acts on a stall only in Queued. An effect still
+                    // unacknowledged past its allowance is a failed look, so it
+                    // raises the read incident at the allowances' pace (#356).
+                    if self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                    {
+                        self.look_failed(
+                            state,
+                            crate::Error::Permanent {
+                                class: "queue_unfinished",
+                                source: "the upstream never acknowledged the request".into(),
+                            },
+                        )?;
+                    }
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
                 Upstream::PrismaBuild | Upstream::Worktrees => {}

@@ -2944,16 +2944,21 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
         SubscriptionFailure(waits::adapter(root.path())),
     );
     waits::record(root.path(), "claimed");
+    let clock = FakeClock::new();
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
         registry,
         bootstrap(),
-        FakeClock::new(),
+        clock.clone(),
     )
     .unwrap();
     c.intake(labelled()).unwrap();
     drain(&mut c);
     for _ in 0..3 {
+        // #356: failed looks count once per silence allowance.
+        clock.advance(u64::from(
+            tl3_config::Allowances::default().agent_worker.silence_secs,
+        ));
         assert!(
             c.look_now().is_ok(),
             "one subscription failure must not stop other looks"
