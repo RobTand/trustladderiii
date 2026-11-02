@@ -54,6 +54,8 @@ pub enum Violation {
     MissingRecommendation,
     MissingRecommendationReason,
     MissingAnswerInstructions,
+    MissingDecision,
+    DecisionNotOneQuestion,
     InternalVocabulary,
     InternalNameOrId,
     FilePath,
@@ -137,8 +139,22 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     if is_blank(&draft.how_to_answer) {
         errors.push(Violation::MissingAnswerInstructions);
     }
+    if let Some(decision) = &draft.decision {
+        let decision = normalize(&without_title_quotes(decision, &policy));
+        let decision = decision.trim();
+        if !decision.ends_with('?')
+            || decision.matches('?').count() != 1
+            || decision.contains(". ")
+            || decision.contains("! ")
+        {
+            errors.push(Violation::DecisionNotOneQuestion);
+        }
+    }
     let request_prefix = format!("You asked for \"{}\".\n\n", draft.request_quote);
     let mut rendered = format!("{request_prefix}{}\n", draft.obstacle);
+    if let Some(decision) = &draft.decision {
+        rendered.push_str(&format!("\n{decision}\n"));
+    }
     for (i, option) in draft.options.iter().enumerate() {
         rendered.push_str(&format!(
             "\n{}. {}: {}\n",
@@ -156,6 +172,7 @@ pub fn check(draft: &Draft, policy: &Policy) -> Result<CheckedMessage, Vec<Viola
     }
     rendered.push_str(&format!("\n{}", draft.how_to_answer));
     let mut written = vec![draft.obstacle.as_str()];
+    written.extend(draft.decision.as_deref());
     for option in &draft.options {
         written.extend([option.action.as_str(), option.outcome.as_str()]);
     }

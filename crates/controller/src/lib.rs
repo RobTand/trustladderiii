@@ -1565,7 +1565,53 @@ impl Controller {
                             .find(|r| r.table == "plans" && r.id == node.0.to_string())
                             .map(|r| r.value.clone())
                     });
-                let context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                let mut context = json!({"node": node, "question": question, "generation": n.generation, "pieces": plan.as_ref().and_then(|p| p.get("pieces")).cloned().unwrap_or(json!([])), "plan": plan});
+                // #322: Rob sees the deciding worker's findings, not only the question kind.
+                let latest = |table: &str| {
+                    commit
+                        .rows
+                        .iter()
+                        .rev()
+                        .find_map(|row| match row {
+                            RowChange::Put {
+                                table: t,
+                                id,
+                                value,
+                            } if t == table && id == &node.0.to_string() => Some(value.clone()),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            snapshot
+                                .rows
+                                .iter()
+                                .find(|r| r.table == table && r.id == node.0.to_string())
+                                .map(|r| r.value.clone())
+                        })
+                };
+                let mut incidents = BTreeMap::new();
+                for (id, value) in snapshot
+                    .rows
+                    .iter()
+                    .filter(|r| r.table == "incidents")
+                    .map(|r| (&r.id, &r.value))
+                    .chain(commit.rows.iter().filter_map(|row| match row {
+                        RowChange::Put { table, id, value } if table == "incidents" => {
+                            Some((id, value))
+                        }
+                        _ => None,
+                    }))
+                {
+                    if value["node"] == json!(node) {
+                        incidents.insert(id.clone(), value.clone());
+                    }
+                }
+                let incidents: Vec<_> = incidents.into_values().collect();
+                if let Some(binding) = n.question.as_ref().filter(|binding| binding.id == question)
+                    && let Some(findings) =
+                        question_findings::findings(binding, &latest, &incidents)
+                {
+                    context["findings"] = findings;
+                }
                 commit.rows.push(put(
                     "question_context",
                     question.to_string(),

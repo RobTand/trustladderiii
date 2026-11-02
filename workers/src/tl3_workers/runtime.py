@@ -176,6 +176,8 @@ def run(request, emit: Callable[[dict], None]):
 def _run(request, emit):
     role = ROLES[request["role"]]
     model = create_model(request)
+    if role.prepare_inputs is not None:
+        request = {**request, "inputs": role.prepare_inputs(request["inputs"], request)}
     with Worktree(request["worktree"]) if role.tools else nullcontext() as worktree:
         if worktree is not None:
             worktree.hindsight_key_file = request.get("hindsight_key_file")

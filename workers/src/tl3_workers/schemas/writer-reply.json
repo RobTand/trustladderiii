@@ -35,7 +35,8 @@
         "options": {"$ref": "#/$defs/options"},
         "recommended_option": {"type": "integer", "minimum": 0},
         "recommendation_reason": {"$ref": "#/$defs/text"},
-        "how_to_answer": {"$ref": "#/$defs/text"}
+        "how_to_answer": {"$ref": "#/$defs/text"},
+        "decision": {"$ref": "#/$defs/text"}
       },
       "required": [
         "request_quote", "obstacle", "options", "recommended_option",

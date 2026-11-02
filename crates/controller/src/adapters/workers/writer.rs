@@ -163,7 +163,9 @@ impl Writer for FakeWriter {
                     .as_str()
                     .ok_or(Error::Invalid("missing answer instructions"))?
                     .into(),
-                decision: None,
+                decision: input.facts["findings"]["decision"]
+                    .as_str()
+                    .map(str::to_owned),
             })),
             MessageKind::Clarification => Ok(WriterReply::Text(TextDraft {
                 text: format!(
@@ -228,6 +230,12 @@ pub fn checked_draft(
     let change_quote = (input.kind == MessageKind::Note)
         .then(|| input.facts["change_quote"].as_str().map(str::to_owned))
         .flatten();
+    // #322: a question built on a worker's findings must name the decision it needs.
+    let needs_decision = input.kind == MessageKind::Question
+        && input
+            .facts
+            .get("findings")
+            .is_some_and(serde_json::Value::is_object);
     for attempt in 0..3 {
         let reply = writer.draft(&format!("{key}:writer:{attempt}"), &input)?;
         if input.kind == MessageKind::Clarification
@@ -238,6 +246,9 @@ pub fn checked_draft(
             continue;
         }
         let checked = match &reply {
+            WriterReply::Question(question) if needs_decision && question.decision.is_none() => {
+                Err(vec![Violation::MissingDecision])
+            }
             WriterReply::Question(question) if input.kind == MessageKind::Question => {
                 let draft = Draft {
                     issue_title: title.clone(),
@@ -247,7 +258,7 @@ pub fn checked_draft(
                     recommended_option: Some(question.recommended_option),
                     recommendation_reason: question.recommendation_reason.clone(),
                     how_to_answer: question.how_to_answer.clone(),
-                    decision: None,
+                    decision: question.decision.clone(),
                 };
                 message::check(&draft, &policy).map(|checked| checked.as_str().to_owned())
             }
@@ -316,6 +327,9 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 question.recommendation_reason.clone(),
             ));
             fields.push(("answer instructions".into(), question.how_to_answer.clone()));
+            if let Some(decision) = &question.decision {
+                fields.push(("decision".into(), decision.clone()));
+            }
             fields
         }
     };
@@ -344,6 +358,12 @@ fn feedback(reply: &WriterReply, violations: &[Violation], policy: &Policy) -> V
                 }
                 Violation::ForeignReference(token) => {
                     return format!("Remove the foreign reference '{token}'; refer only to this request's issue or pull request.");
+                }
+                Violation::MissingDecision => {
+                    return "Add the decision: the one decision Rob must make, as a single question ending in a question mark.".into();
+                }
+                Violation::DecisionNotOneQuestion => {
+                    return "The decision must be one plain question ending in a question mark, with no other sentence.".into();
                 }
                 Violation::HtmlEntity(entity) => {
                     return format!("Replace the HTML entity '{entity}' in '{text}'; write the character itself, not an HTML entity.");

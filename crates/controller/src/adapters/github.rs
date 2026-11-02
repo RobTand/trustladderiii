@@ -516,7 +516,7 @@ fn writer_input(
                     &[
                         (
                             "Continue with the original reading",
-                            "I will continue with the original understanding of your request.",
+                            "I will continue with the original understanding of your request and set the check's open objections aside.",
                         ),
                         (
                             "Change the request",
@@ -587,20 +587,31 @@ fn writer_input(
                     ],
                 ),
             };
+            // #322: the deciding worker's findings, redacted by the worker process.
+            let findings = delivery
+                .question_context
+                .as_ref()
+                .and_then(|context| context.get("findings"))
+                .filter(|findings| findings.is_object());
             let options: Vec<_> = actions
                 .iter()
                 .map(|(action, outcome)| OptionDraft {
                     action: (*action).into(),
-                    outcome: (*outcome).into(),
+                    outcome: if findings.is_some() && *action == "Try again with guidance" {
+                        "I will try again using your answer to the question above and any guidance you provide.".into()
+                    } else {
+                        (*outcome).into()
+                    },
                 })
                 .collect();
-            (
-                MessageKind::Question,
-                json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
+            let mut facts = json!({"issue_title": title, "request": request, "obstacle": if binding.clarified { "I could not tell which option you chose. Could you clarify your answer?" } else { obstacle },
                 "options": options, "recommended_option": 0,
                 "recommendation_reason": "This option gives your request a clear next step.",
-                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")}),
-            )
+                "how_to_answer": format!("Reply on the issue, naming question {question}, with your chosen option and any requested details.")});
+            if let Some(findings) = findings {
+                facts["findings"] = findings.clone();
+            }
+            (MessageKind::Question, facts)
         }
         Notice::Incident { .. } => (
             MessageKind::Note,

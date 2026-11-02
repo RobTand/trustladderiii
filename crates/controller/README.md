@@ -901,6 +901,20 @@ it after a restart. `pieces` contains the proposed briefs, goal IDs and files.
 Ticket #10's message pipeline consumes these briefs to draft the narrowing
 question. This adapter does not draft messages.
 
+`question_context.findings` carries the deciding worker's evidence to the
+question writer (#322). It is set for every kind Rob decides:
+
+- **AuditDisagreement:** the reading, its goals and the audit's objections.
+- **NeedsSplitting:** the planner's split, with its size cause and pieces.
+- **CantMeet:** the planner's report, or the maker's report or latest failures.
+- **OutOfCredit:** the latest failures.
+- **EffectFailed:** the node's open incident.
+
+`decision` is the worker's own question when its report asks one, and otherwise a
+fixed question for that kind. Reports are clipped to 6,000 characters.
+The writer worker redacts findings with the MLflow redactor (#302) before the
+model turn. A question with findings must state its decision as one question.
+
 Run `bash crates/controller/tools/verify-planning.sh` through PrismaBuild once
 with each host tag, `dl380g10`, `sparky` and `sparklina`. It runs controller and
 store process scenarios and the worker package's offline fake-model tests.

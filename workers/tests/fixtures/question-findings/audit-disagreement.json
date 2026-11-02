@@ -3,8 +3,8 @@
   "kind": "brief",
   "brief": "Add a compact JSON export of the rung table so the dashboard can read it without parsing logs. Keep the existing text export unchanged.",
   "goals": [
-   {"text": "The export writes one JSON object per rung with its status and reason."},
-   {"text": "The existing text export keeps its current format."}
+   {"description": "The export writes one JSON object per rung with its status and reason.", "verification": "test"},
+   {"description": "The existing text export keeps its current format.", "verification": "test"}
   ],
   "memory_ids": []
  },

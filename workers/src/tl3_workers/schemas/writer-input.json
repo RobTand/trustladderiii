@@ -25,7 +25,33 @@
             "options": {"$ref": "writer-reply.json#/$defs/options"},
             "recommended_option": {"type": "integer", "minimum": 0, "maximum": 2},
             "recommendation_reason": {"$ref": "writer-reply.json#/$defs/text"},
-            "how_to_answer": {"$ref": "writer-reply.json#/$defs/text"}
+            "how_to_answer": {"$ref": "writer-reply.json#/$defs/text"},
+            "findings": {
+              "description": "The deciding worker's findings (#322). The worker redacts them before the model turn.",
+              "type": "object",
+              "properties": {
+                "source": {"enum": ["audit", "planner", "maker", "checks_and_review", "incident"]},
+                "report": {"type": "string"},
+                "decision": {"$ref": "writer-reply.json#/$defs/text"},
+                "reading": {"type": "string"},
+                "goals": {"type": "array", "items": {"type": "string"}},
+                "objections": {"type": "array", "items": {"type": "string"}},
+                "pieces": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "brief": {"type": "string"},
+                      "files": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["brief", "files"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["source", "decision"],
+              "additionalProperties": false
+            }
           },
           "required": [
             "issue_title", "request", "obstacle", "options", "recommended_option",

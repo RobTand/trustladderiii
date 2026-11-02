@@ -1,12 +1,22 @@
 //! The deciding worker's findings for a question to Rob (#322). The writer
 //! summarises them; the worker process redacts them before any model sees them.
 
-use serde_json::Value;
-use tl3_kernel::Question;
+use serde_json::{Value, json};
+use tl3_kernel::{Cont, QKind, Question};
 
 /// Longest report passed to the writer; it summarises, and never pastes, the report.
 pub(crate) const REPORT_CHARS: usize = 6_000;
 const PIECE_CHARS: usize = 600;
+const ITEM_CHARS: usize = 600;
+const ITEMS: usize = 8;
+
+const AUDIT: &str = "Should I go ahead with this reading of your request even though its independent check still has open objections?";
+const SPLIT: &str =
+    "Which of these smaller parts should I do first, or how would you like to narrow the request?";
+const CANT_MEET: &str = "What should I change about the approach so the request can be met?";
+const CREDIT: &str =
+    "Should I spend more of the request's allowance on another attempt to fix these problems?";
+const EFFECT: &str = "Can you fix this cause so that I can continue?";
 
 /// Findings for `question`, read from the node's stored worker documents and incidents.
 pub(crate) fn findings(
@@ -14,8 +24,181 @@ pub(crate) fn findings(
     document: &dyn Fn(&str) -> Option<Value>,
     incidents: &[Value],
 ) -> Option<Value> {
-    let _ = (question, document, incidents);
-    todo!()
+    match question.kind {
+        QKind::AuditDisagreement => audit(document),
+        QKind::NeedsSplitting => split(&document("plans")?),
+        QKind::CantMeet if matches!(question.cont, Cont::Planning { .. }) => {
+            planner(&document("plans")?)
+        }
+        QKind::CantMeet => maker(document),
+        QKind::OutOfCredit => failures(document, CREDIT),
+        QKind::EffectFailed => incident(incidents),
+        QKind::CleanupFailed => None,
+    }
+}
+
+fn audit(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
+    let brief = document("briefs")?;
+    let audit = document("audits")?;
+    let objections = items(
+        audit["objections"]
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str),
+    );
+    if audit["verdict"] != "disagree" || objections.is_empty() {
+        return None;
+    }
+    let goals = items(
+        brief["goals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|goal| goal["description"].as_str()),
+    );
+    Some(
+        json!({"source": "audit", "reading": clip(brief["brief"].as_str()?, REPORT_CHARS),
+        "goals": goals, "objections": objections, "decision": AUDIT}),
+    )
+}
+
+fn split(plan: &Value) -> Option<Value> {
+    if plan["kind"] != "split" {
+        return None;
+    }
+    let reason = match plan["reason"].as_str()? {
+        "does_not_fit" => "is too large to make as one change",
+        "multiple_repos" => "spans more than one repository",
+        _ => "ran out of room in a single attempt",
+    };
+    let mut report = format!("The planned change {reason}.");
+    let forecast = &plan["forecast"];
+    if let (Some(tokens), Some(limit)) =
+        (forecast["tokens"].as_u64(), forecast["fit_tokens"].as_u64())
+    {
+        report.push_str(&format!(
+            " Its size estimate is {tokens} tokens against a limit of {limit}."
+        ));
+        let mut files: Vec<_> = forecast["file_tokens"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(path, tokens)| Some((tokens.as_u64()?, path)))
+            .collect();
+        files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
+        let largest: Vec<_> = files
+            .iter()
+            .take(3)
+            .map(|(tokens, path)| format!("{path} ({tokens} tokens)"))
+            .collect();
+        if !largest.is_empty() {
+            report.push_str(&format!(" The largest files are {}.", largest.join(", ")));
+        }
+    }
+    let pieces: Vec<_> = plan["pieces"]
+        .as_array()?
+        .iter()
+        .take(ITEMS)
+        .map(|piece| {
+            json!({"brief": clip(piece["brief"].as_str().unwrap_or_default(), PIECE_CHARS),
+                "files": piece["files"].clone()})
+        })
+        .collect();
+    Some(json!({"source": "planner", "report": report, "pieces": pieces, "decision": SPLIT}))
+}
+
+fn planner(plan: &Value) -> Option<Value> {
+    let report = match plan["report"].as_str() {
+        Some(report) if plan["kind"] == "cant_meet" => report.to_owned(),
+        // A rejected plan's reasons are its violations.
+        _ => items(
+            plan["violations"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str),
+        )
+        .join("\n"),
+    };
+    reported("planner", &report, CANT_MEET)
+}
+
+fn maker(document: &dyn Fn(&str) -> Option<Value>) -> Option<Value> {
+    match document("maker_replies") {
+        Some(reply) if reply["kind"] == "cant_meet" => {
+            reported("maker", reply["report"].as_str()?, CANT_MEET)
+        }
+        _ => failures(document, CANT_MEET),
+    }
+}
+
+fn failures(document: &dyn Fn(&str) -> Option<Value>, decision: &str) -> Option<Value> {
+    let findings = document("maker_findings")?;
+    let reports: Vec<_> = findings
+        .as_array()?
+        .iter()
+        .filter_map(|finding| finding["report"].as_str())
+        .collect();
+    let latest = &reports[reports.len().saturating_sub(3)..];
+    if latest.is_empty() {
+        return None;
+    }
+    Some(json!({"source": "checks_and_review",
+        "report": clip(&latest.join("\n\n"), REPORT_CHARS), "decision": decision}))
+}
+
+fn incident(incidents: &[Value]) -> Option<Value> {
+    let open = items(
+        incidents
+            .iter()
+            .filter(|incident| incident["open"] == true)
+            .filter_map(|incident| incident["summary"].as_str()),
+    );
+    if open.is_empty() {
+        return None;
+    }
+    Some(
+        json!({"source": "incident", "report": clip(&open.join("\n"), REPORT_CHARS), "decision": EFFECT}),
+    )
+}
+
+fn reported(source: &str, report: &str, fallback: &str) -> Option<Value> {
+    if report.trim().is_empty() {
+        return None;
+    }
+    let decision = question_in(report).unwrap_or_else(|| fallback.to_owned());
+    Some(json!({"source": source, "report": clip(report, REPORT_CHARS), "decision": decision}))
+}
+
+/// The worker's own question to Rob: the sentence ending at its first question mark.
+fn question_in(report: &str) -> Option<String> {
+    let end = report.find('?')? + 1;
+    let line = report[..end].rfind('\n').map_or(0, |index| index + 1);
+    let start = report[line..end]
+        .rfind(". ")
+        .map_or(line, |index| line + index + 2);
+    let sentence = report[start..end].trim();
+    // Drop a lead-in such as "Question for Rob:".
+    let sentence = match sentence.split_once(": ") {
+        Some((label, rest)) if label.to_lowercase().contains("question") => rest,
+        _ => sentence,
+    };
+    (sentence.len() > 1 && sentence.chars().count() <= ITEM_CHARS).then(|| sentence.to_owned())
+}
+
+fn items<'a>(texts: impl Iterator<Item = &'a str>) -> Vec<String> {
+    texts
+        .take(ITEMS)
+        .map(|text| clip(text, ITEM_CHARS))
+        .collect()
+}
+
+fn clip(text: &str, limit: usize) -> String {
+    const SHORTENED: &str = " [shortened]";
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let kept: String = text.chars().take(limit - SHORTENED.len()).collect();
+    kept + SHORTENED
 }
 
 #[cfg(test)]
