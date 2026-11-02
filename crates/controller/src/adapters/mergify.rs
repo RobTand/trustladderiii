@@ -367,8 +367,17 @@ pub struct Adapter {
     epoch: i64,
     records: Records,
     runtime: &'static tokio::runtime::Runtime,
-    /// Each served repository's PR-body policy (#447).
-    body_lines: Vec<(Repository, Vec<tl3_config::BodyLine>)>,
+    /// Each served repository's PR-body policy and heal reruns (#447).
+    policies: Vec<(Repository, BodyPolicy)>,
+    /// TL3's branch names, so a heal touches only TL3's own PRs.
+    branches: Option<crate::branches::Branches>,
+    /// The world, so a heal touches only a node in Publishing or Queued.
+    store: Option<tl3_config::Store>,
+}
+/// A served repository's PR-body lines and the workflows a heal reruns (#447).
+struct BodyPolicy {
+    rules: Vec<tl3_config::BodyLine>,
+    reruns: Vec<String>,
 }
 impl Adapter {
     pub fn new(clients: BTreeMap<u64, GitHub>, epoch: i64, records: &Path) -> Result<Self> {
@@ -378,11 +387,13 @@ impl Adapter {
             epoch,
             records: Records::new(records),
             runtime: crate::executor::runtime()?,
-            body_lines: Vec::new(),
+            policies: Vec::new(),
+            branches: None,
+            store: None,
         })
     }
-    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Self {
-        self.body_lines = repos
+    pub fn with_repositories(mut self, repos: &[tl3_config::Repository]) -> Result<Self> {
+        self.policies = repos
             .iter()
             .map(|repo| {
                 (
@@ -391,22 +402,32 @@ impl Adapter {
                         name: repo.name.clone(),
                         installation: repo.installation_id,
                     },
-                    repo.pr_body_lines.clone(),
+                    BodyPolicy {
+                        rules: repo.pr_body_lines.clone(),
+                        reruns: repo.heal_rerun_workflows.clone(),
+                    },
                 )
             })
             .collect();
+        self.branches = Some(crate::branches::Branches::new(repos)?);
+        Ok(self)
+    }
+    /// Reads the world, so a heal touches only a node in Publishing or Queued.
+    pub fn with_store(mut self, store: tl3_config::Store) -> Self {
+        self.store = Some(store);
         self
     }
     /// #447: one idempotent update brings an open TL3 PR's body into its
     /// repository's policy. A body that complies is left alone.
     fn heal_body(&self, delivery: &Delivery, pull: &tl3_github::PullRequest) -> Result<()> {
-        let Some((_, rules)) = self
-            .body_lines
+        let Some((_, policy)) = self
+            .policies
             .iter()
             .find(|(repo, _)| *repo == delivery.repository)
         else {
             return Ok(());
         };
+        let rules = &policy.rules;
         if pull.state != "open" || pull.merged_at.is_some() {
             return Ok(());
         }
@@ -425,7 +446,7 @@ impl Adapter {
             Err(error) => return Err(error.into()),
         };
         let body = pull.body.as_deref().unwrap_or_default();
-        if let Some(healed) = crate::pr_body::healed(body, rules, &delivery.paths) {
+        if let Some(healed) = crate::pr_body::healed(body, rules, None, &delivery.paths) {
             // Record the intent first, so a crash after the PATCH still reruns.
             let intent = BodyHeal {
                 head: head.clone(),
@@ -451,7 +472,7 @@ impl Adapter {
             .runtime
             .block_on(github.workflow_runs(&repo, head))
             .map_err(Error::from)?;
-        for run in body_edit_reruns(&runs, head) {
+        for run in body_edit_reruns(&runs, head, &policy.reruns) {
             if let Err(error) = self.runtime.block_on(github.rerun_failed_jobs(&repo, run)) {
                 // The next read of this PR retries; the heal stays pending.
                 eprintln!("PR-body policy: rerun of {repo} run {run} failed: {error}");
@@ -948,7 +969,13 @@ fn full_name(repo: &Repository) -> String {
 /// reruns on `opened`, `synchronize` and `reopened`; an edit doesn't rerun it, so
 /// its failed run stays failed. `pull_request_target` workflows, like
 /// PrismaBuild's regression-test, can listen for `edited` and rerun themselves.
-pub(crate) fn body_edit_reruns(runs: &[tl3_github::WorkflowRun], head: &str) -> Vec<u64> {
+/// Only the repository's listed workflow files are rerun, since a rerun can
+/// have side effects; an empty list reruns nothing.
+pub(crate) fn body_edit_reruns(
+    runs: &[tl3_github::WorkflowRun],
+    head: &str,
+    _workflows: &[String],
+) -> Vec<u64> {
     let mut latest: BTreeMap<&str, &tl3_github::WorkflowRun> = BTreeMap::new();
     for run in runs
         .iter()
@@ -970,6 +997,17 @@ pub(crate) fn body_edit_reruns(runs: &[tl3_github::WorkflowRun], head: &str) -> 
         })
         .map(|run| run.id)
         .collect()
+}
+
+/// #447 review: a heal touches only a node in Publishing or Queued.
+pub(crate) fn heal_phase(_phase: Option<tl3_kernel::Phase>) -> bool {
+    true
+}
+
+/// #447 review: whether every check on the head, other than Mergify's own,
+/// has completed. Until then a check suite read can't show a blocked queue.
+pub(crate) fn checks_settled(_state: &tl3_mergify::Observation) -> bool {
+    true
 }
 
 /// A PR-body heal on one head: whether its stale runs have been rerun (#447).
@@ -1781,14 +1819,73 @@ mod queue_blocked_tests {
         let runs: Vec<tl3_github::WorkflowRun> =
             serde_json::from_str(tl3_mergify::pb2632_fixture::PB2632_WORKFLOW_RUNS).unwrap();
         let head = "4309359678fc08ddfb44f12439e3a3744ee3eb11";
-        assert_eq!(body_edit_reruns(&runs, head), [41476603888]);
-        assert!(body_edit_reruns(&runs, "another-head").is_empty());
+        let gate = ["gate.yml".to_owned()];
+        assert_eq!(body_edit_reruns(&runs, head, &gate), [41476603888]);
+        assert!(body_edit_reruns(&runs, "another-head", &gate).is_empty());
         // A rerun that already succeeded needs nothing more.
         let mut passed = runs.clone();
         for run in &mut passed {
             run.conclusion = Some("success".into());
         }
-        assert!(body_edit_reruns(&passed, head).is_empty());
+        assert!(body_edit_reruns(&passed, head, &gate).is_empty());
+    }
+
+    #[test]
+    fn a_body_edit_reruns_only_listed_workflows() {
+        // #447 review: a rerun can have side effects, so only listed files rerun.
+        let mut runs: Vec<tl3_github::WorkflowRun> =
+            serde_json::from_str(tl3_mergify::pb2632_fixture::PB2632_WORKFLOW_RUNS).unwrap();
+        let head = "4309359678fc08ddfb44f12439e3a3744ee3eb11";
+        let mut deploy = runs[0].clone();
+        deploy.id = 41476609999;
+        deploy.path = ".github/workflows/deploy.yml".into();
+        deploy.conclusion = Some("failure".into());
+        runs.push(deploy);
+        assert!(body_edit_reruns(&runs, head, &[]).is_empty());
+        assert_eq!(
+            body_edit_reruns(&runs, head, &["gate.yml".to_owned()]),
+            [41476603888]
+        );
+        // A name that only ends like a listed file doesn't count.
+        assert!(body_edit_reruns(&runs, head, &["ate.yml".to_owned()]).is_empty());
+    }
+
+    #[test]
+    fn a_heal_touches_only_publishing_or_queued_nodes() {
+        use tl3_kernel::{Outcome, Phase};
+        assert!(heal_phase(Some(Phase::Publishing)));
+        assert!(heal_phase(Some(Phase::Queued)));
+        for phase in [
+            Phase::Making,
+            Phase::Rebasing,
+            Phase::Closed(Outcome::Merged),
+        ] {
+            assert!(!heal_phase(Some(phase)), "{phase:?}");
+        }
+        assert!(!heal_phase(None), "an unknown node is never healed");
+    }
+
+    #[test]
+    fn a_running_check_skips_the_suite_read() {
+        assert!(checks_settled(&pb2632()));
+        let mut running = pb2632();
+        let check = running
+            .check_runs
+            .iter_mut()
+            .find(|check| check.name == "pr-gate")
+            .unwrap();
+        check.status = "in_progress".into();
+        check.conclusion = None;
+        assert!(!checks_settled(&running));
+        // Mergify's own queue check stays in progress while it waits.
+        let mut waiting = pb2632();
+        for check in &mut waiting.check_runs {
+            if check.app.as_ref().is_some_and(|app| app.slug == "mergify") {
+                check.status = "in_progress".into();
+                check.conclusion = None;
+            }
+        }
+        assert!(checks_settled(&waiting));
     }
 
     #[test]

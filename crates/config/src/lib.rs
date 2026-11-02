@@ -288,6 +288,11 @@ pub struct Repository {
     /// `Change type:` (#447). TL3 writes and keeps one valid line per rule.
     #[serde(default)]
     pub pr_body_lines: Vec<BodyLine>,
+    /// Workflow files, such as `gate.yml`, whose failed `pull_request` runs a
+    /// PR-body heal reruns because they don't rerun on `edited` (#447). Empty
+    /// means the heal reruns nothing.
+    #[serde(default)]
+    pub heal_rerun_workflows: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

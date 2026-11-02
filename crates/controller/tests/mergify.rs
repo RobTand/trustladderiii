@@ -129,6 +129,8 @@ struct State {
     queued_before_rerun: bool,
     /// PrismaBuild's `gate.yml` failed on the head, before its body was fixed (#447).
     stale_gate: bool,
+    /// The PR's head ref follows TL3's branch template.
+    tl3_branch: bool,
     body_patches: usize,
     failed_job_reruns: Vec<u64>,
 }
@@ -186,6 +188,7 @@ impl State {
             statuses: json!([]),
             queued_before_rerun: false,
             stale_gate: false,
+            tl3_branch: false,
             body_patches: 0,
             failed_job_reruns: vec![],
         }
@@ -316,6 +319,9 @@ impl Respond for Api {
                     runs.push(json!({"id":702,"check_suite_id":802,"name":"Regression test","head_sha":head,"run_attempt":1,
                         "status":"completed","conclusion":"failure","event":"pull_request_target",
                         "path":".github/workflows/regression-test.yml","html_url":"local"}));
+                    runs.push(json!({"id":703,"check_suite_id":803,"name":"Deploy preview","head_sha":head,"run_attempt":1,
+                        "status":"completed","conclusion":"failure","event":"pull_request",
+                        "path":".github/workflows/deploy.yml","html_url":"local"}));
                 }
                 ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":runs}))
             }
@@ -383,6 +389,9 @@ impl Respond for Api {
                 if !state.lag { state.checks = fixture("running", "checks"); }
                 ResponseTemplate::new(if state.command_lost_response { 503 } else { 201 }).set_body_json(comment)
             }
+            ("GET", "/repos/owner/sandbox/issues/12") => ResponseTemplate::new(200).set_body_json(json!({
+                "number":12, "title":"change", "state":"open", "updated_at":"2026-10-31T16:00:00Z", "labels":[],
+                "body":"Add the lane.\n\n## PR rules\n\n- The PR body has exactly one `Change type: feature` line.\n"})),
             ("GET", "/repos/owner/sandbox/issues/100") => ResponseTemplate::new(200).set_body_json(json!({
                 "number":100, "title":"change", "state":state.pull["state"], "updated_at":state.pull["updated_at"],
                 "labels": ([state.label.then(|| json!({"name":"tl3-queue"})), state.dequeued.then(|| json!({"name":"dequeued"}))].into_iter().flatten().collect::<Vec<_>>()),
@@ -473,7 +482,9 @@ fn queued_with(
     registry.register(
         Upstream::Mergify,
         api.adapter(&root.join("mergify"), 0)
-            .with_repositories(repos),
+            .with_repositories(repos)
+            .unwrap()
+            .with_store(settings.clone()),
     );
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
@@ -504,7 +515,12 @@ fn queued_with(
                             ..
                         }
                     ) {
-                        api.state.lock().unwrap().pull["head"]["sha"] = json!(delivery.head_sha);
+                        let mut state = api.state.lock().unwrap();
+                        state.pull["head"]["sha"] = json!(delivery.head_sha);
+                        if state.tl3_branch {
+                            state.pull["head"]["ref"] =
+                                json!(format!("tl3/issue-12-node-{}", delivery.node().0));
+                        }
                     }
                 }
             })
@@ -594,30 +610,39 @@ fn queue_facts(controller: &mut Controller) -> Vec<Value> {
         .map(|row| row.value)
         .collect()
 }
-/// #447: the heal adds PrismaBuild's `Change type:` line once, then reruns the
-/// failed run of `gate.yml`, which never hears `edited`, once per head. The
-/// `pull_request_target` regression test reads the body itself and is left alone.
+fn heal_repo() -> tl3_config::Repository {
+    serde_json::from_value(json!({
+        "owner": "owner", "name": "sandbox", "installation_id": 3,
+        "pr_body_lines": [{"label": "Change type", "values": ["test", "docs", "fix", "feature"],
+            "default": "fix"}],
+        "heal_rerun_workflows": ["gate.yml"],
+    }))
+    .unwrap()
+}
+/// #447: the heal adds PrismaBuild's `Change type:` line once, with the value
+/// the issue's `## PR rules` names, then reruns the failed run of `gate.yml`,
+/// which never hears `edited`, once per head. The `pull_request_target`
+/// regression test reads the body itself, and the unlisted deploy.yml can have
+/// side effects; both are left alone.
 fn body_heal_reruns_stale_gate(settings: &tl3_config::Store) {
     let api = Server::new();
     {
         let mut state = api.state.lock().unwrap();
         state.stale_gate = true;
+        state.tl3_branch = true;
         state.pull["body"] = json!("Refs #12.\n\nThe change.\n");
     }
-    let repo: tl3_config::Repository = serde_json::from_value(json!({
-        "owner": "owner", "name": "sandbox", "installation_id": 3,
-        "pr_body_lines": [{"label": "Change type", "values": ["test", "docs", "fix", "feature"],
-            "default": "fix"}],
-    }))
-    .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let mut controller = queued_with(settings, &api, root.path(), true, &[repo]);
+    let mut controller = queued_with(settings, &api, root.path(), true, &[heal_repo()]);
     {
         let state = api.state.lock().unwrap();
         assert_eq!(state.body_patches, 1);
         let body = state.pull["body"].as_str().unwrap();
         assert_eq!(body.matches("Change type: ").count(), 1, "{body}");
-        assert!(body.starts_with("Refs #12.\nChange type: "), "{body}");
+        assert!(
+            body.starts_with("Refs #12.\nChange type: feature\n"),
+            "{body}"
+        );
         assert_eq!(state.failed_job_reruns, vec![701]);
     }
     let reads = api.state.lock().unwrap().pull_reads;
@@ -627,6 +652,25 @@ fn body_heal_reruns_stale_gate(settings: &tl3_config::Store) {
     assert_eq!(state.body_patches, 1, "a healed body is left alone");
     assert_eq!(state.failed_job_reruns, vec![701], "one rerun per head");
     println!("test body_heal_reruns_stale_gate ... ok");
+}
+/// #447 review: a PR whose head ref isn't TL3's branch is never healed.
+fn body_heal_skips_foreign_branches(settings: &tl3_config::Store) {
+    let api = Server::new();
+    {
+        let mut state = api.state.lock().unwrap();
+        state.stale_gate = true;
+        state.pull["body"] = json!("Refs #12.\n\nThe change.\n");
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = queued_with(settings, &api, root.path(), true, &[heal_repo()]);
+    catch_up(settings, &api, &mut controller);
+    let state = api.state.lock().unwrap();
+    assert_eq!(
+        state.body_patches, 0,
+        "a foreign branch's body is left alone"
+    );
+    assert!(state.failed_job_reruns.is_empty());
+    println!("test body_heal_skips_foreign_branches ... ok");
 }
 fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
     let api = Server::new();
@@ -2912,6 +2956,9 @@ fn main() {
     ));
     scenario!(watched_merge(&database.create("watched")));
     scenario!(body_heal_reruns_stale_gate(&database.create("body_heal")));
+    scenario!(body_heal_skips_foreign_branches(
+        &database.create("body_heal_foreign")
+    ));
     scenario!(terminal_before_enqueue_ack(
         &database.create("late_enqueue_ack")
     ));

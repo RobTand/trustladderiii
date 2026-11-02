@@ -135,7 +135,8 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     adapters.register(
         Upstream::Mergify,
         adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
-            .with_repositories(&config.github.repos),
+            .with_repositories(&config.github.repos)?
+            .with_store(config.store.clone()),
     );
     let mergify = adapters::mergify::Translator::new(clients.clone())?;
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;

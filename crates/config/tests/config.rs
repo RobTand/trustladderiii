@@ -1361,3 +1361,37 @@ fn pr_body_lines_need_a_label_values_and_an_allowed_default() {
         assert!(error.contains("pr_body_lines"), "{error}");
     }
 }
+
+#[test]
+fn heal_rerun_workflows_are_workflow_file_names() {
+    // #447 review: an explicit allowlist, empty by default.
+    let with = |files: &[&str]| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "heal_rerun_workflows".into(),
+                Value::Array(files.iter().map(|f| Value::String((*f).into())).collect()),
+            );
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .heal_rerun_workflows
+            .is_empty()
+    );
+    assert_eq!(
+        with(&["gate.yml"]).unwrap().github.repos[0].heal_rerun_workflows,
+        ["gate.yml"]
+    );
+    for bad in [
+        &[""][..],
+        &[".github/workflows/gate.yml"],
+        &["gate yml"],
+        &["gate.yml", "gate.yml"],
+    ] {
+        let error = with(bad).unwrap_err().to_string();
+        assert!(error.contains("heal_rerun_workflows"), "{bad:?}: {error}");
+    }
+}

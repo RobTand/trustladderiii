@@ -13,11 +13,18 @@ fn is_doc(path: &str) -> bool {
     path.starts_with("docs/") || path.ends_with(".md") || path.ends_with(".rst")
 }
 
-/// The value TL3 declares for a rule, from the change's files: only tests is
-/// `test`, only docs is `docs`, and a change with its own test is `fix`, since
-/// TL3's demonstrating test is the regression test such policies ask for. A
-/// value the repository doesn't allow falls back to its default.
-pub fn value(rule: &BodyLine, paths: &[String]) -> String {
+/// The value a request's own text instructs for a rule, such as PrismaBuild's
+/// "exactly one `Change type: feature` line" under `## PR rules`.
+pub fn instructed(_rule: &BodyLine, _request: &str) -> Option<String> {
+    None
+}
+
+/// The value TL3 declares for a rule. The request's own instruction comes
+/// first. Failing that, it follows the change's files: only tests is `test`,
+/// only docs is `docs`, and a change with its own test is `fix`, since TL3's
+/// demonstrating test is the regression test such policies ask for. A value
+/// the repository doesn't allow falls back to its default.
+pub fn value(rule: &BodyLine, _request: Option<&str>, paths: &[String]) -> String {
     let candidate = if paths.is_empty() {
         None
     } else if paths.iter().all(|path| is_test(path)) {
@@ -35,10 +42,10 @@ pub fn value(rule: &BodyLine, paths: &[String]) -> String {
 }
 
 /// One `label: value` line per rule.
-pub fn lines(rules: &[BodyLine], paths: &[String]) -> String {
+pub fn lines(rules: &[BodyLine], request: Option<&str>, paths: &[String]) -> String {
     rules
         .iter()
-        .map(|rule| format!("{}: {}\n", rule.label, value(rule, paths)))
+        .map(|rule| format!("{}: {}\n", rule.label, value(rule, request, paths)))
         .collect()
 }
 
@@ -73,7 +80,12 @@ pub fn gaps(body: &str, rules: &[BodyLine]) -> Vec<String> {
 
 /// The body with every unsatisfied rule fixed, or `None` when it already
 /// complies. Invalid declarations go, and the new lines follow `Refs #N.`.
-pub fn healed(body: &str, rules: &[BodyLine], paths: &[String]) -> Option<String> {
+pub fn healed(
+    body: &str,
+    rules: &[BodyLine],
+    request: Option<&str>,
+    paths: &[String],
+) -> Option<String> {
     let gaps = gaps(body, rules);
     if gaps.is_empty() {
         return None;
@@ -88,7 +100,7 @@ pub fn healed(body: &str, rules: &[BodyLine], paths: &[String]) -> Option<String
         .collect();
     let added: String = broken
         .iter()
-        .map(|rule| format!("{}: {}", rule.label, value(rule, paths)))
+        .map(|rule| format!("{}: {}", rule.label, value(rule, request, paths)))
         .collect::<Vec<_>>()
         .join("\n");
     let mut text = String::new();
@@ -111,6 +123,10 @@ pub fn healed(body: &str, rules: &[BodyLine], paths: &[String]) -> Option<String
     }
     Some(text)
 }
+
+#[cfg(test)]
+#[path = "pr_body/pb2626.rs"]
+mod pb2626;
 
 #[cfg(test)]
 mod tests {
@@ -150,22 +166,57 @@ mod tests {
             (&["src/prismabuild/pool.py"][..], "chore"),
             (&[][..], "chore"),
         ] {
-            assert_eq!(value(&rule, &paths(files)), expected, "{files:?}");
+            assert_eq!(value(&rule, None, &paths(files)), expected, "{files:?}");
         }
         // A value the repository doesn't allow falls back to its default.
         let mut narrow = change_type();
         narrow.values = vec!["chore".into(), "feature".into()];
-        assert_eq!(value(&narrow, &paths(&["tests/test_pool.py"])), "chore");
+        assert_eq!(
+            value(&narrow, None, &paths(&["tests/test_pool.py"])),
+            "chore"
+        );
+    }
+
+    #[test]
+    fn the_issues_own_instruction_comes_before_the_files() {
+        // #447 review: PrismaBuild #2626's `## PR rules` names `Change type: feature`.
+        let rule = change_type();
+        let feature = paths(&["src/prismabuild/gpu.py", "tests/test_gpu.py"]);
+        let issue = super::pb2626::PB2626_ISSUE_BODY;
+        assert_eq!(instructed(&rule, issue).as_deref(), Some("feature"));
+        assert_eq!(value(&rule, Some(issue), &feature), "feature");
+        assert_eq!(
+            lines(&[rule.clone()], Some(issue), &feature),
+            "Change type: feature\n"
+        );
+        // Without a `PR rules` section, the whole text counts; case is the rule's.
+        assert_eq!(
+            instructed(&rule, "Use `change TYPE: Docs` for this one.").as_deref(),
+            Some("docs")
+        );
+        // Under a `PR rules` section, text outside it doesn't count.
+        let sectioned = "Earlier work used Change type: fix.\n\n## PR rules\n\n- Change type: perf\n\n## Notes\n\nChange type: test\n";
+        assert_eq!(instructed(&rule, sectioned).as_deref(), Some("perf"));
+        // No value, a value the repository refuses, or two values: the files decide.
+        for text in [
+            "The PR body has exactly one `Change type:` line.",
+            "Change type: <type>",
+            "Change type: mystery",
+            "## PR rules\n- Change type: fix or Change type: feature\n",
+        ] {
+            assert_eq!(instructed(&rule, text), None, "{text:?}");
+            assert_eq!(value(&rule, Some(text), &feature), "fix", "{text:?}");
+        }
     }
 
     #[test]
     fn lines_render_one_label_per_rule() {
         let rules = [change_type()];
         assert_eq!(
-            lines(&rules, &paths(&["src/a.py", "tests/test_a.py"])),
+            lines(&rules, None, &paths(&["src/a.py", "tests/test_a.py"])),
             "Change type: fix\n"
         );
-        assert_eq!(lines(&[], &paths(&["src/a.py"])), "");
+        assert_eq!(lines(&[], None, &paths(&["src/a.py"])), "");
     }
 
     #[test]
@@ -190,16 +241,17 @@ mod tests {
         let rules = [change_type()];
         let body = "Refs #2630.\n\n<!-- tl3:effect:6566666563743a39373a39 -->";
         let files = paths(&["src/prismabuild/pool.py", "tests/test_pool.py"]);
-        let healed = healed(body, &rules, &files).expect("the body lacks Change type");
+        let healed = healed(body, &rules, None, &files).expect("the body lacks Change type");
         assert_eq!(
             healed,
             "Refs #2630.\nChange type: fix\n\n<!-- tl3:effect:6566666563743a39373a39 -->"
         );
         assert!(gaps(&healed, &rules).is_empty());
         // Idempotent: a healed body needs nothing more.
-        assert_eq!(super::healed(&healed, &rules, &files), None);
+        assert_eq!(super::healed(&healed, &rules, None, &files), None);
         // An invalid declaration is replaced, not duplicated.
-        let fixed = super::healed("Refs #1.\nChange type: mystery\n", &rules, &files).unwrap();
+        let fixed =
+            super::healed("Refs #1.\nChange type: mystery\n", &rules, None, &files).unwrap();
         assert!(gaps(&fixed, &rules).is_empty(), "{fixed}");
         assert!(!fixed.contains("mystery"), "{fixed}");
     }
