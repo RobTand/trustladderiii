@@ -85,6 +85,21 @@ pub(super) fn inputs(
         return Err(Error::Invalid("review diff exceeds the input bound"));
     }
     let mut inputs = json!({"goals": criteria["goals"], "base_sha": base, "check_base_sha": run.base_sha, "head_sha": head, "diff": String::from_utf8(diff).map_err(|_| Error::Invalid("review diff must be UTF-8"))?, "checks": report["results"], "standing_rules": criteria["standing_rules"]});
+    // A test that failed a selected check is no longer selected once edited (#359).
+    if let Some(failures) = report["selected_failures"].as_array() {
+        let touched = repository.changed_paths_since_merge_base(&base, &head_id)?;
+        let edited: Vec<_> = failures
+            .iter()
+            .filter_map(|test| test.as_str())
+            .filter(|test| {
+                let file = test.split("::").next().unwrap_or_default();
+                touched.iter().any(|path| path.as_os_str() == file)
+            })
+            .collect();
+        if !edited.is_empty() {
+            inputs["edited_selected_tests"] = json!(edited);
+        }
+    }
     if base != run.base_sha {
         let scope_base = repository.merge_base(&run.base_sha, &head_id)?;
         let scope_diff = repository.diff(&scope_base, &head_id)?;
@@ -282,6 +297,39 @@ mod hostile_tests {
             },
         );
     }
+    #[test]
+    fn review_names_edited_tests_that_failed_a_selected_check() {
+        // #409: a test that failed the selected check and that the change then edits is
+        // no longer selected, so review must judge the edit.
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("edited_selected")).unwrap();
+        store.put_worker_materials("0", &json!({})).unwrap();
+        let mut snapshot = documents(
+            &mut store,
+            &[
+                (
+                    "goals",
+                    json!([{"description":"Update the readme", "verification":"test"}]),
+                ),
+                ("check_reports", json!({})),
+            ],
+        );
+        let report = snapshot
+            .rows
+            .iter_mut()
+            .find(|r| r.table == "check_reports")
+            .unwrap();
+        report.id = format!("0:{}", f.head);
+        report.value = json!({"base_sha":f.base, "results":[], "selected_failures":
+            ["README.md::test_readme", "tests/test_other.py::test_other"]});
+        let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+        assert_eq!(
+            value["edited_selected_tests"],
+            json!(["README.md::test_readme"])
+        );
+    }
+
     #[test]
     fn adopted_scope_evidence_excludes_main_only_progress() {
         use crate::git_tests::git;

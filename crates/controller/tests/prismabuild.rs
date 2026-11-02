@@ -407,6 +407,81 @@ fn staged_request_carries_the_repository_protected_paths() {
     }
 }
 
+/// #359: a repository with `selected_tests` stages the limit, and the harness's one
+/// trailing regression check of selected existing tests is accepted, failing the round
+/// when it fails. Without the limit, the same trailing result is an invalid report.
+fn selected_tests_are_staged_and_their_check_accepted() {
+    const SELECTED: &str = "Existing tests that import the change";
+    let ended = |selected_tests: Option<u32>| {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        config.github.repos[0].selected_tests = selected_tests;
+        let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+        let planned = &delivery.checks.as_ref().unwrap().plan[0];
+        fs::write(
+            root.path().join("queue/recorded_results.json"),
+            serde_json::to_vec(&serde_json::json!([
+                {"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+                 "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion",
+                 "head": "passed", "pre_existing": false, "passed": true}]},
+                {"name": SELECTED, "kind": "regression", "custody": "in-process",
+                 "verdict": "fail", "tests": [{"test": "test_other.py::test_other", "base": "passed",
+                 "head": "assertion", "pre_existing": false, "passed": false,
+                 "message": "assert 2 == 1"}]},
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+        adapter.execute(&delivery).unwrap();
+        let staged: Vec<_> = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "request"))
+            .collect();
+        let request: serde_json::Value =
+            serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+        (request, completion(&mut adapter, &delivery))
+    };
+
+    let (request, ended_with) = ended(Some(25));
+    assert_eq!(request["selected_tests"], 25);
+    match &ended_with.observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                results,
+                ..
+            },
+        ] => {
+            assert!(
+                *report && !*pass,
+                "a failing selected check fails the round"
+            );
+            assert_eq!(results.len(), 2);
+            assert_eq!(failed_tests[0].test, "test_other.py::test_other");
+        }
+        other => panic!("expected one check observation, got {other:?}"),
+    }
+
+    let (request, ended_without) = ended(None);
+    assert!(request.get("selected_tests").is_none());
+    assert!(
+        matches!(
+            &ended_without.observations[..],
+            [Observation::Checks {
+                report: false,
+                pass: false,
+                ..
+            }]
+        ),
+        "an unrequested extra check is an invalid report"
+    );
+}
+
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -2080,6 +2155,10 @@ fn main() {
         ),
         ("bounded_failure_details", bounded_failure_details),
         (
+            "selected_tests_are_staged_and_their_check_accepted",
+            selected_tests_are_staged_and_their_check_accepted,
+        ),
+        (
             "staged_request_carries_the_repository_protected_paths",
             staged_request_carries_the_repository_protected_paths,
         ),
@@ -2162,7 +2241,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("43 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("44 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
