@@ -2,7 +2,7 @@
 //! summarises them; the worker process redacts them before any model sees them.
 
 use serde_json::{Value, json};
-use tl3_kernel::{Cont, QKind, Question};
+use tl3_kernel::{Cont, Phase, QKind, Question};
 
 /// Longest report passed to the writer; it summarises, and never pastes, the report.
 pub(crate) const REPORT_CHARS: usize = 6_000;
@@ -18,12 +18,22 @@ const CREDIT: &str =
     "Should I spend more of the request's allowance on another attempt to fix these problems?";
 const EFFECT: &str = "Can you fix this cause so that I can continue?";
 
-/// Findings for `question`, read from the node's stored worker documents and incidents.
-pub(crate) fn findings(
-    question: &Question,
-    document: &dyn Fn(&str) -> Option<Value>,
-    incidents: &[Value],
-) -> Option<Value> {
+/// Where a question's evidence can come from.
+pub(crate) struct Sources<'a> {
+    /// Worker documents written by the step that raised the question.
+    pub fresh: &'a dyn Fn(&str) -> Option<Value>,
+    /// The node's latest worker documents, including earlier steps.
+    pub stored: &'a dyn Fn(&str) -> Option<Value>,
+    /// Incidents raised by the step that raised the question.
+    pub incidents: &'a [Value],
+    /// The node's phase before that step.
+    pub prior: Phase,
+}
+
+/// Findings for `question`, read from the node's worker documents and incidents.
+pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> {
+    let document = sources.stored;
+    let incidents = sources.incidents;
     match question.kind {
         QKind::AuditDisagreement => audit(document),
         QKind::NeedsSplitting => split(&document("plans")?),
@@ -205,7 +215,7 @@ fn clip(text: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
-    use tl3_kernel::{Cont, NodeId, QKind, Resume};
+    use tl3_kernel::{NodeId, Resume};
 
     fn fixture(name: &str) -> Value {
         // Bazel declares these through //workers/tests:fixtures as compile data.
@@ -241,8 +251,26 @@ mod tests {
         }
     }
 
-    fn from(documents: &Value) -> impl Fn(&str) -> Option<Value> + '_ {
-        move |table| documents.get(table).cloned()
+    /// `fresh` documents were written by the step that raised the question;
+    /// `stored` ones by earlier steps.
+    fn run(
+        question: &Question,
+        fresh: &Value,
+        stored: &Value,
+        incidents: &[Value],
+        prior: Phase,
+    ) -> Option<Value> {
+        let written = |table: &str| fresh.get(table).cloned();
+        let latest = |table: &str| fresh.get(table).or_else(|| stored.get(table)).cloned();
+        findings(
+            question,
+            &Sources {
+                fresh: &written,
+                stored: &latest,
+                incidents,
+                prior,
+            },
+        )
     }
 
     fn text(value: &Value, field: &str) -> String {
@@ -257,6 +285,9 @@ mod tests {
         assert_eq!(decision.matches('?').count(), 1, "{decision}");
     }
 
+    const PLANNING: Cont = Cont::Planning { must_split: false };
+    const MAKING: Cont = Cont::Ready(Resume::Making);
+
     #[test]
     fn planner_cant_meet_reports_carry_their_cause_and_question() {
         // prismaquant#2662, question 10: both planner reports from MLflow, redacted.
@@ -264,11 +295,13 @@ mod tests {
             "prismaquant-2662-planner-cant-meet-a.json",
             "prismaquant-2662-planner-cant-meet-b.json",
         ] {
-            let documents = json!({"plans": fixture(name)});
-            let found = findings(
-                &question(QKind::CantMeet, Cont::Planning { must_split: false }),
-                &from(&documents),
+            let fresh = json!({"plans": fixture(name)});
+            let found = run(
+                &question(QKind::CantMeet, PLANNING),
+                &fresh,
+                &json!({}),
                 &[],
+                Phase::Planning { must_split: false },
             )
             .unwrap();
             assert_eq!(found["source"], "planner");
@@ -277,7 +310,7 @@ mod tests {
             assert!(report.chars().count() <= REPORT_CHARS);
             let decision = text(&found, "decision");
             assert!(
-                decision.contains("may this leaf also edit")
+                decision.starts_with("may this leaf also edit")
                     && decision.contains("CURRENT_SOURCE_BLOBS"),
                 "{name}: the planner's own question must reach Rob: {decision}"
             );
@@ -287,11 +320,12 @@ mod tests {
 
     #[test]
     fn maker_cant_meet_report_carries_its_question() {
-        let documents = fixture("maker-cant-meet.json");
-        let found = findings(
-            &question(QKind::CantMeet, Cont::Ready(Resume::Making)),
-            &from(&documents),
+        let found = run(
+            &question(QKind::CantMeet, MAKING),
+            &fixture("maker-cant-meet.json"),
+            &json!({}),
             &[],
+            Phase::Making,
         )
         .unwrap();
         assert_eq!(found["source"], "maker");
@@ -303,13 +337,43 @@ mod tests {
     }
 
     #[test]
+    fn making_cant_meet_ignores_a_report_rob_already_answered() {
+        // An earlier cant_meet was answered; the run after it failed checks instead.
+        let stale = fixture("maker-cant-meet.json");
+        let fresh = fixture("out-of-credit.json");
+        let found = run(
+            &question(QKind::CantMeet, MAKING),
+            &fresh,
+            &stale,
+            &[],
+            Phase::Checking,
+        )
+        .unwrap();
+        assert_eq!(found["source"], "checks_and_review");
+        assert!(!text(&found, "report").contains("import time"));
+        assert!(
+            run(
+                &question(QKind::CantMeet, MAKING),
+                &json!({}),
+                &stale,
+                &[],
+                Phase::Making
+            )
+            .is_none(),
+            "a run that failed without a reply has no report to show"
+        );
+    }
+
+    #[test]
     fn split_carries_the_size_cause_and_each_proposed_piece() {
         // tessera#1464, question 9: the planner's split from MLflow, redacted.
-        let documents = json!({"plans": fixture("tessera-1464-planner-split.json")});
-        let found = findings(
+        let fresh = json!({"plans": fixture("tessera-1464-planner-split.json")});
+        let found = run(
             &question(QKind::NeedsSplitting, Cont::Nowhere),
-            &from(&documents),
+            &fresh,
+            &json!({}),
             &[],
+            Phase::Planning { must_split: false },
         )
         .unwrap();
         assert_eq!(found["source"], "planner");
@@ -326,16 +390,86 @@ mod tests {
             piece["brief"].as_str().unwrap().chars().count() <= PIECE_CHARS
                 && piece["files"].is_array()
         }));
+        // The options are only "Change the request" and "Stop".
+        assert_eq!(
+            text(&found, "decision"),
+            "How would you like to narrow the request?"
+        );
+    }
+
+    #[test]
+    fn split_pieces_clip_their_file_lists() {
+        let files: Vec<_> = (0..40)
+            .map(|index| format!("src/{}/module_{index}.py", "deep/".repeat(200)))
+            .collect();
+        let fresh = json!({"plans": {"kind": "split", "reason": "does_not_fit",
+            "pieces": [{"brief": "One.", "goal_ids": [0], "files": files},
+                {"brief": "Two.", "goal_ids": [1], "files": []}]}});
+        let found = run(
+            &question(QKind::NeedsSplitting, Cont::Nowhere),
+            &fresh,
+            &json!({}),
+            &[],
+            Phase::Planning { must_split: false },
+        )
+        .unwrap();
+        let files = found["pieces"][0]["files"].as_array().unwrap();
+        assert!(files.len() <= ITEMS, "{}", files.len());
+        assert!(
+            files
+                .iter()
+                .all(|file| file.as_str().unwrap().chars().count() <= ITEM_CHARS)
+        );
+    }
+
+    #[test]
+    fn splitting_without_a_split_plan_has_no_findings() {
+        let fresh = json!({"plans": {"kind": "leaf", "files": ["a.py"], "checks": [],
+            "no_design_questions": true, "lands_on_its_own": true, "violations": []}});
+        assert!(
+            run(
+                &question(QKind::NeedsSplitting, Cont::Nowhere),
+                &fresh,
+                &json!({}),
+                &[],
+                Phase::Planning { must_split: false }
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn planning_cant_meet_for_an_oversized_leaf_reports_its_size() {
+        let fresh = json!({"plans": {"kind": "leaf", "files": ["docs/big.md"], "checks": [],
+            "no_design_questions": true, "lands_on_its_own": true, "violations": [],
+            "forecast": {"tokens": 230121, "fit_tokens": 100000, "fits": false,
+                "file_tokens": {"docs/big.md": 170542, "src/a.py": 10}}}});
+        let found = run(
+            &question(QKind::CantMeet, PLANNING),
+            &fresh,
+            &json!({}),
+            &[],
+            Phase::Planning { must_split: false },
+        )
+        .unwrap();
+        let report = text(&found, "report");
+        for part in ["230121", "100000", "docs/big.md"] {
+            assert!(report.contains(part), "{part}: {report}");
+        }
         assert_one_question(&text(&found, "decision"));
     }
 
     #[test]
     fn audit_disagreement_carries_the_reading_and_open_objections() {
         let documents = fixture("audit-disagreement.json");
-        let found = findings(
+        let fresh = json!({"audits": documents["audits"]});
+        let stored = json!({"briefs": documents["briefs"]});
+        let found = run(
             &question(QKind::AuditDisagreement, Cont::Unplanned),
-            &from(&documents),
+            &fresh,
+            &stored,
             &[],
+            Phase::Auditing,
         )
         .unwrap();
         assert_eq!(found["source"], "audit");
@@ -348,12 +482,38 @@ mod tests {
     }
 
     #[test]
-    fn out_of_credit_carries_the_latest_failures() {
-        let documents = fixture("out-of-credit.json");
-        let found = findings(
-            &question(QKind::OutOfCredit, Cont::Ready(Resume::Making)),
-            &from(&documents),
+    fn audit_disagreement_on_an_early_end_carries_its_reason() {
+        let fresh = json!({"audits": {"verdict": "disagree",
+            "objections": ["The earlier issue covered a different export."]}});
+        let stored = json!({"briefs": {"kind": "early_end", "outcome": "duplicate",
+            "reason": "The same export was requested and merged under the earlier issue."}});
+        let found = run(
+            &question(
+                QKind::AuditDisagreement,
+                Cont::Stop(tl3_kernel::Outcome::Duplicate),
+            ),
+            &fresh,
+            &stored,
             &[],
+            Phase::Auditing,
+        )
+        .unwrap();
+        assert_eq!(
+            text(&found, "reading"),
+            "The same export was requested and merged under the earlier issue."
+        );
+        assert_eq!(found["outcome"], "duplicate");
+        assert_eq!(found["objections"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn out_of_credit_after_a_failed_round_carries_the_latest_failures() {
+        let found = run(
+            &question(QKind::OutOfCredit, MAKING),
+            &fixture("out-of-credit.json"),
+            &json!({}),
+            &[],
+            Phase::Reviewing,
         )
         .unwrap();
         assert_eq!(found["source"], "checks_and_review");
@@ -363,18 +523,70 @@ mod tests {
     }
 
     #[test]
+    fn out_of_credit_names_its_own_cause_and_never_old_failures() {
+        let old = fixture("out-of-credit.json");
+        for (cont, prior, cause) in [
+            (
+                Cont::Planning { must_split: true },
+                Phase::Making,
+                "ran out of room",
+            ),
+            (MAKING, Phase::Rebasing, "main branch"),
+            (
+                Cont::Ready(Resume::Reviewing),
+                Phase::Reviewing,
+                "free rechecks",
+            ),
+            (
+                Cont::Ready(Resume::Checking),
+                Phase::Rebasing,
+                "free rechecks",
+            ),
+        ] {
+            let found = run(
+                &question(QKind::OutOfCredit, cont),
+                &json!({}),
+                &old,
+                &[],
+                prior,
+            )
+            .unwrap_or_else(|| panic!("{cont:?} needs its cause"));
+            let report = text(&found, "report");
+            assert!(report.contains(cause), "{cont:?}: {report}");
+            assert!(
+                !report.contains("fixed 5 seconds") && !report.contains("base passed"),
+                "{cont:?} must not show resolved failures: {report}"
+            );
+            assert_one_question(&text(&found, "decision"));
+        }
+        assert!(
+            run(
+                &question(QKind::OutOfCredit, MAKING),
+                &json!({}),
+                &old,
+                &[],
+                Phase::Reviewing
+            )
+            .is_none(),
+            "a failed round shows only failures from that round"
+        );
+    }
+
+    #[test]
     fn effect_failed_carries_this_node_open_incident() {
-        let incidents = fixture("effect-failed.json")["incidents"]
+        let incidents: Vec<_> = fixture("effect-failed.json")["incidents"]
             .as_array()
             .unwrap()
-            .clone();
-        let found = findings(
-            &question(QKind::EffectFailed, Cont::Ready(Resume::Making)),
-            &|_| None,
-            &incidents
-                .into_iter()
-                .filter(|incident| incident["node"] == json!(NodeId(0)))
-                .collect::<Vec<_>>(),
+            .iter()
+            .filter(|incident| incident["node"] == json!(NodeId(0)))
+            .cloned()
+            .collect();
+        let found = run(
+            &question(QKind::EffectFailed, MAKING),
+            &json!({}),
+            &json!({}),
+            &incidents,
+            Phase::Publishing,
         )
         .unwrap();
         assert_eq!(found["source"], "incident");
@@ -393,13 +605,48 @@ mod tests {
             QKind::AuditDisagreement,
             QKind::NeedsSplitting,
             QKind::CantMeet,
-            QKind::OutOfCredit,
             QKind::EffectFailed,
         ] {
             assert!(
-                findings(&question(kind, Cont::Nowhere), &|_| None, &[]).is_none(),
+                run(
+                    &question(kind, Cont::Nowhere),
+                    &json!({}),
+                    &json!({}),
+                    &[],
+                    Phase::Making
+                )
+                .is_none(),
                 "{kind:?}"
             );
+        }
+    }
+
+    #[test]
+    fn the_decision_is_the_last_real_question_in_the_report() {
+        for (report, expected) in [
+            (
+                "See https://example.test/run?id=4 for the log.\n\nShould I keep the old export?",
+                Some("Should I keep the old export?"),
+            ),
+            (
+                "The pattern `.*?` matches lazily. May I widen it?",
+                Some("May I widen it?"),
+            ),
+            (
+                "It returns `Option<T>?` today. May I return a Result instead?",
+                Some("May I return a Result instead?"),
+            ),
+            (
+                "Why does the test fail? Because the pin is stale.\n\nQuestion for Rob: may I update the pin?",
+                Some("may I update the pin?"),
+            ),
+            (
+                "The pin is stale.\n\n**Question for Rob:** may I update the pin?",
+                Some("may I update the pin?"),
+            ),
+            ("See https://example.test/run?id=4 for the log.", None),
+        ] {
+            assert_eq!(question_in(report).as_deref(), expected, "{report}");
         }
     }
 }

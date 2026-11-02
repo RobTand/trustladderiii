@@ -752,8 +752,7 @@ impl Adapter {
                     .filter(|path| path.contains('/'))
                     .cloned(),
             );
-            let mut draft = match checked_draft(self.writer.as_mut(), &delivery.key, input, &policy)
-            {
+            let mut draft = match question_draft(self.writer.as_mut(), delivery, input, &policy) {
                 Ok(draft) => draft,
                 Err(Error::MessageRejected)
                     if matches!(
@@ -793,6 +792,16 @@ impl Adapter {
         self.close_original(delivery)?;
         Ok(Completion::confirmed(vec![]))
     }
+}
+
+/// Draft a message for Rob. A question always posts (#322).
+pub(crate) fn question_draft(
+    writer: &mut dyn Writer,
+    delivery: &Delivery,
+    input: WriteRequest,
+    policy: &Policy,
+) -> Result<String> {
+    checked_draft(writer, &delivery.key, input, policy)
 }
 
 fn fixed_notice_text(delivery: &Delivery) -> Result<Option<String>> {
@@ -992,8 +1001,9 @@ mod question_findings_tests {
                 "objections":["The brief never says where the file is written."],
                 "decision":"Should I build this reading even though the check still has objections?"}),
         ));
-        assert!(
-            outcome(&request, "Continue with the original reading").contains("objections"),
+        assert_eq!(
+            outcome(&request, "Continue with the original reading"),
+            "I will continue with the original understanding of your request and set the check's open objections aside.",
             "continue must say what happens to the open objections"
         );
         let request = input(&ask(
@@ -1002,7 +1012,10 @@ mod question_findings_tests {
             json!({"source":"planner", "report":"The digest test pins the file.",
                 "decision":"May this change also update the pinned digest entry?"}),
         ));
-        assert!(outcome(&request, "Try again with guidance").contains("question"));
+        assert_eq!(
+            outcome(&request, "Try again with guidance"),
+            "I will try again using your answer to the question above and any guidance you provide."
+        );
     }
 
     struct Scripted(Vec<Option<&'static str>>, Vec<WriteRequest>);
@@ -1042,5 +1055,48 @@ mod question_findings_tests {
             writer.1[1].violations
         );
         assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_faithful_rewrite_of_the_2662_decision_passes_the_checker() {
+        // prismaquant#2662: the planner asked whether the change may also edit the
+        // `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`.
+        let decision = "May this change also update the `digests.py` entry in `CURRENT_SOURCE_BLOBS`, in the digest retention test?";
+        let mut writer = Scripted(vec![Some(decision)], vec![]);
+        let request = input(&ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit the `prismaquant/digests.py` entry in `CURRENT_SOURCE_BLOBS`?"}),
+        ));
+        let message = checked_draft(&mut writer, "ask:10", request, &Policy::default()).unwrap();
+        assert!(message.contains(decision), "{message}");
+    }
+
+    #[test]
+    fn a_rejected_question_still_posts_with_the_fixed_decision() {
+        // Every draft names a path the checker refuses; Rob must still get a question.
+        let bad = "May I edit prismaquant/digests.py as well?";
+        let mut writer = Scripted(vec![Some(bad); 3], vec![]);
+        let delivery = ask(
+            QKind::CantMeet,
+            Cont::Planning { must_split: false },
+            json!({"source":"planner", "report":"The digest test pins the file.",
+                "decision":"may this leaf also edit `prismaquant/digests.py`?"}),
+        );
+        let message =
+            question_draft(&mut writer, &delivery, input(&delivery), &Policy::default()).unwrap();
+        assert_eq!(
+            writer.1.len(),
+            3,
+            "the writer gets its usual three drafts first"
+        );
+        assert!(message.contains("I could not finish your request with the approach I tried."));
+        assert!(
+            message.contains("What should I change about the approach so the request can be met?"),
+            "{message}"
+        );
+        assert!(message.contains("1. Try again with guidance: "));
+        assert!(!message.contains("digests"), "{message}");
     }
 }
