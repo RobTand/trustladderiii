@@ -469,14 +469,16 @@ fn memory_kind(tags: &Value) -> &'static str {
     }
 }
 
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_:.".contains(&b))
+}
+
 fn memory_id(value: &Value) -> Option<&str> {
-    value.as_str().filter(|id| {
-        !id.is_empty()
-            && id.len() <= 256
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-_:.".contains(&b))
-    })
+    value.as_str().filter(|id| valid_id(id))
 }
 
 /// Recall bounded, redacted memories as worker inputs. Hindsight failures degrade
@@ -574,7 +576,10 @@ pub fn rob_curation(
     state: CurationState,
     reason: &str,
 ) -> Result<()> {
-    let id = self::memory_id(&json!(memory_id)).ok_or(Error::Invalid("invalid memory id"))?;
+    if !valid_id(memory_id) {
+        return Err(Error::Invalid("invalid memory id"));
+    }
+    let id = memory_id;
     let reason = safe_text(clip_chars(reason.trim(), 1000));
     if reason.is_empty() {
         return Err(Error::Invalid("a curation needs a reason"));
