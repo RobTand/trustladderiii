@@ -147,6 +147,9 @@ runs = "/srv/tl3/worker-runs"
 # The deployment service wrapper exports this as TIKTOKEN_CACHE_DIR.
 # tiktoken_cache_dir = "/srv/tl3/tiktoken"
 command = ["-m", "tl3_workers", "run"]
+# Starts each attempt's supervisor outside tl3d's cgroup, so a restart or
+# deploy leaves runs alive (#372). Empty starts it as tl3d's plain child.
+# launcher = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect", "--slice=tl3-workers.slice"]
 
 [planning]
 protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]

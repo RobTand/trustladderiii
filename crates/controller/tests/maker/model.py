@@ -55,6 +55,14 @@ def create_model(request):
     record = Path(request['session_file']).parents[3] / "maker-requests" / f"request-{request['operation']['generation']}.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(request))
+    if mode == 'restart':
+        # Hold the run until the test has killed and reopened the controller.
+        # Every model turn, tool result and the reply are then written without it.
+        runs = Path(request['session_file']).parents[3]
+        (runs / 'restart-entered').write_text(str(__import__('os').getpid()))
+        import time
+        while not (runs / 'restart-release').exists():
+            time.sleep(0.01)
     if mode in ('killed-after-commit', 'session-save-fails', 'twice-killed', 'fix-killed'):
         marker = record.parent / 'failure-injected'
         failures = int(marker.read_text()) if marker.exists() else 0

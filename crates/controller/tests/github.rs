@@ -687,6 +687,8 @@ fn main() {
     println!("test post_crash_recovers ... ok");
     message_reconciliation();
     println!("test message_reconciliation ... ok");
+    console_note_posts_once();
+    println!("test console_note_posts_once ... ok");
     real_writer::all();
     real_writer::classifier_contract();
     writer_checks();
@@ -756,7 +758,7 @@ fn main() {
         steering::merge_pending(&database.create(&format!("pending_{point}")), point);
     }
     database.stop();
-    let scenario_count = if group == Some("flow") { 81 } else { 199 };
+    let scenario_count = if group == Some("flow") { 82 } else { 200 };
     println!(
         "{scenario_count} GitHub integration scenarios passed; no skips; no live GitHub calls"
     );
@@ -1013,6 +1015,41 @@ fn delivery(notice: Notice) -> Delivery {
         scope_removals: None,
     }
 }
+/// PRD #327: a console command's audit note is posted as written, with its
+/// marker, and a replay after a lost response finds the marker and posts
+/// nothing more.
+fn console_note_posts_once() {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let mut adapter = adapter(&api.uri(), root.path());
+    let text = "Rob deferred to TL3 on question 9. TL3 applied its recommended option: Stop.";
+    let mut note = delivery(Notice::MeasuresPosted);
+    note.key = "console-note:00000000-0000-4000-8000-000000000001".into();
+    note.output = Out::Comment {
+        node: NodeId(0),
+        kind: tl3_controller::executor::CommentKind::ConsoleNote,
+    };
+    note.steering = Some(tl3_controller::steering::Task::ConsoleNote { text: text.into() });
+    assert!(matches!(
+        adapter.reconcile(&note).unwrap(),
+        Reconciliation::Absent
+    ));
+    adapter.execute(&note).unwrap();
+    {
+        let state = api.state.lock().unwrap();
+        assert_eq!(state.posts, 1);
+        let body = state.comments[0]["body"].as_str().unwrap();
+        assert_eq!(body, format!("{}\n\n{text}", GitHub::marker(&note.key)));
+    }
+    // The post landed but its response was lost; the replay finds the marker.
+    assert!(matches!(
+        adapter.reconcile(&note).unwrap(),
+        Reconciliation::Found(_)
+    ));
+    adapter.execute(&note).unwrap();
+    assert_eq!(api.state.lock().unwrap().posts, 1);
+}
+
 fn message_reconciliation() {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();

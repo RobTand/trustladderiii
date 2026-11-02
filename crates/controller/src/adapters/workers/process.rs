@@ -128,6 +128,52 @@ pub(super) fn kill_and_wait(path: &Path) -> Result<()> {
     }
 }
 
+/// The cgroup v2 scope a record's live process runs in, when that scope is its
+/// own (#372): never the controller's cgroup, whose kill would stop tl3d.
+pub(super) fn own_scope(path: &Path) -> Result<Option<PathBuf>> {
+    let Some(value) = read(path)? else {
+        return Ok(None);
+    };
+    if value["cancelled"] == true {
+        return Ok(None);
+    }
+    let identity: Identity = serde_json::from_value(value)?;
+    if !matches(&identity)? {
+        return Ok(None);
+    }
+    let cgroup = match fs::read_to_string(format!("/proc/{}/cgroup", identity.pid)) {
+        Ok(cgroup) => cgroup,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    // Recheck, so a reused PID can never name another process's scope.
+    if !matches(&identity)? {
+        return Ok(None);
+    }
+    Ok(scope_of(&cgroup, &fs::read_to_string("/proc/self/cgroup")?))
+}
+
+fn scope_of(cgroup: &str, own: &str) -> Option<PathBuf> {
+    let unified = |text: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix("0::"))
+            .map(str::to_owned)
+    };
+    let path = unified(cgroup)?;
+    (path.ends_with(".scope") && Some(&path) != unified(own).as_ref())
+        .then(|| Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/')))
+}
+
+/// Kill every process in a scope, including descendants a worker started.
+pub(super) fn kill_scope(scope: &Path) -> Result<()> {
+    match fs::write(scope.join("cgroup.kill"), "1") {
+        Ok(()) => Ok(()),
+        // The scope ended, and systemd collected it, before the kill.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn temporary(path: &Path) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     path.with_extension(format!(
@@ -201,6 +247,24 @@ mod tests {
             Some(rustix::io::Errno::SRCH.raw_os_error())
         );
         assert_eq!(read_stat(opened).unwrap(), None);
+    }
+
+    #[test]
+    fn only_an_attempt_scope_of_its_own_is_killed() {
+        let own = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/tl3d.service\n";
+        let attempt =
+            "0::/user.slice/user-1000.slice/user@1000.service/tl3-workers.slice/run-r1.scope\n";
+        assert_eq!(
+            scope_of(attempt, own),
+            Some(PathBuf::from(
+                "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/tl3-workers.slice/run-r1.scope"
+            ))
+        );
+        // Without a launcher the supervisor shares tl3d's cgroup; never kill it.
+        assert_eq!(scope_of(own, own), None);
+        let shared = "0::/user.slice/user-1000.slice/session-3.scope\n";
+        assert_eq!(scope_of(shared, shared), None);
+        assert_eq!(scope_of("12:pids:/legacy\n", own), None);
     }
 
     #[test]

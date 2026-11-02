@@ -105,6 +105,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, include_str!("../migrations/0008_memory_parking.sql")),
     (9, include_str!("../migrations/0009_memory_recovery.sql")),
     (10, include_str!("../migrations/0010_change_feed.sql")),
+    (11, include_str!("../migrations/0011_console_commands.sql")),
     (12, include_str!("../migrations/0012_prompts.sql")),
 ];
 
@@ -969,8 +970,10 @@ impl Reader {
 }
 
 /// Create or update a login that may read TL3's tables, now and after later
-/// migrations, and write nothing but prompt versions, with the password in
-/// `password_file`. Connects as the store's owner. Safe to repeat.
+/// migrations, with the password in `password_file`. Its writes are filing
+/// console commands through `tl3_console_command` and adding prompt versions
+/// and moving the active prompt pointers, through `tl3_prompt_editor`.
+/// Connects as the store's owner. Safe to repeat.
 pub fn grant_reader(
     settings: &tl3_config::Store,
     role: &str,
@@ -1011,7 +1014,12 @@ pub fn grant_reader(
          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {role};
          DO $editor$ BEGIN CREATE ROLE tl3_prompt_editor NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $editor$;
          GRANT tl3_prompt_editor TO {role};
-         ALTER ROLE {role} SET default_transaction_read_only = on;"
+         ALTER ROLE {role} SET default_transaction_read_only = on;
+         DO $grant$ BEGIN
+             IF to_regprocedure('tl3_console_command(text, bigint, jsonb)') IS NOT NULL THEN
+                 GRANT EXECUTE ON FUNCTION tl3_console_command(text, bigint, jsonb) TO {role};
+             END IF;
+         END $grant$;"
     ))?;
     tx.commit()?;
     Ok(())
@@ -1025,8 +1033,21 @@ pub struct Listener {
 
 impl Listener {
     pub fn open(settings: &tl3_config::Store) -> Result<Self> {
-        let mut client = connect(settings, true)?;
-        client.batch_execute("LISTEN tl3_changes")?;
+        Self::listen(settings, "LISTEN tl3_changes")
+    }
+
+    /// tl3d's wake for ingress filed outside its own process, such as console commands.
+    pub fn ingress(settings: &tl3_config::Store) -> Result<Self> {
+        Self::listen(settings, "LISTEN tl3_ingress")
+    }
+
+    fn listen(settings: &tl3_config::Store, statement: &str) -> Result<Self> {
+        let mut config = config(settings, true)?;
+        // A LISTEN session idles for hours. Keepalives find a dead peer, so
+        // the session ends and its owner reconnects and drains.
+        config.keepalives_idle(LISTEN_KEEPALIVE_IDLE);
+        let mut client = config.connect(NoTls)?;
+        client.batch_execute(statement)?;
         Ok(Self { client })
     }
 
@@ -1045,6 +1066,35 @@ impl Listener {
             tables.insert(next.payload().to_string());
         }
         Ok(tables)
+    }
+}
+
+/// The console's session for filing commands. Its login may only read, so the
+/// one write goes through `tl3_console_command` in an explicit read-write
+/// transaction.
+pub struct ConsoleCommands {
+    client: Client,
+}
+
+impl ConsoleCommands {
+    pub fn open(settings: &tl3_config::Store) -> Result<Self> {
+        Ok(Self {
+            client: connect(settings, false)?,
+        })
+    }
+
+    /// File a command for tl3d. False when this id was already filed.
+    pub fn submit(&mut self, id: &str, node: u64, action: &serde_json::Value) -> Result<bool> {
+        let node = i64::try_from(node).map_err(|_| Error::Invalid("node id out of range"))?;
+        let mut tx = self.client.build_transaction().read_only(false).start()?;
+        let filed = tx
+            .query_one(
+                "SELECT tl3_console_command($1, $2, $3)",
+                &[&id, &node, action],
+            )?
+            .get(0);
+        tx.commit()?;
+        Ok(filed)
     }
 }
 
@@ -1112,7 +1162,13 @@ fn check_schema(tx: &mut Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+const LISTEN_KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+
 fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
+    Ok(config(settings, read_only)?.connect(NoTls)?)
+}
+
+fn config(settings: &tl3_config::Store, read_only: bool) -> Result<postgres::Config> {
     settings.validate()?;
     let mut connection = postgres::Config::new();
     connection
@@ -1130,7 +1186,7 @@ fn connect(settings: &tl3_config::Store, read_only: bool) -> Result<Client> {
     if read_only {
         connection.options("-c default_transaction_read_only=on");
     }
-    Ok(connection.connect(NoTls)?)
+    Ok(connection)
 }
 
 fn read_transaction(client: &mut Client) -> Result<Transaction<'_>> {

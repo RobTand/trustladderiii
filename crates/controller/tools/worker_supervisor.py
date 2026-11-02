@@ -51,8 +51,16 @@ def main():
         os.execv(sys.executable, [sys.executable, *command])
     if not publish(root / "claim.json", identity(), exclusive=True):
         return
-    print("claimed", flush=True)
-    sys.stdout.close()
+    # Since #372 this process outlives a tl3d restart. After the handshake it
+    # writes only to attempt files; if tl3d is already gone, a restarted
+    # controller reattaches through the claim instead of reading this line.
+    try:
+        os.write(1, b"claimed\n")
+    except BrokenPipeError:
+        pass
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1)
+    os.close(devnull)
     with (root / "request.json").open("rb") as request, \
          (root / "stdout.jsonl").open("wb", buffering=0) as output, \
          (root / "stderr.log").open("ab", buffering=0) as errors:

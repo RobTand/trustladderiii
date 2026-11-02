@@ -130,13 +130,14 @@ signature verification or ingress persistence.
 ## Restart every service, then open the gate
 
 Before any seed is labelled, restart Postgres, status and the controller. The
-controller's `KillMode=control-group` stops its supervisors, workers, writers,
-Git helpers and PB clients before a new process starts. Durable request and run
-records remain. Reconciliation reuses the effect key, accepts a completed reply,
-or starts a new attempt only after the earlier local process is proved absent.
-A service restart can interrupt an in-flight model call. It is not a promise to
-keep that process alive. Ordinary controller recovery tests also cover attaching
-to a still-live supervisor after a process-only crash.
+controller's `KillMode=control-group` stops its writers, Git helpers and PB
+clients before a new process starts. Since #372 it no longer stops worker runs:
+`workers.launcher` starts each attempt's supervisor in its own scope under
+`tl3-workers.slice`, outside tl3d's cgroup. The restarted controller reattaches
+to a live supervisor through its claim record, and accepts the run's reply under
+the same effect key and generation. A supervisor that is gone goes through the
+usual absence proof before any new attempt. To stop every run, use
+`deploy.py stop-runs` (below), not a tl3d stop.
 
 ```bash
 systemctl --user restart tl3-postgres.service

@@ -31,7 +31,11 @@ impl Executor for Fake {
                 kind: EffectKind::PostApproval | EffectKind::ClosePr,
                 ..
             }
-            | Out::Notice { .. } => vec![],
+            | Out::Notice { .. }
+            | Out::Comment {
+                kind: CommentKind::ConsoleNote,
+                ..
+            } => vec![],
             _ => return Err(crate::Error::Invalid("unsupported GitHub effect")),
         };
         let mut posted = delivery.clone();
@@ -185,6 +189,26 @@ impl Adapter {
             &body,
         ))?;
         Ok(Self::linked(delivery, issue))
+    }
+    /// PRD #327: a console command's audit note. Code writes it, so it is
+    /// posted as written, without the writer model.
+    fn console_note(&mut self, delivery: &Delivery, text: &str) -> Result<Completion> {
+        let client = self.client(delivery)?;
+        let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+        if self
+            .runtime
+            .block_on(client.reconcile_comments(&repo, delivery.issue, delivery.marker_key()))?
+            .is_none()
+        {
+            self.fence(delivery)?;
+            self.runtime.block_on(client.post_comment(
+                &repo,
+                delivery.issue,
+                delivery.marker_key(),
+                text,
+            ))?;
+        }
+        Ok(Completion::confirmed(vec![]))
     }
     /// Q49: read the issue's current text, and reopen it only if TL3 closed it.
     fn restart(&mut self, delivery: &Delivery) -> Result<Completion> {
@@ -413,6 +437,21 @@ impl Executor for Adapter {
         // A restart only reads the issue and reopens it, so running it again is safe.
         if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
             return Ok(Reconciliation::Absent);
+        }
+        if let Some(crate::steering::Task::ConsoleNote { .. }) = &delivery.steering {
+            let client = self.client(delivery)?;
+            let repo = format!("{}/{}", delivery.repository.owner, delivery.repository.name);
+            return Ok(
+                match self.runtime.block_on(client.reconcile_comments(
+                    &repo,
+                    delivery.issue,
+                    delivery.marker_key(),
+                )) {
+                    Ok(Some(_)) => Reconciliation::Found(Completion::confirmed(vec![])),
+                    Ok(None) => Reconciliation::Absent,
+                    Err(_) => Reconciliation::Pending,
+                },
+            );
         }
         if Self::request_notice(delivery).is_none()
             && !matches!(
@@ -670,6 +709,9 @@ impl Adapter {
         }
         if let Some(crate::steering::Task::Restart { .. }) = &delivery.steering {
             return self.restart(delivery);
+        }
+        if let Some(crate::steering::Task::ConsoleNote { text }) = &delivery.steering {
+            return self.console_note(delivery, text);
         }
         let notice = Self::request_notice(delivery);
         if notice.is_none()
