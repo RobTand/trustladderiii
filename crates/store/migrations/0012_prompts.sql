@@ -5,10 +5,10 @@
 CREATE TABLE tl3_prompt_versions (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     role text NOT NULL,
-    body text NOT NULL CHECK (body <> ''),
+    body text NOT NULL CHECK (body <> '' AND octet_length(body) <= 262144),
     builtin boolean NOT NULL DEFAULT false,
     author text NOT NULL CHECK (author <> ''),
-    note text NOT NULL CHECK (note <> ''),
+    note text NOT NULL CHECK (note <> '' AND char_length(note) <= 500),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (role, id)
 );

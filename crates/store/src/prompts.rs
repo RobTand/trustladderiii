@@ -178,14 +178,18 @@ impl Prompts {
 
     /// One version of a role, with its text.
     pub fn version(&mut self, role: &str, id: i64) -> Result<Option<PromptVersion>> {
-        let _ = (role, id);
-        todo!("one version's text")
+        let mut tx = self.read()?;
+        let found = full(&mut tx, role, id)?;
+        tx.commit()?;
+        Ok(found)
     }
 
     /// Whether the session still reaches Postgres. Check before an edit, so a
     /// dropped session is replaced before anything is sent rather than after.
     pub fn is_live(&mut self) -> bool {
-        todo!("probe the session")
+        self.client
+            .is_valid(std::time::Duration::from_secs(5))
+            .is_ok()
     }
 
     /// Add a version and make it active at once. `base` is the active version
@@ -203,6 +207,12 @@ impl Prompts {
         }
         if note.trim().is_empty() {
             return Ok(Err(Refusal::EmptyNote));
+        }
+        if body.len() > TEXT_LIMIT {
+            return Ok(Err(Refusal::TextTooLong));
+        }
+        if note.trim().chars().count() > NOTE_LIMIT {
+            return Ok(Err(Refusal::NoteTooLong));
         }
         self.edit(role, |tx, active| {
             if active != base {
@@ -230,7 +240,9 @@ impl Prompts {
         expected: i64,
     ) -> Result<Edit> {
         self.edit(role, |tx, active| {
-            let _ = expected;
+            if active != expected {
+                return Ok(Err(Refusal::Stale { active }));
+            }
             let builtin = tx
                 .query_opt(
                     "SELECT builtin FROM tl3_prompt_versions WHERE role = $1 AND id = $2",
