@@ -104,7 +104,8 @@ def make_diff_tool(worktree, parts, limits):
             stat = _stat(checkout, commit, spec, untracked)
             extra = untracked[UNTRACKED_ENTRIES:]
             if not stat:
-                return {**result, "stat": [], "diff": "", "next_offset": None, "message": f"No changes under {path}."}
+                where = "against the base" if path == "." else f"under {path}"
+                return {**result, "stat": [], "diff": "", "next_offset": None, "message": f"No changes {where}."}
             listed = []
             for entry in stat[:STAT_ENTRIES]:
                 if len(json.dumps([*listed, entry]).encode()) > STAT_BYTES:

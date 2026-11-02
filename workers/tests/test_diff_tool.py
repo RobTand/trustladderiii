@@ -124,7 +124,7 @@ def test_diff_pages_a_long_change_like_read(repo):
             page = tool.invoke({"path": "big.txt", "offset": offset})
             assert len(json.dumps(page).encode()) <= OUTPUT_LIMITS["bytes"]
             assert len(page["diff"].splitlines()) <= OUTPUT_LIMITS["read_lines"]
-            assert ("stat" in page and page["stat"]) is (offset == 0)
+            assert bool(page.get("stat")) is (offset == 0)
             pages.append(page)
             offset = page["next_offset"]
             if offset is not None:
@@ -219,7 +219,7 @@ def test_diff_gives_a_clean_worktree_an_empty_change(repo):
     git(root, "commit", "--quiet", "-m", "Round 1")
     with attach(Worktree(root), root, git(root, "rev-parse", "HEAD")) as worktree:
         result = diff_tool(worktree).invoke({})
-    assert result["stat"] == [] and result["diff"] == "" and result["message"] == "No changes under ."
+    assert result["stat"] == [] and result["diff"] == "" and result["message"] == "No changes against the base."
 
 
 # The maker and reviewer runs attach the checkout and the base the tool reads.
