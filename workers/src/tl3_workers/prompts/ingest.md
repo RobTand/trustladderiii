@@ -39,7 +39,7 @@ Return only the JSON object, without Markdown fences or surrounding prose.
 
 When forecast settings are supplied, also declare `files`, the repository-relative files this request needs to read or change. Include planned new files. Code measures these files and the brief to size the request.
 
-## Requests that require protected paths (Q55)
+## Requests that require protected paths (Q57)
 
 Use the supplied effective `protected_paths`, including repository additions.
 If the request's goals cannot be met without editing a protected path, report

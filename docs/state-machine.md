@@ -642,7 +642,7 @@ TL3 decides on the check-suite and check-run webhooks it already receives, with 
 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
 
-## Q55: requests that require protected paths
+## Q57: requests that require protected paths
 
 Rob, 2026-11-02, issue #451:
 
