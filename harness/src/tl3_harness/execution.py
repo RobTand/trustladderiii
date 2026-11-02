@@ -26,7 +26,7 @@ SELECTED_CHECK = "Existing tests that import the change"
 MAX_SELECTED_TESTS = 1000
 
 
-_BASE_RESULTS: dict[tuple, dict[str, Outcome]] = {}
+_BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
 # Selected candidates' base outcomes, per test, apart from the plan's base cache.
 _SELECTED_BASE: dict[tuple, Outcome] = {}
 
@@ -405,10 +405,12 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
-            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress)
+            before_messages = {}
+            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress, messages=before_messages)
             if Outcome.NO_REPORT not in observed.values():
-                _BASE_RESULTS[cache_key] = observed
-        before = _BASE_RESULTS.get(cache_key, dict.fromkeys(ordinary, Outcome.NO_REPORT)).copy()
+                _BASE_RESULTS[cache_key] = observed, before_messages
+        before, before_messages = _BASE_RESULTS.get(cache_key, (dict.fromkeys(ordinary, Outcome.NO_REPORT), {}))
+        before = before.copy()
         before.update(dict.fromkeys(stale, Outcome.MISSING))
         # Candidates run apart, so one crashing there can't cost the plan its base evidence.
         selected_before = selected_base(tool, old, container, candidates, base, root, progress)
@@ -451,9 +453,11 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         after.update(dict.fromkeys(stale, Outcome.MISSING))
+        # A collection/plan refusal is also UNCOLLECTED, but proves nothing about missing nodes.
         stale.update(test for test in always_tests if "::" in test
                      and before[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
-                     and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED))
+                     and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and not before_messages.get(test) and not messages.get(test))
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
