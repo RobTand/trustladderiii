@@ -32,6 +32,7 @@ _COMPILE_DATA = {
         "//workers:schemas",
         "//workers/tests:fixtures",
     ],
+    "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }

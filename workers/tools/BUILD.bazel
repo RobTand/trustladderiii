@@ -49,3 +49,16 @@ py_library(
     visibility = ["//visibility:public"],
     deps = ["//workers/src"],
 )
+
+py_binary(
+    name = "trial_tracing",
+    srcs = ["trial_tracing.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//workers/src",
+        "@tl3_pip//httpx",
+        "@tl3_pip//langchain_core",
+        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//protobuf",
+    ],
+)

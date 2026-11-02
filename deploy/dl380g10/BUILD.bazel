@@ -3,6 +3,9 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
 exports_files(["helper.rs"])
 
+# crates/config tests include_str! the deployment model defaults.
+exports_files(["models.toml"])
+
 # The MLflow server runs in its own uv environment on the deployment host and
 # has no tests; Light checks only verify its lockfile.
 # gazelle:python_ignore_files mlflow-server.py
