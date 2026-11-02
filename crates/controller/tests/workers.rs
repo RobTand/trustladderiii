@@ -3,6 +3,8 @@ use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
 mod prismabuild_fixture;
+#[path = "workers/quota_ladder.rs"]
+mod quota_ladder;
 #[path = "workers/retirement.rs"]
 mod retirement_review;
 mod support;
@@ -462,6 +464,29 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--quota-ladder") {
+        prepare_workers();
+        let mut database = Database::start();
+        match args.get(2).map(String::as_str) {
+            Some("fallback") => {
+                quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"))
+            }
+            Some("whole") => {
+                quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"))
+            }
+            Some("removed") => quota_ladder::removed_model_resumes_on_open(
+                &database.create("quota_removed"),
+                false,
+            ),
+            Some("legacy") => quota_ladder::removed_model_resumes_on_open(
+                &database.create("quota_removed_legacy"),
+                true,
+            ),
+            _ => quota_scenarios(&mut database),
+        }
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--review-feedback") {
         maker::review_trial(&database.create("review_feedback"));
         database.stop();
@@ -570,11 +595,23 @@ fn main() {
     println!("test planner_leaf_narrowing_and_rule_retry_with_findings ... ok");
     planning::stop(&database.create("planner_stop"));
     println!("test planner_stop ... ok");
+    quota_scenarios(&mut database);
     finish_fixture(database, "worker_planning");
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("76 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("80 worker supervisor, planning and maker scenarios passed; no skips");
+}
+
+fn quota_scenarios(database: &mut Database) {
+    quota_ladder::planner_falls_back(&database.create("quota_planner_fallback"));
+    println!("test quota_planner_falls_back_to_next_model ... ok");
+    quota_ladder::whole_ladder_waits(&database.create("quota_whole_ladder"));
+    println!("test quota_whole_ladder_waits_for_earliest_reset ... ok");
+    quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed"), false);
+    println!("test quota_wait_for_removed_model_resumes_on_open ... ok");
+    quota_ladder::removed_model_resumes_on_open(&database.create("quota_removed_legacy"), true);
+    println!("test quota_legacy_wait_for_removed_model_resumes_on_open ... ok");
 }
 
 // These scenarios isolate ingest/audit. Maker acceptance below uses the real
@@ -595,6 +632,21 @@ fn worker_simulation(
     impl Executor for IngestAudit {
         fn retire(&mut self, store: &mut Store) -> tl3_controller::Result<()> {
             self.0.retire(store)
+        }
+        // Quota waits only arise from the real worker runs this wrapper forwards.
+        fn resume_after_quota(
+            &mut self,
+            delivery: &Delivery,
+        ) -> tl3_controller::Result<Option<tl3_controller::executor::Completion>> {
+            self.0.resume_after_quota(delivery)
+        }
+        fn quota_resume_ms(
+            &mut self,
+            delivery: &Delivery,
+            announced: u64,
+            now: u64,
+        ) -> tl3_controller::Result<u64> {
+            self.0.quota_resume_ms(delivery, announced, now)
         }
         fn execute(
             &mut self,

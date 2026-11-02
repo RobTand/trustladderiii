@@ -1154,6 +1154,17 @@ due immediately, so a zero `retry_after` cannot strand a quota wait.
 The supervisor tracks the attempt as well as the key, so retirement of the quota
 ending cannot remove a resumed process from its active set.
 
+Q53 moves a quota-limited worker step down its role's ladder. The quota
+observation names the model, and the controller records it in `model_quotas`
+with its reset. The look then asks the adapter's `quota_resume_ms` when the step
+can resume: now if another ladder model is free, otherwise at the earliest
+reset. The relaunch picks the first model that hasn't reported quota. A reset
+deletes its `model_quotas` row. The startup look asks again, so a wait for a
+model no longer configured ends when tl3d opens. A wait recorded before Q53
+names its model only in the attempt's `request.json`, which the adapter reads.
+The maker's reply records its model in `maker_session`, and the reviewer stays a
+different family from it.
+
 From a clean detached worktree at the final commit, generate the host runs,
 workspace checks, worker protocol tests, kernel tests and stall proof with `python3 crates/controller/tools/looks_manifest.py`. Submit the
 manifest with the published `pbcampaign.py`. Process and timing tests run once

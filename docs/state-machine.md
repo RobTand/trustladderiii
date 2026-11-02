@@ -483,6 +483,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q8 Notes:** only when something changes a request's course, such as a stop, a pause, a merge TL3 didn't approve or a re-plan. Routine steps show only in the status view.
 - **Q17 Incidents:** they go to one pinned "TL3 operations" issue in TL3's repo until Discord exists. Questions about a request stay on its issue.
 - **Q22 Model ladder:** attempts 1 and 2 use the default maker model, attempt 2 at maximum effort and budget. Attempt 3 uses the strongest model from a different family. Reviewers default to a different family from the maker.
+- **Q53 Quota falls back down the ladder:** approved by Rob, 2026-11-01: "Fall back down the ladder." A step whose model reports quota moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset, with no credit spent and no failure counted. TL3 records each model's quota with its reset, and waits for the earliest reset only when every model in the ladder is out. A wait for a model no longer configured ends when tl3d opens. The maker keeps the Q22 attempt ladder, and the reviewer stays a different family from the maker that ran. The controller and worker adapter implement this; the kernel is unchanged.
 - **Q31 Escalation reports:** only the impact on the parent's goals, at most about 2,000 tokens. The parent can pull the evidence for one goal per escalation.
 
 **Order of work**
