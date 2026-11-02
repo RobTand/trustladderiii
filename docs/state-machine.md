@@ -497,7 +497,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q36 Rank:** the number of other pieces waiting on a piece, directly or through a chain of waits, with ties going to the older piece.
 - **Q37 Manual priority:** none in slices one and two. A label such as `tl3-urgent` could come later. Approved by Rob, 2026-11-02 (#416, #417): issue priorities `P0`–`P3` order agent-pool grants (Q39) and can raise starting credit.
 - **Q38 Shared files:** the age rule goes. Whichever piece unblocks more gets the file, with ties going to the older piece.
-- **Q39 Agent pool:** the same ordering. Postmortems run only on spare capacity. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are priority-first, P0 to P3 then unranked, with ties going to the older ticket, and with the bounded aging described below.
+- **Q39 Agent pool:** the same ordering. Postmortems run only on spare capacity. Approved by Rob, 2026-11-02 (#417), pulled forward from slice two: grants are priority-first, P0 to P3 then unranked, with ties going to the older ticket, and with the bounded seniority described below.
 
 **Proofs**
 
@@ -624,11 +624,13 @@ Credit costs and infrastructure retry limits are the same as in Queued.
 
 > Priority-first agent pool grants (#417).
 
-A free agent-pool grant goes to the waiter with the lowest (effective level, ticket). The level is the issue priority's rank, P0 = 0 to unranked = 4, lowered by one per 8 tickets issued after the waiter's own (`POOL_AGING_TICKETS`), down to 0. Rob approved priority-first, not aging; aging is the minimal rule that bounds starvation. A waiter of rank r is granted after at most K + r × 8 grants to others, where K counts older waiters. The gate's slot order (Q48) doesn't change.
+A free agent-pool grant goes to the waiter with the lowest score, then the older ticket. The score is the waiter's ticket plus 8 tickets (`POOL_AGING_TICKETS`) per level below P0, from P0 = 0 to unranked = 4 levels. A better priority passes a waiter only if that waiter is fewer than 8 tickets per level older. Rob approved priority-first, not aging; this seniority is the minimal rule that bounds starvation. A waiter of rank r is granted after at most K + r × 8 − 1 grants to others, where K counts older waiters. The gate's slot order (Q48) doesn't change.
 
-Priority lives on the node and arrives with `NewRequest` or `NewAdoption`, so stored events without it replay as unranked. `Fact::Priority` refreshes it on an open node and leaves a closed one unchanged.
+An aging rule that reads the world's ticket counter, raising a waiter one level per 8 later tickets, was tried first. It has the same bound, but it couples every pool comparison to that counter. Every apply proof assumes a settled world, which already decides who is first in the pool line, so twelve reply proofs ran out of memory at 44 GB. The fixed score costs one addition per waiter.
 
-The Kani proofs: `apply_priority` changes only the priority, and never on a closed node. `pool_grant_is_priority_ordered` starts from three waiters with arbitrary priorities and tickets, and shows a grant goes only to the lowest key, written independently of the kernel; its covers include a better priority passing an older ticket and an aged older ticket passing a better priority. `pool_aging_bound` shows aging only improves a waiter, never reverses as tickets are issued, and that after rank × 8 later tickets no younger ticket of any priority can pass it. Settle still ends: a grant clears the ticket and moves the run on, so each `advance` still lowers its node's settle rank, and the per-phase advance proofs check that over arbitrary priorities.
+Priority lives on the node and arrives with `NewRequest` or `NewAdoption`, so stored events without it replay as unranked. Unranked serializes as absent. `Fact::Priority` refreshes it on an open node and leaves a closed one unchanged.
+
+The Kani proofs: `apply_priority` changes only the priority, and never on a closed node. `pool_grant_is_priority_ordered` starts from three waiters with arbitrary priorities and tickets, and shows a grant goes only to the lowest key, written independently of the kernel. Its covers include a better priority passing an older ticket, and seniority holding against a better priority. `pool_aging_bound` shows a better priority passes a ticket less than its window older, that no ticket issued rank × 8 or more after a waiter's passes it, and that ties go to the older ticket. Settle still ends: a grant clears the ticket and moves the run on, so each `advance` still lowers its node's settle rank, and the per-phase advance proofs check that over arbitrary priorities.
 
 ### Q48, Rob, 2026-11-01
 

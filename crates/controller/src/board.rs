@@ -234,8 +234,6 @@ pub struct Input<'a> {
     pub models: Option<&'a tl3_config::Models>,
     /// Q53: models that reported quota, with their announced resets in Unix ms.
     pub quota_resets: BTreeMap<String, u64>,
-    /// The world's next ticket, which ages pool waiters (Q39).
-    pub next_ticket: u64,
 }
 
 /// A request's newest node and what the controller's side tables say about it.
@@ -286,10 +284,10 @@ pub fn project(input: Input<'_>) -> Board {
     let keys: Vec<_> = input
         .requests
         .iter()
-        .filter_map(|request| tl3_kernel::pool_key(input.next_ticket, &request.node))
+        .filter_map(|request| tl3_kernel::pool_key(&request.node))
         .collect();
     for request in input.requests {
-        let pool_position = tl3_kernel::pool_key(input.next_ticket, &request.node)
+        let pool_position = tl3_kernel::pool_key(&request.node)
             .map(|key| 1 + keys.iter().filter(|theirs| **theirs < key).count() as u32);
         if matches!(request.node.phase, Phase::Closed(_))
             && request
@@ -723,7 +721,6 @@ pub struct Rows {
     pub requests: Vec<Request>,
     pub unassigned_incidents: Vec<StoredIncident>,
     pub quota_resets: BTreeMap<String, u64>,
-    pub next_ticket: u64,
 }
 
 impl Rows {
@@ -736,13 +733,11 @@ impl Rows {
             requests: Vec::new(),
             unassigned_incidents: Vec::new(),
             quota_resets: BTreeMap::new(),
-            next_ticket: 0,
         };
         if snapshot.rows.is_empty() {
             return Ok(rows);
         }
         let world = crate::snapshot::decode(&snapshot)?;
-        rows.next_ticket = world.next_ticket;
         let ids: Vec<_> = (0..world.nodes.len())
             .map(|index| NodeId(index as u64))
             .collect();
@@ -872,7 +867,6 @@ impl Rows {
             unassigned_incidents: self.unassigned_incidents.clone(),
             models,
             quota_resets: self.quota_resets.clone(),
-            next_ticket: self.next_ticket,
         })
     }
 }

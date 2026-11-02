@@ -24,11 +24,6 @@ fn request(id: u64, phase: Phase) -> Request {
 }
 
 fn board(requests: Vec<Request>) -> Board {
-    let next_ticket = requests
-        .iter()
-        .filter_map(|request| request.node.ticket)
-        .max()
-        .map_or(0, |ticket| ticket + 1);
     project(Input {
         revision: 7,
         now_ms: NOW,
@@ -36,7 +31,6 @@ fn board(requests: Vec<Request>) -> Board {
         unassigned_incidents: vec![],
         models: None,
         quota_resets: BTreeMap::new(),
-        next_ticket,
     })
 }
 
@@ -245,7 +239,6 @@ fn card_carries_counters_progress_and_incidents() {
         unassigned_incidents: vec![],
         models: Some(&config.models),
         quota_resets: BTreeMap::new(),
-        next_ticket: 0,
     })
     .cards;
     assert_eq!(
@@ -415,7 +408,6 @@ fn board_keeps_revision_order_and_unassigned_incidents() {
         }],
         models: None,
         quota_resets: BTreeMap::new(),
-        next_ticket: 0,
     });
     assert_eq!(board.revision, 12);
     assert_eq!(board.built_at_ms, NOW);
@@ -545,7 +537,6 @@ fn card_names_the_model_the_worker_runs() {
             unassigned_incidents: vec![],
             models: Some(&config.models),
             quota_resets,
-            next_ticket: 0,
         })
         .cards
         .into_iter()

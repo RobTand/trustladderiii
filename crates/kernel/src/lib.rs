@@ -2738,24 +2738,23 @@ fn slot_free(w: &World, i: usize) -> bool {
     holders < gate.w as u32
 }
 
-/// Tickets issued after a pool waiter's own that raise it one level (Q39).
-pub const POOL_AGING_TICKETS: u64 = 1 << POOL_AGING_SHIFT;
-/// A power of two, so aging is a shift: Kani encodes a 64-bit division as a
-/// full divider at every pool comparison, which the reply proofs can't afford.
-const POOL_AGING_SHIFT: u32 = 3;
+/// Tickets of seniority that one priority level is worth in the pool (Q39).
+pub const POOL_AGING_TICKETS: u64 = 8;
 
-/// A pool waiter's place in line (Q39): its priority's rank, raised one level
-/// per POOL_AGING_TICKETS tickets issued after its own, down to P0.
-pub fn pool_level(next_ticket: u64, priority: Priority, ticket: u64) -> u8 {
-    let aged = next_ticket.saturating_sub(ticket).saturating_sub(1) >> POOL_AGING_SHIFT;
-    priority.rank().saturating_sub(aged.min(4) as u8)
+/// A pool waiter's score (Q39): its ticket plus POOL_AGING_TICKETS per level
+/// below P0. A better priority passes only waiters fewer than that many tickets
+/// per level older. The score is fixed while the waiter keeps its ticket, so
+/// two waiters never swap places, and it reads no world counter, which keeps
+/// the settled-world assumption in every apply proof cheap for Kani.
+pub fn pool_score(priority: Priority, ticket: u64) -> u64 {
+    ticket.saturating_add(POOL_AGING_TICKETS * u64::from(priority.rank()))
 }
 
-/// A node's place in the agent pool's line (Q39), lowest first: best effective
-/// level, then the older ticket. None unless it waits for the pool.
-pub fn pool_key(next_ticket: u64, n: &Node) -> Option<(u8, u64)> {
+/// A node's place in the agent pool's line (Q39), lowest first: its score, then
+/// the older ticket. None unless it waits for the pool.
+pub fn pool_key(n: &Node) -> Option<(u64, u64)> {
     let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
-    Some((pool_level(next_ticket, n.priority, ticket), ticket))
+    Some((pool_score(n.priority, ticket), ticket))
 }
 
 /// Older slot waiters block runnable or overlapping younger leaves.
@@ -2763,11 +2762,11 @@ pub fn pool_key(next_ticket: u64, n: &Node) -> Option<(u8, u64)> {
 fn first_in_line(w: &World, i: usize) -> bool {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
-    if let Some(key) = pool_key(w.next_ticket, me) {
+    if let Some(key) = pool_key(me) {
         return !w
             .nodes
             .iter()
-            .any(|n| pool_key(w.next_ticket, n).is_some_and(|theirs| theirs < key));
+            .any(|n| pool_key(n).is_some_and(|theirs| theirs < key));
     }
     let mut first_runnable = mine;
     for (j, waiter) in w.nodes.iter().enumerate() {

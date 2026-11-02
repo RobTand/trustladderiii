@@ -1404,10 +1404,17 @@ fn check_priority() {
     );
 }
 
-/// The state table's effective level, written independently of the kernel.
-fn spec_level(priority: Priority, ticket: u64, next: u64) -> u8 {
-    let aged = (next - ticket - 1) / POOL_AGING_TICKETS;
-    priority.rank().saturating_sub(aged.min(4) as u8)
+/// The state table's place in the pool line, written independently of the
+/// kernel: a ticket plus 8 tickets per level below P0, then the ticket.
+fn spec_key(priority: Priority, ticket: u64) -> (u64, u64) {
+    let levels = match priority {
+        Priority::P0 => 0,
+        Priority::P1 => 1,
+        Priority::P2 => 2,
+        Priority::P3 => 3,
+        Priority::Unranked => 4,
+    };
+    (ticket + 8 * levels, ticket)
 }
 
 /// Three leaves waiting for the agent pool at their first run, in arbitrary
@@ -1435,19 +1442,14 @@ fn check_pool_grant_order() {
     let mut out = Outbox::new();
     advance(&mut after, 0, &mut out);
     require_consistent(&after);
-    let mine = n.ticket.unwrap();
-    let key = |m: &Node| {
-        m.ticket
-            .map(|t| (spec_level(m.priority, t, before.next_ticket), t))
-    };
-    let first = before.nodes[1..].iter().all(|m| {
-        key(m)
-            .is_none_or(|theirs| (spec_level(n.priority, mine, before.next_ticket), mine) < theirs)
-    });
+    let mine = spec_key(n.priority, n.ticket.unwrap());
+    let first = before.nodes[1..]
+        .iter()
+        .all(|m| m.ticket.is_none_or(|t| mine < spec_key(m.priority, t)));
     if after.nodes[0].pool {
         assert!(
             first,
-            "a grant goes to the best effective level, then the older ticket"
+            "a grant goes to the lowest score, then the older ticket"
         );
         assert!(after.nodes[0].ticket.is_none());
     } else if before.pool_capacity == 1 {
@@ -1457,7 +1459,7 @@ fn check_pool_grant_order() {
         after.nodes[0].pool
             && before.nodes[1..]
                 .iter()
-                .any(|m| m.ticket.is_some_and(|t| t < mine)),
+                .any(|m| m.ticket.is_some_and(|t| t < mine.1)),
         "a better priority passes an older ticket"
     );
     kani::cover!(
@@ -1465,7 +1467,7 @@ fn check_pool_grant_order() {
             && before.nodes[1..]
                 .iter()
                 .any(|m| m.ticket.is_some() && m.priority < n.priority),
-        "an aged older ticket passes a better priority"
+        "seniority holds against a better priority"
     );
     kani::cover!(
         !after.nodes[0].pool && before.pool_capacity == 1,
@@ -1475,32 +1477,36 @@ fn check_pool_grant_order() {
 }
 
 fn check_pool_aging_bound() {
-    let mut w = World::new(&[1], 1);
-    w.next_ticket = kani::any();
     let (mine, theirs): (u64, u64) = (kani::any(), kani::any());
     let (p, q): (Priority, Priority) = (kani::any(), kani::any());
-    kani::assume(mine < theirs && theirs < w.next_ticket && w.next_ticket < LIMIT);
-    let level = pool_level(w.next_ticket, p, mine);
-    assert!(level <= p.rank(), "aging only improves a waiter");
-    // Once rank x POOL_AGING_TICKETS tickets follow a waiter's, no younger
-    // ticket of any priority can pass it. Only older tickets, which are finite
-    // and never renewed below it, still can: at most K + rank x N grants.
-    if w.next_ticket - mine - 1 >= p.rank() as u64 * POOL_AGING_TICKETS {
-        assert_eq!(level, 0);
-        assert!((level, mine) < (pool_level(w.next_ticket, q, theirs), theirs));
+    kani::assume(mine < LIMIT && theirs < LIMIT && mine != theirs);
+    let key = |priority: Priority, ticket| (pool_score(priority, ticket), ticket);
+    let window = |better: Priority, worse: Priority| {
+        u64::from(worse.rank() - better.rank()) * POOL_AGING_TICKETS
+    };
+    // Priority first: a better priority passes a ticket less than its
+    // window older.
+    if mine < theirs && q < p && theirs - mine < window(q, p) {
+        assert!(key(q, theirs) < key(p, mine));
     }
-    // Issuing more tickets never lowers a waiter's place.
-    let mut later = w.clone();
-    later.next_ticket = kani::any();
-    kani::assume(later.next_ticket >= w.next_ticket && later.next_ticket < LIMIT);
-    assert!(pool_level(later.next_ticket, p, mine) <= level);
+    // Bounded: no ticket issued rank x POOL_AGING_TICKETS or more after a
+    // waiter's passes it, whatever its priority. Only older tickets, which are
+    // finite and never reissued, and the fewer younger tickets inside the
+    // window can, so it waits for at most K + rank x N - 1 grants to others.
+    if theirs >= mine + u64::from(p.rank()) * POOL_AGING_TICKETS {
+        assert!(key(p, mine) < key(q, theirs));
+    }
+    // Ties go to the older ticket.
+    if p == q {
+        assert_eq!(key(p, mine) < key(q, theirs), mine < theirs);
+    }
     kani::cover!(
-        level == 0 && p == Priority::Unranked,
-        "an unranked waiter reaches P0"
+        mine < theirs && key(q, theirs) < key(p, mine),
+        "a better priority passes an older ticket"
     );
     kani::cover!(
-        level == p.rank() && p == Priority::P3,
-        "a fresh P3 waits as P3"
+        mine < theirs && q < p && key(p, mine) < key(q, theirs),
+        "seniority holds against a better priority"
     );
 }
 
