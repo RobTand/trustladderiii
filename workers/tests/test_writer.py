@@ -478,3 +478,31 @@ def test_2636_cant_meet_report_reaches_writer_redacted(tmp_path, writer_request)
     assert "Grant a protected-path exception" in shown["report"]
     assert "runner-marker-only" in shown["report"]
     assert "Zq8vLm2pRt6wXy4nB9kD" not in json.dumps(seen)
+
+
+def test_summary_recorded_evidence_reaches_model_redacted(tmp_path, writer_request):
+    writer_request["inputs"] = inputs_for("summary")
+    writer_request["inputs"]["facts"].update({
+        "evidence_status": "captured",
+        "merge_status": "not_recorded",
+        "evidence": {"checks": [{"head_sha": "reviewed", "results": [{
+            "name": "forced departure", "verdict": "pass", "head_forced": "passed",
+            "diagnostic": "password=Zq8vLm2pRt6wXy4nB9kD",
+        }]}], "reviews": [{"verdict": "approve"}], "queue": [], "scratch": [],
+            "goals": [], "remaining_failures": [], "artifacts": [], "audit": None},
+    })
+    seen, reply = run_with_findings(tmp_path, writer_request, SUMMARY)
+    check = seen["facts"]["evidence"]["checks"][0]["results"][0]
+    assert check["head_forced"] == "passed"
+    assert "Zq8vLm2pRt6wXy4nB9kD" not in json.dumps(seen)
+    assert reply["reply"] == SUMMARY
+
+
+def test_summary_prompt_forbids_inventing_missing_history():
+    prompt = files("tl3_workers").joinpath("prompts", "writer.md").read_text()
+    summary = prompt.split('For kind "summary",', 1)[1]
+    assert "not captured" in summary
+    assert "not run" in summary
+    assert "not merged" in summary
+    assert "no work done" in summary
+    assert "unsupported negative" in summary
