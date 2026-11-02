@@ -9,8 +9,8 @@ import graph_impact as impact
 
 def graph(deps=None, tests=('//tests:small', '//tests:other'), sources=('//pkg:a.py', '//pkg:b.py'),
           loc=None):
-    return impact.from_deps(deps or {'//tests:small': ['//pkg:a.py'],
-                                    '//tests:other': ['//pkg:b.py']}, tests, sources, loc)
+    deps = deps or {'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py']}
+    return impact.from_deps({**{source: [] for source in sources}, **deps}, tests, sources, loc)
 
 
 class GraphImpactTests(unittest.TestCase):
@@ -58,6 +58,17 @@ class GraphImpactTests(unittest.TestCase):
                           source: [target]})
             result = impact.check(base, head, set(), impact.baseline(base))
             self.assertTrue(any('forbidden edge' in error for error in result['errors']), result)
+
+    def test_conftest_rule_dependency_is_an_import_even_when_source_is_a_leaf(self):
+        base = graph({'//tests:small': ['//pkg:a.py'], '//tests:other': ['//pkg:b.py'],
+                      '//tests:conftest': ['//tests:conftest.py'], '//pkg:lib': ['//pkg:a.py']})
+        deps = {}
+        for source, target in base.edges:
+            deps.setdefault(source, []).append(target)
+        deps['//tests:conftest'].append('//pkg:lib')
+        head = graph(deps)
+        result = impact.check(base, head, set(), impact.baseline(base))
+        self.assertTrue(any('forbidden edge' in error for error in result['errors']), result)
 
     def test_uniform_regression_reports_added_edge_and_fanout_growth(self):
         base = graph()

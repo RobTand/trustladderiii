@@ -1,0 +1,5 @@
+{
+  "sha256": "c5b598de19bb4d173990ab416013ced8cc73c87e44e778e1cb25c4f66f29d24a",
+  "source": "TL3 fallback; PrismaQuant core not published as of 2026-11-02",
+  "contract": "tests, edges, loc; Bazel-native deps.json adapter"
+}

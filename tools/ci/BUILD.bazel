@@ -9,11 +9,13 @@ exports_files(["rust-test-budget.json"])
 tl3_py_test(
     name = "test_graph_impact",
     srcs = ["test_graph_impact.py"],
+    deps = [":graph_impact"],
 )
 
 tl3_py_test(
     name = "test_bazel_graph_impact",
     srcs = ["test_bazel_graph_impact.py"],
+    deps = [":bazel_graph_impact"],
 )
 
 py_binary(
@@ -142,6 +144,8 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":bazel_generated",
+        ":bazel_graph_impact",
+        ":graph_impact",
         ":rust_gate",
     ],
 )
@@ -191,4 +195,27 @@ tl3_py_test(
     name = "test_bazel_budget_calibration",
     srcs = ["test_bazel_budget_calibration.py"],
     deps = [":bazel_budget_calibration"],
+)
+
+py_library(
+    name = "graph_impact",
+    srcs = ["graph_impact.py"],
+)
+
+py_library(
+    name = "bazel_graph_impact",
+    srcs = ["bazel_graph_impact.py"],
+    deps = [":graph_impact"],
+)
+
+py_binary(
+    name = "graph_impact_check",
+    srcs = ["graph_impact_check.py"],
+    deps = [":bazel_gate", ":bazel_graph_impact"],
+)
+
+py_binary(
+    name = "graph_impact_proof",
+    srcs = ["graph_impact_proof.py"],
+    deps = [":bazel_gate", ":bazel_graph_impact", ":graph_impact"],
 )

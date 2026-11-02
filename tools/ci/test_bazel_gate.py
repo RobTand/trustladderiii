@@ -146,17 +146,20 @@ class PlanTests(unittest.TestCase):
 
 
 class BazelDiffCommandTests(unittest.TestCase):
-    def test_v42_commands_name_the_workspace_and_rule_targets(self):
-        generate, impacted = bazel_gate.diff_commands('java', 'diff.jar', '/repo', 'bazel',
-                                                      '/t/base.json', '/t/head.json', '/t/out.txt')
-        self.assertEqual(generate('/t/base.json')[3:], ['generate-hashes', '--workspacePath', '/repo',
-                                                        '--bazelPath', 'bazel', '--excludeExternalTargets',
-                                                        '--includeTargetType', '/t/base.json'])
+    def test_native_commands_export_edges_and_select_with_distances(self):
+        generate, impacted = bazel_gate.diff_commands('diff', '/repo', 'bazel',
+                                                      '/t/base.json', '/t/head.json', '/t/out.json', '/t/deps.json')
+        command = generate('/t/base.json', '/t/base-deps.json')
+        self.assertEqual(command[:2], ['diff', 'generate-hashes'])
+        self.assertIn('--includeTargetType', command)
+        self.assertEqual(command[command.index('--depEdgesFile') + 1], '/t/base-deps.json')
         self.assertIn('get-impacted-targets', impacted)
+        self.assertEqual(impacted[impacted.index('--depEdgesFile') + 1], '/t/deps.json')
         for flag, value in [('--workspacePath', '/repo'), ('--bazelPath', 'bazel'),
                             ('--targetType', 'Rule'), ('--startingHashes', '/t/base.json'),
-                            ('--finalHashes', '/t/head.json'), ('--output', '/t/out.txt')]:
+                            ('--finalHashes', '/t/head.json'), ('--output', '/t/out.json')]:
             self.assertEqual(impacted[impacted.index(flag) + 1], value)
+
 
 
 class SkipDiffTests(unittest.TestCase):
