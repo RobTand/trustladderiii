@@ -1,8 +1,16 @@
 use crate::Repository;
 use std::collections::BTreeMap;
 
+/// A repository's check settings, keyed by its identity.
+#[derive(Clone)]
+struct Settings {
+    image: Option<String>,
+    exec_scratch: bool,
+    selected_tests: Option<u32>,
+}
+
 #[derive(Clone, Default)]
-pub(super) struct Images(BTreeMap<(String, String, u64), (Option<String>, bool, Option<u32>)>);
+pub(super) struct Images(BTreeMap<(String, String, u64), Settings>);
 
 impl Images {
     pub(super) fn new(repos: &[tl3_config::Repository]) -> Self {
@@ -16,45 +24,38 @@ impl Images {
                             repo.name.to_ascii_lowercase(),
                             repo.installation_id,
                         ),
-                        (
-                            repo.container_image.clone(),
-                            repo.exec_scratch,
-                            repo.selected_tests,
-                        ),
+                        Settings {
+                            image: repo.container_image.clone(),
+                            exec_scratch: repo.exec_scratch,
+                            selected_tests: repo.selected_tests,
+                        },
                     )
                 })
                 .collect(),
         )
     }
 
+    fn settings(&self, repo: &Repository) -> Option<&Settings> {
+        self.0.get(&(
+            repo.owner.to_ascii_lowercase(),
+            repo.name.to_ascii_lowercase(),
+            repo.installation,
+        ))
+    }
+
     pub(super) fn exec_scratch(&self, repo: &Repository) -> bool {
-        self.0
-            .get(&(
-                repo.owner.to_ascii_lowercase(),
-                repo.name.to_ascii_lowercase(),
-                repo.installation,
-            ))
-            .is_some_and(|(_, enabled, _)| *enabled)
+        self.settings(repo)
+            .is_some_and(|settings| settings.exec_scratch)
     }
 
     pub(super) fn selected_tests(&self, repo: &Repository) -> Option<u32> {
-        self.0
-            .get(&(
-                repo.owner.to_ascii_lowercase(),
-                repo.name.to_ascii_lowercase(),
-                repo.installation,
-            ))
-            .and_then(|(_, _, limit)| *limit)
+        self.settings(repo)
+            .and_then(|settings| settings.selected_tests)
     }
 
     pub(super) fn for_repository<'a>(&'a self, repo: &Repository, fallback: &'a str) -> &'a str {
-        self.0
-            .get(&(
-                repo.owner.to_ascii_lowercase(),
-                repo.name.to_ascii_lowercase(),
-                repo.installation,
-            ))
-            .and_then(|(image, _, _)| image.as_deref())
+        self.settings(repo)
+            .and_then(|settings| settings.image.as_deref())
             .unwrap_or(fallback)
     }
 }
