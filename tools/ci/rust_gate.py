@@ -17,7 +17,9 @@ POLICY = Path('tools/ci/rust-test-budget.json')
 MARKER = re.compile(r'^test (.+?) \.\.\. ok(?:[ ;(].*)?$')
 SCENARIO_COUNT = re.compile(r'^(\d+) .+ scenarios passed(?:;.*)?$')
 # Fixed calibration from hosted artifacts; see docs/hosted-budget-tolerance.md.
-BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15}
+BUDGET_MULTIPLIERS = {'baseline': 1.0, 'hosted-x64': 1.25, 'hosted-arm64': 1.15,
+                      # BuildBuddy remote execution; docs/bazel-budget-calibration.json.
+                      'buildbuddy-amd64': 1.65}
 
 
 def runner_class():

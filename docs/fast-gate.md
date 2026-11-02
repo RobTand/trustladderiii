@@ -1,5 +1,8 @@
 # Rust merge gate evidence
 
+> Historical: this describes the Light checks gate (`light-checks.yml`). The Bazel
+> gate in `.github/workflows/gate.yml` replaced it (#310); see `docs/bazel.md`.
+
 The gate builds every workspace test target once, then runs four binaries concurrently. Native libtest tests run one thread per binary and report their own execution times. Custom harnesses keep their existing CLI and assertions. The GitHub harness has two independent groups, each with its own Postgres. Plain `cargo test --workspace --all-targets --locked` still runs every scenario.
 
 `tools/ci/check.py rust` runs fmt, clippy and the enforcing runner. Development runs of that command must go through PrismaBuild. Mergify runs it directly in its admitted fleet runner.
