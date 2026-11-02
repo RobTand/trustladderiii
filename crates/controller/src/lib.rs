@@ -627,7 +627,28 @@ impl Controller {
     /// Upstream inbox keys must be stable across webhook redelivery and looks.
     pub fn observe(&mut self, key: &str, observation: Observation) -> Result<()> {
         let snapshot = self.store.load()?;
-        if let Observation::TraceLogsCapped { .. } = observation {
+        if let Observation::TraceLogsCapped { evicted } = observation {
+            // #430: an operations note (#81), once while it stays open.
+            let mut commit = Commit::new(
+                format!("trace-logs-capped:{key}:{}", snapshot.revision.get()),
+                json!({"trace_logs_capped": evicted}),
+                &snapshot,
+            );
+            self.input_failed(
+                &snapshot,
+                "worker-trace-logs",
+                None,
+                "Held worker span logs",
+                None,
+                executor::Upstream::Workers,
+                Error::Invalid(
+                    "held span logs reached their disk cap; the oldest unshipped ones were dropped",
+                ),
+                &mut commit,
+            )?;
+            if !commit.rows.is_empty() {
+                self.store.commit(&commit)?;
+            }
             return Ok(());
         }
         let news = observation_upstream(&snapshot, &observation)?;

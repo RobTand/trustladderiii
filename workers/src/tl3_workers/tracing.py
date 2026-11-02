@@ -968,7 +968,7 @@ class Capture:
         self.live_bytes = self.live_spans = 0
         self.log = None
         try:
-            self.log = SpanLog(trace.get('log'))
+            self.log = SpanLog(trace.get('log'), trace.get('wake'))
             self.log.append(self.header())
             from opentelemetry.proto.trace.v1.trace_pb2 import Span
             # A trace appears once one of its spans is stored, so the run shows
@@ -998,7 +998,9 @@ class Capture:
 
     def live_record(self, entry):
         """Append an ended span to the span log, redacted now within the live budget."""
-        if self.log is None or not entry.proto.parent_span_id or self.live_spans >= FIRST_SPANS + LAST_SPANS:
+        # Past the first spans, the final packet decides which spans a long run
+        # keeps; a live copy of a span it omits would stay in MLflow.
+        if self.log is None or not entry.proto.parent_span_id or self.live_spans >= FIRST_SPANS:
             return
         from opentelemetry.proto.trace.v1.trace_pb2 import Span
         from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
@@ -1043,6 +1045,17 @@ class Capture:
                     self.shaped += content.size
 
     def finish(self, outcome):
+        try:
+            self.close(outcome)
+        finally:
+            if self.log is not None:
+                self.log.finish()
+
+    def close(self, outcome):
+        if self.log is None:
+            # Live setup failed; an unlinked log still hands the final to a shipper.
+            self.log = SpanLog(None)
+            self.log.append(self.header())
         self.context.__exit__(None, None, None)
         from mlflow.tracing.trace_manager import InMemoryTraceManager
         from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
@@ -1066,6 +1079,10 @@ class Capture:
                         usage[item.key] = usage.get(item.key, 0) + item.value.int_value
         self.tags.update(outcome=outcome, **{key: str(value) for key, value in usage.items()})
         root.proto.status.code = 1 if outcome == 'succeeded' else 2
+        # The outcome is known before the final packet is built, so a failure
+        # below still closes the trace with it, never as a crash.
+        with self.lock:
+            self.log.append({'kind': 'end', 'status': root.proto.status.code, 'tags': self.live_tags()})
         for key, value in self.tags.items():
             root.proto.attributes.add(key='mlflow.traceTag.' + key).value.string_value = \
                 self.redactor.text(value)[:512]
@@ -1096,14 +1113,16 @@ class Capture:
                 if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
                     spans[index].attributes.remove(attr)
         if packet.ByteSize() > TRACE_BYTES:
+            # The root alone still closes the trace; live copies keep the children.
             failure()
-            return
-        if self.log is None:
-            self.log = SpanLog(None)
-            self.log.append(self.header())
+            del resource.scope_spans[:]
+            only = resource.scope_spans.add().spans.add()
+            only.CopyFrom(root.proto)
+            for attr in list(only.attributes):
+                if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
+                    only.attributes.remove(attr)
         with self.lock:
             self.log.append({'kind': 'final', 'otlp': encode(packet)})
-        self.log.finish()
 
     def allocate(self, root, entries):
         """Give the root its content, then the newest model and tool spans, then
@@ -1286,8 +1305,8 @@ class SpanLog:
     write and synced before the shipper is woken. Without a path from the
     controller, an unlinked file only bounds handoff to the shipper."""
 
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path, wake=None):
+        self.path, self.wake_path = path, wake
         if path:
             self.fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o600)
         else:
@@ -1310,9 +1329,11 @@ class SpanLog:
         # The shipper owns every network wait; the worker never waits for it.
         read, self.wake = os.pipe()
         os.set_blocking(self.wake, False)
+        options = [*(['--log', self.path] if self.path else []),
+                   *(['--wake', self.wake_path] if self.wake_path else [])]
         try:
             self.shipper = subprocess.Popen(
-                [sys.executable, str(Path(__file__)), 'ship', str(self.fd), *([self.path] if self.path else [])],
+                [sys.executable, str(Path(__file__)), 'ship', str(self.fd), *options],
                 stdin=read, stdout=subprocess.DEVNULL, stderr=sys.stderr, close_fds=True, pass_fds=(self.fd,))
         finally:
             os.close(read)
@@ -1342,10 +1363,36 @@ def records(data):
 
 
 class Shipper:
-    def __init__(self, path):
+    """Sends span log records in order. Records are decoded once, as they
+    arrive; a failed send keeps them queued for the next wake."""
+
+    def __init__(self, log=None, wake=None):
         import httpx
         self.client = httpx.Client(timeout=1, trust_env=False)
-        self.path, self.header, self.experiment, self.failed = path, None, None, False
+        self.log, self.wake = log, wake
+        self.header, self.experiment, self.failed, self.reported = None, None, False, False
+        self.queue, self.end, self.final, self.sent_final = [], None, None, False
+        self.buffer = b''
+
+    def feed(self, data):
+        """Decode the complete records in data, keeping a torn tail for later."""
+        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+        from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+        self.buffer += data
+        consumed = 0
+        for record, offset in records(self.buffer):
+            consumed = offset
+            kind = record.get('kind')
+            if kind == 'start':
+                self.header = record
+            elif kind == 'span':
+                self.queue.append(Span.FromString(base64.b64decode(record['otlp'])))
+            elif kind == 'end':
+                self.end = record
+            elif kind == 'final':
+                self.final = ExportTraceServiceRequest.FromString(base64.b64decode(record['otlp']))
+        self.buffer = self.buffer[consumed:] if consumed else self.buffer
 
     def resolve(self):
         if self.experiment is not None:
@@ -1392,63 +1439,75 @@ class Shipper:
             return packet, resource.scope_spans.add().spans
 
         current, spans = packet()
-        for proto in protos:
+        for proto in list(protos):
             if spans and current.ByteSize() + proto.ByteSize() + 16 > TRACE_BYTES:
                 self.post(current)
+                del protos[:len(spans)]
                 current, spans = packet()
             spans.append(proto)
         if spans:
             self.post(current)
+            del protos[:len(spans)]
 
-    def send(self, data):
-        """Send each record in order. Returns how many bytes were sent, and
-        whether the final packet was among them."""
-        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
-        from opentelemetry.proto.trace.v1.trace_pb2 import Span
-
-        sent, pending, final = 0, [], False
+    def send(self, closing=None):
+        """Send queued spans, then the final packet, or else a closing root.
+        Returns whether the trace is closed in MLflow."""
+        if self.header is None:
+            return False
         try:
-            for record, offset in records(data):
-                if record.get('kind') == 'start':
-                    self.header = record
-                elif self.header is None:
-                    break
-                elif record.get('kind') == 'span':
-                    pending.append((Span.FromString(base64.b64decode(record['otlp'])), offset))
-                    continue
-                elif record.get('kind') == 'final':
-                    self.spans([proto for proto, _ in pending])
-                    pending = []
-                    self.post(ExportTraceServiceRequest.FromString(base64.b64decode(record['otlp'])))
-                    final = True
-                sent = offset
-            if pending:
-                self.spans([proto for proto, _ in pending])
-                sent = pending[-1][1]
+            self.spans(self.queue)
+            if self.final is not None and not self.sent_final:
+                self.post(self.final)
+                self.sent_final = True
+            elif self.final is None and closing is not None:
+                root = closing(self.header, self.end)
+                self.spans([root])
+                self.sent_final = True
         except Exception:
-            if not self.failed:
+            if not self.reported:
                 failure()
-            self.failed = True
-        return sent, final
+            self.failed = self.reported = True
+            return False
+        if self.failed and self.wake:
+            # MLflow is back: held logs of ended runs can ship too. A write, not
+            # a touch, so the controller's inotify watch sees it.
+            try:
+                os.close(os.open(self.wake, os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC, 0o600))
+            except OSError:
+                pass
+        self.failed = False
+        return self.sent_final
 
     def shipped(self):
-        if self.path:
+        if self.log:
             try:
-                Path(self.path + '.shipped').touch()
+                Path(self.log + '.shipped').touch()
             except OSError:
-                pass  # Retirement removed the attempt; the trace is sent either way.
+                pass  # Retirement moved the log; the trace is sent either way.
 
 
-def ship(fd, path):
+def options(args):
+    found, args = {}, list(args)
+    while len(args) >= 2 and args[0] in ('--log', '--wake'):
+        found[args[0][2:]] = args[1]
+        del args[:2]
+    if args:
+        raise ValueError('unexpected arguments')
+    return found
+
+
+def ship(fd, log=None, wake=None):
     """Send the span log as the worker appends it, waking once per record."""
     import signal
 
     def expired(*_):
         raise TimeoutError
 
-    offset, final = 0, False
+    offset, closed = 0, False
     try:
-        shipper = Shipper(path)
+        # The first successful send also wakes held flushes.
+        shipper = Shipper(log, wake)
+        shipper.failed = True
         while True:
             ended = not os.read(0, 4096)
             if ended:
@@ -1456,11 +1515,12 @@ def ship(fd, path):
                 signal.signal(signal.SIGALRM, expired)
                 signal.alarm(5)
             size = os.fstat(fd).st_size
-            sent, finished = shipper.send(os.pread(fd, size - offset, offset))
-            offset, final = offset + sent, final or finished
+            shipper.feed(os.pread(fd, size - offset, offset))
+            offset = size
+            closed = shipper.send()
             if ended:
                 break
-        if final:
+        if closed:
             shipper.shipped()
             return 0
     except Exception:
@@ -1470,33 +1530,50 @@ def ship(fd, path):
     return 1
 
 
+def identity():
+    stat = Path(f'/proc/{os.getpid()}/stat').read_text().rsplit(')', 1)[1].split()
+    return {'pid': os.getpid(), 'machine': Path('/etc/machine-id').read_text().strip(), 'start': int(stat[19]),
+            'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+
+
+def claim(path):
+    """One flusher per attempt: a link publishes the claim atomically. The
+    controller clears a claim whose process has died."""
+    temporary = Path(f'{path}.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps(identity()))
+    try:
+        os.link(temporary, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def flush(path):
     """Run by the controller when an attempt has ended: send the span log, and
-    close the trace as crashed when the worker never wrote its final packet."""
+    close the trace of a worker that never wrote its final packet."""
     import signal
-    from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
     def expired(*_):
         raise TimeoutError
 
+    claimed = Path(path + '.flushing')
+    try:
+        if not claim(claimed):
+            return 0
+    except OSError:
+        claimed = None  # Retirement moved the attempt; send without a claim.
     signal.signal(signal.SIGALRM, expired)
     signal.alarm(10)
     try:
-        data = sys.stdin.buffer.read()
         shipper = Shipper(path)
-        logged = list(records(data))
-        if not logged or logged[0][0].get('kind') != 'start':
+        shipper.feed(sys.stdin.buffer.read())
+        if shipper.header is None:
             shipper.shipped()  # Nothing was traced, so there is nothing to retry.
             return 0
-        if any(record.get('kind') == 'final' for record, _ in logged):
-            shipper.send(data)
-        else:
-            header = logged[0][0]
-            spans = [Span.FromString(base64.b64decode(record['otlp']))
-                     for record, _ in logged if record.get('kind') == 'span']
-            shipper.header = header
-            shipper.spans(spans + [crashed_root(header, spans, path)])
-        if shipper.failed:
+        logged = list(shipper.queue)
+        if not shipper.send(lambda header, end: closing_root(header, end, logged, path)):
             return 1
         shipper.shipped()
         return 0
@@ -1505,46 +1582,59 @@ def flush(path):
         return 1
     finally:
         signal.alarm(0)
+        if claimed is not None:
+            claimed.unlink(missing_ok=True)
 
 
-def crashed_root(header, spans, path):
-    """The root span of a worker that ended before finishing its trace. Its end
-    is the last logged evidence of work, never the time of this flush."""
+def closing_root(header, end, spans, path):
+    """The root span of a worker that ended before sending its final packet.
+    Its end is the last logged evidence of work, never the time of this flush.
+    A worker that recorded its outcome closes with it; otherwise it was stopped
+    by the controller or crashed."""
     from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
     start = header['start_ns']
     root = Span(trace_id=bytes.fromhex(header['trace_id']), span_id=bytes.fromhex(header['root_span_id']),
                 name='tl3_' + header['role'], start_time_unix_nano=start,
                 end_time_unix_nano=max([start, *(span.end_time_unix_nano for span in spans)]))
-    root.status.code = 2
     root.attributes.add(key='mlflow.spanType').value.string_value = 'AGENT'
     root.attributes.add(key='tl3.role').value.string_value = header['role']
-    usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
-    for span in spans:
-        for attr in span.attributes:
-            if attr.key == 'mlflow.chat.tokenUsage':
-                for item in attr.value.kvlist_value.values:
-                    usage[item.key] = usage.get(item.key, 0) + item.value.int_value
-    message = 'worker ended without an exit record'
-    try:
-        code = json.loads(Path(path).with_name('exit.json').read_text())['code']
-        if type(code) is int:
-            message = f'worker exited with code {code}'
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    tags = {**header['tags'], 'outcome': 'crashed', 'failure_class': 'WorkerCrashed',
-            'failure_message': message, **{key: str(value) for key, value in usage.items()}}
+    if end is not None:
+        root.status.code = 1 if end.get('status') == 1 else 2
+        tags = end['tags']
+    else:
+        root.status.code = 2
+        usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
+        for span in spans:
+            for attr in span.attributes:
+                if attr.key == 'mlflow.chat.tokenUsage':
+                    for item in attr.value.kvlist_value.values:
+                        usage[item.key] = usage.get(item.key, 0) + item.value.int_value
+        attempt = Path(path).parent
+        if (attempt / 'stopped.json').exists():
+            tags = {'outcome': 'stopped', 'failure_class': 'WorkerStopped',
+                    'failure_message': 'stopped by the controller'}
+        else:
+            message = 'worker ended without an exit record'
+            try:
+                code = json.loads((attempt / 'exit.json').read_text())['code']
+                if type(code) is int:
+                    message = f'worker exited with code {code}'
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            tags = {'outcome': 'crashed', 'failure_class': 'WorkerCrashed', 'failure_message': message}
+        tags = {**header['tags'], **tags, **{key: str(value) for key, value in usage.items()}}
     for key, value in tags.items():
         root.attributes.add(key='mlflow.traceTag.' + key).value.string_value = value
     return root
 
 
 def main(args):
-    if args[:1] == ['ship'] and len(args) in (2, 3):
-        return ship(int(args[1]), args[2] if len(args) == 3 else None)
+    if args[:1] == ['ship'] and len(args) >= 2:
+        return ship(int(args[1]), **options(args[2:]))
     if args[:1] == ['flush'] and len(args) == 2:
         return flush(args[1])
-    print('usage: tracing.py ship FD [LOG] | flush LOG', file=sys.stderr)
+    print('usage: tracing.py ship FD [--log LOG] [--wake WAKE] | flush LOG', file=sys.stderr)
     return 2
 
 

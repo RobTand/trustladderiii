@@ -18,6 +18,14 @@ fn fake_python(root: &Path) -> PathBuf {
     python
 }
 
+/// No launcher, and no fallback Python: tests name the Python in launch.json.
+fn none() -> trace::Flusher<'static> {
+    trace::Flusher {
+        launcher: &[],
+        python: Path::new("/nonexistent/python"),
+    }
+}
+
 const LOGGED: &[u8] = b"{\"kind\":\"start\"}\n";
 
 /// `runs/<run>/attempt-00000000` after its worker ended, with an unshipped span log.
@@ -95,17 +103,29 @@ fn a_deliberate_stop_marks_the_attempt_stopped() {
     let root = tempfile::tempdir().unwrap();
     let (runs, attempt) = ended_attempt(root.path());
     fs::remove_file(attempt.join("exit.json")).unwrap();
+    let mut worker = Command::new("sleep").arg("600").spawn().unwrap();
+    let stat = fs::read_to_string(format!("/proc/{}/stat", worker.id())).unwrap();
+    let start = stat.rsplit_once(')').unwrap().1.split_whitespace().nth(19);
+    write(
+        &attempt.join("process.json"),
+        &identity(worker.id(), start.unwrap().parse().unwrap()),
+    )
+    .unwrap();
     stop_attempt(&runs.join("72756e")).unwrap();
+    assert!(
+        !worker.wait().unwrap().success(),
+        "the stop killed the worker"
+    );
     assert!(
         attempt.join("stopped.json").exists(),
         "Q49: a stop is not a crash"
     );
     let other = tempfile::tempdir().unwrap();
-    let finished = ended_attempt(other.path()).1;
-    stop_attempt(finished.parent().unwrap()).unwrap();
+    let crashed = ended_attempt(other.path()).1;
+    stop_attempt(crashed.parent().unwrap()).unwrap();
     assert!(
-        !finished.join("stopped.json").exists(),
-        "a worker that already ended was not stopped"
+        !crashed.join("stopped.json").exists(),
+        "a worker that had already died was not stopped"
     );
 }
 
@@ -119,17 +139,17 @@ fn retirement_holds_an_unshipped_log_until_mlflow_takes_it() {
     let held = held(&runs);
     assert_eq!(fs::read(held.join("trace.jsonl")).unwrap(), LOGGED);
     assert!(held.join("exit.json").exists() && held.join("launch.json").exists());
-    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    trace::sweep(&runs, &none(), &[], trace::HELD_BYTES).unwrap();
     assert!(!flushed(&held).expect("a held log is flushed").success());
     assert!(
         held.join("trace.jsonl").exists(),
         "an unsent log stays held"
     );
     fs::write(root.path().join("mlflow-up"), b"").unwrap();
-    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    trace::sweep(&runs, &none(), &[], trace::HELD_BYTES).unwrap();
     assert!(flushed(&held).expect("the next event retries").success());
     assert_eq!(fs::read(root.path().join("python.stdin")).unwrap(), LOGGED);
-    trace::sweep(&runs, &[], &[], trace::HELD_BYTES).unwrap();
+    trace::sweep(&runs, &none(), &[], trace::HELD_BYTES).unwrap();
     assert!(flushed(&held).is_none());
     assert!(!held.exists(), "a shipped held log is removed");
 }
@@ -195,15 +215,19 @@ fn flushers_start_in_the_launcher_scope() {
     let launcher = root.path().join("launcher");
     executable(
         &launcher,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexec \"$@\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nshift\nexec \"$@\"\n",
     );
     let launcher = vec![
         launcher.to_str().unwrap().to_owned(),
         "--scope-fixture".into(),
     ];
+    let python = PathBuf::new();
     trace::sweep(
         &runs,
-        &launcher,
+        &trace::Flusher {
+            launcher: &launcher,
+            python: &python,
+        },
         std::slice::from_ref(&attempt),
         trace::HELD_BYTES,
     )
@@ -240,7 +264,7 @@ fn held_logs_beyond_the_cap_drop_oldest_first() {
             .set_modified(base + std::time::Duration::from_secs(index as u64))
             .unwrap();
     }
-    let evicted = trace::sweep(&runs, &[], &[], 250).unwrap();
+    let evicted = trace::sweep(&runs, &none(), &[], 250).unwrap();
     assert_eq!(evicted, 1);
     assert!(!runs.join(".traces/b-attempt-00000000").exists());
     assert!(runs.join(".traces/a-attempt-00000000").exists());
