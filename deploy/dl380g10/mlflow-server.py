@@ -2,8 +2,21 @@
 """Systemd-only entry point. Read the database credential only at runtime."""
 import os
 from pathlib import Path
+import socket
 import sys
+from urllib.parse import urlsplit
 import tomllib
+
+
+def access_args(tracking_uri, *, hostname=None):
+    address = urlsplit(tracking_uri)
+    hostname = hostname or socket.gethostname()
+    short = hostname.split('.')[0]
+    hosts = list(dict.fromkeys([address.hostname, '127.0.0.1', 'localhost',
+                               hostname, short, short + '.local']))
+    authorities = [f'{host}:{address.port}' for host in hosts]
+    return ['--allowed-hosts', ','.join(authorities),
+            '--cors-allowed-origins', ','.join(f'{address.scheme}://{host}' for host in authorities)]
 
 
 def main():
@@ -12,7 +25,6 @@ def main():
 
     root = Path.home() / '.local/share/tl3'
     config = tomllib.loads((Path.home() / '.config/tl3/mlflow.toml').read_text())['mlflow']
-    from urllib.parse import urlsplit
     address = urlsplit(config['tracking_uri'])
     password = (Path(os.environ['CREDENTIALS_DIRECTORY']) / 'postgres-password').read_text().strip()
     connection = dict(host=str(root / 'postgres/socket'), port=5543, user='tl3', password=password,
@@ -31,8 +43,7 @@ def main():
     from mlflow.cli import server
     server.main(args=['--host', address.hostname, '--port', str(address.port), '--workers', '1',
                       '--artifacts-destination', str(artifacts),
-                      '--allowed-hosts', f'{address.hostname}:{address.port},127.0.0.1:{address.port},localhost:{address.port}',
-                      '--cors-allowed-origins', f'http://{address.hostname}:{address.port}'],
+                      *access_args(config['tracking_uri'])],
                 standalone_mode=False)
 
 

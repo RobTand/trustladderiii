@@ -549,17 +549,117 @@ remains private because it can contain credentials and request content.
 
 MLflow 3.17.2 autologs LangChain and LangGraph, including role-specific run hooks.
 A pinned SDK adapter replaces its network exporter with in-memory capture.
-Only span IDs, parent IDs, times, types, status codes, numeric token counts and
-explicit correlation tags reach the export child. Prompts, model replies,
-tool inputs and outputs, arbitrary exception messages, resource attributes and provider
-metadata are omitted. This also excludes echoed secrets and request headers.
+Traces contain repository text, prompts, model replies, tool arguments and
+results, plus role/model names, numeric token counts and correlation tags.
+Cached-read and cache-creation counts are retained when reported. Numeric raw
+proxy usage chunks sit beside LangChain totals so accounting differences are visible.
+Redaction is best effort, not a guarantee that every secret is recognized.
+It has three layers, and runs before export:
+
+- **Patterns.** Credential formats (private key blocks, JWTs, vendor
+  token prefixes such as `ghp_`, `glrt-`, `whsec_`, `ya29.` and `hvs.`,
+  webhook URLs, password hashes), passwords in URLs, authorization headers and
+  cookie jar lines. Command-line flags with one or two dashes, such as
+  `--password`, `-db-password` and PowerShell `-Password`, and commands such as
+  `curl --user`, `sshpass -p`, `mysql -p`, `net use`, `ConvertTo-SecureString`
+  and redis `requirepass` and `AUTH`. Values after a secret label in env, YAML,
+  TOML, INI, JSON, netrc and markdown forms, XML elements and `name`/`key`
+  properties, CSV columns, SQL `WITH PASSWORD` and `IDENTIFIED BY`, and
+  name/value pairs in Kubernetes YAML and JSON. A label is judged by its words:
+  `DB_PASS` and `_authToken` are secret labels, `input_tokens` and `TokenBucket`
+  are not. In prose, a password-like token on the same line within 48
+  characters after `password`, `secret`, `token`, `api key` or `credentials` is
+  redacted, as in "the password for staging is X" or "password used: X".
+  Values that are code, types, numbers, templates or prose stay.
+- **Structure.** A string that is wholly JSON is parsed and judged by field
+  name. Every value in a Kubernetes `Secret` manifest's `data` block is
+  redacted. A tool result from a sensitive file becomes
+  `[omitted: content of sensitive file PATH]`. Files are judged by their path
+  components: `.env*`, `*.env`, `env.*`, any file under `secrets/`,
+  `credentials/`, `.ssh/` or `.gnupg/`, `*.pem`, `*.key`, `*.p12`, `*.pfx`,
+  `*.p8`, `*.pk8`, `*.jks`, `*.keystore`, `*.ppk`, `*.tfvars`, `*.tfstate`,
+  `id_*` keys and their backups (not `*.pub`), `.netrc`, `.npmrc`, `.pypirc`,
+  `.pgpass`, `.htpasswd`, `.my.cnf`, `.dockercfg`, `.s3cfg`, `.boto`, vault
+  password files, `.git-credentials`, `token.json`, `auth.json`,
+  `service-account*.json`, `wp-config.php`, `shadow`, docker `config.json`, kube
+  configs, and names containing `secret` or `credentials`. Source and docs
+  files (`.py`, `.rs`, `.md` and similar) under the broad rules keep their
+  content: `src/credentials.rs` and `docs/secret-scanning.md` are code. This
+  covers the tool span, the tool message in later model inputs, grep matches,
+  and write or edit arguments.
+- **Entropy.** A token of 24 or more characters that mixes upper case, lower
+  case and digits like a random string is redacted without a label. Readable
+  names such as `FileNotFoundError` stay. Exact 40- and 64-character hex
+  digests (git SHAs, sha256), UUIDs and prefixed UUIDs such as `GPU-<uuid>`,
+  MLflow trace IDs, PrismaBuild scope names and `sha512-` integrity strings
+  stay.
+
+The runtime supplies the already-loaded model key, so tracing never opens
+credential files. Headers, provider metadata and raw exceptions are omitted.
+Integer usage counts always survive.
+
+What redaction does not catch:
+
+- Hex secrets under neutral labels. A 64-character hex secret looks exactly like
+  a sha256 digest, and a 40-character one like a git SHA, so
+  `HMAC_SEED=<openssl rand -hex 32 output>` or `{"v": "<64 hex>"}` stays. The
+  same value after a secret label (`SIGNING_SECRET=`) is redacted.
+- Other unlabeled secrets with low entropy: a short or word-like password, a
+  value with one character class (upper case and digits only), a secret shaped
+  like a UUID, or a bare value on its own line, such as the output of
+  `kubectl get secret … | base64 -d`.
+- Weakly labeled values that don't look random. `key`, `pass`, `auth`, `pwd`,
+  `pw`, `sig` and `session` also name ordinary things, so `pass=hunter` stays.
+  A bare lowercase name in a code-style assignment (`token = runtime`) is
+  treated as a variable. A value made only of words, one of which is `fake`,
+  `fixture`, `test`, `example` or a similar word, is treated as a fixture.
+- An unquoted value with spaces after a label: `password=two words` keeps
+  `words`. Credentials in `user:pw@host` without a scheme. A password in prose
+  more than 48 characters after its keyword, or on the next line.
+- Re-encoded secrets: base64 of a short secret, URL-encoding, string
+  concatenation, labels spelled with JSON escapes (`p\u0061ssword`) inside
+  other text, or values a tool or the model split or rewrote. A secret split
+  across two tool results is redacted only if each half is recognizable alone.
+- New token prefixes, unless the token itself looks random.
+- Multi-line forms (YAML block scalars, Kubernetes name and value pairs, TOML
+  sections, markdown tables) inside JSON that is embedded in other text, where
+  newlines are escaped.
+- Sensitive files read without a path argument, or named in ways the rules
+  don't list: `.git/config`, `config/database.yml`,
+  `appsettings.Production.json`, look-alike Unicode names. Labeled values inside
+  them are still redacted.
+- Personal or business data in repository text.
+
+Treat every trace as readable by anyone on the LAN.
+
+Content is bounded when each span ends, and redacted once when the run ends.
+Each message, tool argument and result is bounded separately. Oversized text
+keeps complete trailing lines with a truncation note. An oversized single line
+keeps its head and tail, with a note giving how many characters were cut from
+the middle. A cut never starts inside a private key block or a token, and
+redaction sees 1 KiB of text beyond each cut, so a cut cannot separate a label
+from its value. Serialized JSON is bounded by field first, so model replies and
+tool arguments remain readable. Message lists keep their newest items.
+JSON text that is changed or too long to keep verbatim (pretty-printed JSON
+over about 10 KiB) is re-serialized on one line.
+
+Each span input and output is at most 64 KiB, and the trace has a 1 MiB export
+budget. The root keeps its inputs and the final reply. Model and tool spans
+come next, newest first, so the latest turns keep the most content. Chain
+spans, which repeat the graph state, come last. Every span keeps a floor of up
+to 4 KiB, less when a trace has many spans, so older spans shrink before
+anything else. Spans keep metadata and token counts regardless. The root marks
+truncation with `tl3.trace.truncated`. A run with more than 4,096 spans keeps
+its first 1,024 and last 3,072; the root counts the rest in
+`tl3.trace.omitted_spans`, and children of omitted spans attach to the root.
+The MLflow server is LAN-only with no login; anyone on the LAN can read these
+prompts and repository contents. See the deployment README for access limits.
 
 One child exports the sanitized protobuf to the configured experiment. It uses
 no retries, one-second HTTP timeouts and a five-second process alarm. The worker
 never waits for that child. Export failures and initialization failures log a
 fixed diagnostic to stderr, without exception details, and preserve the role's
 result. Traces can be lost during an outage or if the supervisor kills a run.
-There is no retry backlog. Runs exceeding 4,096 spans drop their trace and log
-that same diagnostic. Deep Agents remains the engine. Stored traces aren't
+There is no retry backlog. Deep Agents remains the engine. Stored traces aren't
 pruned yet; `deploy/dl380g10/README.md` gives their growth and how to reclaim
 space.
