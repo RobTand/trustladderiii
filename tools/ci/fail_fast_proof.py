@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from urllib.parse import urlparse, unquote
 
 import bazel_gate
 
@@ -21,7 +20,6 @@ PLANTED = '''import os
 from pathlib import Path
 import sys
 import time
-from urllib.parse import urlparse, unquote
 mode = sys.argv[1]
 if mode == 'budget':
     Path(os.environ['TEST_UNDECLARED_OUTPUTS_DIR'], 'budget-overrun.txt').write_text('budget only')
@@ -37,23 +35,16 @@ assert mode == 'slow', 'planted early assertion failure'
 def metrics(name, elapsed, workspace, statuses):
     path = Path(tempfile.gettempdir(), f'{name}-bep.json')
     invocation, seconds, remote = None, 0.0, 0
-    debug_outputs = []
     for event in bazel_gate.BepStream(path).read():
         if 'started' in event:
             invocation = event['started']['uuid']
         result = event.get('testResult')
         if result:
-            for output in result.get('testActionOutput', []):
-                uri = urlparse(output.get('uri', ''))
-                debug_outputs.append({'name': output.get('name'), 'scheme': uri.scheme,
-                                      'exists': uri.scheme == 'file' and Path(unquote(uri.path)).exists()})
             duration = result.get('testAttemptDuration', '0s')
             seconds += float(duration.removesuffix('s'))
             remote += result.get('executionInfo', {}).get('strategy') == 'remote'
-    print('[DEBUG-fail-fast] ' + json.dumps({'outputs': debug_outputs,
-          'budget_markers': sorted(workspace.budget_only(statuses))}), flush=True)
     return {'invocation': invocation, 'wall_seconds': round(elapsed, 3),
-            'completed': len(statuses), 'statuses': statuses,
+            'completed': sum(status != 'NO_STATUS' for status in statuses.values()), 'statuses': statuses,
             'remote_test_results': remote, 'test_seconds': round(seconds, 3),
             'aborted_early': workspace.aborted_early, 'not_run': workspace.not_run}
 
@@ -74,6 +65,7 @@ def main():
         raise SystemExit('Use the shared bbrun.py step wrapper for the required final artifact scan')
     count = len(bazel_gate.Workspace().tests())
     assert count > JOBS, 'fallback must be larger than one wave'
+    print(f'Fallback-sized proof: {count} targets, --jobs=16', flush=True)
     with tempfile.TemporaryDirectory(prefix='fail_fast_fixture_', dir=bazel_gate.ROOT) as directory:
         package = Path(directory)
         prefix = f'//{package.name}:'

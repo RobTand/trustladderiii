@@ -182,12 +182,15 @@ class FailFast:
         identity = event.get('id', {})
         result = identity.get('testResult')
         summary = identity.get('testSummary')
-        if result or summary:
+        if result or (summary and event.get('testSummary', {}).get('overallStatus') != 'NO_STATUS'):
             self.observed.add(canonical((result or summary)['label']))
         reason, label = None, None
         if result and event.get('testResult', {}).get('status') == 'FAILED':
             label, reason = canonical(result['label']), 'FAILED'
-            if label in budget_only([label]):
+            # BEP names outputs before remote downloads finish. Looking only
+            # at bazel-testlogs races the budget marker's materialization.
+            outputs = event['testResult'].get('testActionOutput', [])
+            if any(Path(output.get('name', '')).name == BUDGET_MARKER for output in outputs) or label in budget_only([label]):
                 return
         completed = identity.get('targetCompleted')
         if completed and event.get('completed', {}).get('success') is False:
@@ -322,6 +325,9 @@ class Workspace:
             self.run(*command, capture=False, check=False)
             self.not_run = []
         else:
+            # Each undeclared output must be named in BEP so a budget marker
+            # can be recognized without downloading an outputs.zip first.
+            command.append('--nozip_undeclared_test_outputs')
             _, observed = self.watch(command, bep)
             self.not_run = sorted(set(targets) - observed)
         return test_statuses(bep)
