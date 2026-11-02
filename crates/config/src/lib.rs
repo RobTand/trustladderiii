@@ -284,6 +284,20 @@ pub struct Repository {
     pub branch_template: String,
     #[serde(default = "default_base_branch")]
     pub base_branch: String,
+    /// Lines the repository's PR-body policy requires, such as PrismaBuild's
+    /// `Change type:` (#447). TL3 writes and keeps one valid line per rule.
+    #[serde(default)]
+    pub pr_body_lines: Vec<BodyLine>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BodyLine {
+    /// The line's label, written as `label: value`.
+    pub label: String,
+    pub values: Vec<String>,
+    /// Used when TL3 can't tell the kind of change from its files.
+    pub default: String,
 }
 
 /// The harness's `MAX_SELECTED_TESTS`.
@@ -643,6 +657,9 @@ impl Config {
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
             validate_protected_paths(&format!("{field}.protected_paths"), &repo.protected_paths)?;
+            for (line, rule) in repo.pr_body_lines.iter().enumerate() {
+                let _ = (line, rule);
+            }
             tl3_worktrees::branch_template::BranchTemplate::new(&repo.branch_template)
                 .map_err(|error| invalid(format!("{field}.branch_template"), error.to_string()))?;
             tl3_worktrees::BranchName::new(&repo.base_branch)

@@ -384,6 +384,12 @@ pub fn ci_is_infrastructure(check: &CheckRun) -> bool {
     )
 }
 
+/// Mergify's unmet top-level queue entry conditions, each as `condition: note`,
+/// from the queue check's versioned payload (#447).
+pub fn unmet_conditions(_check: &CheckRun) -> Vec<String> {
+    Vec::new()
+}
+
 /// The selected check belongs to Mergify on the original PR head.
 pub fn merged_via_queue(observation: &Observation) -> bool {
     observation.check.as_ref().is_some_and(|check| {
@@ -391,4 +397,44 @@ pub fn merged_via_queue(observation: &Observation) -> bool {
             && check.conclusion.as_deref() == Some("success")
             && check_state(check) == QueueState::Merged
     })
+}
+
+#[doc(hidden)]
+#[path = "fixtures/pb2632.rs"]
+pub mod pb2632_fixture;
+
+#[cfg(test)]
+mod queue_condition_tests {
+    use super::*;
+
+    fn pb2632() -> (PullRequest, Vec<CheckRun>) {
+        (
+            serde_json::from_str(pb2632_fixture::PB2632_PULL_REQUEST).unwrap(),
+            serde_json::from_str(pb2632_fixture::PB2632_CHECK_RUNS).unwrap(),
+        )
+    }
+
+    #[test]
+    fn prismabuild_2632_reads_as_waiting_on_scopes() {
+        // #447: Mergify's payload is URL-safe base64 without padding.
+        let (pull, checks) = pb2632();
+        let head = pull.head.sha.clone();
+        let observed = observe(pull, &checks, &head);
+        assert_eq!(observed.state, QueueState::Waiting);
+        assert_eq!(
+            unmet_conditions(observed.check.as_ref().unwrap()),
+            ["scopes-available: waiting for pull request scopes to be reported"]
+        );
+    }
+
+    #[test]
+    fn a_met_queue_reports_no_unmet_conditions() {
+        let (pull, mut checks) = pb2632();
+        let head = pull.head.sha.clone();
+        for check in &mut checks {
+            check.output = None;
+        }
+        let observed = observe(pull, &checks, &head);
+        assert!(unmet_conditions(observed.check.as_ref().unwrap()).is_empty());
+    }
 }

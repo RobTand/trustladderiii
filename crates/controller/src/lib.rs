@@ -27,6 +27,7 @@ pub mod looks;
 mod loom_tests;
 pub mod memory;
 mod notices;
+pub mod pr_body;
 pub mod priority;
 pub mod production;
 pub mod prompts;

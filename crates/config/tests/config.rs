@@ -1321,3 +1321,43 @@ fn configured_extra_paths_are_protected() {
     sorted.dedup();
     assert_eq!(paths, sorted);
 }
+
+#[test]
+fn pr_body_lines_need_a_label_values_and_an_allowed_default() {
+    // #447: PrismaBuild's PR-body policy.
+    let rule = |label: &str, values: &[&str], default: &str| {
+        let mut table = toml::map::Map::new();
+        table.insert("label".into(), Value::String(label.into()));
+        table.insert(
+            "values".into(),
+            Value::Array(values.iter().map(|v| Value::String((*v).into())).collect()),
+        );
+        table.insert("default".into(), Value::String(default.into()));
+        Value::Table(table)
+    };
+    let with = |rule: Value| {
+        let mut document: Value = EXAMPLE.parse().unwrap();
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert("pr_body_lines".into(), Value::Array(vec![rule]));
+        Config::parse(&toml::to_string(&document).unwrap())
+    };
+    let config = with(rule("Change type", &["chore", "fix", "test"], "chore")).unwrap();
+    assert_eq!(config.github.repos[0].pr_body_lines[0].label, "Change type");
+    assert!(
+        Config::parse(EXAMPLE).unwrap().github.repos[0]
+            .pr_body_lines
+            .is_empty()
+    );
+    for bad in [
+        rule("", &["chore"], "chore"),
+        rule("Change type:", &["chore"], "chore"),
+        rule("Change type", &[], "chore"),
+        rule("Change type", &["chore", ""], "chore"),
+        rule("Change type", &["fix"], "chore"),
+    ] {
+        let error = with(bad).unwrap_err().to_string();
+        assert!(error.contains("pr_body_lines"), "{error}");
+    }
+}

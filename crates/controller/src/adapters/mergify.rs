@@ -826,6 +826,17 @@ fn full_name(repo: &Repository) -> String {
     format!("{}/{}", repo.owner, repo.name)
 }
 
+/// #447: Mergify waits on queue conditions while every check suite on the head
+/// has completed, so nothing still running can meet them. Returns the unmet
+/// conditions and the failed checks outside TL3's required set.
+pub(crate) fn queue_blocked(
+    _state: &tl3_mergify::Observation,
+    _suites_completed: bool,
+    _required: &[RequiredCheck],
+) -> Option<(Vec<String>, Vec<String>)> {
+    None
+}
+
 /// `open` names the open missing-check incidents on the expected head.
 async fn queue_facts(
     github: &GitHub,
@@ -1501,5 +1512,48 @@ mod error_tests {
                 expected
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_blocked_tests {
+    use super::*;
+    use tl3_mergify::pb2632_fixture::{PB2632_CHECK_RUNS, PB2632_PULL_REQUEST};
+
+    fn pb2632() -> tl3_mergify::Observation {
+        let pull: tl3_github::PullRequest = serde_json::from_str(PB2632_PULL_REQUEST).unwrap();
+        let checks: Vec<tl3_github::CheckRun> = serde_json::from_str(PB2632_CHECK_RUNS).unwrap();
+        let head = pull.head.sha.clone();
+        tl3_mergify::observe(pull, &checks, &head)
+    }
+
+    // PrismaBuild's branch protection requires only issue-link (app 15368).
+    fn required() -> Vec<RequiredCheck> {
+        vec![RequiredCheck {
+            context: "issue-link".into(),
+            app: Some(15368),
+        }]
+    }
+
+    #[test]
+    fn prismabuild_2632_is_blocked_on_scopes_by_pr_gate() {
+        let (conditions, failed) = queue_blocked(&pb2632(), true, &required())
+            .expect("TL3 must not wait silently on #2632");
+        assert_eq!(
+            conditions,
+            ["scopes-available: waiting for pull request scopes to be reported"]
+        );
+        assert_eq!(
+            failed,
+            ["Bazel", "Hosted lane", "pr-gate", "regression-test"]
+        );
+    }
+
+    #[test]
+    fn a_suite_still_running_or_a_queue_not_waiting_is_not_blocked() {
+        assert_eq!(queue_blocked(&pb2632(), false, &required()), None);
+        let mut queued = pb2632();
+        queued.state = tl3_mergify::QueueState::Queued;
+        assert_eq!(queue_blocked(&queued, true, &required()), None);
     }
 }

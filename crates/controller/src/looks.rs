@@ -1772,6 +1772,23 @@ mod incident_tests {
     use super::*;
 
     #[test]
+    fn a_blocked_queue_names_its_conditions_and_failed_checks() {
+        let summary = queue_blocked_summary(
+            &["scopes-available: waiting for pull request scopes to be reported".into()],
+            &["Bazel".into(), "pr-gate".into()],
+        );
+        for expected in [
+            "`scopes-available`",
+            "waiting for pull request scopes to be reported",
+            "`pr-gate`",
+            "`Bazel`",
+            "no credit",
+        ] {
+            assert!(summary.contains(expected), "{expected}: {summary}");
+        }
+    }
+
+    #[test]
     fn git_remote_failures_in_worktrees_are_upstream() {
         // The operation names crates/worktrees gives its network calls.
         for operation in [
@@ -1871,6 +1888,11 @@ pub(crate) fn check_setup_incident_id(node: NodeId, permission: &str) -> String 
     use sha2::{Digest, Sha256};
     let gap = format!("{:x}", Sha256::digest(permission.as_bytes()));
     format!("required-checks:{}:{gap}", node.0)
+}
+
+/// #447: what Rob reads when Mergify waits on conditions nothing running can meet.
+pub(crate) fn queue_blocked_summary(_conditions: &[String], _failed: &[String]) -> String {
+    String::new()
 }
 
 /// One missing-check incident per head, context and expected app (Q52).
