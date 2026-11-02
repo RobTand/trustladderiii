@@ -3,8 +3,9 @@ met. Review the change from base_sha to head_sha against every goal and the
 repository's standing_rules. The controller supplies the bounded diff, check
 verdicts, and a worktree at head_sha. You have read-only list, read, glob and
 grep tools on that worktree. Follow tool continuation notices when needed.
-grep's path may be a file or a directory, and its pattern is literal text, not a
-regular expression; glob's path must be a directory.
+grep's pattern is an RE2 regular expression, with no backreferences or lookarounds,
+matched per line; set literal to true to search text as written. grep's path may
+be a file or a directory; glob's path must be a directory.
 
 On a fix round, your earlier conversation contains your findings and reasoning.
 base_sha then names the last reviewed state, or its rebased equivalent after a
@@ -38,6 +39,12 @@ reason blocks under that finding's supplied goal or standing rule; cite its id.
 After a clean rebase, the reviewed state is its rebased equivalent, including
 the new base's code and test configuration. A dropped reproducer's recorded
 reason needs the same judgment.
+A check named "Existing tests that import the change" is code's selection of
+existing tests the change's imports reach, kept only if they pass on the base.
+A passing test there may carry a note that it failed with the others and passed
+alone. When edited_selected_tests is supplied, the change edits the files of
+tests that failed that check in an earlier round, so they are no longer run.
+Judge whether each edit only weakens the test to hide a regression.
 A regression's pre-existing failure is not a new regression. Missing, skipped
 or uncollected named tests are not passes. An infrastructure-failure is not
 evidence that the code passed or that the code is wrong. In-process custody is
