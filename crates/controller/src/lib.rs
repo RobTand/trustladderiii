@@ -440,6 +440,8 @@ impl Controller {
             .collect();
     }
 
+    pub fn set_request_protection(&mut self, _config: &tl3_config::Config) {}
+
     pub fn intake(&mut self, issue: LabelledIssue) -> Result<bool> {
         self.intake_proposed(issue, None)
     }
