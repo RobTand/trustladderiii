@@ -512,7 +512,7 @@ impl Supervisor {
                     let body = if let Some(narrowing) = &narrowing {
                         // #449: the answer is the scope; the original issue is context it may
                         // refer to. Later roles read the same text, so keep it for this request.
-                        let (title, original) = self.original_issue(delivery, &materials);
+                        let (title, original, read) = self.original_issue(delivery, &materials);
                         let body = crate::narrowing::issue_body(
                             &answer,
                             &title,
@@ -520,7 +520,13 @@ impl Supervisor {
                             narrowing
                                 .get("question")
                                 .filter(|question| !question.is_null()),
+                            read.is_err(),
                         );
+                        // A later narrowing reads this pristine copy, not the composed body.
+                        materials["original_issue"] = json!({
+                            "title": title, "body": original,
+                            "read": read.err().unwrap_or_else(|| "github".into()),
+                        });
                         Some(body)
                     } else {
                         None
@@ -564,25 +570,28 @@ impl Supervisor {
         }
     }
 
-    /// The original issue's title and body for a narrowed request: as GitHub has them now, or
-    /// failing that as the first ingest read them.
-    fn original_issue(&self, delivery: &Delivery, root: &Value) -> (String, String) {
-        if let Some(provider) = &self.materials_provider {
-            match provider.current_issue(delivery) {
-                Ok(issue) => return (issue.title, issue.body.unwrap_or_default()),
-                Err(error) => eprintln!(
-                    "narrowed request {}: using the issue as first read; GitHub read failed: {error}",
-                    delivery.node().0
-                ),
+    /// The original issue's title and body for a narrowed request, as GitHub has them now. If the
+    /// read fails the stored copy stands in, the pristine one when this request's parent was itself
+    /// narrowed, and the failure is returned so the agents and the stored materials say so.
+    fn original_issue(
+        &self,
+        delivery: &Delivery,
+        root: &Value,
+    ) -> (String, String, std::result::Result<(), String>) {
+        let read = match &self.materials_provider {
+            Some(provider) => match provider.current_issue(delivery) {
+                Ok(issue) => return (issue.title, issue.body.unwrap_or_default(), Ok(())),
+                Err(error) => format!("GitHub read failed: {error}"),
+            },
+            None => {
+                return {
+                    let (title, body) = crate::narrowing::stored_original(root);
+                    (title, body, Ok(()))
+                };
             }
-        }
-        let issue = root.get("issue").or_else(|| root["ingest"].get("issue"));
-        let text = |field: &str| {
-            issue
-                .and_then(|issue| issue[field].as_str())
-                .unwrap_or_default()
         };
-        (text("title").into(), text("body").into())
+        let (title, body) = crate::narrowing::stored_original(root);
+        (title, body, Err(read))
     }
 
     /// Stop and prove termination before acknowledging teardown or a stall.

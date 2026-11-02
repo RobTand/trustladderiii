@@ -16,6 +16,14 @@ pub(crate) const ORIGINAL: &str = "Original issue, narrowed by Rob's answer abov
 /// GitHub's own limit for an issue body or a comment.
 const BODY_CHARS: usize = 65_536;
 
+/// A markdown heading line: its level and text. Fenced code is the caller's to skip.
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let level = line.chars().take_while(|c| *c == '#').count();
+    let rest = &line[level..];
+    let text = rest.trim().trim_end_matches('#').trim();
+    ((1..=6).contains(&level) && rest.starts_with(' ') && !text.is_empty()).then_some((level, text))
+}
+
 /// Headings of `body` that `answer` refers to, by full heading text or by the heading's first word.
 /// The list is a hint for the audit; it names where to look, not what the brief must say.
 pub(crate) fn referenced_sections(answer: &str, body: &str) -> Vec<String> {
@@ -42,15 +50,9 @@ pub(crate) fn referenced_sections(answer: &str, body: &str) -> Vec<String> {
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
         }
-        let hashes = line.chars().take_while(|c| *c == '#').count();
-        let text = line[hashes..].trim().trim_end_matches('#').trim();
-        if fenced
-            || !(1..=6).contains(&hashes)
-            || !line[hashes..].starts_with(' ')
-            || text.is_empty()
-        {
+        let Some((_, text)) = heading(line).filter(|_| !fenced) else {
             continue;
-        }
+        };
         let heading = words(text);
         let first = heading.split_whitespace().next().unwrap_or("");
         let referred = answer.contains(&heading)
@@ -60,6 +62,33 @@ pub(crate) fn referenced_sections(answer: &str, body: &str) -> Vec<String> {
         }
     }
     sections
+}
+
+/// The original issue within the bound. When it is too long, the sections the answer refers to
+/// (with their subsections) come first and the tail of the rest is what gets clipped.
+fn original_text(original: &str, sections: &[String]) -> String {
+    if original.trim().chars().count() <= BODY_CHARS || sections.is_empty() {
+        return clipped(original);
+    }
+    let (mut referred, mut rest) = (String::new(), String::new());
+    let (mut inside, mut fenced) = (None::<usize>, false);
+    let mut keep = false;
+    for line in original.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        if let Some((level, text)) = heading(line.trim_end()).filter(|_| !fenced) {
+            if inside.is_none_or(|outer| level <= outer) {
+                inside = sections.iter().any(|s| s == text).then_some(level);
+            }
+            keep = inside.is_some();
+        }
+        let target = if keep { &mut referred } else { &mut rest };
+        target.push_str(line);
+    }
+    clipped(&format!(
+        "(The issue was too long to include whole, so the sections the answer refers to come first.)\n\n{referred}{rest}"
+    ))
 }
 
 fn clipped(text: &str) -> String {
@@ -125,8 +154,17 @@ fn question_text(question: &Value) -> String {
 /// The original issue's title and body from a request's stored materials: the pristine copy a
 /// narrowed request kept, else the issue as first ingested.
 pub(crate) fn stored_original(root: &Value) -> (String, String) {
-    let _ = root;
-    todo!("#449 round 2")
+    let issue = root
+        .get("original_issue")
+        .or_else(|| root.get("issue"))
+        .or_else(|| root["ingest"].get("issue"));
+    let text = |field: &str| {
+        issue
+            .and_then(|issue| issue[field].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    (text("title"), text("body"))
 }
 
 /// The issue body the ingest and audit agents read for a narrowed request.
@@ -135,6 +173,7 @@ pub(crate) fn issue_body(
     title: &str,
     original: &str,
     question: Option<&Value>,
+    stale: bool,
 ) -> String {
     let mut body = format!("## {ANSWER}\n{}\n\n", clipped(answer));
     let sections = referenced_sections(answer, original);
@@ -148,7 +187,15 @@ pub(crate) fn issue_body(
     if let Some(question) = question {
         body += &format!("## {QUESTION}\n{}\n\n", question_text(question));
     }
-    body + &format!("## {ORIGINAL}\nTitle: {title}\n\n{}", clipped(original))
+    let note = if stale {
+        "(GitHub could not be read just now, so this is the issue as it was first read.)\n"
+    } else {
+        ""
+    };
+    body + &format!(
+        "## {ORIGINAL}\n{note}Title: {title}\n\n{}",
+        original_text(original, &sections)
+    )
 }
 
 #[cfg(test)]
@@ -182,7 +229,13 @@ mod tests {
     fn the_brief_input_carries_scope_context_and_question_in_order() {
         let question = json!({"id": 20, "kind": "needs_splitting",
             "pieces": ["Fence and offer", "Publisher and docs"]});
-        let body = issue_body(ANSWER_Q20, "Defer new GPU claims", ISSUE, Some(&question));
+        let body = issue_body(
+            ANSWER_Q20,
+            "Defer new GPU claims",
+            ISSUE,
+            Some(&question),
+            false,
+        );
         let order = [ANSWER, REFERRED, QUESTION, ORIGINAL].map(|label| {
             body.find(&format!("## {label}\n"))
                 .unwrap_or_else(|| panic!("{label}: {body}"))
@@ -206,7 +259,7 @@ mod tests {
             "x".repeat(70_000),
             "tail ".repeat(100)
         );
-        let body = issue_body(answer, "Title", &original, None);
+        let body = issue_body(answer, "Title", &original, None, false);
         assert!(body.starts_with(&format!("## {ANSWER}\n{answer}")));
         assert!(
             body.contains("1. keep me\n2. and me"),
@@ -221,6 +274,14 @@ mod tests {
             "the unreferred tail is clipped"
         );
         assert!(body.chars().count() < 66_500, "{}", body.chars().count());
+    }
+
+    #[test]
+    fn a_stale_original_says_so_to_the_agents() {
+        let body = issue_body("Do less.", "Title", "## Problem\nreal", None, true);
+        assert!(body.contains(&format!(
+            "## {ORIGINAL}\n(GitHub could not be read just now, so this is the issue as it was first read.)\nTitle: Title"
+        )));
     }
 
     #[test]
@@ -243,7 +304,7 @@ mod tests {
     #[test]
     fn a_comment_without_a_question_omits_that_part_and_the_original_is_bounded() {
         let long = format!("## Problem\n{}", "x".repeat(70_000));
-        let body = issue_body("Do less.", "Title", &long, None);
+        let body = issue_body("Do less.", "Title", &long, None, false);
         assert!(!body.contains(QUESTION));
         assert!(body.chars().count() < 66_500, "{}", body.chars().count());
         assert!(body.ends_with("[truncated]"));

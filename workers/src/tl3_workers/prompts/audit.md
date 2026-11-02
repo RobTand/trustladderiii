@@ -26,7 +26,10 @@ against the answer and the original issue. For each listed section, check that
 the brief carries what the kept goals depend on, including facts the answer only
 refers to by heading, item number or phrase. Where the brief leaves such a fact
 out, or the answer refers to a section the brief does not carry, return
-"disagree" and name the section, or object.
+"disagree" and name the section, or object. Return "disagree" if the brief
+carries goals or acceptance tests that Rob's answer excludes or does not ask for:
+a listed section is context, so the answer, not the section, decides which of
+its items are goals.
 
 Check that briefs ask only for available steps: the maker has TL3 worktree file
 tools, run_tests through PrismaBuild and read-only recall; the reviewer has

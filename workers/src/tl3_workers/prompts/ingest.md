@@ -30,7 +30,7 @@ answer excludes. Never invent a fact the original does not give.
 
 Return kind "brief" with a concise brief, at most about 20,000 tokens and at most
 80,000 characters. Preserve the problem, relevant constraints, architecture and
-source evidence. List every requested goal. For each goal set verification to
+source evidence. List every goal the request asks for; for a narrowed request, every goal the answer keeps. For each goal set verification to
 "test" for behavior code can check, or "review" for a judgment a reviewer must
 make. Do not claim a test ran. Check the brief and goals against the original
 issue before replying. Do not add scope or invent facts. Include the IDs of
