@@ -81,11 +81,6 @@ fn main() {
     let mut database = Database::start();
     type Scenario = (&'static str, fn(&tl3_config::Store));
     let cases: &[Scenario] = &[
-        ("postmortem_records", postmortem_records),
-        (
-            "postmortem_incident_needs_rob",
-            postmortem_incident_needs_rob,
-        ),
         ("repository_count_mismatch", |s| {
             repository_followups::corrupt_index(s, "count")
         }),
@@ -257,6 +252,11 @@ fn main() {
         (
             "publication_main_advance_conflict",
             publication_main_advance_conflict,
+        ),
+        ("postmortem_records", postmortem_records),
+        (
+            "postmortem_incident_needs_rob",
+            postmortem_incident_needs_rob,
         ),
     ];
     let selected = args.iter().find_map(|arg| arg.strip_prefix("--case="));
