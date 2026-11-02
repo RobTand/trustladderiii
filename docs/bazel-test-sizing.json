@@ -9,7 +9,7 @@
       "properties": {
         "EstimatedComputeUnits": "1",
         "EstimatedCPU": "4",
-        "EstimatedMemoryBytes": 2147483648
+        "EstimatedMemory": "2GB"
       },
       "before": {
         "invocation": "cf925036-43e2-41c6-be27-3d3276560385",
@@ -109,7 +109,8 @@
             "sampled_peak_cpu": 2.946107784431138
           }
         ],
-        "url": "https://app.buildbuddy.io/invocation/478d4cf8-90a5-4e22-bded-2a127ce841e4"
+        "url": "https://app.buildbuddy.io/invocation/478d4cf8-90a5-4e22-bded-2a127ce841e4",
+        "verified": true
       }
     },
     "workers": {
@@ -117,7 +118,7 @@
       "properties": {
         "EstimatedComputeUnits": "1",
         "EstimatedCPU": "3",
-        "EstimatedMemoryBytes": 1073741824
+        "EstimatedMemory": "1GB"
       },
       "before": {
         "invocation": "0a78d9d0-37f1-41a2-9f4e-17df84f37ba2",
@@ -468,6 +469,65 @@
             "sampled_peak_cpu": 2.176
           }
         ]
+      },
+      "after": {
+        "invocation": "02bb5f9b-e74d-40df-ab7a-c9f168f4a568",
+        "label": "//crates/controller:test_test_workers",
+        "receipts": [
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/99bfc02b-954d-4e4f-85e1-dac00320a339/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          },
+          {
+            "action_digest": {
+              "hash": "ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216",
+              "sizeBytes": "431"
+            },
+            "execution_id": "/uploads/7a8fde1f-b43b-4b63-a044-3273be008355/blobs/ff9ca67355a6f8ea453e5348bbb011b311943b3f2a8abeb1d038be5523e5f216/431",
+            "shard": null,
+            "stage": "COMPLETED",
+            "status": {
+              "code": 1,
+              "message": "invocation cancelled"
+            },
+            "exit_code": 0,
+            "requested": {},
+            "effective": {},
+            "predicted": null,
+            "measured": null,
+            "cgroup": null,
+            "isolation": null,
+            "started": null,
+            "completed": null,
+            "cpu_seconds": null,
+            "peak_memory_bytes": null,
+            "sampled_peak_cpu": null
+          }
+        ],
+        "url": "https://app.buildbuddy.io/invocation/02bb5f9b-e74d-40df-ab7a-c9f168f4a568",
+        "verified": false,
+        "outcome": "No verdict within the ten-minute window. Explicitly cancelled, including the automatic retry. Both executions ended COMPLETED with status code 1; allocation metadata was unavailable. Worker after-sizing proof remains pending #483 or coordinator review."
       }
     },
     "postgres": {
@@ -475,7 +535,7 @@
       "properties": {
         "EstimatedComputeUnits": "1",
         "EstimatedCPU": "2",
-        "EstimatedMemoryBytes": 1073741824
+        "EstimatedMemory": "1GB"
       },
       "before": {
         "invocation": "a2d4c76d-d46a-4bc3-b6b3-27901233211f",
@@ -529,7 +589,7 @@
       "properties": {
         "EstimatedComputeUnits": "1",
         "EstimatedCPU": "2",
-        "EstimatedMemoryBytes": 536870912
+        "EstimatedMemory": "0.5GB"
       },
       "before": {
         "invocation": "81abd858-8657-449c-ab8e-7520ded0247d",
@@ -624,7 +684,8 @@
             "sampled_peak_cpu": 0.994
           }
         ],
-        "url": "https://app.buildbuddy.io/invocation/ec92ab37-9842-4948-8f82-1ab9f4abbf50"
+        "url": "https://app.buildbuddy.io/invocation/ec92ab37-9842-4948-8f82-1ab9f4abbf50",
+        "verified": true
       }
     }
   },

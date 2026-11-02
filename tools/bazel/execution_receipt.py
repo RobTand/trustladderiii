@@ -46,7 +46,7 @@ def test_receipts(response, label):
             'isolation': auxiliary.get('isolationType'),
             'started': metadata.get('executionStartTimestamp'),
             'completed': metadata.get('executionCompletedTimestamp'),
-            'cpu_seconds': int(usage.get('cpuNanos', 0)) / 1e9,
+            'cpu_seconds': int(usage['cpuNanos']) / 1e9 if 'cpuNanos' in usage else None,
             'peak_memory_bytes': usage.get('peakMemoryBytes'),
             'sampled_peak_cpu': burst,
         }

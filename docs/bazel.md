@@ -82,7 +82,7 @@ runner and every package in `_POSTGRES`, including each worker shard. The
 harness package default also covers new tests that start nested pytest suites.
 Other Python packages keep dynamic sizing.
 
-The 2026-11-02 execution receipts give these measurements. CPU bursts are the
+The baseline 2026-11-02 execution receipts give these sizing inputs. CPU bursts are the
 largest CPU-millisecond delta divided by its wall-millisecond interval in
 BuildBuddy's usage timeline, sampled about every 500 ms. They include children,
 but can miss shorter bursts. #466's scenario CPU receipts provide a second
@@ -102,7 +102,7 @@ memory maximum comes from GitHub notices, and its CPU maximum from publishing.
 Worker measurements cover all eight #483 shards. The unsharded worker target
 uses the same reservation; recalibrate if its process concurrency changes.
 Store and harness sizes use `test_test_postgres` and `test_report_limits`.
-These samples are amd64 OCI observations. They do not calibrate arm64 budgets.
+The reservations use representative targets. These samples are amd64 OCI observations. They do not calibrate arm64 budgets.
 
 ### Verify the allocation
 
@@ -136,7 +136,9 @@ The old publishing receipt from [cf925036](https://app.buildbuddy.io/invocation/
 requested 4000m and 8 GiB but received 1000m and 491,680,192 bytes. Worker
 shards in [0a78d9d0](https://app.buildbuddy.io/invocation/0a78d9d0-37f1-41a2-9f4e-17df84f37ba2)
 also received 1000m despite their 4000m requests. Before/after receipts are
-recorded in `docs/bazel-test-sizing.json`.
+recorded in `docs/bazel-test-sizing.json`. The worker verification attempt was
+cancelled after exceeding the ten-minute window, and its after-sizing receipt
+is unverified. Repeat that check after #483 shards the worker target.
 
 OCI receipts show the account's shared 30-core quota, not a per-test hard CPU
 limit. Sizes control scheduling and CPU weight. Remote configurations now cap
