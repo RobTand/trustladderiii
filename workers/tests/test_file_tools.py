@@ -471,6 +471,7 @@ def test_concurrent_enumerations_each_see_every_entry(tree):
 
 
 def call(tool, **args):
+    """A failing call, as the model sees it: a ToolMessage with status error."""
     return tool.invoke({"name": tool.name, "args": args, "id": "fixture", "type": "tool_call"})
 
 
@@ -480,13 +481,13 @@ def test_grep_searches_a_single_file_given_as_path(tree):
     (root / "src/other.py").write_text("hello elsewhere\n")
     with Worktree(root) as worktree:
         tool = tools_for(worktree)["grep"]
-        assert call(tool, pattern="hello", path="src/code.py") == {
+        assert tool.invoke({"pattern": "hello", "path": "src/code.py"}) == {
             "matches": [{"path": "src/code.py", "line": 1, "text": "hello"},
                         {"path": "src/code.py", "line": 2, "text": "hello again"}],
             "next_offset": None, "message": "",
         }
-        assert call(tool, pattern="absent", path="src/code.py")["matches"] == []
-        assert call(tool, pattern="again", path="src/code.py", offset=0)["matches"] == [
+        assert tool.invoke({"pattern": "absent", "path": "src/code.py"})["matches"] == []
+        assert tool.invoke({"pattern": "again", "path": "src/code.py", "offset": 0})["matches"] == [
             {"path": "src/code.py", "line": 2, "text": "hello again"},
         ]
 
@@ -514,7 +515,7 @@ def test_grep_on_a_file_reports_non_utf8_instead_of_an_empty_result(tree):
     (root / "binary.dat").write_bytes(b"\xff\xfe needle\n")
     with Worktree(root) as worktree:
         tool = tools_for(worktree)["grep"]
-        assert call(tool, pattern="needle", path=".")["matches"] == []
+        assert tool.invoke({"pattern": "needle", "path": "."})["matches"] == []
         result = call(tool, pattern="needle", path="binary.dat")
     assert result.status == "error"
     assert result.text == "Expected valid UTF-8 text."
