@@ -12,17 +12,18 @@ import sys
 
 import tiktoken
 
-from tl3_workers.tools import Worktree, _parts
+from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_class
 
 
 # Test sources the planner reads whole for test names.
 MAX_FILE_BYTES = 1_048_576
-# A declared file larger than this is read by range and edited by unique
-# string replacement, so it costs a bounded allowance, not its full size (#321).
-LARGE_FILE_BYTES = 65_536
+# A declared file larger than LARGE_FILE_BYTES is read by range and edited by
+# unique string replacement, so it costs a bounded allowance, not its full size (#321).
 RANGED_FILE_TOKENS = 16_384
 # Larger declared files can't be used at all.
 HARD_CAP_BYTES = 16 * 1_048_576
+# Notes in the brief name at most this many files each.
+NOTE_PATHS = 10
 TOKENIZER_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
 TOKENIZER_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
 
@@ -82,8 +83,13 @@ class DeclaredFileError(ValueError):
         super().__init__(f"{path}: {reason}" + (f" ({size} bytes)" if size is not None else ""))
 
 
+def _environment(error):
+    # Q50: an environment failure is infrastructure, not the model's file problem.
+    return isinstance(error, OSError) and environment_class(error) is not None
+
+
 def _file_tokens(worktree, path, encoding):
-    """Return the file's token cost and whether it is a ranged large file."""
+    """Return the file's token cost, and its size when it is read by range."""
     try:
         parts = _parts(path)
     except ValueError as error:
@@ -96,8 +102,10 @@ def _file_tokens(worktree, path, encoding):
         with worktree._directory(parts[:-1]) as parent:
             os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
     except FileNotFoundError:
-        return 0, False
-    except (OSError, ValueError):
+        return 0, None
+    except (OSError, ValueError) as error:
+        if _environment(error):
+            raise
         raise DeclaredFileError(path, "not a regular file inside the worktree") from None
     try:
         with worktree._file(path) as stream:
@@ -120,12 +128,12 @@ def _file_tokens(worktree, path, encoding):
     except UnicodeDecodeError:
         raise DeclaredFileError(path, "not UTF-8 text", size) from None
     except (OSError, ValueError) as error:
-        if isinstance(error, DeclaredFileError):
+        if isinstance(error, DeclaredFileError) or _environment(error):
             raise
         raise DeclaredFileError(path, "not a regular file inside the worktree") from None
     if read > LARGE_FILE_BYTES:
-        return RANGED_FILE_TOKENS, True
-    return len(encoding.encode_ordinary("".join(chunks))), False
+        return RANGED_FILE_TOKENS, read
+    return len(encoding.encode_ordinary("".join(chunks))), None
 
 
 class Forecaster:
@@ -144,14 +152,13 @@ class Forecaster:
         with Worktree(".") as worktree:
             for path in sorted(set(paths)):
                 try:
-                    file_tokens[path], large = _file_tokens(worktree, path, self.encoding)
+                    file_tokens[path], size = _file_tokens(worktree, path, self.encoding)
                 except DeclaredFileError as error:
                     self.problems.append(error)
                     file_tokens[path] = 0
                     continue
-                if large:
-                    with worktree._file(path) as stream:
-                        self.large[path] = os.fstat(stream.fileno()).st_size
+                if size is not None:
+                    self.large[path] = size
         return file_tokens
 
     def forecast(self, brief, file_tokens):
@@ -170,16 +177,22 @@ class Forecaster:
         return self.forecast(brief, self.files(paths))
 
     def notes(self):
-        """Guidance for the maker about the files last measured, for the brief."""
+        """Guidance for the maker about the files last measured, for the brief.
+        Each note names at most NOTE_PATHS files."""
+        def listed(items):
+            items = list(items)
+            more = f", and {len(items) - NOTE_PATHS} more" if len(items) > NOTE_PATHS else ""
+            return "; ".join(items[:NOTE_PATHS]) + more
+
         notes = []
         if self.large:
             notes.append(
                 "These declared files are too large to read whole. Read them by range with "
                 "read's offset and limit, or find lines with grep first, and change them with "
                 "edit's unique exact-text replacement: "
-                + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(self.large.items()))
+                + listed(f"{path} ({size} bytes)" for path, size in sorted(self.large.items()))
                 + ".")
         if self.problems:
             notes.append("TL3's file tools can't use these declared files: "
-                         + "; ".join(str(error) for error in self.problems) + ".")
+                         + listed(str(error) for error in self.problems) + ".")
         return notes
