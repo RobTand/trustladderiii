@@ -58,6 +58,10 @@ def summarize(testlogs, policy, runner):
             'overruns': overruns}
 
 
+def calibrate_cpu(paths, policy):
+    return {'cpu': policy, 'receipts': []}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('testlogs', type=Path)

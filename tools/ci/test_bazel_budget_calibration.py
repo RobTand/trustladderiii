@@ -28,6 +28,29 @@ def receipt(directory, target, run, total, seconds, runner='baseline', zipped=Fa
 
 
 class CalibrationTests(unittest.TestCase):
+    def test_cpu_calibration_tightens_only_observed_existing_limits(self):
+        policy = {'seconds': 10, 'slow': {'b::slow': 20, 'b::unmeasured': 30}}
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, wall in enumerate([8, 60]):
+                path = Path(directory, f'{index}.json')
+                path.write_text(json.dumps({'seconds': {'b::slow': wall},
+                                            'cpu_seconds': {'b::slow': 1.2 + index * .1}}))
+                paths.append(path)
+            summary = calibration.calibrate_cpu(paths, policy)
+            self.assertEqual(summary['cpu'], {'seconds': 10,
+                                              'slow': {'b::slow': 3, 'b::unmeasured': 30}})
+            self.assertEqual(len(summary['receipts']), 2)
+
+    def test_cpu_calibration_refuses_receipts_without_cpu_or_a_second_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, 'receipt.json')
+            path.write_text(json.dumps({'seconds': {'b::slow': 3}}))
+            with self.assertRaisesRegex(ValueError, 'two'):
+                calibration.calibrate_cpu([path], POLICY)
+            with self.assertRaisesRegex(ValueError, 'CPU'):
+                calibration.calibrate_cpu([path, path], POLICY)
+
     def test_multiplier_follows_the_hosted_method(self):
         with tempfile.TemporaryDirectory() as directory:
             for run in range(1, 11):
