@@ -655,6 +655,13 @@ def test_prompt_distinguishes_excused_regressions_and_unverified_evidence():
     assert "A failing check your change caused is never unverified." in prompt
 
 
+def test_prompt_tells_history_records_from_open_feedback():
+    # #316: superseded findings arrive as one-line records with resolved_round.
+    prompt = " ".join(files("tl3_workers").joinpath("prompts", "maker.md").read_text().split())
+    assert "A feedback item with resolved_round is a one-line record of history that a later review or check superseded; it is not a task." in prompt
+    assert "The full-text items without resolved_round are the open ones to fix." in prompt
+
+
 def test_prompt_requires_reds_the_harness_accepts():
     # #340: a module-level import of a new name errors on the base, and a flaky
     # test can pass there; neither demonstrates the change.
@@ -1023,6 +1030,26 @@ def test_review_fix_contract_accepts_named_tests_and_reasons(review_fix):
     assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'reviewed findings need identities'
     assert Draft202012Validator(schema('maker-reply')).is_valid({**reply, 'head': 'c' * 40}), 'done must carry reproductions'
     maker._check_reply(inputs, reply)
+
+
+def test_bounded_fix_round_contract_accepts_resolved_records_and_finding_refs(maker_request):
+    from tl3_workers.contracts import schema
+    from jsonschema import Draft202012Validator
+    inputs = maker_request['inputs']
+    inputs.update(round=1, reviewed_sha='b' * 40, feedback=[
+        {'kind': 'review_finding', 'id': 'review-1-0', 'reviewed_sha': 'a' * 40,
+         'report': 'Greeting fails for an empty name.', 'goal_ids': ['greeting'], 'resolved_round': 1},
+        {'kind': 'failed_check', 'report': 'Existing test failed.', 'goal_ids': [], 'resolved_round': 2},
+        {'kind': 'review_finding', 'id': 'review-3-0', 'reviewed_sha': 'b' * 40,
+         'report': 'Describe the signature in full.', 'goal_ids': ['greeting']},
+    ])
+    inputs['current_review_findings'] = [{'id': 'review-3-0', 'reviewed_sha': 'b' * 40}]
+    assert Draft202012Validator(schema('maker-input')).is_valid(inputs), 'one-line records and finding refs'
+    maker._check_inputs(inputs)
+    reply = {**DONE, 'reproductions': [{'finding_id': 'review-3-0', 'reason': 'A documentation fix.'}]}
+    maker._check_reply(inputs, reply)
+    inputs['feedback'][0]['resolved_round'] = 0
+    assert not Draft202012Validator(schema('maker-input')).is_valid(inputs), 'rounds start at 1'
 
 
 @pytest.mark.parametrize('invalid', ['omitted', 'partial', 'duplicate', 'unknown', 'old', 'selector'])

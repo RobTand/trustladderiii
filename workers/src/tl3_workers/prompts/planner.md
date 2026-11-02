@@ -61,13 +61,29 @@ those marked for review. Return exactly one of these proposals:
   forcing. The reviewer judges whether the forcing models the symptom the
   request describes. Repeating a test until it fails does not count. If no
   forcing can recreate the condition, return can't meet once with the reason.
+  If no deterministic test can be written and the change edits code, confirm
+  the goal with regression or behavior-preserving checks that fit the evidence,
+  naming only tests the change doesn't edit.
   Regression checks cover existing behavior. Behavior-preserving checks run on
   both versions for refactors. Regression and behavior-preserving checks must
   name tests that already exist in the base, exactly as written there; tests the
   maker adds belong only in demonstrating checks. Name each test by its pytest
   node ID, file::function or file::Class::method. Name a parametrized function
   without its parameter suffix to select every case. A test file path on its own is
-  not a node ID; to guard existing behavior, name the existing tests that cover it. State no_design_questions and lands_on_its_own
+  not a node ID; to guard existing behavior, name the existing tests that cover it.
+  List in edits_tests, by node ID, every existing test whose definition the
+  change modifies, and declare its file; omit edits_tests when the change edits
+  no existing test. A goal that asks the maker to change an existing test, for
+  example to extend, patch, update, fix or rewrite it, needs that test in
+  edits_tests; code refuses a plan whose goal asks that of a test a regression
+  or behavior-preserving check names. Name such a test in a demonstrating check, never in a regression
+  or behavior-preserving check: those run tests exactly as the base wrote them,
+  so the harness refuses an edit to a test they name. If the change edits only
+  tests, such as a deflake that patches the flaky test, an ordinary
+  demonstrating check can't show it, because the base run applies the leaf's
+  test edits and runs the same test. A change to tests alone needs a forced
+  reproduction (Q55, #393) on its demonstrating check; if no forcing can be
+  written, return can't meet. State no_design_questions and lands_on_its_own
   only when true. If either is false, return can't meet with the unresolved
   question. In slice one, avoid CI, Mergify and test configuration, including
   conftest.py, pytest settings, tox, nox and test scripts called by CI. Both

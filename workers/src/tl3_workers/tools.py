@@ -13,12 +13,13 @@ from threading import Lock
 import re2
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
+from tl3_workers.diff import make_diff_tool
 from tl3_workers.pb_tests import make_test_tool
 from tl3_workers.recall import make_recall_tool
 from tl3_workers.memory import current
 
 
-READ_TOOLS = frozenset({"list", "read", "glob", "grep"})
+READ_TOOLS = frozenset({"list", "read", "glob", "grep", "diff"})
 # Files larger than this are read by range and changed with edit (#321).
 LARGE_FILE_BYTES = 65_536
 WRITE_TOOLS = frozenset({"write", "edit"})
@@ -571,6 +572,7 @@ TOOL_FACTORIES = {
     "read": lambda worktree: worktree.read,
     "glob": lambda worktree: worktree.glob,
     "grep": lambda worktree: worktree.grep,
+    "diff": lambda worktree: make_diff_tool(worktree, _parts, OUTPUT_LIMITS),
     "write": lambda worktree: worktree.write,
     "edit": lambda worktree: worktree.edit,
 }

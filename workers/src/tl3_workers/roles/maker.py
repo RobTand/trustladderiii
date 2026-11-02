@@ -242,6 +242,8 @@ def run(model, request, worktree, emit):
     worktree.test_settings = TestSettings(**inputs["tests"])
     worktree.test_checkout = Path(request["worktree"])
     worktree.check_base_sha = inputs.get("check_base_sha")
+    worktree.diff_checkout = Path(request["worktree"])
+    worktree.diff_base = inputs.get("check_base_sha")
     worktree.test_checks = inputs["plan"]["checks"]
     worktree.progress_emit = emit
 
@@ -448,6 +450,7 @@ ROLE = Role(
         "read": "Read worktree text to implement or self-check a goal.",
         "glob": "Find relative worktree paths relevant to the declared plan. The path must be a directory.",
         "grep": "Find references in worktree text while implementing a goal. The pattern is an RE2 regular expression, with no backreferences or lookarounds, matched per line; set literal to true to search text as written. The path may be a file or a directory.",
+        "diff": "Read-only: show every change in the worktree against check_base_sha, as a stat and unified hunks, paged. Use it to check what changed and the plan's scope.",
         "write": "Create or overwrite a declared file with UTF-8 text.",
         "edit": "Replace exact text in a declared file. Read it first and use a unique match.",
         "run_tests": ("Run named pytest tests or the suite through PrismaBuild. No shell or commands. "

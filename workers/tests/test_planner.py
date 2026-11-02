@@ -661,3 +661,207 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
     reply['checks'] = [{'kind': kind, 'node_ids': ['tests/test_large.py::test_existing'], 'goal_ids': [0, 1]}]
     check_reply(planner_request['inputs'], reply)
     assert not any('test_large.py' in item for item in reply['violations']), reply['violations']
+
+
+DIGESTS = 'tests/test_digests.py'
+FROZEN = f'{DIGESTS}::test_digests_imports_only_the_standard_library'
+SIBLING = f'{DIGESTS}::test_digest_is_stable'
+
+
+@pytest.fixture
+def digests_plan(planner_request, monkeypatch):
+    # #438: PQ #2662's shape. A goal extends an existing test that a check freezes.
+    from tl3_workers.forecast import Forecaster
+
+    root = Path(planner_request['worktree'])
+    (root / 'digests.py').write_text('import hashlib\n')
+    (root / DIGESTS).write_text(
+        'import pytest\n\n'
+        'def test_digests_imports_only_the_standard_library():\n    assert True\n\n'
+        '@pytest.mark.parametrize("n", [1, 2])\n'
+        'def test_digest_is_stable(n):\n    assert n\n')
+    planner_request['inputs']['ingest']['goals'] = [
+        {'description': 'Extend `test_digests_imports_only_the_standard_library` so the '
+                        'standalone-loaded module force-executes its lazy imports.',
+         'verification': 'test'},
+        {'description': 'Keep digests stable.', 'verification': 'test'}]
+    (root / 'pyproject.toml').write_text(
+        '[tool.tl3.harness]\ncommand = ["python", "-m", "pytest"]\ntest-files = ["tests/**/*.py"]\n')
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    return {
+        'kind': 'leaf', 'files': ['digests.py', DIGESTS],
+        'checks': [
+            {'kind': 'demonstrating', 'node_ids': [f'{DIGESTS}::test_lazy_imports_run'], 'goal_ids': [0]},
+            {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+            {'kind': 'regression', 'node_ids': [FROZEN], 'goal_ids': [0]},
+        ],
+        'no_design_questions': True, 'lands_on_its_own': True,
+    }
+
+
+def planned(planner_request, reply):
+    from tl3_workers.roles.planner import check_reply
+
+    check_reply(planner_request['inputs'], reply)
+    return reply['violations']
+
+
+def test_goal_that_edits_a_frozen_test_is_a_plan_defect(planner_request, digests_plan):
+    violations = planned(planner_request, digests_plan)
+    assert any('Goal 0 names `test_digests_imports_only_the_standard_library`' in item
+               and 'check-3' in item and 'edits_tests' in item for item in violations), violations
+
+
+def test_goal_naming_a_frozen_test_in_an_undeclared_file_is_not_flagged(planner_request, digests_plan):
+    # The maker can't edit an undeclared file, so freezing its tests is right.
+    digests_plan['files'] = ['digests.py']
+    digests_plan['checks'][0]['node_ids'] = ['tests/test_lazy.py::test_lazy_imports_run']
+    digests_plan['files'].append('tests/test_lazy.py')
+    assert planned(planner_request, digests_plan) == []
+
+
+@pytest.mark.parametrize('frozen', [FROZEN, f'{SIBLING}[1]'])
+@pytest.mark.parametrize('kind', ['regression', 'behavior-preserving'])
+def test_declared_edit_may_not_be_frozen(planner_request, digests_plan, frozen, kind):
+    edited = frozen.split('[')[0]
+    digests_plan['edits_tests'] = [edited]
+    digests_plan['checks'] = [
+        {'kind': 'demonstrating', 'node_ids': [edited], 'goal_ids': [0, 1]},
+        {'kind': kind, 'node_ids': [frozen], 'goal_ids': [0, 1]},
+    ]
+    violations = planned(planner_request, digests_plan)
+    assert any(f'`{edited}` is in edits_tests' in item and 'only in a demonstrating check' in item
+               for item in violations), violations
+
+
+def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan):
+    digests_plan['edits_tests'] = [FROZEN]
+    digests_plan['checks'] = digests_plan['checks'][:2]
+    digests_plan['checks'][0]['goal_ids'] = [0]
+    violations = planned(planner_request, digests_plan)
+    assert any(f'`{FROZEN}` is in edits_tests but no demonstrating check names it' in item
+               for item in violations), violations
+
+
+@pytest.mark.parametrize('edited,files,reason', [
+    ('tests/test_digests.py', ['digests.py', DIGESTS], 'edits_tests must name exact pytest node IDs.'),
+    (f'{DIGESTS}::test_new', ['digests.py', DIGESTS],
+     f'edits_tests must name a test defined at the base: `{DIGESTS}::test_new`.'),
+    (FROZEN, ['digests.py'], f'A test the change edits must be in a declared file: `{DIGESTS}`.'),
+])
+def test_declared_edits_name_existing_tests_in_declared_files(planner_request, digests_plan, edited, files, reason):
+    digests_plan['files'] = files
+    digests_plan['edits_tests'] = [edited]
+    digests_plan['checks'] = [{'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0, 1]}]
+    violations = planned(planner_request, digests_plan)
+    assert any(item.startswith(reason) for item in violations), violations
+
+
+def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_plan):
+    digests_plan['edits_tests'] = [FROZEN]
+    digests_plan['checks'] = [
+        {'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0]},
+        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+    ]
+    assert planned(planner_request, copy.deepcopy(digests_plan)) == []
+    result = run_reply(tmp_path, planner_request, digests_plan)
+    assert result.exit_code == 0, result.stderr
+    reply = result.events[-1]['reply']
+    assert reply['edits_tests'] == [FROZEN]
+    assert reply['violations'] == []
+
+
+def test_test_only_change_answers_cant_meet_naming_393(planner_request, digests_plan):
+    # PB #2625's shape: a deflake that patches only the flaky test can't demonstrate.
+    digests_plan['files'] = [DIGESTS]
+    digests_plan['edits_tests'] = [FROZEN]
+    digests_plan['checks'] = [
+        {'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0]},
+        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+    ]
+    violations = planned(planner_request, digests_plan)
+    assert any('changes only tests' in item and "can't meet" in item and '#393' in item
+               for item in violations), violations
+
+
+def test_plan_schema_allows_edits_tests_only_on_a_leaf():
+    validate('planner-reply', {**LEAF, 'edits_tests': [FROZEN]})
+    with pytest.raises(Exception):
+        validate('planner-reply', {**LEAF, 'edits_tests': [FROZEN, FROZEN]})
+    with pytest.raises(Exception):
+        validate('planner-reply', {**CANT_MEET, 'edits_tests': [FROZEN]})
+
+
+def test_prompt_states_edits_tests_rules():
+    # #438: a plan that freezes a test its goals edit burns every maker round.
+    prompt = " ".join((Path(__file__).parents[1] / "src/tl3_workers/prompts/planner.md").read_text().split())
+    assert "edits_tests" in prompt
+    assert "never in a regression or behavior-preserving check" in prompt
+    assert "naming only tests the change doesn't edit" in prompt
+    assert "If the change edits only tests" in prompt and "#393" in prompt
+    assert "to extend, patch, update, fix or rewrite it" in prompt
+
+
+NAME = 'test_digests_imports_only_the_standard_library'
+
+
+@pytest.mark.parametrize('goal', [
+    f'Fix the bug. `{NAME}` must still pass unchanged.',
+    f'Do not edit {NAME}.',
+    f"Don't change `{NAME}`; add new tests beside it.",
+    f'Keep {NAME} green.',
+    f'Fix the bug so {NAME} passes.',
+    f'Fix the bug, keeping {NAME} green.',
+    f'`tests/{NAME}.py` passes.',
+    f'Update the docs. Leave `{NAME}` unchanged.',
+])
+def test_goal_that_keeps_a_frozen_test_is_accepted(planner_request, digests_plan, goal):
+    # #444 review: rule 7 fires only when an edit verb governs the name.
+    planner_request['inputs']['ingest']['goals'][0]['description'] = goal
+    assert planned(planner_request, digests_plan) == []
+
+
+@pytest.mark.parametrize('goal', [
+    f'Extend `{NAME}` so the module force-executes its lazy imports.',
+    f'Add a case to {NAME} for the new profile.',
+    f'Add a not-interchangeable pair to `{NAME}` showing the new profile differs.',
+    f'Update the import assertion in `{NAME}`.',
+    f'Patch {NAME} to load the module standalone.',
+    f'Rewrite {DIGESTS}::{NAME} without the sleep.',
+])
+def test_goal_that_edits_a_frozen_test_is_refused(planner_request, digests_plan, goal):
+    planner_request['inputs']['ingest']['goals'][0]['description'] = goal
+    violations = planned(planner_request, digests_plan)
+    assert any(f'Goal 0 names `{NAME}`' in item for item in violations), violations
+
+
+def test_test_only_leaf_whose_goal_names_a_frozen_test_answers_cant_meet(planner_request, digests_plan):
+    # PQ #3070 and Tessera #1532: a deflake goal names the flaky test without an edit verb.
+    planner_request['inputs']['ingest']['goals'][0]['description'] = (
+        f'Identify the cause of the intermittent failure of {NAME} and reproduce it deterministically.')
+    digests_plan['files'] = [DIGESTS]
+    digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
+    violations = planned(planner_request, copy.deepcopy(digests_plan))
+    assert any('changes only tests' in item and '#393' in item for item in violations), violations
+    digests_plan['files'] = ['digests.py', DIGESTS]
+    assert planned(planner_request, digests_plan) == []
+
+
+def test_test_only_leaf_cannot_demonstrate(planner_request, digests_plan):
+    # The base run applies every test-file edit, so a test-only head is the demonstrating base.
+    digests_plan['files'] = [DIGESTS, 'tests/test_lazy.py']
+    digests_plan['checks'] = [
+        {'kind': 'demonstrating', 'node_ids': ['tests/test_lazy.py::test_lazy_imports_run'], 'goal_ids': [0]},
+        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+    ]
+    violations = planned(planner_request, digests_plan)
+    assert any('changes only tests' in item and '#393' in item for item in violations), violations
+
+
+def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
+    # A test refactor guarded by existing tests can pass; only shapes that can't are refused.
+    planner_request['inputs']['ingest']['goals'][0]['description'] = 'Share the digest fixtures.'
+    digests_plan['files'] = [DIGESTS]
+    digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
+    assert planned(planner_request, digests_plan) == []

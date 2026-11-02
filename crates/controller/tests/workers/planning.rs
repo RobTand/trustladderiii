@@ -139,6 +139,14 @@ pub(super) fn planning(settings: &tl3_config::Store, mode: &str) {
             "rejected plans must open a decision question"
         );
         assert_eq!(n.question.unwrap().kind, tl3_kernel::QKind::CantMeet);
+        // #403: a question to Rob owes a postmortem in the commit that asks it.
+        let owed = store.postmortems("0").unwrap();
+        assert!(
+            owed.iter().any(|record| record.trigger
+                == format!("question:{}", n.question.unwrap().id)
+                && record.reason == "escalation"),
+            "{owed:?}"
+        );
         // #322: the question carries the planner's last report for Rob.
         let context = store
             .question_context(n.question.unwrap().id)

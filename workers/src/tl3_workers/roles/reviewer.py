@@ -55,6 +55,8 @@ def run(model, request, worktree, emit):
 
     if isinstance(model, ChatOpenAI):
         model.stream_usage = True
+    worktree.diff_checkout = Path(request["worktree"])
+    worktree.diff_base = request["inputs"]["base_sha"]
     control = TurnControl()
     agent = build_agent(model, ROLE, worktree, control=control)
     characters = ContextCharacters()
@@ -162,6 +164,7 @@ ROLE = Role(
         "read": "Read reviewed head files to check goals and standing rules. Follow page continuations.",
         "glob": "Find reviewed head paths using relative glob patterns. The path must be a directory.",
         "grep": "Find text in reviewed head files to investigate a goal or rule. The pattern is an RE2 regular expression, with no backreferences or lookarounds, matched per line; set literal to true to search text as written. The path may be a file or a directory.",
+        "diff": "Read-only: show the change from base_sha to head_sha, as a stat and unified hunks, paged. Use it when the supplied diff is not enough.",
     },
     check_reply=check_reply,
     run=run,
