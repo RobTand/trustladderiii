@@ -192,6 +192,26 @@ class GateTests(unittest.TestCase):
                        'bazel-under-test run //:gazelle -- -mode=diff']:
             self.assertTrue(any(needle in command for command in commands), needle)
 
+    def test_test_and_build_keep_their_own_diagnostic_logs(self):
+        # Later helper invocations write the default log names; the test run's logs must survive.
+        workspace = bazel_gate.Workspace(bazel='bazel')
+        commands = []
+        workspace.run = lambda *command, **_: commands.append(list(map(str, command))) or 0
+        workspace.test(['//a:t'], 'remote', {}, 'pr')
+        workspace.build(['//a:b'], 'remote', {}, 'pr')
+        for command, prefix in zip(commands, ['pr', 'pr-build']):
+            self.assertIn(f'--remote_grpc_log={prefix}-bazel-remote-grpc.log', command)
+            self.assertIn(f'--execution_log_compact_file={prefix}-execution_log.binpb.zst', command)
+
+    def test_every_diagnostic_log_reaches_the_artifacts(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as output:
+            names = ['bazel-remote-grpc.log', 'pr-bazel-remote-grpc.log', 'pr-execution_log.binpb.zst']
+            for name in names:
+                Path(root, name).write_text('log')
+            bazel_gate.write_result({'mode': 'pr'}, Path(output), root=Path(root))
+            self.assertEqual(sorted(path.name for path in Path(output).iterdir()),
+                             sorted(names + [bazel_gate.RESULT]))
+
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')
         with self.assertRaisesRegex(bazel_gate.GateError, 'bazel-diff'):
