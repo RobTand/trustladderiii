@@ -69,6 +69,11 @@ use it. To apply those defaults deliberately to an existing deployment, run
 explicit command replaces role ladders, preserves the endpoint and key path,
 and saves a 0600 backup. Normal preparation never resets tuned ladders.
 The deployed `~/.config/tl3/tl3.toml` remains the operator's runtime config.
+Its `planning.protected_paths` only adds to the built-in defaults, which always
+apply. A release that adds a default needs no edit to the live file:
+`tl3-deploy parse` and tl3d print a note naming any defaults the file doesn't
+list, and those paths stay protected (#388). `tl3 status` shows each served
+repository's effective list.
 
 Rob moved the ladders off GPT-6.1 Sol, which was out of quota, to Anthropic
 models on 2026-11-01. The maker ladder uses Claude Sonnet 5.5 twice, then Claude

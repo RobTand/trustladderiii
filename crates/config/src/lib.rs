@@ -62,12 +62,41 @@ pub struct Operations {
     pub issue: u64,
 }
 
+/// The protected paths in force for one repository (#388): the slice-one
+/// defaults, plus `planning.protected_paths`, plus the repository's own list.
+/// The configured lists only add: nothing can remove a default.
+pub fn protected_paths(global: &[String], repository: &[String]) -> Vec<String> {
+    let mut paths = Planning::default().protected_paths;
+    paths.extend_from_slice(global);
+    paths.extend_from_slice(repository);
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Planning {
     /// Calibration seam: replace these named estimates with measured overheads later.
     pub overhead_tokens: BTreeMap<String, u32>,
     pub protected_paths: Vec<String>,
+}
+
+impl Planning {
+    /// The defaults plus this file's additions. Nothing removes a default.
+    pub fn effective_protected_paths(&self) -> Vec<String> {
+        protected_paths(&self.protected_paths, &[])
+    }
+
+    /// Defaults this file doesn't list. They stay protected; a newer release can
+    /// add a default without the live file repeating it.
+    pub fn defaults_not_listed(&self) -> Vec<String> {
+        Planning::default()
+            .protected_paths
+            .into_iter()
+            .filter(|path| !self.protected_paths.contains(path))
+            .collect()
+    }
 }
 
 impl Default for Planning {
@@ -504,14 +533,6 @@ impl Config {
                 "planning.overhead_tokens",
                 "must contain named overhead estimates",
             ));
-        }
-        for required in Planning::default().protected_paths {
-            if !self.planning.protected_paths.contains(&required) {
-                return Err(invalid(
-                    "planning.protected_paths",
-                    "must retain the slice-one protected paths",
-                ));
-            }
         }
         validate_protected_paths("planning.protected_paths", &self.planning.protected_paths)?;
         let limits = &self.limits;
