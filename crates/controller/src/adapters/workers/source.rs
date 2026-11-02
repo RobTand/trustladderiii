@@ -584,7 +584,7 @@ mod tests {
             let last = case["stdout"].as_array().unwrap().last().unwrap();
             roles.insert(format!(
                 "{}:{}",
-                case["start"],
+                case["start"].as_str().unwrap(),
                 last["reply"]["kind"]
                     .as_str()
                     .or(last["reply"]["verdict"].as_str())
