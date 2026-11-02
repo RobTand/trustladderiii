@@ -1102,6 +1102,7 @@ fn killed_controller(settings: &tl3_config::Store, mode: &str) {
     let worker_pid = fs::read_to_string(root.path().join("entered")).unwrap();
     child.kill().unwrap();
     assert!(!child.wait().unwrap().success());
+    support::controller_restart::wait_for_owner_release(&mut owner(settings));
     let (registry, mut source) =
         worker_simulation(&root.path().join("fakes"), &config, mode != "plan-blocked").unwrap();
     let mut controller = Controller::open(
