@@ -111,6 +111,7 @@ impl GitHubTranslator for Translator {
                 title: issue.title,
                 actor: actor.id,
                 label: label.name.clone(),
+                labels: issue.labels.into_iter().map(|label| label.name).collect(),
             },
             proposed: ProposedPullRequest {
                 number: pull_request.number,

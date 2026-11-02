@@ -45,6 +45,7 @@ fn open(settings: &tl3_config::Store, root: &std::path::Path, adapter: Recorder)
         title: "Fix a greeting".into(),
         actor: 42,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
     .unwrap();
     c

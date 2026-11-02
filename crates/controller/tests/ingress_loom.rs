@@ -21,6 +21,7 @@ fn webhook() -> Input {
         title: "Loom ingress fixture".into(),
         actor: 24923402,
         label: "tl3".into(),
+        labels: Vec::new(),
     })
 }
 fn worker_reply(index: usize) -> Input {

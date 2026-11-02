@@ -10,7 +10,7 @@ import time
 from typing import Protocol
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import Check, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
+from .model import Check, FailureNotes, HarnessInputError, Kind, Outcome, Result, TestResult, Verdict, judge
 from .node_ids import selects
 from .report import InvalidReport, decode, parse
 from . import selection
@@ -368,6 +368,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests)
                       if selected_tests else ())
         progress = Progress()
+        base_notes = {Kind.DEMONSTRATING: FailureNotes(), Kind.REPRODUCING: FailureNotes()}
         cache_key = (os.environ["PRISMABUILD_CONTAINER_OWNER"], base, container, ordinary)
         if ordinary and cache_key not in _BASE_RESULTS:
             observed = tool.run(old, container, ordinary, root / "base.jsonl", progress)
@@ -382,7 +383,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             shutil.copytree(old, demo)
             tool.test_edits(old, new, demo, config)
             additions = tool.added_names(old, new, config)
-            demonstrated = tool.run(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions)
+            demonstrated = tool.run(demo, container, demonstrating, root / "demonstrating.jsonl", progress, additions,
+                                     messages=base_notes[Kind.DEMONSTRATING])
         else:
             demonstrated = {}
         reproduced = {}
@@ -399,14 +401,16 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             tool.test_edits(reviewed_tree, new, round_tree, config)
             additions = tool.added_names(reviewed_tree, new, config)
             reproduced = tool.run(round_tree, container, reproducing,
-                                  root / "reproducing.jsonl", progress, additions)
+                                  root / "reproducing.jsonl", progress, additions,
+                                  messages=base_notes[Kind.REPRODUCING])
         messages = {}
         after = tool.run(new, container, tests, root / "head.jsonl", progress, messages=messages)
         comparisons = {Kind.DEMONSTRATING: demonstrated, Kind.REPRODUCING: reproduced,
                        Kind.REGRESSION: before, Kind.BEHAVIOR_PRESERVING: before}
         results = []
         for check in plan:
-            result = judge(check, comparisons[check.kind], after, messages=messages)
+            result = judge(check, comparisons[check.kind], after, messages=messages,
+                           base_notes=base_notes.get(check.kind))
             if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
                 restored = tuple(replace(test, passed=False, message=(
                     f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])

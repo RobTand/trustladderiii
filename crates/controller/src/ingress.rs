@@ -191,6 +191,11 @@ fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<Input> {
                         title: issue.title.clone(),
                         actor: change.actor.id,
                         label: change.label.name,
+                        labels: issue
+                            .labels
+                            .iter()
+                            .map(|label| label.name.clone())
+                            .collect(),
                     }));
                 }
             }
@@ -453,6 +458,7 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 title: issue.title,
                 actor: actor.id,
                 label: label.name,
+                labels: issue.labels.into_iter().map(|label| label.name).collect(),
             })]
         }
         Some(Event::CommentCreated {

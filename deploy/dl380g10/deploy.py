@@ -214,7 +214,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     }
     if image:
         replacements['sha256:' + '0' * 64] = image
-    # Primary is maker attempts 1 and 2; alternate is attempt 3. Both rename every role that uses them.
+    # Primary is maker attempt 1; alternate is attempt 2 onward (#416). Both rename every role that uses them.
     if primary:
         replacements['claude-sonnet-5-5'] = primary
     if alternate:
