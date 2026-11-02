@@ -201,24 +201,20 @@ class FailFastTests(unittest.TestCase):
         self.assertEqual(watcher.failure, {'label': '//a:failed', 'reason': 'FAILED'})
         self.assertTrue(watcher.should_cancel(10))
 
-    def test_timeout_budget_and_quarantine_do_not_cancel(self):
-        for status, budget, quarantine in [('TIMEOUT', set(), set()),
-                                            ('FAILED', {'//a:failed'}, set()),
-                                            ('FAILED', set(), {'//a:failed'})]:
-            with self.subTest(status=status, budget=budget, quarantine=quarantine):
+    def test_timeout_is_a_definitive_failure(self):
+        watcher = bazel_gate.FailFast('batch-draft')
+        watcher.event(self.result(status='TIMEOUT'), 10, lambda labels: set())
+        self.assertTrue(watcher.should_cancel(10))
+        self.assertEqual(watcher.failure, {'label': '//a:failed', 'reason': 'TIMEOUT'})
+
+    def test_budget_warning_and_quarantined_failures_do_not_cancel(self):
+        for status, quarantine in [('PASSED', set()), ('FAILED', {'//a:failed'}),
+                                    ('TIMEOUT', {'//a:failed'})]:
+            with self.subTest(status=status, quarantine=quarantine):
                 watcher = bazel_gate.FailFast('batch-draft', quarantine=quarantine)
-                watcher.event(self.result(status=status), 10, lambda labels: budget)
+                watcher.event(self.result(status=status), 10, lambda labels: set())
                 self.assertFalse(watcher.should_cancel(1000))
                 self.assertIsNone(watcher.failure)
-
-    def test_bep_budget_marker_precedes_local_download_and_prevents_abort(self):
-        watcher = bazel_gate.FailFast('batch-draft')
-        event = self.result()
-        event['testResult']['testActionOutput'] = [
-            {'name': 'test.outputs/budget-overrun.txt', 'uri': 'bytestream://fixture/blobs/hash/5'}]
-        watcher.event(event, 0, lambda labels: set())
-        self.assertFalse(watcher.should_cancel(1000))
-        self.assertIsNone(watcher.failure)
 
     def test_no_status_summary_does_not_count_as_a_test_that_ran(self):
         watcher = bazel_gate.FailFast('pr')
@@ -270,17 +266,15 @@ class FailFastTests(unittest.TestCase):
                                           'aborted_early': {'label': '//a:broken',
                                                             'reason': 'BUILD_FAILURE'}}))
 
-    def test_abort_skips_budget_rerun_inputs_and_build_and_records_missing(self):
+    def test_abort_skips_followup_work_and_records_missing(self):
         label = '//crates/kernel:lib_test_tl3_kernel'
-        workspace = FakeWorkspace(['MODULE.bazel'], [], {label: 'FAILED'}, budget={label: 'PASSED'})
+        workspace = FakeWorkspace(['MODULE.bazel'], [], {label: 'FAILED'})
         workspace.aborted_early = {'label': label, 'reason': 'FAILED'}
         workspace.test = lambda *args, **kwargs: {label: 'FAILED'}
-        workspace.budget_only = lambda labels: self.fail('reran a definitively aborted run')
         workspace.inputs_check = lambda: self.fail('checked inputs after abort')
         result = bazel_gate.gate_pr(workspace, 'a' * 40, 'b' * 40, {}, mode='batch-draft')
         self.assertEqual(result['aborted_early'], workspace.aborted_early)
         self.assertEqual(result['not_run'], sorted(TESTS - {label}))
-        self.assertEqual(result['budget_reruns'], {})
         self.assertEqual(workspace.built, [])
 
     def test_pr_finishes_naturally_within_grace_without_interrupt(self):
