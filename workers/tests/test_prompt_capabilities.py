@@ -56,3 +56,29 @@ def test_reviewer_judges_review_goals_without_outside_verification():
         "Treat attributed outside facts as unverified; "
         "do not require outside verification" in prompt
     )
+
+
+@pytest.mark.parametrize("role", ["ingest", "audit"])
+def test_narrowed_requests_keep_the_sections_the_answer_refers_to(role):
+    # #449: Rob's answer is the scope; the original issue is context it may refer to.
+    prompt = prompt_text(role)
+    assert "Rob's answer (the new scope; it wins where it conflicts with the original issue)" in prompt
+    assert "Original issue, narrowed by Rob's answer above" in prompt
+    assert "Sections of the original issue that the answer refers to" in prompt
+    assert "Question Rob answered" in prompt
+
+
+def test_ingest_carries_referred_sections_into_the_brief():
+    prompt = prompt_text("ingest")
+    assert (
+        "carry into the brief every fact from those sections that a kept goal depends on" in prompt
+    )
+    assert "drop only what the answer excludes" in prompt
+
+
+def test_audit_objects_to_a_brief_missing_a_referred_section():
+    prompt = prompt_text("audit")
+    assert (
+        "For each listed section, check that the brief carries what the kept goals depend on" in prompt
+    )
+    assert "or object" in prompt

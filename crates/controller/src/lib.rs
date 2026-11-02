@@ -18,6 +18,7 @@ pub mod clock;
 pub mod console;
 pub mod executor;
 mod goals;
+mod narrowing;
 mod http;
 pub mod ingress;
 pub mod input_errors;
