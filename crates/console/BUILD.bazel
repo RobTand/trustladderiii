@@ -13,6 +13,9 @@ tl3_crate(
         "//crates/store:tl3_store",
     ],
     bins = ["tl3-console"],
-    examples = {"console_fixture": "examples/console_fixture.rs"},
+    examples = {
+        "board_scale": "examples/board_scale.rs",
+        "console_fixture": "examples/console_fixture.rs",
+    },
     declared_tests = {"console": {"path": "tests/console.rs", "harness": False}},
 )

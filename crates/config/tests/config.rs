@@ -1077,3 +1077,46 @@ fn deployment_model_defaults_pass_validation() {
         assert_ne!(reviewer.name, maker.name, "Q22: a different model reviews");
     }
 }
+
+#[test]
+fn console_connects_as_its_own_reader_when_configured() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let console = config.console.clone().unwrap();
+    assert_eq!(console.store(&config.store).user, config.store.user);
+    let with_reader = EXAMPLE.replace(
+        "assets = \"/srv/tl3/console\"",
+        "assets = \"/srv/tl3/console\"\nuser = \"tl3_console\"\npassword_file = \"/run/tl3/console-password\"",
+    );
+    let config = Config::parse(&with_reader).unwrap();
+    let store = config.console.as_ref().unwrap().store(&config.store);
+    assert_eq!(store.user, "tl3_console");
+    assert_eq!(
+        store.password_file.as_deref(),
+        Some(Path::new("/run/tl3/console-password"))
+    );
+    assert_eq!(store.database, config.store.database);
+    for (field, fields) in [
+        ("console.password_file", "user = \"tl3_console\""),
+        (
+            "console.user",
+            "password_file = \"/run/tl3/console-password\"",
+        ),
+        (
+            "console.user",
+            "user = \"tl3 console\"\npassword_file = \"/run/tl3/console-password\"",
+        ),
+        (
+            "console.password_file",
+            "user = \"tl3_console\"\npassword_file = \"console-password\"",
+        ),
+    ] {
+        let error = Config::parse(&EXAMPLE.replace(
+            "assets = \"/srv/tl3/console\"",
+            &format!("assets = \"/srv/tl3/console\"\n{fields}"),
+        ))
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+        assert!(error.contains(field), "{fields}: {error}");
+    }
+}

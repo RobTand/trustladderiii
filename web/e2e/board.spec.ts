@@ -10,6 +10,8 @@ test("a controller commit moves a card on the open board", async ({ page }) => {
     const card = (region: string) =>
       page.getByRole("region", { name: region }).getByRole("article", { name: /tl3-sandbox#42:/ });
     await expect(card("Intake")).toBeVisible();
+    // The example config's request reader is default-model; cards name it briefly.
+    await expect(card("Intake").getByText("Reader · default-model", { exact: true })).toBeVisible();
     await expect(page.getByRole("status")).toHaveText(/Live/);
     // A reload would drop this marker.
     await page.evaluate(() => ((window as unknown as { tl3Marker: number }).tl3Marker = 1));

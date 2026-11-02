@@ -8,6 +8,7 @@ pub mod api;
 mod feed;
 mod rebuild;
 mod server;
+mod supervise;
 
 use rebuild::Rebuilds;
 use std::{

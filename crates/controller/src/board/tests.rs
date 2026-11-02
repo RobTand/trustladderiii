@@ -249,7 +249,7 @@ fn card_carries_counters_progress_and_incidents() {
             ending: None,
             waiting_on: "the current task to finish".into(),
             role: Some("Maker".into()),
-            model: Some("alternate-model (high)".into()),
+            model: Some("alternate-model".into()),
             attempt: 3,
             round: 2,
             retries: Retries {
@@ -278,12 +278,12 @@ fn card_carries_counters_progress_and_incidents() {
     assert_eq!(
         roles,
         [
-            (Some("Maker"), Some("alternate-model (high)")),
+            (Some("Maker"), Some("alternate-model")),
             // Attempt 1's maker is the default family, so review takes the alternate.
-            (Some("Reviewer"), Some("alternate-model (high)")),
-            (Some("Planner"), Some("alternate-model (high)")),
+            (Some("Reviewer"), Some("alternate-model")),
+            (Some("Planner"), Some("alternate-model")),
             (None, None),
-            (Some("Reader"), Some("default-model (high)")),
+            (Some("Reader"), Some("default-model")),
         ]
     );
     assert_eq!(cards[4].title, "title not recorded");
@@ -441,4 +441,71 @@ fn patch_carries_only_changed_cards() {
     assert_eq!(patch.upserts[0].column, Column::Reviewing);
     assert_eq!(patch.removals, [2]);
     assert!(after.patch_since(&after).upserts.is_empty());
+}
+
+#[test]
+fn done_shows_the_last_day_and_counts_every_ending() {
+    let mut recent = request(0, Phase::Closed(Outcome::Merged));
+    recent.phase_since_ms = Some(NOW - 23 * 60 * MINUTE);
+    let mut old = request(1, Phase::Closed(Outcome::Stopped));
+    old.phase_since_ms = Some(NOW - 25 * 60 * MINUTE);
+    let mut unknown = request(2, Phase::Closed(Outcome::Duplicate));
+    unknown.phase_since_ms = None;
+    let mut cleaning = request(3, Phase::Stopping(Outcome::Stopped));
+    cleaning.phase_since_ms = Some(NOW - 30 * 60 * MINUTE);
+    let board = board(vec![
+        recent,
+        old,
+        unknown,
+        cleaning,
+        request(4, Phase::Making),
+    ]);
+    assert_eq!(
+        board.cards.iter().map(|card| card.id).collect::<Vec<_>>(),
+        [0, 3, 4],
+        "closed requests older than a day leave the board; cleanup stays"
+    );
+    let done = board
+        .flow
+        .columns
+        .iter()
+        .find(|count| count.column == Column::Done)
+        .unwrap();
+    assert_eq!(done.count, 4, "the count includes every ending");
+}
+
+#[test]
+fn a_cancelled_step_is_not_the_wait() {
+    // Stopping from the merge queue leaves the queue admission in flight, cancelled.
+    let mut stopping = request(0, Phase::Stopping(Outcome::Stopped));
+    stopping.node.effect = Some(InFlight {
+        seq: 3,
+        kind: EffectKind::Enqueue,
+        cancelling: true,
+    });
+    let mut tearing_down = request(1, Phase::Stopping(Outcome::Stopped));
+    tearing_down.node.effect = Some(InFlight {
+        seq: 4,
+        kind: EffectKind::StopRun,
+        cancelling: false,
+    });
+    let mut moved_on = request(2, Phase::Ready(Resume::Making));
+    moved_on.node.effect = Some(InFlight {
+        seq: 1,
+        kind: EffectKind::StartRun(Role::Make),
+        cancelling: true,
+    });
+    let waits: Vec<_> = board(vec![stopping, tearing_down, moved_on])
+        .cards
+        .into_iter()
+        .map(|card| card.waiting_on)
+        .collect();
+    assert_eq!(
+        waits,
+        [
+            "a cancelled step to settle",
+            "the current task to stop",
+            "a cancelled step to settle",
+        ]
+    );
 }

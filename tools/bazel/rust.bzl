@@ -33,8 +33,9 @@ _COMPILE_DATA = {
         "//workers/tests:fixtures",
     ],
     "crates/config": ["//deploy/dl380g10:models.toml"],
-    # The console's tests and fixture include the store's embedded Postgres support.
-    "crates/console": ["//crates/store:sources"],
+    # The console's tests and fixture include the store's embedded Postgres
+    # support and the example config's model ladders.
+    "crates/console": ["//crates/config:sources", "//crates/store:sources"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }
@@ -43,7 +44,8 @@ _BUILD_SCRIPT_DATA = {
 }
 _EXAMPLE_DATA = {
     "//deploy/dl380g10:helper.rs": ["//deploy/github-app:manifest.json"],
-    "examples/console_fixture.rs": ["//crates/store:sources"],
+    "examples/console_fixture.rs": ["//crates/config:sources", "//crates/store:sources"],
+    "examples/board_scale.rs": ["//crates/store:sources"],
 }
 
 # Files other crates' tests read at run time.

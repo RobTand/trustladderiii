@@ -103,7 +103,11 @@ fn main() {
         tl3_console::Options {
             store: settings.clone(),
             assets,
-            models: None,
+            models: Some(
+                tl3_config::Config::parse(include_str!("../../config/example.toml"))
+                    .unwrap()
+                    .models,
+            ),
         },
     )
     .unwrap();

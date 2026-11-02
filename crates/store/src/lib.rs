@@ -939,6 +939,18 @@ impl Reader {
     }
 }
 
+/// Create or update a login that may only read TL3's tables, now and after
+/// later migrations, with the password in `password_file`. Connects as the
+/// store's owner. Safe to repeat.
+pub fn grant_reader(
+    settings: &tl3_config::Store,
+    role: &str,
+    password_file: &std::path::Path,
+) -> Result<()> {
+    let _ = (settings, role, password_file);
+    todo!()
+}
+
 /// A read-only session that waits for committed changes on the change feed.
 /// It blocks on the socket, so a waiting reader never polls.
 pub struct Listener {

@@ -40,6 +40,7 @@ fn main() {
 
     commit_reaches_open_stream(address, &settings, &mut controller);
     println!("test commit_reaches_open_stream ... ok");
+    println!("test worker_progress_reaches_the_stream ... ok");
     last_event_id_gets_a_fresh_consistent_snapshot(address, &settings);
     println!("test last_event_id_gets_a_fresh_consistent_snapshot ... ok");
     serves_board_and_web_app(address, &settings);
@@ -47,10 +48,12 @@ fn main() {
     console_reads_through_a_role_that_cannot_write(&settings);
     println!("test console_reads_through_a_role_that_cannot_write ... ok");
     drop(controller);
+    builds_once_the_store_is_migrated(&mut database, assets.path());
+    println!("test builds_once_the_store_is_migrated ... ok");
     streams_again_after_postgres_restarts(address, &mut database, &settings, records.path());
     println!("test streams_again_after_postgres_restarts ... ok");
     database.stop();
-    println!("5 console scenarios passed; no skips");
+    println!("7 console scenarios passed; no skips");
 }
 
 fn bootstrap() -> Bootstrap {
@@ -155,6 +158,7 @@ fn commit_reaches_open_stream(
     );
     let mut column = "Intake".to_string();
     let mut seen = first.data["revision"].as_i64().unwrap();
+    let mut shown = first.id.clone();
     for _ in 0..100 {
         if column == "Making" {
             break;
@@ -164,18 +168,55 @@ fn commit_reaches_open_stream(
         while seen < committed {
             let event = stream.board_event();
             assert_eq!(event.name, "patch", "{event:?}");
-            assert!(
-                event
-                    .id
-                    .starts_with(&format!("{}.", event.data["revision"]))
-            );
-            seen = event.data["revision"].as_i64().unwrap();
-            if let Some(moved) = card_column(&event.data["upserts"], 42) {
+            // Each patch names the board it applies to, so a gap is visible.
+            assert_eq!(event.data["base"], shown.as_str(), "{event:?}");
+            let patch = &event.data["patch"];
+            assert!(event.id.starts_with(&format!("{}.", patch["revision"])));
+            seen = patch["revision"].as_i64().unwrap();
+            shown = event.id.clone();
+            if let Some(moved) = card_column(&patch["upserts"], 42) {
                 column = moved;
             }
         }
     }
     assert_eq!(column, "Making", "the card moved live without a reload");
+    worker_progress_reaches_the_stream(&mut stream, settings, &shown);
+}
+
+/// A worker's progress, with no controller commit, updates the card.
+fn worker_progress_reaches_the_stream(
+    stream: &mut EventStream,
+    settings: &tl3_config::Store,
+    shown: &str,
+) {
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    store
+        .claim_worker("console-progress", "0", snapshot.epoch.get(), 1)
+        .unwrap();
+    store
+        .record_worker_progress("console-progress", 1, 7, "tool_result", None)
+        .unwrap();
+    let mut base = shown.to_string();
+    loop {
+        let event = stream.board_event();
+        assert_eq!(event.data["base"], base.as_str());
+        base = event.id.clone();
+        let patch = &event.data["patch"];
+        assert_eq!(patch["revision"], snapshot.revision.get());
+        let card = patch["upserts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["issue"] == 42);
+        if let Some(card) = card
+            && card["last_progress"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Tool result received at "))
+        {
+            break;
+        }
+    }
 }
 
 fn last_event_id_gets_a_fresh_consistent_snapshot(
@@ -260,13 +301,13 @@ fn streams_again_after_postgres_restarts(
     let committed = revision(settings);
     loop {
         let event = stream.board_event();
-        let cards = if event.name == "snapshot" {
-            &event.data["cards"]
+        let (board, cards) = if event.name == "snapshot" {
+            (&event.data, &event.data["cards"])
         } else {
-            &event.data["upserts"]
+            (&event.data["patch"], &event.data["patch"]["upserts"])
         };
         if card_column(cards, 43).is_some() {
-            assert_eq!(event.data["revision"], committed);
+            assert_eq!(board["revision"], committed);
             break;
         }
     }
@@ -291,11 +332,13 @@ struct EventStream {
 
 impl EventStream {
     fn open(address: SocketAddr, last_event_id: Option<&str>) -> Self {
-        let mut socket = TcpStream::connect(address).unwrap();
         // A hang guard only; events arrive as soon as Postgres commits.
-        socket
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .unwrap();
+        Self::open_with_guard(address, last_event_id, Duration::from_secs(60))
+    }
+
+    fn open_with_guard(address: SocketAddr, last_event_id: Option<&str>, guard: Duration) -> Self {
+        let mut socket = TcpStream::connect(address).unwrap();
+        socket.set_read_timeout(Some(guard)).unwrap();
         let resume = last_event_id
             .map(|id| format!("Last-Event-ID: {id}\r\n"))
             .unwrap_or_default();
@@ -434,4 +477,25 @@ fn get(address: SocketAddr, path: &str) -> (u16, String, Vec<u8>) {
         body
     };
     (status, headers, body)
+}
+
+/// A console started before tl3d migrates the store builds the board once the
+/// schema matches, without waiting for a controller commit.
+fn builds_once_the_store_is_migrated(database: &mut Database, assets: &Path) {
+    let settings = database.create("console_unmigrated");
+    let console = tl3_console::start(
+        TcpListener::bind("127.0.0.1:0").unwrap(),
+        tl3_console::Options {
+            store: settings.clone(),
+            assets: assets.into(),
+            models: None,
+        },
+    )
+    .unwrap();
+    let mut stream = EventStream::open_with_guard(console.address(), None, Duration::from_secs(20));
+    drop(Store::open(&settings).unwrap());
+    let event = stream.board_event();
+    assert_eq!(event.name, "snapshot");
+    assert_eq!(event.data["revision"], 0);
+    assert_eq!(event.data["cards"], serde_json::json!([]));
 }

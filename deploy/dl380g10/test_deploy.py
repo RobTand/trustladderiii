@@ -346,6 +346,76 @@ class DeployTests(unittest.TestCase):
         self.assertEqual((installed / "assets/app.js").read_text(), "app")
         self.assertFalse((installed / "stale.js").exists())
 
+    def test_fresh_install_uses_the_console_listen_flag(self):
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987},
+                         console_listen="192.168.1.107:9100")
+        self.assertEqual(tomllib.loads(destination.read_text())["console"]["listen"], "192.168.1.107:9100")
+
+    def test_console_connects_as_a_read_only_login(self):
+        _, data = self.config()
+        config = self.home / ".config/tl3"
+        self.assertEqual(data["console"]["user"], "tl3_console")
+        self.assertEqual(data["console"]["password_file"], str(config / "secrets/console-postgres-password"))
+        destination = config / "tl3.toml"
+        text = self.config()[0].read_text()
+        older = "\n".join(line for line in text.splitlines()
+                          if not line.startswith(("user = \"tl3_console\"", "password_file = \"" + str(config / "secrets/console"))))
+        deploy.write_file(destination, (older + "\n").encode())
+        deploy.configure(self.home, "192.168.1.107:8033", {})
+        console = tomllib.loads(destination.read_text())["console"]
+        self.assertEqual(console["user"], "tl3_console")
+        self.assertEqual(console["password_file"], str(config / "secrets/console-postgres-password"))
+        for unit in ("tl3-console.service", "tl3-postgres.service"):
+            self.assertIn("LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password",
+                          (deploy.HERE / "units" / unit).read_text().splitlines(), unit)
+
+    def test_postgres_setup_creates_the_console_credential_once(self):
+        root, config, binaries = deploy.paths(self.home)
+        (binaries / "bin").mkdir(parents=True)
+        (binaries / "bin/postgres").write_text("")
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.postgres(self.home)
+        secret = config / "secrets/console-postgres-password"
+        deploy.private_file(secret)
+        first = secret.read_bytes()
+        self.assertNotEqual(first, (config / "secrets/postgres-password").read_bytes())
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.postgres(self.home)
+        self.assertEqual(secret.read_bytes(), first)
+
+    def test_services_read_the_console_credential_from_systemd(self):
+        config, _ = self.config()
+        destination = self.home / ".config/tl3/tl3.toml"
+        deploy.write_file(destination, config.read_bytes())
+        runtime = self.home / "runtime"
+        credentials = self.home / "credentials"
+        for service in ("console", "database"):
+            with self.subTest(service=service), \
+                 patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
+                 patch.object(os, "execv"):
+                deploy.service(self.home, service)
+                written = tomllib.loads((runtime / "tl3.toml").read_text())
+                self.assertEqual(written["console"]["password_file"], str(credentials / "console-postgres-password"))
+
+    def test_install_grants_the_console_login_when_postgres_runs(self):
+        root, config, _ = deploy.paths(self.home)
+        for active in (True, False):
+            calls = []
+
+            def command(argv, **kwargs):
+                calls.append([str(part) for part in argv])
+                return subprocess.CompletedProcess(argv, 0 if active else 3)
+
+            with self.subTest(active=active), patch.object(subprocess, "run", side_effect=command), \
+                 patch.object(deploy, "run", side_effect=lambda argv, **kwargs: calls.append([str(p) for p in argv])), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                deploy.grant_console_reader(self.home)
+            grant = [str(root / "bin/tl3-deploy"), "console-role", str(config / "tl3.toml")]
+            self.assertEqual(grant in calls, active)
+            if not active:
+                self.assertIn("tl3-postgres", output.getvalue())
+
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             with self.assertRaisesRegex(RuntimeError, "output suppressed"):

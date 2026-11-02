@@ -389,6 +389,19 @@ pub struct Console {
     pub listen: SocketAddr,
     /// The built web app. Deploy builds and installs it, so Rust builds never need Node.
     pub assets: PathBuf,
+    /// A Postgres login that may only read, used instead of `store.user`.
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password_file: Option<PathBuf>,
+}
+
+impl Console {
+    /// The store settings the console connects with.
+    pub fn store(&self, store: &Store) -> Store {
+        let _ = store;
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

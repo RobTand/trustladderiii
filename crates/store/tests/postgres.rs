@@ -44,6 +44,8 @@ fn main() {
         ("ingress_retirement", ingress_retirement),
         ("change_feed", change_feed),
         ("phase_entry_times", phase_entry_times),
+        ("phase_backfill_from_schema_9", phase_backfill_from_schema_9),
+        ("reader_role", reader_role),
     ];
     let selected: Vec<_> = cases
         .iter()
@@ -1192,4 +1194,132 @@ fn phase_entry_times(settings: &tl3_config::Store) {
             .get::<_, i64>(0),
         0
     );
+}
+
+/// A version-9 world, from before the change feed, gains entry times from
+/// each node's last change. Rows without a phase are skipped.
+fn phase_backfill_from_schema_9(settings: &tl3_config::Store) {
+    let mut client = raw(settings);
+    client
+        .batch_execute(
+            "CREATE TABLE tl3_schema_migrations (version integer PRIMARY KEY, sql text NOT NULL)",
+        )
+        .unwrap();
+    let schema_9 = [
+        include_str!("../migrations/0001_store.sql"),
+        include_str!("../migrations/0002_world_arrival.sql"),
+        include_str!("../migrations/0003_workers.sql"),
+        include_str!("../migrations/0004_ingress.sql"),
+        include_str!("../migrations/0005_worker_retirement.sql"),
+        include_str!("../migrations/0006_worker_wait.sql"),
+        include_str!("../migrations/0007_hindsight.sql"),
+        include_str!("../migrations/0008_memory_parking.sql"),
+        include_str!("../migrations/0009_memory_recovery.sql"),
+    ];
+    for (index, sql) in schema_9.iter().enumerate() {
+        client.batch_execute(sql).unwrap();
+        client
+            .execute(
+                "INSERT INTO tl3_schema_migrations VALUES ($1, $2)",
+                &[&((index + 1) as i32), sql],
+            )
+            .unwrap();
+    }
+    client
+        .batch_execute(
+            "INSERT INTO tl3_events (event_key, revision, epoch, payload, result, committed_at) VALUES
+                 ('first', 1, 0, '1', '1', '2026-10-01 10:00:00+00'),
+                 ('second', 2, 0, '2', '2', '2026-10-02 11:30:00+00');
+             INSERT INTO tl3_world (table_name, row_id, value, version) VALUES
+                 ('nodes', '0', '{\"phase\": {\"Closed\": \"Merged\"}}', 1),
+                 ('nodes', '1', '{\"phase\": \"Making\", \"attempt\": 2}', 2),
+                 ('nodes', '2', '[1, 2]', 2),
+                 ('nodes', '3', '{\"attempt\": 1}', 1),
+                 ('requests', '1', '{\"phase\": \"Making\"}', 2);
+             UPDATE tl3_meta SET revision = 2;",
+        )
+        .unwrap();
+    drop(Store::open(settings).unwrap());
+    let rows: Vec<(String, serde_json::Value, String)> = client
+        .query(
+            "SELECT node_id, phase, to_char(since AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM tl3_node_phases ORDER BY node_id",
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "0".into(),
+                json!({"Closed": "Merged"}),
+                "2026-10-01 10:00".into()
+            ),
+            ("1".into(), json!("Making"), "2026-10-02 11:30".into()),
+        ]
+    );
+}
+
+/// The console's login reads every table, including ones later migrations
+/// add, and can't write. Granting twice changes nothing.
+fn reader_role(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let change = seed(&mut store);
+    store.commit(&change).unwrap();
+    let password = settings.password_file.as_deref().unwrap();
+    grant_reader(settings, "tl3_reader_test", password).unwrap();
+    grant_reader(settings, "tl3_reader_test", password).unwrap();
+    let reader = tl3_config::Store {
+        user: "tl3_reader_test".into(),
+        ..settings.clone()
+    };
+    assert_eq!(
+        Reader::open(&reader).unwrap().load().unwrap(),
+        store.load().unwrap()
+    );
+    Listener::open(&reader).unwrap();
+    let mut owner = raw(settings);
+    owner
+        .batch_execute(
+            "CREATE TABLE tl3_later_migration (id int); INSERT INTO tl3_later_migration VALUES (7)",
+        )
+        .unwrap();
+    let mut client = postgres::Config::new()
+        .host(&reader.host)
+        .port(reader.port)
+        .user(&reader.user)
+        .dbname(&reader.database)
+        .password("tl3-disposable-test-password")
+        .connect(NoTls)
+        .unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT id FROM tl3_later_migration", &[])
+            .unwrap()
+            .get::<_, i32>(0),
+        7
+    );
+    for sql in [
+        "INSERT INTO tl3_world VALUES ('forbidden', '1', '{}', 1)",
+        "UPDATE tl3_meta SET revision = revision",
+        "DELETE FROM tl3_later_migration",
+        "CREATE TABLE tl3_forbidden (id int)",
+    ] {
+        assert!(client.batch_execute(sql).is_err(), "{sql}");
+    }
+    let flags = owner
+        .query_one(
+            "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolcanlogin FROM pg_roles WHERE rolname = 'tl3_reader_test'",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        (0..5)
+            .map(|index| flags.get::<_, bool>(index))
+            .collect::<Vec<_>>(),
+        [false, false, false, false, true]
+    );
+    assert!(grant_reader(settings, "bad role; DROP TABLE tl3_world", password).is_err());
 }

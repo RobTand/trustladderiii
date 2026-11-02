@@ -19,5 +19,9 @@ describe("FlowStrip", () => {
     expect(value("In flight")).toHaveTextContent("3");
     expect(value("Merged, last hour")).toHaveTextContent("2");
     expect(value("Merged, last day")).toHaveTextContent("11");
+    // A dl may group each dt and dd in one div, and nothing deeper.
+    for (const term of document.querySelectorAll("dt")) {
+      expect(term.parentElement?.parentElement?.tagName).toBe("DL");
+    }
   });
 });
