@@ -21,7 +21,7 @@ def finish(key, request):
         save(root / "ready" / f"{key}.json", {"schema": "prismaquant.prismabuild.pool_item.v1",
              "action_key": key, "published_unix": 100, "attempt_history": []})
         return
-    state = mode if mode in ("failed", "withdrawn") else "done"
+    state = mode if mode in ("failed", "withdrawn") else "failed" if mode == "harness_error" else "done"
     original = next((recordings / state).glob("*.json"))
     old_key = original.stem
     text = original.read_text().replace(old_key, key)
@@ -54,6 +54,10 @@ def finish(key, request):
     if mode == "bad_report":
         report = {"invalid": True}
     raw = "" if mode in ("no_report", "withdrawn") else "TL3_CHECKS " + json.dumps(report) + "\n"
+    if mode == "harness_error":
+        raw = ("Traceback (most recent call last):\nValueError: a plan needs uniquely named checks\n"
+               "TL3_CHECKS_ERROR " + json.dumps({"schema": "tl3.checks.error.v1",
+                                                 "effect_key": request["effect_key"], "error": "ValueError"}) + "\n")
     log = root / f"{key}.stdout"
     log.write_text(raw)
     save(root / f"{key}.ending", {"schema": "prismabuild.endings.v1", "complete": True,

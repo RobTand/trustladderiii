@@ -187,6 +187,23 @@ fn recorded_endings() {
         );
     }
 }
+fn harness_error_is_named_tl3_side() {
+    // #326: the trusted harness rejected TL3's own check input inside the action.
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "harness_error");
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    assert_eq!(ended.failure_class.as_deref(), Some("harness"));
+    assert!(!observed(ended).0, "no check report");
+    for mode in ["failed", "no_report", "infrastructure"] {
+        let root = tempfile::tempdir().unwrap();
+        let delivery = run(root.path(), false);
+        let mut adapter = fixture(root.path(), mode);
+        adapter.execute(&delivery).unwrap();
+        assert_eq!(completion(&mut adapter, &delivery).failure_class, None, "{mode}");
+    }
+}
 fn bounded_failure_details() {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
@@ -1737,6 +1754,7 @@ fn main() {
             retirement_refuses_active_or_unreadable_jobs,
         ),
         ("bounded_failure_details", bounded_failure_details),
+        ("harness_error_is_named_tl3_side", harness_error_is_named_tl3_side),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
         ("SIGKILL_reuses_seal", crash_reuses_seal),
