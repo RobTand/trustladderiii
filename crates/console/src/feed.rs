@@ -1,15 +1,20 @@
 //! One LISTEN session per console. Every notification marks the board stale.
 //! A lost session reconnects after a bounded backoff, then marks the board
-//! stale, since changes may have committed while it was away.
+//! stale, since changes may have committed while it was away. Sessions that
+//! drop soon after opening keep backing off.
 
-use crate::rebuild::Rebuilds;
+use crate::{
+    describe,
+    rebuild::{Change, Rebuilds},
+};
 use std::{
+    collections::BTreeSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tl3_store::Listener;
 
@@ -37,8 +42,9 @@ impl Backoff {
     /// A session that dropped soon after it opened keeps backing off; only a
     /// healthy one starts the delays over.
     pub(crate) fn after_session(&mut self, lasted: Duration) {
-        let _ = lasted;
-        todo!()
+        if lasted >= Self::HEALTHY {
+            self.reset();
+        }
     }
 
     pub(crate) fn reset(&mut self) {
@@ -46,39 +52,57 @@ impl Backoff {
     }
 }
 
-pub(crate) fn spawn(
+/// Progress tables change without a controller commit; anything else is the world.
+fn change(tables: &BTreeSet<String>) -> Change {
+    if tables
+        .iter()
+        .all(|table| matches!(table.as_str(), "tl3_worker_progress" | "tl3_worker_summary"))
+    {
+        Change::Progress
+    } else {
+        Change::World
+    }
+}
+
+pub(crate) fn run(
     settings: tl3_config::Store,
     rebuilds: Arc<Rebuilds>,
     connected: Arc<AtomicBool>,
-) -> std::io::Result<thread::JoinHandle<()>> {
-    thread::Builder::new()
-        .name("tl3-console-feed".into())
-        .spawn(move || {
-            let mut backoff = Backoff::new();
-            let mut reported = false;
-            loop {
-                match Listener::open(&settings) {
-                    Ok(mut listener) => {
-                        backoff.reset();
-                        reported = false;
-                        connected.store(true, Ordering::SeqCst);
-                        rebuilds.request();
-                        while listener.wait().is_ok() {
-                            rebuilds.request();
-                        }
-                        connected.store(false, Ordering::SeqCst);
-                        eprintln!("console change feed lost; reconnecting");
-                        rebuilds.request();
+) {
+    let mut backoff = Backoff::new();
+    let mut reported = false;
+    loop {
+        let opened = Instant::now();
+        match Listener::open(&settings) {
+            Ok(mut listener) => {
+                reported = false;
+                connected.store(true, Ordering::SeqCst);
+                rebuilds.request(Change::World);
+                let error = loop {
+                    match listener.wait() {
+                        Ok(tables) => rebuilds.request(change(&tables)),
+                        Err(error) => break error,
                     }
-                    Err(error) if !reported => {
-                        reported = true;
-                        eprintln!("console change feed unavailable: {error}; retrying");
-                    }
-                    Err(_) => {}
-                }
-                thread::sleep(backoff.delay());
+                };
+                connected.store(false, Ordering::SeqCst);
+                eprintln!(
+                    "console change feed lost: {}; reconnecting",
+                    describe(&error)
+                );
+                rebuilds.request(Change::World);
+                backoff.after_session(opened.elapsed());
             }
-        })
+            Err(error) if !reported => {
+                reported = true;
+                eprintln!(
+                    "console change feed unavailable: {}; retrying",
+                    describe(&error)
+                );
+            }
+            Err(_) => {}
+        }
+        thread::sleep(backoff.delay());
+    }
 }
 
 #[cfg(test)]

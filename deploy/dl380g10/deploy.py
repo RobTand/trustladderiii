@@ -127,6 +127,7 @@ def postgres(home):
     if (root / "postgres/data").exists() and not credential.exists():
         raise RuntimeError("existing Postgres data needs its original password file; refusing to generate another")
     password(credential)
+    password(config / "secrets/console-postgres-password")
     private_dir(root / "postgres")
     private_dir(root / "postgres/socket")
     print(f"Postgres: Zonky {PG_VERSION} installed")
@@ -167,10 +168,13 @@ def lan_address(listen, service):
 
 
 def console_fields(home, listen, console_listen=None):
-    """The console listens beside the status page unless told otherwise."""
+    """The console listens beside the status page unless told otherwise, and
+    reads Postgres as its own login that may only read."""
     console_listen = console_listen or lan_address(listen, "status") + ":8034"
     lan_address(console_listen, "console")
-    return {"listen": console_listen, "assets": str(paths(home)[0] / "console")}
+    root, config, _ = paths(home)
+    return {"listen": console_listen, "assets": str(root / "console"), "user": "tl3_console",
+            "password_file": str(config / "secrets/console-postgres-password")}
 
 
 def render_config(home, listen, installation=1, issue=None, image=None, primary=None, alternate=None,
@@ -212,6 +216,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     if issue is not None:
         text = text.replace('[github]\n', '[github]\noperations = ' + toml_value({"owner": "RobTand", "name": "trustladderiii", "number": issue, "installation_id": installation}) + '\n')
         text += f'\n[operations]\nowner = "RobTand"\nrepo = "trustladderiii"\nissue = {issue}\n'
+    text = add_fields(text, "[console]", {key: toml_value(console[key]) for key in ("user", "password_file")})
     tomllib.loads(text)
     return text
 
@@ -229,7 +234,7 @@ def configure(home, listen, state, image=None, primary=None, alternate=None, con
     _, config, _ = paths(home)
     destination = config / "tl3.toml"
     defaults = render_config(home, listen, state.get("installation_id", 1),
-                             state.get("operations_issue"), image, primary, alternate)
+                             state.get("operations_issue"), image, primary, alternate, console_listen)
     if not destination.exists():
         write_file(destination, defaults.encode())
         return
@@ -339,6 +344,7 @@ def install(args):
     run([root / "bin/tl3-deploy", "parse", destination])
     install_console_assets(home)
     print("Console: web app built with npm and installed")
+    grant_console_reader(home)
     units = home / ".config/systemd/user"
     units.mkdir(parents=True, exist_ok=True)
     for unit in (HERE / "units").glob("*.service"):
@@ -371,6 +377,17 @@ def install_console_assets(home, source=SOURCE):
     shutil.rmtree(previous, ignore_errors=True)
 
 
+def grant_console_reader(home):
+    """Create or update the console's read-only login. Postgres also does this each time it starts."""
+    root, config, _ = paths(home)
+    active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "tl3-postgres.service"]).returncode == 0
+    if active:
+        run([root / "bin/tl3-deploy", "console-role", config / "tl3.toml"])
+        print("Console: read-only Postgres login granted")
+    else:
+        print("Console: the read-only Postgres login is granted when tl3-postgres starts")
+
+
 def service(home, name):
     root, config, _ = paths(home)
     runtime = Path(os.environ["RUNTIME_DIRECTORY"])
@@ -380,6 +397,7 @@ def service(home, name):
     if name == "controller" and cache:
         os.environ["TIKTOKEN_CACHE_DIR"] = cache
     for source, filename in ((config / "secrets/postgres-password", "postgres-password"),
+                             (config / "secrets/console-postgres-password", "console-postgres-password"),
                              (config / "github-app.json", "github-app.json"),
                              (config / "secrets/model-key", "model-key"),
                              (config / "secrets/hindsight-key", "hindsight-key")):

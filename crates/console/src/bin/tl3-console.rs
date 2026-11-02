@@ -20,8 +20,7 @@ fn run() -> tl3_console::Result<()> {
             ));
         }
     };
-    // The console needs only its store credential, like the status page.
-    let config = tl3_config::Config::load_status(path)?;
+    let config = tl3_config::Config::load_console(path)?;
     config.validate()?;
     let console = config.console.ok_or(tl3_console::Error::Invalid(
         "the config has no [console] section",
@@ -30,7 +29,7 @@ fn run() -> tl3_console::Result<()> {
     let running = tl3_console::start(
         listener,
         tl3_console::Options {
-            store: config.store,
+            store: console.store(&config.store),
             assets: console.assets,
             models: Some(config.models),
         },

@@ -20,14 +20,28 @@ impl Supervisor {
         name: &'static str,
         body: impl FnOnce() + Send + 'static,
     ) -> std::io::Result<()> {
-        let _ = (name, body, thread::current());
-        todo!()
+        // Dropped on return and while unwinding from a panic alike.
+        struct Report(mpsc::Sender<&'static str>, &'static str);
+        impl Drop for Report {
+            fn drop(&mut self) {
+                let _ = self.0.send(self.1);
+            }
+        }
+        let report = Report(self.stopped.clone(), name);
+        thread::Builder::new()
+            .name(format!("tl3-console-{name}"))
+            .spawn(move || {
+                let _report = report;
+                body();
+            })?;
+        Ok(())
     }
 
     /// Block until any supervised thread stops; returns its name.
     pub(crate) fn wait(self) -> &'static str {
-        let _ = (&self.stopped, &self.first);
-        todo!()
+        self.first
+            .recv()
+            .expect("the supervisor holds a sender until it returns")
     }
 }
 

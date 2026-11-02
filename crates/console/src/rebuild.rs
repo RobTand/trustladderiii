@@ -1,5 +1,6 @@
 //! Change notifications mark the board stale; one loop rebuilds it. Marks
-//! that arrive during a rebuild collapse into one more rebuild.
+//! that arrive during a rebuild collapse into one more rebuild, and a world
+//! change covers any progress tick that arrived with it.
 
 use std::sync::{Condvar, Mutex};
 
@@ -9,15 +10,23 @@ pub(crate) struct Rebuilds {
     wake: Condvar,
 }
 
+/// What changed: worker progress alone, or the controller's world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Change {
+    Progress,
+    World,
+}
+
 #[derive(Default)]
 struct State {
-    stale: bool,
+    stale: Option<Change>,
     stopped: bool,
 }
 
 impl Rebuilds {
-    pub(crate) fn request(&self) {
-        self.state.lock().expect("rebuild state").stale = true;
+    pub(crate) fn request(&self, change: Change) {
+        let mut state = self.state.lock().expect("rebuild state");
+        state.stale = state.stale.max(Some(change));
         self.wake.notify_one();
     }
 
@@ -27,16 +36,15 @@ impl Rebuilds {
         self.wake.notify_all();
     }
 
-    /// Block until the board is stale, and claim it. False once stopped.
-    pub(crate) fn next(&self) -> bool {
+    /// Block until the board is stale, and claim what changed. None once stopped.
+    pub(crate) fn next(&self) -> Option<Change> {
         let mut state = self.state.lock().expect("rebuild state");
         loop {
             if state.stopped {
-                return false;
+                return None;
             }
-            if state.stale {
-                state.stale = false;
-                return true;
+            if let Some(change) = state.stale.take() {
+                return Some(change);
             }
             state = self.wake.wait(state).expect("rebuild state");
         }
@@ -60,7 +68,7 @@ mod tests {
             let rebuilds = rebuilds.clone();
             thread::spawn(move || {
                 let mut count = 0;
-                while rebuilds.next() {
+                while rebuilds.next().is_some() {
                     count += 1;
                     started.send(count).unwrap();
                     gate.recv().unwrap();
@@ -68,10 +76,10 @@ mod tests {
                 count
             })
         };
-        rebuilds.request();
+        rebuilds.request(Change::World);
         assert_eq!(builds.recv().unwrap(), 1);
         for _ in 0..10 {
-            rebuilds.request();
+            rebuilds.request(Change::Progress);
         }
         release.send(()).unwrap();
         assert_eq!(builds.recv().unwrap(), 2);
@@ -84,10 +92,21 @@ mod tests {
     #[test]
     fn repeated_requests_build_once_and_stop_ends_the_loop() {
         let rebuilds = Rebuilds::default();
-        rebuilds.request();
-        rebuilds.request();
-        assert!(rebuilds.next());
+        rebuilds.request(Change::World);
+        rebuilds.request(Change::World);
+        assert_eq!(rebuilds.next(), Some(Change::World));
         rebuilds.stop();
-        assert!(!rebuilds.next());
+        assert_eq!(rebuilds.next(), None);
+    }
+
+    #[test]
+    fn a_world_change_covers_progress_ticks() {
+        let rebuilds = Rebuilds::default();
+        rebuilds.request(Change::Progress);
+        assert_eq!(rebuilds.next(), Some(Change::Progress));
+        rebuilds.request(Change::Progress);
+        rebuilds.request(Change::World);
+        rebuilds.request(Change::Progress);
+        assert_eq!(rebuilds.next(), Some(Change::World));
     }
 }

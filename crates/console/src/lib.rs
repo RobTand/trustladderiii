@@ -10,7 +10,7 @@ mod rebuild;
 mod server;
 mod supervise;
 
-use rebuild::Rebuilds;
+use rebuild::{Change, Rebuilds};
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -18,10 +18,10 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tl3_controller::board::{self, Board};
+use supervise::Supervisor;
+use tl3_controller::board::{Board, Rows};
 use tl3_store::Reader;
 use tokio::sync::watch;
 
@@ -33,6 +33,8 @@ pub enum Error {
     Invalid(&'static str),
     #[error("console I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("the console's {0} thread stopped; exiting so the service restarts")]
+    Stopped(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -48,7 +50,7 @@ pub struct Options {
 /// A console serving on its own threads.
 pub struct Running {
     address: SocketAddr,
-    server: thread::JoinHandle<std::io::Result<()>>,
+    supervisor: Supervisor,
 }
 
 impl Running {
@@ -56,12 +58,10 @@ impl Running {
         self.address
     }
 
-    /// Block while the console serves.
+    /// Block while the console serves. Returns when any of its threads stops,
+    /// so the caller can exit and let the service manager restart it.
     pub fn wait(self) -> Result<()> {
-        self.server
-            .join()
-            .map_err(|_| Error::Invalid("the console's HTTP server panicked"))??;
-        Ok(())
+        Err(Error::Stopped(self.supervisor.wait()))
     }
 }
 
@@ -83,84 +83,132 @@ pub fn start(listener: std::net::TcpListener, options: Options) -> Result<Runnin
     let rebuilds = Arc::new(Rebuilds::default());
     let connected = Arc::new(AtomicBool::new(false));
     let (publish, published) = watch::channel(Published::default());
-    feed::spawn(options.store.clone(), rebuilds.clone(), connected.clone())?;
+    let supervisor = Supervisor::new();
     let Options {
         store,
         assets,
         models,
     } = options;
-    thread::Builder::new()
-        .name("tl3-console-board".into())
-        .spawn(move || {
-            let mut reader = None;
-            while rebuilds.next() {
-                let built = build(&mut reader, &store, models.as_ref());
-                if let Err(error) = &built {
-                    eprintln!("console board unavailable: {error}");
-                }
-                let live = built.is_ok() && connected.load(Ordering::SeqCst);
-                publish.send_if_modified(|current| {
-                    let mut changed = current.connected != live;
-                    current.connected = live;
-                    if let Ok(board) = built
-                        && current
-                            .board
-                            .as_deref()
-                            .is_none_or(|shown| !same_content(shown, &board))
-                    {
-                        current.build += 1;
-                        current.board = Some(Arc::new(board));
-                        changed = true;
-                    }
-                    changed
-                });
+    {
+        let (store, rebuilds, connected) = (store.clone(), rebuilds.clone(), connected.clone());
+        supervisor.spawn("feed", move || feed::run(store, rebuilds, connected))?;
+    }
+    supervisor.spawn("board", move || {
+        let mut board = Builder {
+            store,
+            models,
+            reader: None,
+            rows: None,
+        };
+        let mut retry = feed::Backoff::new();
+        while let Some(change) = rebuilds.next() {
+            let built = board.build(change);
+            let live = built.is_ok() && connected.load(Ordering::SeqCst);
+            match &built {
+                Ok(_) => retry.reset(),
+                Err(error) => eprintln!("console board unavailable: {}", describe(error)),
             }
-        })?;
+            publish.send_if_modified(|current| {
+                let mut changed = current.connected != live;
+                current.connected = live;
+                if let Ok(board) = &built
+                    && current
+                        .board
+                        .as_deref()
+                        .is_none_or(|shown| !same_content(shown, board))
+                {
+                    current.build += 1;
+                    current.board = Some(Arc::new(board.clone()));
+                    changed = true;
+                }
+                changed
+            });
+            // The feed rebuilds after it reconnects. While it is connected, a
+            // failed build (a schema tl3d hasn't migrated yet) retries itself.
+            if built.is_err() && connected.load(Ordering::SeqCst) {
+                std::thread::sleep(retry.delay());
+                rebuilds.request(Change::World);
+            }
+        }
+    })?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("tl3-console-http")
         .enable_all()
         .build()?;
     let app = server::router(published, &assets);
-    let server = thread::Builder::new()
-        .name("tl3-console-http".into())
-        .spawn(move || {
-            runtime.block_on(async move {
-                let listener = tokio::net::TcpListener::from_std(listener)?;
-                axum::serve(listener, app).await
-            })
-        })?;
-    Ok(Running { address, server })
+    supervisor.spawn("http", move || {
+        let served = runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(listener)?;
+            axum::serve(listener, app).await
+        });
+        if let Err(error) = served {
+            eprintln!("console HTTP server stopped: {error}");
+        }
+    })?;
+    Ok(Running {
+        address,
+        supervisor,
+    })
 }
 
-/// Read the board in one snapshot. A broken session is replaced once.
-fn build(
-    reader: &mut Option<Reader>,
-    store: &tl3_config::Store,
-    models: Option<&tl3_config::Models>,
-) -> tl3_controller::Result<Board> {
-    let mut retried = false;
-    loop {
-        if reader.is_none() {
-            *reader = Some(Reader::open(store)?);
-        }
-        let session = reader.as_mut().expect("an open reader");
-        let result = session
-            .transaction()
-            .map_err(Into::into)
-            .and_then(|mut tx| {
-                let board = board::read(&mut tx, now_ms(), models)?;
-                tx.commit().map_err(tl3_store::Error::from)?;
-                Ok(board)
-            });
-        match result {
-            Err(_) if !retried => {
-                retried = true;
-                *reader = None;
+/// Keeps the last read rows so a progress tick rereads progress alone.
+struct Builder {
+    store: tl3_config::Store,
+    models: Option<tl3_config::Models>,
+    reader: Option<Reader>,
+    rows: Option<Rows>,
+}
+
+impl Builder {
+    /// Read the board in one snapshot. A broken session is replaced once.
+    fn build(&mut self, change: Change) -> tl3_controller::Result<Board> {
+        let mut retried = false;
+        loop {
+            match self.read(change) {
+                Err(_) if !retried => {
+                    retried = true;
+                    self.reader = None;
+                }
+                result => return result,
             }
-            result => return result,
         }
     }
+
+    fn read(&mut self, change: Change) -> tl3_controller::Result<Board> {
+        if self.reader.is_none() {
+            self.reader = Some(Reader::open(&self.store)?);
+        }
+        let session = self.reader.as_mut().expect("an open reader");
+        let mut tx = session.transaction()?;
+        let rows = match (change, self.rows.take()) {
+            (Change::Progress, Some(mut rows)) => {
+                rows.refresh_progress(&mut tx)?;
+                rows
+            }
+            _ => Rows::read(&mut tx)?,
+        };
+        tx.commit().map_err(tl3_store::Error::from)?;
+        let board = rows.project(now_ms(), self.models.as_ref());
+        self.rows = Some(rows);
+        Ok(board)
+    }
+}
+
+/// An error and its causes on one line, for the service log.
+pub(crate) fn describe(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        // Wrappers that display their cause would repeat it.
+        let cause_text = cause.to_string();
+        if !text.ends_with(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 /// Boards that differ only in when they were built show the same thing.

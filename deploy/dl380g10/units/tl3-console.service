@@ -7,7 +7,7 @@ After=tl3-postgres.service
 [Service]
 Type=exec
 UMask=0077
-LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password
+LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password
 RuntimeDirectory=tl3-console
 RuntimeDirectoryMode=0700
 ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service console

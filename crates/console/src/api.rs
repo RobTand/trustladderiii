@@ -13,6 +13,14 @@ pub struct DatabaseStatus {
     pub connected: bool,
 }
 
+/// The stream's `patch` event: apply `patch` to the board whose event id is
+/// `base`. A client holding another board reconnects for a fresh snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+pub struct PatchEvent {
+    pub base: String,
+    pub patch: BoardPatch,
+}
+
 /// The generated `web/src/api/types.gen.ts`.
 pub fn typescript() -> String {
     let config = ts_rs::Config::new().with_large_int("number");
@@ -31,6 +39,7 @@ pub fn typescript() -> String {
         (Flow::docs(), Flow::decl(&config)),
         (Retries::docs(), Retries::decl(&config)),
         (DatabaseStatus::docs(), DatabaseStatus::decl(&config)),
+        (PatchEvent::docs(), PatchEvent::decl(&config)),
     ] {
         output.push('\n');
         output.push_str(&docs.unwrap_or_default());

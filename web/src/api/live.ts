@@ -1,52 +1,36 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyPatch } from "./board";
-import type { Board, BoardPatch, DatabaseStatus } from "./types.gen";
+import { BoardStream, browserEnvironment, type StreamState } from "./stream";
+import type { Board } from "./types.gen";
 
 export type Connection = "connecting" | "live" | "reconnecting" | "database-offline";
 
 const BOARD = ["board"] as const;
 
-async function fetchBoard(): Promise<Board> {
-  const response = await fetch("/api/board", { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`The console answered ${response.status}`);
-  return (await response.json()) as Board;
-}
-
 /**
- * The board, kept current by the console's event stream. Every (re)connection
- * starts with a full snapshot; the browser's EventSource reconnects by itself
- * after the delay the console sets.
+ * The board, kept current by the console's event stream alone: every
+ * connection starts with a snapshot, so no separate fetch can race it.
  */
-export function useLiveBoard(): { board: Board | undefined; connection: Connection; error: Error | null } {
+export function useLiveBoard(): { board: Board | undefined; connection: Connection } {
   const client = useQueryClient();
-  const query = useQuery({
-    queryKey: BOARD,
-    queryFn: fetchBoard,
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: false,
-  });
-  const [stream, setStream] = useState<"connecting" | "open" | "closed">("connecting");
+  const { data: board } = useQuery<Board>({ queryKey: BOARD, queryFn: skipToken });
+  const [stream, setStream] = useState<StreamState>("connecting");
   const [database, setDatabase] = useState(true);
   useEffect(() => {
-    const source = new EventSource("/api/stream");
-    source.onopen = () => setStream("open");
-    source.onerror = () => setStream(source.readyState === EventSource.CLOSED ? "closed" : "connecting");
-    source.addEventListener("snapshot", (event) => {
-      client.setQueryData<Board>(BOARD, JSON.parse((event as MessageEvent<string>).data) as Board);
-    });
-    source.addEventListener("patch", (event) => {
-      const patch = JSON.parse((event as MessageEvent<string>).data) as BoardPatch;
-      client.setQueryData<Board>(BOARD, (board) => (board ? applyPatch(board, patch) : board));
-    });
-    source.addEventListener("database", (event) => {
-      setDatabase((JSON.parse((event as MessageEvent<string>).data) as DatabaseStatus).connected);
-    });
-    return () => source.close();
+    const live = new BoardStream(
+      {
+        snapshot: (next) => client.setQueryData<Board>(BOARD, next),
+        patch: (patch) => client.setQueryData<Board>(BOARD, (shown) => (shown ? applyPatch(shown, patch) : shown)),
+        database: setDatabase,
+        state: setStream,
+      },
+      browserEnvironment(),
+    );
+    live.start();
+    return () => live.stop();
   }, [client]);
   const connection: Connection =
-    stream === "open" ? (database ? "live" : "database-offline") : stream === "connecting" && !query.data ? "connecting" : "reconnecting";
-  return { board: query.data, connection, error: query.data ? null : query.error };
+    stream === "open" ? (database ? "live" : "database-offline") : stream === "connecting" ? "connecting" : "reconnecting";
+  return { board, connection };
 }

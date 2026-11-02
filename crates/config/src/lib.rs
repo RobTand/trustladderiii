@@ -399,8 +399,14 @@ pub struct Console {
 impl Console {
     /// The store settings the console connects with.
     pub fn store(&self, store: &Store) -> Store {
-        let _ = store;
-        todo!()
+        match &self.user {
+            Some(user) => Store {
+                user: user.clone(),
+                password_file: self.password_file.clone(),
+                ..store.clone()
+            },
+            None => store.clone(),
+        }
     }
 }
 
@@ -737,6 +743,30 @@ impl Config {
                 ));
             }
             absolute("console.assets", &console.assets)?;
+            match (&console.user, &console.password_file) {
+                (None, None) => {}
+                (Some(user), Some(path)) => {
+                    // The deploy helper names this role in GRANT statements.
+                    if user.is_empty()
+                        || !user.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                        || !user
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        return Err(invalid(
+                            "console.user",
+                            "use a lowercase Postgres role name: letters, digits and underscores",
+                        ));
+                    }
+                    absolute("console.password_file", path)?;
+                }
+                (Some(_), None) => {
+                    return Err(invalid("console.password_file", "set it with console.user"));
+                }
+                (None, Some(_)) => {
+                    return Err(invalid("console.user", "set it with console.password_file"));
+                }
+            }
         }
         if let Some(operations) = &self.github.operations {
             github_name("github.operations.owner", &operations.owner, false)?;
@@ -790,6 +820,28 @@ impl Config {
             validate_secret_file(field, path)?;
         }
         Ok(())
+    }
+
+    /// The console needs only the store credential it connects with: its own
+    /// login's when it has one, otherwise the store's.
+    pub fn load_console(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let path = path.as_ref();
+        let text = fs::read_to_string(path).map_err(|source| Error::File {
+            field: "config".into(),
+            path: path.into(),
+            source,
+        })?;
+        let config = Self::parse(&text)?;
+        let console = config
+            .console
+            .as_ref()
+            .ok_or_else(|| invalid("console", "add a [console] section"))?;
+        match (&console.password_file, &config.store.password_file) {
+            (Some(path), _) => validate_secret_file("console.password_file", path)?,
+            (None, Some(path)) => validate_secret_file("store.password_file", path)?,
+            (None, None) => {}
+        }
+        Ok(config)
     }
 
     /// Status needs only its store credential. It can run before model setup.

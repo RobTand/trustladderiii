@@ -1,42 +1,14 @@
 import { useMemo, useState } from "react";
 import { Select, ToggleGroup } from "radix-ui";
-import { useLiveBoard, type Connection } from "./api/live";
-import type { Board } from "./api/types.gen";
+import { useLiveBoard } from "./api/live";
 import { BoardColumn } from "./components/BoardColumn";
 import { FlowStrip } from "./components/FlowStrip";
+import { Status } from "./components/Status";
 import { filterCards } from "./filter";
 import { useTheme, type Theme } from "./theme";
 import { useNow } from "./time";
 
 const ALL_REPOS = "*";
-
-const CONNECTION: Record<Connection, { label: string; dot: string }> = {
-  connecting: { label: "Connecting", dot: "bg-faint" },
-  live: { label: "Live", dot: "bg-ok" },
-  reconnecting: { label: "Reconnecting", dot: "bg-warn" },
-  "database-offline": { label: "Database offline", dot: "bg-danger" },
-};
-
-function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function Status({ connection, board }: { connection: Connection; board: Board | undefined }) {
-  const state = CONNECTION[connection];
-  return (
-    <div role="status" className="flex items-center gap-2 text-xs text-muted">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-text">
-        <span aria-hidden="true" className={`size-1.5 rounded-full ${state.dot}`} />
-        {state.label}
-      </span>
-      {board && (
-        <span className="hidden sm:inline">
-          Updated <time dateTime={new Date(board.built_at_ms).toISOString()}>{clock(board.built_at_ms)}</time>
-        </span>
-      )}
-    </div>
-  );
-}
 
 function RepoFilter(props: { repos: string[]; value: string | null; onChange: (repo: string | null) => void }) {
   return (
@@ -102,7 +74,7 @@ function ThemeSwitch() {
 }
 
 export function App() {
-  const { board, connection, error } = useLiveBoard();
+  const { board, connection } = useLiveBoard();
   const now = useNow();
   const [repo, setRepo] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -114,7 +86,7 @@ export function App() {
         <h1 className="flex items-baseline gap-2 text-base font-semibold">
           TL3 <span className="font-normal text-muted">console</span>
         </h1>
-        <Status connection={connection} board={board} />
+        <Status connection={connection} builtAt={board?.built_at_ms ?? null} />
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <RepoFilter repos={repos} value={repo} onChange={setRepo} />
           <input
@@ -146,20 +118,25 @@ export function App() {
             </section>
           )}
           <main className="flex min-h-0 flex-1 snap-x gap-3 overflow-x-auto pb-1">
-            {board.flow.columns.map((column) => (
-              <BoardColumn
-                key={column.column}
-                column={column.column}
-                label={column.label}
-                now={now}
-                cards={cards.filter((card) => card.column === column.column)}
-              />
-            ))}
+            {board.flow.columns.map((column) => {
+              // The board keeps a day of endings; the count above covers them all.
+              const older = column.count - board.cards.filter((card) => card.column === column.column).length;
+              return (
+                <BoardColumn
+                  key={column.column}
+                  column={column.column}
+                  label={column.label}
+                  now={now}
+                  cards={cards.filter((card) => card.column === column.column)}
+                  {...(older > 0 ? { note: `${older} older ${older === 1 ? "ending" : "endings"} not shown` } : {})}
+                />
+              );
+            })}
           </main>
         </>
       ) : (
         <main className="flex flex-1 items-center justify-center text-sm text-muted">
-          {error ? `The board is not available yet: ${error.message}` : "Loading the board…"}
+          Waiting for the console's first snapshot…
         </main>
       )}
     </div>

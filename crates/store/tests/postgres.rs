@@ -1128,14 +1128,25 @@ fn change_feed(settings: &tl3_config::Store) {
     let mut listener = Listener::open(settings).unwrap();
     let change = seed(&mut store);
     store.commit(&change).unwrap();
-    assert!(listener.wait().unwrap() >= 1, "a commit notifies");
+    assert!(
+        listener.wait().unwrap().contains("tl3_meta"),
+        "a commit notifies"
+    );
     let epoch = store.load().unwrap().epoch.get();
     store.claim_worker("run:1", "1", epoch, 1).unwrap();
-    assert!(listener.wait().unwrap() >= 1, "a new worker run notifies");
+    assert_eq!(
+        listener.wait().unwrap(),
+        ["tl3_worker_progress".to_string()].into(),
+        "a new worker run notifies"
+    );
     store
         .record_worker_progress("run:1", 1, 5, "tool_result", None)
         .unwrap();
-    assert!(listener.wait().unwrap() >= 1, "worker progress notifies");
+    assert_eq!(
+        listener.wait().unwrap(),
+        ["tl3_worker_progress".to_string()].into(),
+        "worker progress notifies"
+    );
     // Notifications queue on the session until the listener takes them.
     for index in 0..3 {
         let snapshot = store.load().unwrap();
@@ -1143,7 +1154,7 @@ fn change_feed(settings: &tl3_config::Store) {
         next.rows = vec![put("2", json!([index]))];
         store.commit(&next).unwrap();
     }
-    assert!(listener.wait().unwrap() >= 1);
+    assert!(listener.wait().unwrap().contains("tl3_meta"));
 }
 
 fn phase_entry_times(settings: &tl3_config::Store) {

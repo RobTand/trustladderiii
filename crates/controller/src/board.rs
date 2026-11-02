@@ -264,12 +264,20 @@ pub struct StoredIncident {
     pub maker_blocked: bool,
 }
 
+/// Closed requests stay on the board for a day; the counts include them all.
 pub fn project(input: Input<'_>) -> Board {
-    let mut cards: Vec<_> = input
-        .requests
-        .into_iter()
-        .map(|request| card(request, input.models))
-        .collect();
+    let mut cards = Vec::with_capacity(input.requests.len());
+    let mut expired = BTreeSet::new();
+    for request in input.requests {
+        if matches!(request.node.phase, Phase::Closed(_))
+            && request
+                .phase_since_ms
+                .is_none_or(|since| input.now_ms - since > DAY_MS)
+        {
+            expired.insert(request.id.0);
+        }
+        cards.push(card(request, input.models));
+    }
     cards.sort_by_key(|card| card.id);
     let merged_within = |window: i64| {
         cards
@@ -298,6 +306,7 @@ pub fn project(input: Input<'_>) -> Board {
         merged_last_hour: merged_within(HOUR_MS),
         merged_last_day: merged_within(DAY_MS),
     };
+    cards.retain(|card| !expired.contains(&card.id));
     Board {
         revision: input.revision,
         built_at_ms: input.now_ms,
@@ -339,10 +348,7 @@ fn card(request: Request, models: Option<&tl3_config::Models>) -> Card {
             };
             models.run_model(role, usize::from(rung), node.review_restarted)
         })
-        .map(|model| match &model.effort {
-            Some(effort) => format!("{} ({effort})", model.name),
-            None => model.name.clone(),
-        });
+        .map(|model| model.name.clone());
     let mut badges = BTreeSet::new();
     if node.paused {
         badges.insert(Badge::Paused);
@@ -378,6 +384,9 @@ fn card(request: Request, models: Option<&tl3_config::Models>) -> Card {
         ending,
         waiting_on: if request.question_post_failed {
             "the question post that failed; the question was never posted"
+        } else if node.effect.is_some_and(|effect| effect.cancelling) {
+            // The node moved on; it waits only for the old delivery to settle.
+            "a cancelled step to settle"
         } else {
             waiting_on(wait, node.phase)
         }
@@ -545,12 +554,9 @@ pub(crate) struct Details {
     pub incidents: Vec<StoredIncident>,
 }
 
-/// Read side-table details inside the caller's snapshot. An active run's
-/// progress takes precedence; retirement keeps progress while a request waits.
-pub(crate) fn details(
-    tx: &mut Transaction<'_>,
-    nodes: &[NodeId],
-) -> Result<BTreeMap<NodeId, Details>> {
+/// Each node's latest worker progress. An active run's takes precedence;
+/// retirement keeps the last progress while a request waits.
+fn progress(tx: &mut Transaction<'_>, nodes: &[NodeId]) -> Result<BTreeMap<NodeId, Progress>> {
     let ids: Vec<_> = nodes.iter().map(|node| node.0.to_string()).collect();
     let rows = tx
         .query(
@@ -566,22 +572,42 @@ pub(crate) fn details(
             &[&ids],
         )
         .map_err(tl3_store::Error::from)?;
-    let mut details = BTreeMap::new();
-    for (node, row) in nodes.iter().zip(rows) {
-        let at_ms: Option<i64> = row.get(1);
-        let unit: Option<String> = row.get::<_, Option<String>>(0).or_else(|| row.get(2));
-        details.insert(
-            *node,
-            Details {
-                progress: at_ms.map(|at_ms| Progress {
-                    at_ms,
+    Ok(nodes
+        .iter()
+        .zip(rows)
+        .filter_map(|(node, row)| {
+            let at_ms: Option<i64> = row.get(1);
+            let unit: Option<String> = row.get::<_, Option<String>>(0).or_else(|| row.get(2));
+            Some((
+                *node,
+                Progress {
+                    at_ms: at_ms?,
                     model_turn: unit.as_deref() == Some("model_turn"),
-                }),
+                },
+            ))
+        })
+        .collect())
+}
+
+/// Read side-table details inside the caller's snapshot. An active run's
+/// progress takes precedence; retirement keeps progress while a request waits.
+pub(crate) fn details(
+    tx: &mut Transaction<'_>,
+    nodes: &[NodeId],
+) -> Result<BTreeMap<NodeId, Details>> {
+    let ids: Vec<_> = nodes.iter().map(|node| node.0.to_string()).collect();
+    let mut progress = progress(tx, nodes)?;
+    let mut details: BTreeMap<_, _> = nodes
+        .iter()
+        .map(|node| {
+            let details = Details {
+                progress: progress.remove(node),
                 worker_failure: None,
                 incidents: Vec::new(),
-            },
-        );
-    }
+            };
+            (*node, details)
+        })
+        .collect();
     for row in tx.query("SELECT failure.row_id, failure.value, node.value->'generation'
         FROM tl3_world failure JOIN tl3_world node ON node.table_name = 'nodes' AND node.row_id = failure.row_id
         WHERE failure.table_name = 'worker_failures' AND failure.row_id = ANY($1)", &[&ids]).map_err(tl3_store::Error::from)? {
@@ -613,86 +639,147 @@ pub(crate) fn details(
     Ok(details)
 }
 
+/// Stored rows for one board, read in one snapshot. Keep them to refresh
+/// worker progress without rereading the world.
+#[derive(Clone, Debug)]
+pub struct Rows {
+    pub revision: i64,
+    pub requests: Vec<Request>,
+    pub unassigned_incidents: Vec<StoredIncident>,
+}
+
+impl Rows {
+    /// Read every request's newest node and side tables inside the caller's
+    /// read transaction.
+    pub fn read(tx: &mut Transaction<'_>) -> Result<Rows> {
+        let snapshot = tl3_store::load_snapshot(tx)?;
+        let mut rows = Rows {
+            revision: snapshot.revision.get(),
+            requests: Vec::new(),
+            unassigned_incidents: Vec::new(),
+        };
+        if snapshot.rows.is_empty() {
+            return Ok(rows);
+        }
+        let world = crate::snapshot::decode(&snapshot)?;
+        let ids: Vec<_> = (0..world.nodes.len())
+            .map(|index| NodeId(index as u64))
+            .collect();
+        let mut details = details(tx, &ids)?;
+        let since: BTreeMap<String, i64> = tx
+            .query(
+                "SELECT node_id, (extract(epoch FROM since) * 1000)::bigint FROM tl3_node_phases",
+                &[],
+            )
+            .map_err(tl3_store::Error::from)?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect();
+        let mut failed_notices = Vec::new();
+        let mut bindings = BTreeMap::new();
+        let mut incidents = Vec::new();
+        for row in &snapshot.rows {
+            match row.table.as_str() {
+                "notice_failures" => {
+                    failed_notices.push(crate::decode_stored::<FailedNotice>(row.value.clone())?)
+                }
+                "incidents" => incidents.push(crate::decode_stored::<Incident>(row.value.clone())?),
+                // A binding that doesn't decode never counts as an issue's newest request.
+                "requests" => {
+                    if let Ok(id) = row.id.parse::<u64>() {
+                        bindings.insert(
+                            id,
+                            crate::decode_stored::<crate::Request>(row.value.clone()).ok(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Repository identity ignores ASCII case, as `Repository`'s equality does.
+        let issue = |request: &crate::Request| {
+            (
+                request.repo.installation,
+                request.repo.owner.to_ascii_lowercase(),
+                request.repo.name.to_ascii_lowercase(),
+                request.issue,
+            )
+        };
+        let mut newest = BTreeMap::new();
+        for (id, request) in &bindings {
+            if let Some(request) = request {
+                newest.insert(issue(request), *id);
+            }
+        }
+        for (index, node) in world.nodes.iter().enumerate() {
+            let id = NodeId(index as u64);
+            let request = bindings
+                .get_mut(&id.0)
+                .and_then(Option::take)
+                .ok_or(crate::Error::Invalid("missing request binding"))?;
+            // A newer request for the same issue replaces this one on the board.
+            if newest.get(&issue(&request)) != Some(&id.0) {
+                continue;
+            }
+            let question_post_failed = failed_notices.iter().any(|failed| {
+                matches!(failed.delivery.output,
+                    Output::Notice { node: n, notice: Notice::Ask { question } }
+                    if n == id && node.question.is_some_and(|q| q.id == question))
+            });
+            let details = details.remove(&id);
+            rows.requests.push(Request {
+                id,
+                node: *node,
+                repo: format!("{}/{}", request.repo.owner, request.repo.name),
+                issue: request.issue,
+                title: request.title,
+                question_post_failed,
+                phase_since_ms: since.get(&index.to_string()).copied(),
+                progress: details.as_ref().and_then(|d| d.progress.clone()),
+                worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),
+                incidents: details.map(|d| d.incidents).unwrap_or_default(),
+            });
+        }
+        rows.unassigned_incidents = incidents
+            .into_iter()
+            .filter(|incident| incident.open && incident.node.is_none())
+            .map(|incident| StoredIncident {
+                maker_blocked: incident.signature.class == crate::blocked::CLASS,
+                id: incident.id,
+                summary: incident.summary,
+            })
+            .collect();
+        Ok(rows)
+    }
+
+    /// Reread only worker progress. Controller commits need a full `read`.
+    pub fn refresh_progress(&mut self, tx: &mut Transaction<'_>) -> Result<()> {
+        let ids: Vec<_> = self.requests.iter().map(|request| request.id).collect();
+        let mut progress = progress(tx, &ids)?;
+        for request in &mut self.requests {
+            request.progress = progress.remove(&request.id);
+        }
+        Ok(())
+    }
+
+    pub fn project(&self, now_ms: i64, models: Option<&tl3_config::Models>) -> Board {
+        project(Input {
+            revision: self.revision,
+            now_ms,
+            requests: self.requests.clone(),
+            unassigned_incidents: self.unassigned_incidents.clone(),
+            models,
+        })
+    }
+}
+
 /// Read and project the board inside the caller's read transaction.
 pub fn read(
     tx: &mut Transaction<'_>,
     now_ms: i64,
     models: Option<&tl3_config::Models>,
 ) -> Result<Board> {
-    let snapshot = tl3_store::load_snapshot(tx)?;
-    let mut input = Input {
-        revision: snapshot.revision.get(),
-        now_ms,
-        requests: Vec::new(),
-        unassigned_incidents: Vec::new(),
-        models,
-    };
-    if snapshot.rows.is_empty() {
-        return Ok(project(input));
-    }
-    let world = crate::snapshot::decode(&snapshot)?;
-    let ids: Vec<_> = (0..world.nodes.len())
-        .map(|index| NodeId(index as u64))
-        .collect();
-    let mut details = details(tx, &ids)?;
-    let since: BTreeMap<String, i64> = tx
-        .query(
-            "SELECT node_id, (extract(epoch FROM since) * 1000)::bigint FROM tl3_node_phases",
-            &[],
-        )
-        .map_err(tl3_store::Error::from)?
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect();
-    let failed_notices = snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == "notice_failures")
-        .map(|row| crate::decode_stored::<FailedNotice>(row.value.clone()))
-        .collect::<Result<Vec<_>>>()?;
-    for (index, node) in world.nodes.iter().enumerate() {
-        let id = NodeId(index as u64);
-        let request = crate::request(&snapshot, id)?;
-        // A newer request for the same issue replaces this one on the board.
-        if crate::latest_request(&snapshot, &request.repo, request.issue)
-            .is_some_and(|row| row.id != index.to_string())
-        {
-            continue;
-        }
-        let question_post_failed = failed_notices.iter().any(|failed| {
-            matches!(failed.delivery.output,
-                Output::Notice { node: n, notice: Notice::Ask { question } }
-                if n == id && node.question.is_some_and(|q| q.id == question))
-        });
-        let details = details.remove(&id);
-        input.requests.push(Request {
-            id,
-            node: *node,
-            repo: format!("{}/{}", request.repo.owner, request.repo.name),
-            issue: request.issue,
-            title: request.title,
-            question_post_failed,
-            phase_since_ms: since.get(&index.to_string()).copied(),
-            progress: details.as_ref().and_then(|d| d.progress.clone()),
-            worker_failure: details.as_ref().and_then(|d| d.worker_failure.clone()),
-            incidents: details.map(|d| d.incidents).unwrap_or_default(),
-        });
-    }
-    input.unassigned_incidents = snapshot
-        .rows
-        .iter()
-        .filter(|row| row.table == "incidents")
-        .map(|row| crate::decode_stored::<Incident>(row.value.clone()))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|incident| incident.open && incident.node.is_none())
-        .map(|incident| StoredIncident {
-            maker_blocked: incident.signature.class == crate::blocked::CLASS,
-            id: incident.id,
-            summary: incident.summary,
-        })
-        .collect();
-    Ok(project(input))
+    Ok(Rows::read(tx)?.project(now_ms, models))
 }
 
 #[cfg(test)]

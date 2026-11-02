@@ -41,6 +41,7 @@ fn run() -> Result<()> {
             std::process::exit(status.code().unwrap_or(1));
         }
         "database" => database(&tl3_config::Config::load_status(path)?)?,
+        "console-role" => console_role(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
             let config = tl3_config::Config::load_status(path)?;
             tl3_store::Reader::open(&config.store)?;
@@ -87,6 +88,19 @@ fn database(config: &tl3_config::Config) -> Result<()> {
     }
     tl3_store::Store::open(settings)?;
     println!("Postgres: database exists, fsync on, migrations applied");
+    console_role(config)
+}
+
+/// The console reads through its own login, which may only read, including
+/// tables that later migrations add.
+fn console_role(config: &tl3_config::Config) -> Result<()> {
+    let Some(console) = &config.console else {
+        return Ok(());
+    };
+    if let (Some(user), Some(password)) = (&console.user, &console.password_file) {
+        tl3_store::grant_reader(&config.store, user, password)?;
+        println!("Postgres: console login {user} may read and not write");
+    }
     Ok(())
 }
 

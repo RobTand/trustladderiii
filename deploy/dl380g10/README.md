@@ -185,9 +185,19 @@ Reserve 192.168.1.107 in Rob's router DHCP settings if desired, so the status ad
 ## Operator console
 
 The console (PRD #327) is a separate service, `tl3-console.service`. It shows
-the live board at `http://192.168.1.107:8034`. It reads Postgres through
-read-only sessions and never writes the world snapshot or the event log, so it
-can restart at any time without touching `tl3d`. It updates when Postgres
+the live board at `http://192.168.1.107:8034`. It connects as its own Postgres
+login, `tl3_console`, which may read every table, including ones later
+migrations add, and may write none. It never writes the world snapshot or the
+event log, so it can restart at any time without touching `tl3d`.
+
+The installer creates the login's password at
+`~/.config/tl3/secrets/console-postgres-password` (0600, once, never
+replaced). Each start of `tl3-postgres.service` creates or updates the login
+and its grants (`tl3-deploy database`), and `deploy.py install` does the same
+right away when Postgres is already running (`tl3-deploy console-role`). Both
+are safe to repeat. The console's unit loads only that credential, not the
+store owner's. If any of the console's threads stops, the process exits and
+systemd restarts it. It updates when Postgres
 reports a commit (`LISTEN tl3_changes`), never on a timer, and reconnects by
 itself after Postgres or `tl3d` restarts.
 
@@ -195,9 +205,9 @@ itself after Postgres or `tl3d` restarts.
 `web/`, then swaps `web/dist` into `~/.local/share/tl3/console`. Node 22 or
 newer and npm must be on the PATH. Cargo builds never need Node. The installer
 adds a `[console]` section to an existing `tl3.toml` with `listen` on the status
-address at port 8034 and `assets` at the installed directory. Existing values
-win. Pass `--console-listen ADDRESS:PORT` for a new config to choose another
-LAN address. Start or restart it with:
+address at port 8034, `assets` at the installed directory, and the console's
+`user` and `password_file`. Existing values win. Pass `--console-listen ADDRESS:PORT` when the installer writes a new config to
+choose another LAN address. Start or restart it with:
 
 ```sh
 systemctl --user enable --now tl3-console.service

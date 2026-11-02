@@ -9,7 +9,7 @@ function ordered(column: Column, cards: Card[]): Card[] {
     : [...cards].sort((a, b) => a.id - b.id);
 }
 
-export function BoardColumn(props: { column: Column; label: string; cards: Card[]; now: number }) {
+export function BoardColumn(props: { column: Column; label: string; cards: Card[]; now: number; note?: string }) {
   const heading = useId();
   return (
     <section
@@ -32,6 +32,7 @@ export function BoardColumn(props: { column: Column; label: string; cards: Card[
         ) : (
           ordered(props.column, props.cards).map((card) => <BoardCard key={card.id} card={card} now={props.now} />)
         )}
+        {props.note && <p className="px-1 pt-1 text-2xs text-faint">{props.note}</p>}
       </div>
     </section>
   );

@@ -18,6 +18,7 @@ use tl3_store::{Commit, Reader, RowChange, Store};
 
 const REQUESTS: usize = 2_000;
 const FULL_BUDGET: Duration = Duration::from_millis(200);
+const PROGRESS_BUDGET: Duration = Duration::from_millis(20);
 const ROUNDS: usize = 7;
 
 fn main() {
@@ -93,8 +94,28 @@ fn main() {
         assert_eq!(board.flow.columns.last().unwrap().count, REQUESTS as u32);
     });
     println!("full rebuild at {REQUESTS} requests: median {full:?} (budget {FULL_BUDGET:?})");
+    let mut tx = reader.transaction().unwrap();
+    let mut rows = board::Rows::read(&mut tx).unwrap();
+    tx.commit().unwrap();
+    let epoch = store.load().unwrap().epoch.get();
+    store.claim_worker("scale-run", "7", epoch, 1).unwrap();
+    let mut offset = 0;
+    let progress = median(|| {
+        offset += 1;
+        store
+            .record_worker_progress("scale-run", 1, offset, "tool_result", None)
+            .unwrap();
+        let mut tx = reader.transaction().unwrap();
+        rows.refresh_progress(&mut tx).unwrap();
+        tx.commit().unwrap();
+        let board = rows.project(0, None);
+        assert!(board.cards.iter().any(|card| card.last_progress.is_some()));
+    });
+    println!(
+        "progress refresh at {REQUESTS} requests: median {progress:?} (budget {PROGRESS_BUDGET:?}), including the progress write"
+    );
     database.stop();
-    if full > FULL_BUDGET {
+    if full > FULL_BUDGET || progress > PROGRESS_BUDGET {
         eprintln!("board_scale: over budget");
         std::process::exit(1);
     }

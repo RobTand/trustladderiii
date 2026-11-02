@@ -1,6 +1,9 @@
 //! HTTP: the board, its event stream and the built web app.
 
-use crate::{Published, api::DatabaseStatus};
+use crate::{
+    Published,
+    api::{DatabaseStatus, PatchEvent},
+};
 use axum::{
     Json, Router,
     extract::State,
@@ -74,6 +77,7 @@ async fn events(
     let client = Client {
         published,
         shown: None,
+        shown_id: String::new(),
         connected: None,
         queue: VecDeque::new(),
         retry_sent: false,
@@ -87,6 +91,8 @@ async fn events(
 struct Client {
     published: watch::Receiver<Published>,
     shown: Option<Arc<Board>>,
+    /// The event id of `shown`, which the next patch names as its base.
+    shown_id: String,
     connected: Option<bool>,
     queue: VecDeque<Event>,
     retry_sent: bool,
@@ -116,13 +122,17 @@ impl Client {
             {
                 let id = format!("{}.{}", board.revision, current.build);
                 self.queue.push_back(match &self.shown {
-                    None => json(Event::default().event("snapshot").id(id), board.as_ref()),
+                    None => json(Event::default().event("snapshot").id(&id), board.as_ref()),
                     Some(shown) => json(
-                        Event::default().event("patch").id(id),
-                        &board.patch_since(shown),
+                        Event::default().event("patch").id(&id),
+                        &PatchEvent {
+                            base: std::mem::take(&mut self.shown_id),
+                            patch: board.patch_since(shown),
+                        },
                     ),
                 });
                 self.shown = Some(board);
+                self.shown_id = id;
             }
             if self.queue.is_empty() && self.published.changed().await.is_err() {
                 return None;

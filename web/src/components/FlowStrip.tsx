@@ -14,20 +14,20 @@ function Stat(props: { label: string; value: number; strong?: boolean }) {
 /** Counts per stage, then the factory's totals. */
 export function FlowStrip({ flow }: { flow: Flow }) {
   return (
-    <dl
-      aria-label="Flow"
-      className="flex shrink-0 overflow-x-auto rounded-lg border border-border bg-surface shadow-[var(--shadow)]"
-    >
-      <div className="flex divide-x divide-border">
+    <div className="flex shrink-0 overflow-x-auto rounded-lg border border-border bg-surface shadow-[var(--shadow)]">
+      <dl aria-label="Requests per stage" className="flex divide-x divide-border">
         {flow.columns.map((count) => (
           <Stat key={count.column} label={count.label} value={count.count} />
         ))}
-      </div>
-      <div className="ml-auto flex divide-x divide-border border-l border-border bg-surface-2/50">
+      </dl>
+      <dl
+        aria-label="Totals"
+        className="ml-auto flex divide-x divide-border border-l border-border bg-surface-2/50"
+      >
         <Stat label="In flight" value={flow.in_flight} strong />
         <Stat label="Merged, last hour" value={flow.merged_last_hour} strong />
         <Stat label="Merged, last day" value={flow.merged_last_day} strong />
-      </div>
-    </dl>
+      </dl>
+    </div>
   );
 }

@@ -70,3 +70,9 @@ export type Retries = { plan: number, audit: number, run_failures: number, effec
  * The stream's `database` event: whether the console can read the store.
  */
 export type DatabaseStatus = { connected: boolean, };
+
+/**
+ * The stream's `patch` event: apply `patch` to the board whose event id is
+ * `base`. A client holding another board reconnects for a fresh snapshot.
+ */
+export type PatchEvent = { base: string, patch: BoardPatch, };

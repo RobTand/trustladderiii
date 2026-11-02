@@ -312,7 +312,8 @@ class DeployTests(unittest.TestCase):
         unit = (deploy.HERE / "units/tl3-console.service").read_text().splitlines()
         self.assertIn("ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service console", unit)
         self.assertIn("Requires=tl3-postgres.service", unit)
-        self.assertIn("LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password", unit)
+        # The console reads as its own login and never holds the store owner's credential.
+        self.assertNotIn("LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password", unit)
 
     def test_console_service_execs_the_console_with_runtime_config(self):
         config, _ = self.config()
