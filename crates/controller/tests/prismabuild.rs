@@ -2062,6 +2062,7 @@ fn main() {
             "moving_job_reconcile_is_pending",
             moving_job_reconcile_is_pending,
         ),
+        ("job_look_states", job_look_states as fn()),
         (
             "reproducing_check_plan_and_verdict",
             reproducing_check_plan_and_verdict,
@@ -2161,7 +2162,7 @@ fn main() {
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
     database.stop();
-    println!("42 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("43 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
@@ -2407,6 +2408,53 @@ fn moving_wait_bell_is_quiet() {
     assert_eq!(count, 1, "retained wait receives its ending");
     assert!(
         matches!(rx.try_recv().unwrap(), tl3_controller::cli::Input::Look {key} if key == delivery.key)
+    );
+}
+
+/// #369, #410 review: the look reads the job's own record. Queued, claimed
+/// and moving are alive; an ended job, lease lost included, is found; a job
+/// never submitted is absent.
+fn job_look_states() {
+    use tl3_controller::executor::Look;
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), "pending");
+    assert!(matches!(adapter.look(&delivery).unwrap(), Look::Absent));
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let queue = root.path().join("queue");
+    let alive = |adapter: &mut Adapter, state: &str| {
+        let look = adapter.look(&delivery).unwrap();
+        assert!(
+            matches!(&look, Look::Alive { progress } if *progress == format!("prismabuild:{state}")),
+            "{state}"
+        );
+    };
+    alive(&mut adapter, "queued");
+    fs::rename(
+        queue.join(format!("ready/{key}.json")),
+        queue.join(format!("claimed/{key}.json")),
+    )
+    .unwrap();
+    alive(&mut adapter, "claimed");
+    fs::rename(
+        queue.join(format!("claimed/{key}.json")),
+        queue.join(format!("claimed/{key}.100.host.1.abc.tombstone")),
+    )
+    .unwrap();
+    alive(&mut adapter, "moving");
+    fs::remove_file(queue.join(format!("claimed/{key}.100.host.1.abc.tombstone"))).unwrap();
+    finish(root.path(), key.as_str(), "failed");
+    let record = queue.join(format!("failed/{key}.json"));
+    let lost = fs::read_to_string(&record).unwrap().replace(
+        "\"termination_reason\": \"failed\"",
+        "\"termination_reason\": \"lease_lost\"",
+    );
+    assert!(lost.contains("lease_lost"));
+    fs::write(&record, lost).unwrap();
+    assert!(
+        matches!(adapter.look(&delivery).unwrap(), Look::Found(_)),
+        "a job whose lease was lost has ended"
     );
 }
 

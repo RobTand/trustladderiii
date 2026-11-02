@@ -1090,6 +1090,25 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
         })
         .unwrap();
     assert!(notice.payload["note"].as_str().unwrap().contains(summary));
+    // Q7 (#410 review): an unchanged look doesn't end the Queued stall's
+    // incident. A passing probe or Rob clears it; this fake's probe fails.
+    let open_incidents = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .count()
+    };
+    assert_eq!(open_incidents(&mut c), 1);
+    clock.advance(1);
+    c.look_now().unwrap();
+    drain(&mut c);
+    assert_eq!(
+        open_incidents(&mut c),
+        1,
+        "an unchanged token-only look keeps the Queued stall incident open"
+    );
     terminal.set(true);
     drain(&mut c);
     c.look_now().unwrap();
