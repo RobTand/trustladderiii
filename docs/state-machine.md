@@ -688,3 +688,20 @@ Both posts use code-written text, so no writer run can omit the paths.
 A useful unprotected leaf is allowed only when it meets all goals on its own.
 An unusable half is not a substitute. PB #2636's runner-only marker had no reader
 without the protected CI gate change, so the whole request belongs outside TL3.
+
+## Q58: merge queue failures outside the change
+
+Coordinator's reading of Q50 and Rob's Q54, 2026-11-02, for Rob to check.
+A merge queue failure confined to parsed tests whose files the PR did not
+change, and which its plan did not name, gets one infrastructure requeue.
+The existing kernel path starts no maker and spends no credit. This is a
+bounded chance to get past an unrelated failure, not proof that the change
+cannot cause a regression in an untouched test.
+
+If a requeued run fails on any of the same tests, the controller reports a
+normal CI failure with evidence. The maker or reviewer gets the check names,
+URLs and failing test lines and can compare against base. Unmapped test IDs,
+missing test IDs, unavailable plans or incomplete evidence do not justify an outside-change
+requeue. The controller journals the decision and test IDs with the queue fact,
+so restart and redelivery retain the retry bound. The kernel and state table
+are unchanged.
