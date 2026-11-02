@@ -3,7 +3,7 @@
 from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
-from tl3_workers.forecast import Forecaster, MAX_FILE_BYTES
+from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
 from tl3_harness import Check, Kind
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import test_function_source
@@ -38,14 +38,19 @@ def check_reply(inputs, reply):
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
                 if check["kind"] in {"regression", "behavior-preserving"}:
+                    # The whole module is parsed to find the test, so the
+                    # declared-file hard cap bounds it, not a page size.
+                    path = node_id.split("::")[0]
                     try:
-                        with Worktree(".") as tree, tree._file(node_id.split("::")[0]) as stream:
-                            source = stream.read(MAX_FILE_BYTES + 1)
-                        exists = (len(source) <= MAX_FILE_BYTES and
-                                  test_function_source(source, node_id) is not None)
+                        with Worktree(".") as tree, tree._file(path) as stream:
+                            source = stream.read(HARD_CAP_BYTES + 1)
+                        oversized = len(source.encode("utf-8")) > HARD_CAP_BYTES
+                        exists = not oversized and test_function_source(source, node_id) is not None
                     except (OSError, ValueError, UnicodeError):
-                        exists = False
-                    if not exists:
+                        oversized, exists = False, False
+                    if oversized:
+                        violations.append(f"Existing check's test file is over the {HARD_CAP_BYTES}-byte limit: {path}")
+                    elif not exists:
                         violations.append(f"Existing check must name a test defined at the base: {node_id}")
             cited = set(check["goal_ids"])
             if not cited <= goals:

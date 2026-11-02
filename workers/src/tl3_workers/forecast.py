@@ -16,8 +16,6 @@ from tl3_workers.tools import LARGE_FILE_BYTES, Worktree, _parts, environment_cl
 from tl3_workers.turns import Unrepairable
 
 
-# Test sources the planner reads whole for test names.
-MAX_FILE_BYTES = 1_048_576
 # A declared file larger than LARGE_FILE_BYTES is read by range and edited by
 # unique string replacement, so it costs a bounded allowance, not its full size (#321).
 RANGED_FILE_TOKENS = 16_384

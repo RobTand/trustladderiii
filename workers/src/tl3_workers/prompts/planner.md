@@ -65,12 +65,20 @@ those marked for review. Return exactly one of these proposals:
   already identified, or an empty files list if none are known.
 
 Code reports rule violations to the controller, which gives the kernel the evidence for its next step. After your reply, code counts the brief and
-the complete base contents of declared files once each with o200k_base as a
+the base contents of declared files once each with o200k_base as a
 model-agnostic estimate. New files contribute zero base tokens. It sums the
 configured overhead_tokens constants, records the total and compares it with
 forecast.fit_tokens, strictly below the limit. forecast.context_tokens records
-the model context. Each declared existing file must be UTF-8 text without binary
-control bytes and at most 1,048,576 bytes. Otherwise the run fails with a diagnostic.
+the model context.
+
+A declared existing file may be any UTF-8 text file up to 16,777,216 bytes,
+including a large document or source module. A file over 65,536 bytes is
+counted as a fixed 16,384 tokens, not its full size, because the maker reads it
+by range and edits it by unique text replacement. Declare a large file when the
+change touches it; don't narrow or split a request just because a file is large.
+A declared file that is binary, isn't UTF-8 text, is over 16,777,216 bytes or is
+not a regular file inside the worktree is reported as a named violation; leave
+it out.
 The estimate will be calibrated from MLflow later. An oversized leaf keeps its
 fits=false measurement so the controller can reject it under the planning rules.
 Each proposed piece must have a smaller forecast than its parent.
