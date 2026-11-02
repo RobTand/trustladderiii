@@ -188,6 +188,19 @@ def explain(result, prs):
     if result.get('inputs'):
         lines.append('Stale generated inputs or parity drift; fix with tools/bazel/generate.sh: '
                      + '; '.join(result['inputs']))
+    graph = result.get('graph_impact', {})
+    if graph:
+        lines.append(graph['summary'])
+        if graph.get('head'):
+            measured = graph['head']
+            lines.append(f'LOC U {measured["loc_u_pct"]:.3f}%, reach median/p90/max '
+                         f'{measured["reach_median"]}/{measured["reach_p90"]}/{measured["reach_max"]}')
+        if graph.get('crates'):
+            crates = graph['crates']
+            lines.append('Largest crate cycle: ' + (', '.join(crates['largest_cycle']) or 'none'))
+            lines.append('Crate fan-out: ' + ', '.join(f'{label} {count}' for label, count in
+                         sorted(crates['fanout'].items(), key=lambda item: (-item[1], item[0]))))
+        lines.extend(graph.get('errors', []))
     if result['mode'] == 'pr':
         lines.append(f"Selection: {result.get('selection')}, {len(result.get('selected', []))} tests")
         for language, labels in result.get('failed', {}).items():
@@ -286,6 +299,8 @@ def main():
     summary = explain(result, prs)
     print(summary, flush=True)
     write_github('GITHUB_STEP_SUMMARY', '```\n' + summary + '\n```\n')
+    for target, mermaid in result.get('graph_impact', {}).get('mermaid', {}).items():
+        write_github('GITHUB_STEP_SUMMARY', f'\n{target}\n\n```mermaid\n{mermaid}\n```\n')
     write_github('GITHUB_OUTPUT', ''.join(f'{k}={v}\n' for k, v in outputs(result).items()))
     ok = invocation.get('success') and not result.get('error') and not result.get('inputs')
     if args.mode == 'main':
