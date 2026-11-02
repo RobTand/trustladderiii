@@ -88,16 +88,19 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/fixture_contracts.rs": ["tests/support/**"],
+    "tests/mergify.rs": ["tests/support/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**"],
     "tests/crash_safety.rs": ["tests/crash/**"],
-    "tests/github.rs": ["tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_transport.py"],
+    "tests/github.rs": ["tests/support/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_transport.py"],
     "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**"],
-    "tests/prismabuild.rs": ["tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
-    "tests/publishing.rs": ["tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
+    "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
+    "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**"],
-    "tests/scope.rs": ["tests/worktree_fixture/**"],
+    "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
     "tests/simulation.rs": ["tests/worktree_fixture/**"],
     "tests/workers.rs": [
+        "tests/support/**",
         "tests/fixtures/pb.py",
         "tests/fixtures/waits/**",
         "tests/maker/**",
@@ -261,7 +264,7 @@ def _crate_test(kind, package, name, source, harness, options):
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
             (["tests/loom/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else
-             ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else []) + ["tests/support/**"]) +
+             ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else [])) +
             _CONTROLLER_TEST_SOURCES.get(source, []),
             allow_empty = True,
         ) + ["README.md"]
