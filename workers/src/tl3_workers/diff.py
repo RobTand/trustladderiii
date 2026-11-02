@@ -2,9 +2,9 @@
 
 Scope goals ("touches only ...") need the change, and the model has no Git. The tool runs
 fixed Git read commands in a hardened environment: no model input reaches an option, and
-nothing it runs writes the repository's index, objects, refs or files. It writes one thing,
-a throwaway copy of the index in a temporary directory, so that untracked files appear as
-additions in a single `git diff` stream.
+nothing it runs writes the repository's index, objects, refs or files. It writes only to a
+temporary directory: a throwaway copy of the index, and an object directory, so that
+untracked files appear as additions in a single `git diff` stream.
 
 Its cost is bounded by structure, not by a clock: a page runs a fixed number of Git
 processes whatever the number of files, a line is read through a bounded buffer, and files
@@ -163,7 +163,12 @@ def make_diff_tool(worktree, parts, limits):
             source = Path(checkout, git.run("rev-parse", "--git-path", "index").strip())
             if source.is_file():
                 shutil.copyfile(source, index)
-            env = {"GIT_INDEX_FILE": str(index)}
+            # `git add --intent-to-add` writes the empty blob. It goes to a scratch object directory,
+            # and the repository's own objects are read through an alternate.
+            objects = Path(checkout, git.run("rev-parse", "--git-path", "objects").strip())
+            (Path(scratch) / "objects").mkdir()
+            env = {"GIT_INDEX_FILE": str(index), "GIT_OBJECT_DIRECTORY": str(Path(scratch) / "objects"),
+                   "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects.resolve())}
             if shown:
                 # Intent-to-add records the path with the empty blob and writes no object, so
                 # untracked files diff as additions in the same stream as the tracked changes.

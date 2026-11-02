@@ -318,7 +318,7 @@ def track_reads(monkeypatch):
 
 def test_diff_buffers_only_a_bounded_slice_of_a_very_long_line(repo, monkeypatch):
     root, base = repo
-    (root / "minified.js").write_text("x" * (20 * 1_048_576) + "\n")
+    (root / "minified.js").write_text("x" * (8 * 1_048_576) + "\n")
     sizes, _ = track_reads(monkeypatch)
     with attach(Worktree(root), root, base) as worktree:
         text = diff_tool(worktree).invoke({"path": "minified.js"})["diff"]
@@ -328,18 +328,13 @@ def test_diff_buffers_only_a_bounded_slice_of_a_very_long_line(repo, monkeypatch
 
 def git_processes(monkeypatch):
     count = [0]
-    real_run, real_popen = subprocess.run, subprocess.Popen
+    real = subprocess.Popen
 
-    def run(*args, **kwargs):
-        count[0] += 1
-        return real_run(*args, **kwargs)
-
-    class Popen(real_popen):
+    class Popen(real):  # subprocess.run starts its child through Popen too
         def __init__(self, *args, **kwargs):
             count[0] += 1
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(diff_module.subprocess, "run", run)
     monkeypatch.setattr(diff_module.subprocess, "Popen", Popen)
     return count
 
@@ -359,7 +354,7 @@ def test_a_page_costs_the_same_number_of_git_processes_however_many_files_change
         monkeypatch.undo()
         for number in range(files_count):
             (root / f"{name}_{number}.txt").unlink()
-    assert counts["many"] == counts["few"] and counts["few"] <= 14
+    assert counts["many"] == counts["few"] and counts["few"] <= 10
 
 
 def test_diff_lists_and_pages_at_most_200_untracked_files(repo):
@@ -381,8 +376,8 @@ def test_diff_lists_and_pages_at_most_200_untracked_files(repo):
 def test_diff_skips_files_that_are_not_regular_or_are_too_large(repo):
     root, base = repo
     os.mkfifo(root / "pipe")
-    (root / "src/old.py").unlink()
-    os.mkfifo(root / "src/old.py")
+    (root / "docs/guide.md").unlink()
+    os.mkfifo(root / "docs/guide.md")
     (root / "huge.txt").write_bytes(b"a\n" * (diff_module.DIFF_FILE_BYTES // 2 + 1))
     previous = signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("diff hung")))
     signal.alarm(60)
@@ -392,10 +387,10 @@ def test_diff_skips_files_that_are_not_regular_or_are_too_large(repo):
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous)
-    assert {"pipe", "huge.txt", "src/old.py"}.isdisjoint(item["path"] for item in result["stat"])
+    assert {"pipe", "huge.txt", "docs/guide.md"}.isdisjoint(item["path"] for item in result["stat"])
     assert "src/app.py" in {item["path"] for item in result["stat"]}
     assert "3 changed files were skipped because they are not regular files or are over 16,777,216 bytes" in result["message"]
-    for name in ("pipe", "huge.txt", "src/old.py"):
+    for name in ("pipe", "huge.txt", "docs/guide.md"):
         assert name in result["message"]
 
 
