@@ -26,7 +26,10 @@ cd "$(mktemp -d)"
 curl -fsSLo uv.tar.gz https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz
 echo "{UV_SHA256}  uv.tar.gz" | sha256sum -c -
 tar -xzf uv.tar.gz
-install -D -m 755 uv-x86_64-unknown-linux-gnu/uv "$HOME/.local/bin/uv"'''
+install -D -m 755 uv-x86_64-unknown-linux-gnu/uv "$HOME/.local/bin/uv"
+# uv export resolves workers/.python-version (3.14+gil); the image has only 3.12.
+export PATH="$HOME/.local/bin:$PATH"
+uv python install 3.14'''
 SCHEMA = 'tl3.bazel-gate.v1'
 # Diagnostic logs, by suffix: each test or build run names its own.
 DIAGNOSTICS = ('bazel-remote-grpc.log', 'execution_log.binpb.zst')
