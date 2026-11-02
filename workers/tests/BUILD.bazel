@@ -344,7 +344,7 @@ tl3_py_test(
         ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//pytest",
     ],

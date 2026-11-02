@@ -70,7 +70,7 @@ py_binary(
     deps = [
         "//workers/src",
         "@tl3_pip//httpx",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
     ],
 )
 
