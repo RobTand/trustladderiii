@@ -79,6 +79,24 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    let context: Value =
+        serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
+    let mut store = Store::open(settings).unwrap();
+    let mut commit = tl3_store::Commit::new(
+        "reviewed-fixture-backfill",
+        json!({}),
+        &store.load().unwrap(),
+    );
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "request_decisions".into(),
+        id: "0".into(),
+        value: context.clone(),
+    });
+    store.commit(&commit).unwrap();
+    // A process restart must read the durable context, not a recalled memory.
+    drop(controller);
+    let mut controller =
+        steering::race_controller(settings, root.path(), &api, json!({"kind": "restart"}));
     edit_issue(&api);
     restart_comment(&mut controller, 20001);
     drain(&mut controller);
@@ -91,6 +109,16 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
     assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Replaced));
     assert!(!world.nodes[1].phase.is_closed());
     assert_restarted(&mut controller, &api, "1", 0);
+    let inherited = store
+        .load()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "request_decisions" && r.id == "1")
+        .expect("restart must preserve approved decisions")
+        .value;
+    assert_eq!(inherited["request_version"], 1);
+    assert_eq!(inherited["decisions"], context["decisions"]);
     println!("test restart_open_request_starts_from_edited_issue ... ok");
 }
 

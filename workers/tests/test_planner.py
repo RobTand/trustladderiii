@@ -947,3 +947,22 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     digests_plan['files'] = [DIGESTS]
     digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     assert planned(planner_request, digests_plan) == []
+
+
+def test_restart_plans_approved_retention_exception(tmp_path, planner_request):
+    context = {"schema_version": 1, "request_version": 121, "decisions": [{
+        "id": "pq2662-q10", "source_comment": "https://github.com/RobTand/prismaquant/issues/2662#issuecomment-6580255177",
+        "question": {"id": 10, "kind": "cant_meet"},
+        "answer": "Allow the current-source pin update.",
+        "allowed_scope": ["tests/test_guarded_read_digest_retention_2637.py"],
+        "restrictions": ["CURRENT_SOURCE_BLOBS only", "Preserve historical manifest material"],
+        "origin_request_version": 83, "superseded_by": None,
+    }]}
+    planner_request["inputs"]["decision_context"] = context
+    reply = copy.deepcopy(LEAF)
+    reply["files"].append("tests/test_guarded_read_digest_retention_2637.py")
+    result = run_reply(tmp_path, planner_request, reply)
+    assert result.exit_code == 0, result.stderr
+    planned = [event["reply"] for event in result.events if event["event"] == "reply"][0]
+    assert "tests/test_guarded_read_digest_retention_2637.py" in planned["files"]
+    assert planned["kind"] == "leaf"

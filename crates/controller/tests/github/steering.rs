@@ -917,6 +917,35 @@ pub(super) fn answer_replacement(settings: &tl3_config::Store) {
     d.send(21001, "Use a smaller request");
     d.classified(21001);
     replacement_assertions(&mut d);
+    let snapshot = d.store.load().unwrap();
+    let context = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_decisions" && r.id == "0")
+        .expect("accepted answer must have durable decision context")
+        .value;
+    assert_eq!(context["schema_version"], 1);
+    assert_eq!(context["request_version"], 0);
+    assert_eq!(context["decisions"][0]["answer"], "Use a smaller request");
+    assert_eq!(
+        context["decisions"][0]["source_comment"],
+        "https://github.com/RobTand/tl3-sandbox/issues/12#issuecomment-21001"
+    );
+    assert!(context["decisions"][0]["question"]["id"].is_u64());
+    let inherited = &snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "request_decisions" && r.id == "1")
+        .unwrap()
+        .value;
+    assert_eq!(inherited["request_version"], 1);
+    assert_eq!(inherited["decisions"], context["decisions"]);
+    let requests = d.requests();
+    let input = &requests
+        .iter()
+        .find(|r| r["role"] == "ingest" && r["operation"]["node"] == 1)
+        .unwrap()["inputs"];
+    assert_eq!(input["decision_context"], inherited);
     let body = d
         .requests()
         .iter()
