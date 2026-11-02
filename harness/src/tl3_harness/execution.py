@@ -9,9 +9,10 @@ import tempfile
 import time
 
 from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, validate_check_plan
-from .model import Check, Kind, Outcome, Result, Verdict, judge
+from .model import Check, Kind, Outcome, Result, TestResult, Verdict, judge
 from .report import InvalidReport, decode, parse
-from .trees import added_names, changed_existing_tests, commit, configuration, export, is_test, test_edits, validate_configuration
+from .trees import (added_names, changed_configuration, changed_existing_tests, commit, configuration, export,
+                    is_test, own_base, test_edits)
 
 
 TMPFS_MIB = 512
@@ -135,6 +136,27 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
         return dict.fromkeys(tests, Outcome.NO_REPORT)
 
 
+def refused(plan: tuple[Check, ...], changed: list[str]) -> tuple[Result, ...]:
+    """A failing round that names changed test configuration; nothing ran."""
+    message = (f"Test configuration changed: {', '.join(changed)}. Restore these files: "
+               "checks never run a changed test configuration.")[:MAX_MESSAGE_CHARS]
+    return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
+        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message)
+        for test in check.tests)) for check in plan)
+
+
+def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, head: str,
+                          head_tree: Path) -> list[str]:
+    """Judge only what the head changed, against the commit it descends from. A head
+    built on an older main than the check base must not answer for main's changes."""
+    fork = own_base(repo, base, head)
+    if fork != base:
+        base_tree = root / f"fork-{fork}"
+        if not base_tree.exists():
+            export(repo, fork, base_tree)
+    return changed_configuration(base_tree, head_tree)
+
+
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code."""
@@ -160,7 +182,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         export(repo, base, old)
         export(repo, head, new)
         config = configuration(old)
-        validate_configuration(old, new)
+        if changed := configuration_changes(repo, root, base, old, head, new):
+            return refused(plan, changed)
         invalid = {test for test in tests if not is_test(test.split("::")[0], config["test-files"])}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
@@ -190,7 +213,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         if reproducing:
             reviewed_tree, round_tree = root / "reviewed", root / "reproducing"
             export(repo, reviewed, reviewed_tree)
-            validate_configuration(old, reviewed_tree)
+            if changed := configuration_changes(repo, root, base, old, reviewed, reviewed_tree):
+                return refused(plan, changed)
             shutil.copytree(reviewed_tree, round_tree)
             test_edits(reviewed_tree, new, round_tree, config["test-files"])
             additions = added_names(reviewed_tree, new, config["test-files"])

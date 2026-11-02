@@ -16,10 +16,17 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     repo = Path(directory) / "served"
     git(root, "clone", "--quiet", "--template=", "--", str(root / "served.bundle"), str(repo))
     git(repo, "checkout", "--quiet", "--detach", request["head"])
-    plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]))
-                 for check in request["plan"])
-    results = run_checks(repo, request["base"], request["head"], plan,
-                         container=Container(request["image"], exec_scratch=request.get("exec_scratch", False)), reviewed=request.get("reviewed"))
+    try:
+        plan = tuple(Check(check["name"], Kind(check["kind"]), tuple(check["tests"]))
+                     for check in request["plan"])
+        results = run_checks(repo, request["base"], request["head"], plan,
+                             container=Container(request["image"], exec_scratch=request.get("exec_scratch", False)), reviewed=request.get("reviewed"))
+    except (ValueError, KeyError, TypeError) as error:
+        # The trusted harness rejected TL3's own check input. That is TL3's error,
+        # not PrismaBuild's (Q51). Admission and container failures stay upstream.
+        print("TL3_CHECKS_ERROR " + json.dumps({"schema": "tl3.checks.error.v1", "effect_key": request["effect_key"],
+              "error": type(error).__name__}, sort_keys=True, separators=(',', ':')), flush=True)
+        raise
     report = {"schema": "tl3.checks.v1", "effect_key": request["effect_key"],
               "base": request["base"], "head": request["head"],
               "reviewed": request.get("reviewed"),

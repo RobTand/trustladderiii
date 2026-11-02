@@ -454,6 +454,13 @@ impl Supervisor {
         let mut linked_issue: Option<tl3_github::Issue> = None;
         loop {
             if let Some(mut materials) = store.worker_materials(&ancestor.0.to_string())? {
+                if ancestor != delivery.node()
+                    && let Some(materials) = materials.as_object_mut()
+                {
+                    // A check run belongs to its own request's worktree. A restarted or
+                    // replacement request checks against the base its worktree sits on.
+                    materials.remove("check_run");
+                }
                 if let Some(issue) = linked_issue {
                     materials["issue"] = json!({"number": issue.number, "title": issue.title,
                         "body": issue.body.unwrap_or_default(), "author": "TL3", "comments": []});

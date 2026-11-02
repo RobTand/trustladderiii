@@ -103,6 +103,8 @@ impl Cause {
                 Cause::Upstream
             }
             Upstream::Worktrees => Cause::Tl3,
+            // The trusted check harness is TL3's code, running inside a PrismaBuild action.
+            Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
             Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
@@ -1490,6 +1492,7 @@ pub(crate) fn incident_summary(
     app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
+        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",
@@ -1535,6 +1538,7 @@ pub(crate) fn incident_summary(
         "setup" => "could not complete its setup",
         "environment_blocked" => "reported that TL3's environment blocked the work",
         "git_remote" => "could not reach the Git remote",
+        "harness" => "rejected TL3's own check input inside the PrismaBuild action",
         _ => "could not finish the operation",
     };
     let next = if needs_rob {
@@ -1697,6 +1701,18 @@ mod incident_tests {
         );
         assert_eq!(Cause::of(Upstream::Workers, "transport"), Cause::Tl3);
         assert_eq!(Cause::of(Upstream::PrismaBuild, "setup"), Cause::Upstream);
+        // #326: TL3's trusted harness rejecting TL3's own check input is TL3-side.
+        assert_eq!(Cause::of(Upstream::PrismaBuild, "harness"), Cause::Tl3);
+        let summary = incident_summary(
+            "request",
+            &IncidentSignature {
+                upstream: Upstream::PrismaBuild,
+                class: "harness".into(),
+            },
+            false,
+            None,
+        );
+        assert!(summary.contains("TL3's check harness"), "{summary}");
     }
 
     #[test]

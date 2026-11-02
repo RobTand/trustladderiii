@@ -455,7 +455,17 @@ fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
         "{}",
         incidents[0]["summary"]
     );
+    let id = incidents[0]["id"].clone();
     start(&mut c, "release-2");
-    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    // The new release clears it once and the checks retry. This fake fails every
+    // check, so the retry may raise a new incident; the original one is closed.
+    let cleared = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|r| r.table == "incidents" && r.value["id"] == id)
+        .unwrap();
+    assert_eq!(cleared.value["open"], false, "a new release clears TL3's incident");
     db.stop();
 }

@@ -11,7 +11,7 @@ import pytest
 from tl3_harness.execution import Container, Progress, container_command, run_checks
 from tl3_harness.model import Check, Custody, Kind, Outcome, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
-from tl3_harness.trees import added_names, export, git, test_edits as apply_test_edits, validate_configuration
+from tl3_harness.trees import added_names, export, git, test_edits as apply_test_edits, changed_configuration
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -179,8 +179,7 @@ def test_report_rejects_invalid_population_and_phase_order(middle):
 def test_config_edits_are_rejected(trees):
     base, head, _ = trees
     (head / "conftest.py").write_text("def pytest_collection_modifyitems(items): items.clear()\n")
-    with pytest.raises(ValueError, match="configuration changed"):
-        validate_configuration(base, head)
+    assert changed_configuration(base, head) == ["conftest.py"]
 
 
 def test_export_uses_commit_not_dirty_files_or_archive_attributes(tmp_path):
