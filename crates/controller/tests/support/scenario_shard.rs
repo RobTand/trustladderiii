@@ -22,7 +22,7 @@ worker_groups! {
     Launch: 4,
     Restart: 2,
     Reply: 9,
-    Memory: 8,
+    Memory: 10,
     Summaries: 3,
     Sessions: 4,
     Retirement: 5,

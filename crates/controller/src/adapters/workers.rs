@@ -14,6 +14,9 @@ pub(crate) mod review;
 mod source;
 #[cfg(test)]
 mod startup_tests;
+mod trace;
+#[cfg(test)]
+mod trace_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
@@ -179,6 +182,7 @@ impl Supervisor {
             self.store.clone(),
             self.active.clone(),
         )
+        .with_flusher(self.settings.launcher.clone(), self.settings.python.clone())
     }
 
     fn fence(&self, delivery: &Delivery) -> Result<(Store, Snapshot)> {
@@ -616,8 +620,17 @@ impl Supervisor {
         if Store::open(&self.store)?.load()?.epoch.get() != epoch {
             return Err(Error::Invalid("worker stop epoch is fenced"));
         }
-        stop_attempt(&self.root(key))?;
+        if let Some(attempt) = stop_attempt(&self.root(key))? {
+            trace::flush(&attempt, &self.flusher());
+        }
         Ok(())
+    }
+
+    fn flusher(&self) -> trace::Flusher<'_> {
+        trace::Flusher {
+            launcher: &self.settings.launcher,
+            python: &self.settings.python,
+        }
     }
 
     fn retire_sessions(&self, store: &mut Store) -> Result<()> {
@@ -682,6 +695,8 @@ impl Supervisor {
                         }
                         Err(error) => return Err(error),
                     }
+                    // #430: an unshipped span log outlives the run root.
+                    trace::hold(&entry.path(), &self.settings.runs)?;
                 }
             }
         }
@@ -720,8 +735,15 @@ impl Supervisor {
     }
 }
 
-fn stop_attempt(root: &Path) -> Result<()> {
+fn stop_attempt(root: &Path) -> Result<Option<PathBuf>> {
     if let Some((_, attempt)) = latest(root)? {
+        // Q49: stopping a live worker is deliberate, so its trace closes as
+        // stopped rather than crashed (#430).
+        if attempt.join(trace::LOG).try_exists()?
+            && (alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?)
+        {
+            write(&attempt.join("stopped.json"), &json!({}))?;
+        }
         // #372: the supervisor's own scope also holds every process the worker started.
         let scope = process::own_scope(&attempt.join("claim.json"))?;
         cancel(&attempt.join("claim.json"))?;
@@ -731,8 +753,9 @@ fn stop_attempt(root: &Path) -> Result<()> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        return Ok(Some(attempt));
     }
-    Ok(())
+    Ok(None)
 }
 
 impl Supervisor {
@@ -834,6 +857,8 @@ impl Supervisor {
             "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
         });
+        request["trace"]["log"] = json!(attempt.join(trace::LOG));
+        request["trace"]["wake"] = json!(self.settings.runs.join(trace::HELD).join(trace::WAKE));
         let python = release_python(&self.settings.python)?;
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
