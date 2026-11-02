@@ -665,6 +665,7 @@ fn stop_attempt(root: &Path) -> Result<()> {
         }
         process::kill_and_wait(&attempt.join("process.json"))?;
         process::kill_and_wait(&attempt.join("claim.json"))?;
+        trace::flush(&attempt);
     }
     Ok(())
 }
@@ -748,6 +749,7 @@ impl Supervisor {
             "repo": format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             "issue": delivery.issue, "request": delivery.node().0.to_string(), "epoch": delivery.epoch,
         });
+        request["trace"]["log"] = json!(attempt.join(trace::LOG));
         let python = release_python(&self.settings.python)?;
         // #372: the launcher moves the supervisor out of tl3d's cgroup, so a
         // restart or deploy leaves the run alive. A launcher failure fails the
@@ -1039,6 +1041,8 @@ pub(super) fn inspect(attempt: &Path, delivery: &Delivery) -> Result<Reconciliat
     if alive(&attempt.join("process.json"))? {
         return Ok(Reconciliation::Pending);
     }
+    // The worker and its supervisor have ended, whether or not they said so.
+    trace::flush(attempt);
     let Some(exit) = read(&attempt.join("exit.json"))? else {
         return Ok(Reconciliation::Absent);
     };
