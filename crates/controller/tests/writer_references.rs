@@ -32,6 +32,7 @@ fn input(kind: MessageKind) -> WriteRequest {
             "change": "Work is paused.", "outcome": "The button is blue.", "unmet_goals": []
         }),
         violations: vec![],
+        request: None,
     }
 }
 
