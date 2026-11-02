@@ -596,7 +596,8 @@ pub fn rob_curation(
             reason: format!("Rob: {reason}"),
             evidence: json!({}),
         },
-    )
+    )?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -642,7 +643,8 @@ pub fn queue_lesson(store: &mut Store, lesson: &Lesson<'_>) -> Result<()> {
     let item = json!({"content": content, "document_id": format!("tl3-{kind}-{id}"),
         "context": format!("TL3 {kind}"), "tags": tags,
         "metadata": {"source": "tl3", "kind": kind}});
-    store.queue_memory(&id, &item)
+    store.queue_memory(&id, &item)?;
+    Ok(())
 }
 
 fn normalized(text: &str) -> String {
