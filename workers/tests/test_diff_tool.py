@@ -389,8 +389,9 @@ def test_diff_skips_files_that_are_not_regular_or_are_too_large(repo):
         signal.signal(signal.SIGALRM, previous)
     assert {"pipe", "huge.txt", "docs/guide.md"}.isdisjoint(item["path"] for item in result["stat"])
     assert "src/app.py" in {item["path"] for item in result["stat"]}
-    assert "3 changed files were skipped because they are not regular files or are over 16,777,216 bytes" in result["message"]
-    for name in ("pipe", "huge.txt", "docs/guide.md"):
+    # Git itself leaves a tracked file that became a FIFO out of the diff and never opens it.
+    assert "2 changed files were skipped because they are not regular files or are over 16,777,216 bytes" in result["message"]
+    for name in ("pipe", "huge.txt"):
         assert name in result["message"]
 
 
