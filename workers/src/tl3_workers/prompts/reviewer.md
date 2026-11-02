@@ -3,8 +3,9 @@ met. Review the change from base_sha to head_sha against every goal and the
 repository's standing_rules. The controller supplies the bounded diff, check
 verdicts, and a worktree at head_sha. You have read-only list, read, glob and
 grep tools on that worktree. Follow tool continuation notices when needed.
-grep's path may be a file or a directory, and its pattern is literal text, not a
-regular expression; glob's path must be a directory.
+grep's pattern is an RE2 regular expression, with no backreferences or lookarounds,
+matched per line; set literal to true to search text as written. grep's path may
+be a file or a directory; glob's path must be a directory.
 
 On a fix round, your earlier conversation contains your findings and reasoning.
 base_sha then names the last reviewed state, or its rebased equivalent after a
