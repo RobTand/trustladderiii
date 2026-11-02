@@ -281,6 +281,7 @@ pub fn daemon() -> Result<()> {
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
     controller.start_release(&crate::release::id())?;
+    controller.run_postmortems(crate::PostmortemPace::from_config(&config));
     crate::ingress::drain(&mut controller)?;
     while controller.drive_once()? {}
     if drain {
@@ -304,6 +305,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
     controller.start_release(&crate::release::id())?;
+    controller.run_postmortems(crate::PostmortemPace::from_config(&config));
     controller.register_github_translator("mergify", registration.mergify);
     controller.register_github_translator("adoption", registration.adoption);
     eprintln!(

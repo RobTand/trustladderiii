@@ -25,7 +25,11 @@ py_binary(
     name = "__main__",
     srcs = ["tl3_workers/__main__.py"],
     visibility = ["//visibility:public"],
-    deps = [":src"],
+    deps = [
+        ":src",
+        "@tl3_pip//numpy",
+        "@tl3_pip//pandas",
+    ],
 )
 
 py_binary(
@@ -35,6 +39,8 @@ py_binary(
     deps = [
         ":src",
         "@tl3_pip//langchain_core",
+        "@tl3_pip//numpy",
+        "@tl3_pip//pandas",
     ],
 )
 
@@ -46,9 +52,11 @@ py_binary(
         ":src",
         "@tl3_pip//httpx",
         "@tl3_pip//jsonschema",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
+        "@tl3_pip//numpy",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
+        "@tl3_pip//pandas",
         "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
     ],
 )
@@ -63,6 +71,7 @@ py_library(
         "tl3_workers/diff.py",
         "tl3_workers/exploration.py",
         "tl3_workers/forecast.py",
+        "tl3_workers/judges.py",
         "tl3_workers/memory.py",
         "tl3_workers/pb_tests.py",
         "tl3_workers/quota.py",
@@ -74,6 +83,7 @@ py_library(
         "tl3_workers/roles/ingest.py",
         "tl3_workers/roles/maker.py",
         "tl3_workers/roles/planner.py",
+        "tl3_workers/roles/postmortem.py",
         "tl3_workers/roles/reviewer.py",
         "tl3_workers/roles/writer.py",
         "tl3_workers/runtime.py",
@@ -94,10 +104,12 @@ py_library(
         "@tl3_pip//langchain_openai",
         "@tl3_pip//langgraph",
         "@tl3_pip//langgraph_prebuilt",
-        "@tl3_pip//mlflow_tracing",
+        "@tl3_pip//mlflow_skinny",
+        "@tl3_pip//numpy",
         "@tl3_pip//openai",
         "@tl3_pip//opentelemetry_proto",
         "@tl3_pip//opentelemetry_sdk",
+        "@tl3_pip//pandas",
         "@tl3_pip//referencing",
         "@tl3_pip//sqlparse",  # keep: imported dynamically by MLflow tracing
         "@tl3_pip//tiktoken",

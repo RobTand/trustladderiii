@@ -599,6 +599,7 @@ fn main() {
         let settings = database.create("gate_case");
         match case {
             "commands" => steering::commands(&settings),
+            "daemon_with_workers" => daemon_with_workers(&settings),
             "answers" => steering::answers(&settings),
             "replacement" => steering::replacement(&settings),
             "correction" => steering::correction(&settings),
@@ -2077,6 +2078,18 @@ fn daemon_with_workers(settings: &tl3_config::Store) {
         ending.is_some()
     });
     assert_eq!(ending.unwrap().code(), Some(1));
+    // #486: these workers have no postmortem proxy, so the daemon's runner is
+    // off (postmortems_per_day = 0). The stopped request's postmortem stays
+    // owed, and no claim adds a watch after the stop settles.
+    let postmortems = store.postmortems("0").unwrap();
+    assert_eq!(
+        postmortems
+            .iter()
+            .map(|record| record.status.as_str())
+            .collect::<Vec<_>>(),
+        ["owed"],
+        "{postmortems:?}"
+    );
     reader.join().unwrap();
     let logs: Vec<_> = received.try_iter().collect();
     assert!(
@@ -2273,6 +2286,9 @@ fn worker_daemon_config(
             credentials.to_str().unwrap(),
         )
         .replace("/run/tl3/model-key", model_key.to_str().unwrap())
+        // #486: these workers have no postmortem proxy; a zero daily limit
+        // keeps tl3d's postmortem runner from claiming.
+        .replace("# postmortems_per_day = 10", "postmortems_per_day = 0")
         .replace("owner = \"RobTand\"", "owner = \"owner\"")
         .replace("name = \"tl3-sandbox\"", "name = \"sandbox\"")
         .replace("installation_id = 1", "installation_id = 3")
