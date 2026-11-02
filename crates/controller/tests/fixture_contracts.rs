@@ -282,10 +282,17 @@ fn scenario_shards_cover_every_group_once_and_balance_the_worker_fixture_groups(
 }
 
 #[test]
-fn scenario_shard_summary_does_not_require_a_global_expected_count() {
-    let source = include_str!("support/scenario_shard.rs");
-    assert!(
-        !source.contains("finish(self, expected: usize"),
-        "derive the shard summary from its executed groups; a global expected count races across PRs"
-    );
+#[should_panic(expected = "duplicate scenario group")]
+fn scenario_shards_reject_a_duplicated_group_without_a_global_total() {
+    let mut shard = support::scenario_shard::Shard::new(0, 1);
+    shard.run(1, || {});
+    shard.run(1, || {});
+}
+
+#[test]
+#[should_panic(expected = "missing scenario group")]
+fn scenario_shards_reject_a_missing_group_without_a_global_total() {
+    let mut shard = support::scenario_shard::Shard::new(0, 1);
+    shard.run(1, || {});
+    shard.finish(1, "fixture");
 }
