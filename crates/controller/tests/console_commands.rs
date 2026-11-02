@@ -251,6 +251,17 @@ impl World {
     }
 }
 
+fn controller_lock_barrier(settings: &tl3_config::Store) {
+    // Client drop can precede Postgres releasing the session lock.
+    let mut client = raw(settings);
+    client
+        .query_one("SELECT pg_advisory_lock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+    client
+        .query_one("SELECT pg_advisory_unlock($1)", &[&0x544c33434f4e5452_i64])
+        .unwrap();
+}
+
 fn raw(settings: &tl3_config::Store) -> postgres::Client {
     postgres::Config::new()
         .host(&settings.host)
@@ -649,6 +660,7 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
         workers,
     } = world;
     drop(controller);
+    controller_lock_barrier(&settings);
     let mut crashing = open(&settings, root.path(), &workers, store);
     assert!(
         catch_unwind(AssertUnwindSafe(|| tl3_controller::ingress::drain(
@@ -657,6 +669,7 @@ fn a_crash_between_filing_and_applying_loses_nothing_and_applies_once() {
         .is_err()
     );
     drop(crashing);
+    controller_lock_barrier(&settings);
     // The restarted controller replays the command; it changes nothing more.
     let mut world = World {
         controller: open(
@@ -1118,6 +1131,7 @@ fn a_command_filed_during_a_drain_wakes_tl3d_again() {
         workers,
     } = world;
     drop(controller);
+    controller_lock_barrier(&settings);
     let mut draining = open(&settings, root.path(), &workers, store);
     tl3_controller::ingress::drain(&mut draining).unwrap();
     assert!(
