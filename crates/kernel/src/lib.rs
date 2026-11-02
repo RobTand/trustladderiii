@@ -388,8 +388,11 @@ pub struct Node {
     #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
-    /// Orders agent-pool grants (Q39).
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    /// Orders agent-pool grants (Q39). Unranked keeps the older row shape.
+    #[cfg_attr(
+        all(feature = "serde", not(kani)),
+        serde(default, skip_serializing_if = "Priority::is_unranked")
+    )]
     pub priority: Priority,
 }
 
@@ -636,6 +639,10 @@ pub enum Priority {
 }
 
 impl Priority {
+    pub fn is_unranked(&self) -> bool {
+        *self == Priority::Unranked
+    }
+
     /// 0 for P0 through 4 for unranked.
     pub fn rank(self) -> u8 {
         self as u8
@@ -711,14 +718,21 @@ pub enum Command {
 pub enum Event {
     NewRequest {
         repo: RepoId,
-        /// Events stored before Q39 carry none and read as unranked.
-        #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+        /// Events stored before Q39 carry none and read as unranked; unranked
+        /// serializes that way too, as #371 requires of later fields.
+        #[cfg_attr(
+            all(feature = "serde", not(kani)),
+            serde(default, skip_serializing_if = "Priority::is_unranked")
+        )]
         priority: Priority,
     },
     NewAdoption {
         repo: RepoId,
         head: HeadId,
-        #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+        #[cfg_attr(
+            all(feature = "serde", not(kani)),
+            serde(default, skip_serializing_if = "Priority::is_unranked")
+        )]
         priority: Priority,
     },
     Reply {

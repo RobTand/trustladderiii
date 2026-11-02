@@ -557,7 +557,9 @@ impl Controller {
             .cloned()
     }
 
-    /// Refresh an open request's priority from its issue's current title and labels.
+    /// Refresh an open request's pool priority (Q39) from its issue's current
+    /// title and labels. The stored request keeps the priority read at intake,
+    /// which sets its credit reserve (#416).
     pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
         let snapshot = self.store.load()?;
         let Some(repo) = stored_repositories(&snapshot)?.into_iter().find(|r| {
@@ -590,11 +592,6 @@ impl Controller {
             json!({"issue_change": change}),
             &snapshot,
         );
-        let mut request: Request = decode_stored(row.value.clone())?;
-        request.priority = priority::issue_priority(&change.title, &change.labels);
-        commit
-            .rows
-            .push(put("requests", row.id.clone(), json!(request)));
         self.apply(
             &snapshot,
             world,

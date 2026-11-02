@@ -537,6 +537,44 @@ mod observation_shapes {
         );
     }
 
+    /// Q39 added priority to the kernel's request events and nodes. Unranked,
+    /// its default, keeps both in their older shapes.
+    #[test]
+    fn unranked_priority_serializes_like_the_older_shape() {
+        use tl3_kernel::{Event, HeadId, Node, Priority, RepoId};
+        let request = |priority| {
+            json!(Observation::Kernel(Event::NewRequest {
+                repo: RepoId(1),
+                priority,
+            }))
+        };
+        assert_eq!(
+            request(Priority::Unranked),
+            json!({"Kernel": {"NewRequest": {"repo": 1}}})
+        );
+        assert_eq!(
+            request(Priority::P1)["Kernel"]["NewRequest"]["priority"],
+            "P1"
+        );
+        assert_eq!(
+            json!(Observation::Kernel(Event::NewAdoption {
+                repo: RepoId(1),
+                head: HeadId(2),
+                priority: Priority::Unranked,
+            })),
+            json!({"Kernel": {"NewAdoption": {"repo": 1, "head": 2}}})
+        );
+        let node = Node::new(RepoId(0));
+        let stored = json!(node);
+        assert!(stored.get("priority").is_none(), "{stored}");
+        assert_eq!(serde_json::from_value::<Node>(stored).unwrap(), node);
+        let ranked = Node {
+            priority: Priority::P2,
+            ..node
+        };
+        assert_eq!(json!(ranked)["priority"], "P2");
+    }
+
     #[test]
     fn every_optional_observation_field_skips_its_default() {
         let body = include_str!("executor.rs")
