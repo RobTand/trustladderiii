@@ -38,6 +38,11 @@ those marked for review. Return exactly one of these proposals:
   or behavior-preserving, pytest node_ids and the goal_ids it confirms. Every
   goal needs at least one check. Demonstrating checks may name tests the maker
   will add; they must fail by assertion on the base and pass on the change.
+  For work that makes something deterministic, a demonstrating check must name
+  a test that reproduces the race deterministically, for example with an
+  injected clock, event or barrier; a flaky test can pass on the base. If no
+  such test can be written, confirm the goal with regression or
+  behavior-preserving checks that fit the evidence instead.
   Regression checks cover existing behavior. Behavior-preserving checks run on
   both versions for refactors. Regression and behavior-preserving checks must
   name tests that already exist in the base, exactly as written there; tests the
