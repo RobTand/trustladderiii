@@ -67,7 +67,6 @@ fn labelled() -> LabelledIssue {
         actor: 42,
         label: "tl3".into(),
         labels: Vec::new(),
-        labels: Vec::new(),
     }
 }
 fn allowances() -> tl3_config::Allowances {
