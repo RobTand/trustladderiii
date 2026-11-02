@@ -560,3 +560,22 @@ def test_oversized_check_plan_is_a_planner_violation(planner_request, monkeypatc
                         'node_ids': ['tests/test_greeting.py::test_' + 'x' * (4 * 1024 * 1024)]}]
     check_reply(planner_request['inputs'], reply)
     assert any('4194304' in violation and 'reduce' in violation for violation in reply['violations'])
+
+
+@pytest.mark.parametrize('kind', ['regression', 'behavior-preserving'])
+def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, monkeypatch, kind):
+    # A test module over 1 MiB still defines its tests; only the 16 MiB cap applies.
+    from tl3_workers.roles.planner import check_reply
+    from tl3_workers.forecast import Forecaster
+
+    root = Path(planner_request['worktree'])
+    (root / 'tests').mkdir(exist_ok=True)
+    padding = "".join(f"def helper_{i}():\n    return {i}\n\n\n" for i in range(45_000))
+    (root / 'tests/test_large.py').write_text(padding + "def test_existing():\n    assert True\n")
+    assert (root / 'tests/test_large.py').stat().st_size > 1_048_576
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
+    reply = copy.deepcopy(LEAF)
+    reply['checks'] = [{'kind': kind, 'node_ids': ['tests/test_large.py::test_existing'], 'goal_ids': [0, 1]}]
+    check_reply(planner_request['inputs'], reply)
+    assert not any('test_large.py' in item for item in reply['violations']), reply['violations']
