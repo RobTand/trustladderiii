@@ -60,7 +60,7 @@
     "tl3-controller/workers::maker_failure_cant-meet": 15,
     "tl3-controller/workers::maker_failure_ci-fact": 15,
     "tl3-controller/workers::maker_failure_ci-failure": 15,
-    "tl3-controller/workers::maker_failure_fix-killed": 15,
+    "tl3-controller/workers::maker_failure_fix-killed": 25,
     "tl3-controller/workers::maker_failure_killed-after-commit": 15,
     "tl3-controller/workers::maker_failure_needs-files": 15,
     "tl3-controller/workers::maker_failure_normal": 40,
