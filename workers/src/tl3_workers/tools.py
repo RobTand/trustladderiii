@@ -402,7 +402,7 @@ class Worktree:
             # Never follow a link: a symlink takes the directory path and fails there.
             return stat.S_ISREG(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False).st_mode)
 
-    def grep(self, pattern: str, path: str = ".", offset: int = 0) -> dict:
+    def grep(self, pattern: str, path: str = ".", offset: int = 0, literal: bool = False) -> dict:
         """Find bounded literal matches in a file, or below a directory. Offset counts matches; text previews may truncate."""
         def in_file(relative):
             with self._file(relative) as stream:

@@ -619,3 +619,166 @@ def test_a_symlink_path_is_named_as_a_link(tree, name):
     assert result.status == "error"
     assert "link is or passes through a symbolic link" in result.text
     assert "external fixture" not in result.text
+
+
+# grep reads its pattern as a regular expression unless literal is true (#414).
+@pytest.fixture
+def code_tree(tmp_path):
+    root = tmp_path / "worktree"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg/mod.py").write_text(
+        "class SupplierRevision(unittest.TestCase):\n"
+        "    def test_one(self):\n"
+        "        vars(digests)\n"
+        "def rung_speed(a):\n"
+        "x = foo.bar\n"
+        "tab\there\n"
+        "last line without newline",
+    )
+    return root
+
+
+def lines(result):
+    return [match["line"] for match in result["matches"]]
+
+
+@pytest.mark.parametrize("pattern,expected", [
+    ("rung_speed|SupplierRevision|absent_name", [1, 4]),
+    ("^class |    def test_", [1, 2]),
+    ("here$", [6]),
+    ("line without newline$", [7]),
+    (r"\bvars\b", [3]),
+    (r"def \w+\(\w\):", [4]),
+    (r"\d", []),
+    (r"foo\.bar", [5]),
+    (r"tab\s+here", [6]),
+    ("(?i)SUPPLIERREVISION", [1]),
+    ("Supplier[A-Z]evision|x = foo", [1, 5]),
+])
+def test_grep_reads_the_pattern_as_a_regular_expression(code_tree, pattern, expected):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep(pattern, "pkg/mod.py")) == expected
+        assert lines(worktree.grep(pattern, "pkg")) == expected
+
+
+def test_grep_regex_is_case_sensitive_and_matches_within_a_line(code_tree):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep("supplierrevision")) == []
+        assert lines(worktree.grep("Revision")) == [1]
+
+
+def test_grep_literal_true_searches_the_text_as_written(code_tree):
+    with Worktree(code_tree) as worktree:
+        assert lines(worktree.grep("vars(digests)", literal=True)) == [3]
+        assert lines(worktree.grep("rung_speed|SupplierRevision", literal=True)) == []
+        assert lines(worktree.grep("^class ", literal=True)) == []
+        assert lines(worktree.grep("foo.bar", literal=True)) == [5]
+        assert worktree.grep("rung_speed|x", literal=True)["message"] == ""
+
+
+def test_grep_literal_defaults_to_false_in_the_tool_schema(code_tree):
+    with Worktree(code_tree) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert tool.args["literal"]["default"] is False
+        assert tool.invoke({"pattern": "rung_speed|SupplierRevision"})["matches"] != []
+        assert tool.invoke({"pattern": "rung_speed|SupplierRevision", "literal": True})["matches"] == []
+
+
+@pytest.mark.parametrize("pattern", ["def test_one(", "vars(digests", "x[0", "*start", "foo)"])
+def test_grep_searches_an_invalid_regex_as_literal_text_and_says_so(tmp_path, pattern):
+    (tmp_path / "f.py").write_text(f"before\n{pattern}\nafter\n")
+    with Worktree(tmp_path) as worktree:
+        result = worktree.grep(pattern)
+    assert lines(result) == [2]
+    assert "not a valid regular expression" in result["message"]
+    assert "searched as literal text" in result["message"]
+    assert "literal=true" in result["message"]
+
+
+def test_grep_says_when_a_regex_found_nothing_that_the_text_might_be_literal(code_tree):
+    with Worktree(code_tree) as worktree:
+        # vars(digests) is a valid regex whose group means something else.
+        empty = worktree.grep("vars(digests)")
+        assert empty["matches"] == []
+        assert "No matches for the regular expression" in empty["message"]
+        assert "literal=true" in empty["message"]
+        # Plain words and a bare dot cannot differ between the two readings.
+        assert worktree.grep("nothing_here")["message"] == ""
+        assert worktree.grep("no.thing")["message"] == ""
+        assert worktree.grep("rung_speed|nothing_here")["message"] == ""
+        # A page past the last match is not "no matches".
+        assert worktree.grep("rung_speed|SupplierRevision", offset=2)["matches"] == []
+        assert worktree.grep("rung_speed|SupplierRevision", offset=2)["message"] == ""
+
+
+@pytest.mark.parametrize("pattern,reason", [
+    ("(a+)+$", "nested repeat"),
+    ("(a*)*b", "nested repeat"),
+    ("(a|aa)+$", "alternation inside a repeat"),
+    ("(?:ab|a)*c", "alternation inside a repeat"),
+    (r"(a)\1", "backreference"),
+    ("(?=a)a", "lookaround"),
+    ("(?<!a)b", "lookaround"),
+    (".*.*x", "adjacent repeats"),
+    (".+.*x", "adjacent repeats"),
+    (r"\w+.*x", "adjacent repeats"),
+    ("a{1,500}", "repeat count"),
+    ("a+b+c+d+e+f", "too many repeats"),
+    ("x" * 501, "too long"),
+])
+def test_grep_refuses_patterns_that_can_backtrack_catastrophically(code_tree, pattern, reason):
+    with Worktree(code_tree) as worktree:
+        result = call(tools_for(worktree)["grep"], pattern=pattern)
+        error = pytest.raises(ValueError, worktree.grep, pattern)
+    assert result.status == "error"
+    assert reason in result.text
+    assert "literal=true" in result.text
+    assert str(error.value) == result.text
+
+
+def test_grep_still_searches_a_refused_pattern_as_literal_text(tmp_path):
+    (tmp_path / "f.py").write_text("see (a+)+$ here\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("(a+)+$", literal=True)) == [1]
+
+
+@pytest.mark.parametrize("pattern", [
+    r"^\s*def \w+\(.*\):", r"class \w+\(.*Test", r"foo(bar|baz)?qux", r"(?:ab)+c",
+    r"\w+\s*=\s*\d+", r"a{1,50}b", r"[a-z_]+\.py$", "x|y|z|w|v|u|t",
+])
+def test_grep_accepts_ordinary_code_search_patterns(code_tree, pattern):
+    with Worktree(code_tree) as worktree:
+        worktree.grep(pattern)
+
+
+def test_grep_regex_looks_only_at_the_first_characters_of_a_long_line(tmp_path):
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (tmp_path / "wide.txt").write_text("x" * cap + "needle\nneedle at the start\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("need.e")) == [2]
+        assert lines(worktree.grep("needle", literal=True)) == [1, 2]
+        assert lines(worktree.grep("needle")) == [2]
+
+
+def test_grep_regex_keeps_paging_and_truncation(tmp_path):
+    total = OUTPUT_LIMITS["grep_matches"] + 5
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (tmp_path / "many.txt").write_text("hit one\nmiss\n" * total)
+    (tmp_path / "wide.txt").write_text("needle " + "x" * (cap * 2) + "\n")
+    with Worktree(tmp_path) as worktree:
+        first = worktree.grep("^hit|never", "many.txt")
+        assert len(first["matches"]) == OUTPUT_LIMITS["grep_matches"]
+        assert first["next_offset"] == OUTPUT_LIMITS["grep_matches"]
+        second = worktree.grep("^hit|never", "many.txt", offset=first["next_offset"])
+        assert lines(second) == [2 * n + 1 for n in range(100, total)]
+        assert second["next_offset"] is None
+        wide, = worktree.grep("^needle", "wide.txt")["matches"]
+        assert wide["text"].endswith("[Truncated. Use read offset=0, column=0.]")
+
+
+def test_grep_regex_handles_crlf_line_endings(tmp_path):
+    (tmp_path / "f.txt").write_bytes(b"one\r\ntwo$\r\nthree\r\n")
+    with Worktree(tmp_path) as worktree:
+        assert lines(worktree.grep("^one$")) == [1]
+        assert lines(worktree.grep("^three$")) == [3]
+        assert lines(worktree.grep(r"two\$$")) == [2]
