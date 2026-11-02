@@ -18,6 +18,8 @@ pub struct Status {
     pub requests: Vec<RequestStatus>,
     pub memory: MemoryStatus,
     pub unassigned_incidents: Vec<String>,
+    /// Q53: models out of quota until their announced reset.
+    pub quota_models: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -118,6 +120,26 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
         http_parked: counts.get(2),
         rejected_status: health.map(|row| row.get(0)),
     };
+    // Q53: models out of quota until their announced reset.
+    let now = chrono::Utc::now().timestamp_millis();
+    let quota_models = tx
+        .query(
+            "SELECT row_id, value FROM tl3_world WHERE table_name = 'model_quotas' ORDER BY row_id",
+            &[],
+        )
+        .map_err(tl3_store::Error::from)?
+        .into_iter()
+        .filter_map(|row| {
+            let model: String = row.get(0);
+            let value: serde_json::Value = row.get(1);
+            let reset = value["reset_ms"].as_i64().filter(|reset| *reset > now)?;
+            let reset = chrono::DateTime::from_timestamp_millis(reset)?;
+            Some(format!(
+                "{model} is out of quota until {}. Its steps use the next model in their ladder.",
+                reset.format("%Y-%m-%d %H:%M:%S UTC")
+            ))
+        })
+        .collect();
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(Status {
         requests: board
@@ -134,6 +156,7 @@ pub fn load(reader: &mut Reader) -> Result<Status> {
             .collect(),
         memory,
         unassigned_incidents: board.unassigned_incidents.iter().map(clearable).collect(),
+        quota_models,
     })
 }
 
@@ -175,6 +198,9 @@ pub fn render_text(status: &Status) -> String {
             writeln!(output, "{}", plain(incident)).expect("write to string");
         }
     }
+    for note in &status.quota_models {
+        writeln!(output, "{}", plain(note)).expect("write to string");
+    }
     output
 }
 
@@ -203,6 +229,9 @@ pub fn render_html(status: &Status) -> String {
             write!(output, "<li>{}</li>", escape_html(&plain(incident))).expect("write to string");
         }
         output.push_str("</ul>");
+    }
+    for note in &status.quota_models {
+        write!(output, "<p>{}</p>", escape_html(&plain(note))).expect("write to string");
     }
     writeln!(
         output,
@@ -253,6 +282,7 @@ mod tests {
         );
         let model = Status {
             unassigned_incidents: vec![],
+            quota_models: vec![],
             memory: MemoryStatus::default(),
             requests: vec![
                 RequestStatus {

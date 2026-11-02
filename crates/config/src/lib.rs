@@ -302,31 +302,6 @@ impl Models {
             .find(|model| !model.family.eq_ignore_ascii_case(maker_family))
     }
 
-    /// The model a worker run uses. `rung` is the attempt's step on the ladder:
-    /// the maker attempt minus one, or the planner's plan retries. A reviewer
-    /// takes the first model of another family than that attempt's maker, and
-    /// the next one after its fresh restart.
-    pub fn run_model(&self, role: &str, rung: usize, review_restarted: bool) -> Option<&Model> {
-        let ladder: &[Model] = match role {
-            "classifier" => &self.comment_classifier,
-            "ingest" => &self.ingest,
-            "audit" => &self.audit,
-            "maker" => &self.maker,
-            "planner" => &self.planner,
-            "reviewer" => &self.reviewer,
-            _ => return None,
-        };
-        let last = ladder.len().checked_sub(1)?;
-        if role == "reviewer" {
-            let maker = &self.maker[rung.min(self.maker.len() - 1)];
-            let first = ladder
-                .iter()
-                .position(|model| !model.family.eq_ignore_ascii_case(&maker.family))?;
-            return ladder.get((first + usize::from(review_restarted)).min(last));
-        }
-        ladder.get(rung.min(last))
-    }
-
     pub fn worker_model<'a>(&'a self, model: &'a Model) -> WorkerModel<'a> {
         WorkerModel {
             base_url: &self.base_url,

@@ -346,7 +346,17 @@ fn card(request: Request, models: Option<&tl3_config::Models>) -> Card {
             } else {
                 node.attempt.saturating_sub(1)
             };
-            models.run_model(role, usize::from(rung), node.review_restarted)
+            // The step's configured model; the worker adapter chooses the same way.
+            crate::adapters::workers::ladder::candidates(
+                models,
+                role,
+                usize::from(rung),
+                node.review_restarted,
+                None,
+            )
+            .ok()?
+            .first()
+            .copied()
         })
         .map(|model| model.name.clone());
     let mut badges = BTreeSet::new();

@@ -147,6 +147,10 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     fn resume_after_quota(&mut self, delivery: &Delivery) -> Result<Option<Completion>> {
         self.backend(delivery).resume_after_quota(delivery)
     }
+    fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
+        self.backend(delivery)
+            .quota_resume_ms(delivery, announced, now)
+    }
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.backend(delivery).stop_stalled(delivery)
     }
