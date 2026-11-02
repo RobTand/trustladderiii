@@ -128,6 +128,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
                 name: "value".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
+                forcing: None,
             }],
         }),
     }
@@ -2715,6 +2716,7 @@ fn result_budget_rejects_repeated_checks() {
             name: format!("check-{i}"),
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
+            forcing: None,
         })
         .collect();
     let mut adapter = fixture(root.path(), "pending");

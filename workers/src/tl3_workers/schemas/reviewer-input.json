@@ -119,6 +119,18 @@
                     "no-report"
                   ]
                 },
+                "head_forced": {
+                  "enum": [
+                    "passed",
+                    "assertion",
+                    "added-name",
+                    "error",
+                    "skipped",
+                    "missing",
+                    "uncollected",
+                    "no-report"
+                  ]
+                },
                 "pre_existing": {
                   "type": "boolean"
                 },
@@ -143,6 +155,9 @@
           },
           "custody": {
             "const": "in-process"
+          },
+          "forcing": {
+            "$ref": "planner-reply.json#/$defs/forcing"
           }
         },
         "required": [

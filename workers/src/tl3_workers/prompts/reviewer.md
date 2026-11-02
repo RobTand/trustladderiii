@@ -39,6 +39,13 @@ reason blocks under that finding's supplied goal or standing rule; cite its id.
 After a clean rebase, the reviewed state is its rebased equivalent, including
 the new base's code and test configuration. A dropped reproducer's recorded
 reason needs the same judgment.
+A demonstrating check with a forcing is a forced reproduction of a flaky test
+(#393). Its base outcome is the old test on the base under the forcing,
+head_forced is the head under the forcing, and head is the head without it.
+Judge whether the forcing models the symptom the issue describes, the
+condition that made the test flaky, rather than some other failure it can
+cause. If it forces an unrelated failure, block under the goal the check
+confirms and cite the check by name.
 A check named "Existing tests that import the change" is code's selection of
 existing tests the change's imports reach, kept only if they pass on the base.
 A passing test there may carry a note that it failed with the others and passed

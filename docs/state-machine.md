@@ -466,6 +466,7 @@ On 2026-10-29 and 30, Rob answered 41 questions in six rounds. He accepted the r
 - **Q5 Protected config:** CI and Mergify config need Rob's approval. Test configuration needs a second, independent review aimed only at weakened checks, plus a note to Rob.
 - **Q16 Test configuration:** the files that decide which tests run or how results are reported: pytest's settings, `conftest.py`, tox and nox files, and test scripts CI calls. The tests themselves don't count.
 - **Q40 Checks:** every goal is checked as demonstrating, regression or behavior-preserving. TL3 runs the tests itself, and a missing or skipped test fails.
+- **Q55 Forced reproduction:** approved by Rob, 2026-11-02 (#393): "yes, agreed." A forced reproduction is the red for making a named flaky test deterministic; stress runs don't count. See "Q55: forced reproduction" below.
 - **Q41 Approval:** an approval covers one exact commit. Any new commit, including a clean catch-up onto main, is tested and reviewed again. The first 3 catch-ups per piece are free, and later ones cost credit.
 - **Q42 Review fixes:** a fix round for a review finding about behavior adds a reproducing test that fails on the reviewed commit and passes on the fix. A finding no test can show needs a stated reason. Decided after the grilling, on 2026-10-30.
 
@@ -641,3 +642,16 @@ Rob approved three Publishing rows for a required check that never reports on th
 TL3 decides on the check-suite and check-run webhooks it already receives, with no timers or polling. A completed check suite triggers the same look as a check run on the approved head. The controller implements the rows with its existing setup-incident machinery; the kernel is unchanged. An incident is raised once per head, context and app, so a clear stands for that head. A requirement with no expected app accepts a check run or a legacy status from any source.
 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
+
+## Q55: forced reproduction
+
+Rob, 2026-11-02, answering #393: "yes, agreed." This is a reading of Q40 for deflakes. A flaky test passes on the base most of the time, and the demonstrating base run applies the change's test edits, so a fix inside the test already exists there. Neither can show red.
+
+> For a change whose goal is to make a named flaky test deterministic, a **forced reproduction** counts as the red:
+> - The plan names a **forcing**: a patch, fixture or environment setting the harness applies. It deterministically recreates the flake's condition, for example "a real process holds PID 4242".
+> - With the forcing applied, the harness runs the **old test on the base code**, which must fail by assertion, and the **new test on the change**, which must pass. The new test must also pass without the forcing.
+> - The maker can't alter the forcing's verdict, because it's applied by the harness outside the test being fixed. The reviewer judges whether the forcing really models the symptom the issue describes.
+> - Stress runs, meaning repeat until it fails, don't count.
+> - If no forcing can be written, the planner says "can't meet" once, with the reason. Under fail-fast (#440) the request then stops for TL3 review.
+
+The forcing is a field on a demonstrating check. It is declarative: a symptom, environment variables, and patches of attributes inside the served repository with a JSON value, a returned value, a builtin exception other than `AssertionError`, or a delay. The planner writes it, so it is untrusted model output. The harness's host process only bounds it; the runner applies it inside the test container, under the same sandbox as the tests. The maker's edits can't reach it. The check's result echoes the forcing and the head's outcome under it, for review. The kernel is unchanged: it still sees a check pass or fail.

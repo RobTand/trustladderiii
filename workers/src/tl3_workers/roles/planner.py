@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 from tl3_workers.roles.base import Role
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES
-from tl3_harness import Check, Kind
+from tl3_harness import Check, Forcing, HarnessInputError, Kind
 from tl3_harness.limits import validate_check_plan
 from tl3_harness.trees import test_function_source
 from tl3_workers.tools import Worktree
@@ -26,7 +26,16 @@ def check_reply(inputs, reply):
         if not reply["lands_on_its_own"]:
             violations.append("A leaf must land on its own.")
         covered = set()
-        for check in reply["checks"]:
+        forcings = {}
+        for index, check in enumerate(reply["checks"]):
+            if "forcing" in check:
+                # #393: a forced reproduction is the red for a deflake.
+                if check["kind"] != "demonstrating":
+                    violations.append("Only a demonstrating check can carry a forcing.")
+                try:
+                    forcings[index] = Forcing.parse(check["forcing"])
+                except HarnessInputError as error:
+                    violations.append(f"Invalid forcing: {error}")
             if not check["node_ids"]:
                 violations.append("Every check must name at least one test.")
             if not check["goal_ids"]:
@@ -37,7 +46,8 @@ def check_reply(inputs, reply):
                 except ValueError:
                     violations.append("Checks must name exact pytest node IDs.")
                     continue
-                if check["kind"] in {"regression", "behavior-preserving"}:
+                # A forced check runs the old test on the base, so it must exist there too.
+                if check["kind"] in {"regression", "behavior-preserving"} or "forcing" in check:
                     # The whole module is parsed to find the test, so the
                     # declared-file hard cap bounds it, not a page size.
                     path = node_id.split("::")[0]
@@ -58,7 +68,8 @@ def check_reply(inputs, reply):
             covered.update(cited)
         if "Checks must name exact pytest node IDs." not in violations:
             try:
-                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']))
+                validate_check_plan(tuple(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                                                (forcings.get(i) if check['kind'] == 'demonstrating' else None))
                                           for i, check in enumerate(reply['checks']) if check['node_ids']))
             except ValueError as error:
                 violations.append(str(error))

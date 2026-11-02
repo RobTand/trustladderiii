@@ -209,7 +209,11 @@ pub(crate) fn maker_inputs(
         let ids = check["goal_ids"].as_array().ok_or(Error::Invalid("plan check needs goal indexes"))?.iter().map(|id| {
             id.as_u64().and_then(|id| usize::try_from(id).ok()).and_then(|id| goals.get(id)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
         }).collect::<Result<Vec<_>>>()?;
-        Ok(json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids}))
+        let mut planned = json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids});
+        if let Some(forcing) = check.get("forcing") {
+            planned["forcing"] = forcing.clone();
+        }
+        Ok(planned)
     }).collect::<Result<Vec<Value>>>()?;
     Ok(
         json!({"brief":brief["brief"], "goals":goals, "plan":{"files":plan["files"], "checks":checks}}),

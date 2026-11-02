@@ -521,15 +521,16 @@ FORCING = {"symptom": "A real, unrelated process holds PID 4242.", "environment"
 
 def test_review_sees_a_forced_reproduction(review_request):
     # #393: the reviewer judges whether the forcing models the issue's symptom.
-    from jsonschema import Draft202012Validator
-    from tl3_workers.contracts import schema
+    from jsonschema import ValidationError
+    from tl3_workers.contracts import validate
 
     check = review_request["inputs"]["checks"][0]
     check.update(kind="demonstrating", verdict="pass", forcing=FORCING)
     check["tests"][0].update(base="assertion", head="passed", head_forced="passed", passed=True)
-    assert Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"])
+    validate("reviewer-input", review_request["inputs"])
     check["tests"][0]["head_forced"] = "maybe"
-    assert not Draft202012Validator(schema("reviewer-input")).is_valid(review_request["inputs"])
+    with pytest.raises(ValidationError):
+        validate("reviewer-input", review_request["inputs"])
 
 
 def test_prompt_judges_the_forcing_against_the_symptom():
