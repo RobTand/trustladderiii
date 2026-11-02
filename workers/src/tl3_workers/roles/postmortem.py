@@ -27,6 +27,20 @@ STRUCTURAL = {"mlflow.spanType", "mlflow.traceRequestId", "mlflow.chat.tokenUsag
               "tl3.trace.omitted_spans", "tl3.source_trace"}
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens",
          "cache_creation_input_tokens")
+# The release's own files, which a recommendation's target names from the
+# repository root: the worker release ships workers/ and harness/ (#372).
+RELEASE_ROOT = Path(__file__).resolve().parents[4]
+
+
+class PostmortemDeadline(BaseException):
+    """The run passed its whole wall-clock allowance (#486). A BaseException, so
+    no judge's error handling turns it into a judge failure."""
+
+
+def unusable(item, root):
+    """Why a recommendation can't apply to the release, or None."""
+    del item, root
+    return None
 
 
 class MlflowTraces:

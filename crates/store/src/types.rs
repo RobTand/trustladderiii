@@ -208,6 +208,8 @@ pub struct PostmortemRecord {
     pub status: String,
     /// The claim that is running it, or ran it last.
     pub run_key: Option<String>,
+    /// Times a failed run made it owed again, at most 2.
+    pub attempts: i32,
 }
 
 /// One of a postmortem's recommendations: an exact edit with its evidence (Q32).

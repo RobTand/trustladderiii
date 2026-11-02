@@ -273,6 +273,23 @@ fn main() {
             "postmortem_failures_are_fixed_classes",
             postmortems::failures_are_fixed_classes,
         ),
+        (
+            "postmortem_failed_runs_retry_then_pause",
+            postmortems::failed_runs_retry_then_pause,
+        ),
+        (
+            "postmortem_quota_on_a_postmortem_model_stops_claims",
+            postmortems::quota_on_a_postmortem_model_stops_claims,
+        ),
+        ("postmortem_claims_per_day", postmortems::claims_per_day),
+        (
+            "postmortem_stalls_fail_with_no_progress",
+            postmortems::stalls_fail_with_no_progress,
+        ),
+        (
+            "postmortem_result_in_the_inbox_survives_a_restart",
+            postmortems::result_in_the_inbox_survives_a_restart,
+        ),
     ];
     let selected = args.iter().find_map(|arg| arg.strip_prefix("--case="));
     for (name, test) in cases {

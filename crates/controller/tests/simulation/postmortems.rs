@@ -1,7 +1,7 @@
 //! #403 slice B: the postmortem runner, outside the kernel, on spare pool capacity.
 use super::*;
 use std::{cell::RefCell, rc::Rc};
-use tl3_controller::Result;
+use tl3_controller::{PostmortemPace, Result, executor::Look};
 
 const PLANTED: [&str; 3] = [
     "sk-planted403abcdefghijklmnop",
@@ -45,6 +45,12 @@ struct Judge {
     finished: bool,
     permanent: bool,
     reply: Option<serde_json::Value>,
+    /// A finished run fails with this class instead of replying.
+    failing: Option<&'static str>,
+    /// A running postmortem reads as alive but never moves.
+    stalled: bool,
+    /// Stalled runs the controller stopped.
+    stopped: u32,
 }
 
 /// The simulated workers, with postmortems that finish only when told to,
@@ -73,6 +79,15 @@ impl Executor for Workers {
         if !judge.finished {
             return Ok(Reconciliation::Pending);
         }
+        if let Some(failure) = judge.failing {
+            return Ok(Reconciliation::Found(Completion::confirmed(vec![
+                Observation::Postmortem {
+                    key: delivery.key.clone(),
+                    reply: None,
+                    failure: Some(failure.into()),
+                },
+            ])));
+        }
         Ok(Reconciliation::Found(Completion::confirmed(vec![
             Observation::Postmortem {
                 key: delivery.key.clone(),
@@ -81,9 +96,55 @@ impl Executor for Workers {
             },
         ])))
     }
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        if delivery.is_postmortem() && self.judge.borrow().stalled {
+            return Ok(Look::Alive {
+                progress: "stuck".into(),
+            });
+        }
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
+    /// The worker adapter stops a stalled run, and its record reads as a
+    /// failed worker.
+    fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
+        if !delivery.is_postmortem() {
+            return self.fake.stop_stalled(delivery);
+        }
+        self.judge.borrow_mut().stopped += 1;
+        Ok(Completion::confirmed(vec![Observation::Postmortem {
+            key: delivery.key.clone(),
+            reply: None,
+            failure: Some("worker_failed".into()),
+        }]))
+    }
 }
 
-fn start(settings: &tl3_config::Store, root: &Path, judge: &Rc<RefCell<Judge>>) -> Controller {
+fn pace(per_day: u32) -> PostmortemPace {
+    PostmortemPace {
+        per_day,
+        models: vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()],
+    }
+}
+
+#[derive(Clone)]
+struct TestClock(Rc<std::cell::Cell<u64>>);
+impl tl3_controller::clock::Clock for TestClock {
+    fn now(&self) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.0.get())
+    }
+}
+
+fn open_runner(
+    settings: &tl3_config::Store,
+    root: &Path,
+    judge: &Rc<RefCell<Judge>>,
+    pace: PostmortemPace,
+    clock: impl tl3_controller::clock::Clock + 'static,
+) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(
         Upstream::Workers,
@@ -93,9 +154,29 @@ fn start(settings: &tl3_config::Store, root: &Path, judge: &Rc<RefCell<Judge>>) 
         },
     );
     let mut controller =
-        Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
-    controller.run_postmortems();
+        Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
+            .unwrap();
+    controller.run_postmortems(pace);
     controller
+}
+
+fn start(settings: &tl3_config::Store, root: &Path, judge: &Rc<RefCell<Judge>>) -> Controller {
+    start_at(settings, root, judge, pace(10))
+}
+
+fn start_at(
+    settings: &tl3_config::Store,
+    root: &Path,
+    judge: &Rc<RefCell<Judge>>,
+    pace: PostmortemPace,
+) -> Controller {
+    open_runner(
+        settings,
+        root,
+        judge,
+        pace,
+        tl3_controller::clock::SystemClock,
+    )
 }
 
 fn restart(controller: Controller, settings: &tl3_config::Store) {
@@ -321,4 +402,193 @@ pub(super) fn failures_are_fixed_classes(settings: &tl3_config::Store) {
     assert_eq!(failed.failure.as_deref(), Some("invalid_reply"));
     assert!(failed.recommendations.is_empty());
     assert_eq!(incidents(&mut controller), 0);
+}
+
+fn records(settings: &tl3_config::Store, node: &str) -> Vec<tl3_store::PostmortemRecord> {
+    Store::open(settings).unwrap().postmortems(node).unwrap()
+}
+
+/// #486: a run that fails for a reason worth retrying is owed again, twice at
+/// most. Three failed runs in a row pause claims until tl3d starts again, so a
+/// proxy outage can't fail the whole backlog.
+pub(super) fn failed_runs_retry_then_pause(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge {
+        finished: true,
+        failing: Some("worker_failed"),
+        ..Judge::default()
+    }));
+    let mut controller = start(settings, root.path(), &judge);
+    share(settings, "1");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    let record = records(settings, "0")[0].clone();
+    assert_eq!(
+        (record.status.as_str(), record.attempts),
+        ("failed", 2),
+        "the first run and two retries failed"
+    );
+    assert_eq!(judge.borrow().launched.len(), 3);
+    let failure = Store::open(settings)
+        .unwrap()
+        .postmortem(record.id)
+        .unwrap()
+        .unwrap()
+        .failure;
+    assert_eq!(failure.as_deref(), Some("worker_failed"));
+
+    judge.borrow_mut().failing = None;
+    controller.intake(issue(43)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[1].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert_eq!(
+        status(settings, "1"),
+        [("owed".to_string(), None)],
+        "three failed runs in a row pause the runner"
+    );
+    assert_eq!(judge.borrow().launched.len(), 3);
+
+    restart(controller, settings);
+    let mut controller = start(settings, root.path(), &judge);
+    drain(&mut controller);
+    assert_eq!(status(settings, "1")[0].0, "done", "a restart resumes it");
+}
+
+/// #486: spare pool slots aren't spare quota. While a model in the postmortem
+/// ladder has reported quota, nothing is claimed; other models' quota is no bar.
+pub(super) fn quota_on_a_postmortem_model_stops_claims(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge {
+        finished: true,
+        ..Judge::default()
+    }));
+    let mut controller = start(settings, root.path(), &judge);
+    share(settings, "1");
+    let quota = |controller: &mut Controller, model: &str| {
+        let key = format!("quota-fixture-{model}");
+        controller
+            .observe(
+                &key,
+                Observation::Quota {
+                    key: key.clone(),
+                    reset_ms: 4_000_000_000_000,
+                    model: Some(model.into()),
+                },
+            )
+            .unwrap();
+    };
+    quota(&mut controller, "gpt-unrelated");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    assert_eq!(status(settings, "0")[0].0, "done");
+
+    quota(&mut controller, "claude-sonnet-5-5");
+    controller.intake(issue(43)).unwrap();
+    drain(&mut controller);
+    assert_eq!(
+        controller.world().unwrap().nodes[1].phase,
+        Phase::Closed(Outcome::Merged)
+    );
+    assert_eq!(status(settings, "1"), [("owed".to_string(), None)]);
+    assert_eq!(jobs(&mut controller), 0);
+    assert_eq!(judge.borrow().launched.len(), 1);
+}
+
+/// #486: at most `per_day` claims in a UTC day, across restarts.
+pub(super) fn claims_per_day(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge {
+        finished: true,
+        ..Judge::default()
+    }));
+    let mut controller = start_at(settings, root.path(), &judge, pace(1));
+    share(settings, "1");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    controller.intake(issue(43)).unwrap();
+    drain(&mut controller);
+    assert_eq!(status(settings, "0")[0].0, "done");
+    assert_eq!(status(settings, "1"), [("owed".to_string(), None)]);
+    restart(controller, settings);
+    let mut controller = start_at(settings, root.path(), &judge, pace(1));
+    drain(&mut controller);
+    assert_eq!(
+        status(settings, "1"),
+        [("owed".to_string(), None)],
+        "the day's count is stored"
+    );
+    assert_eq!(judge.borrow().launched.len(), 1);
+}
+
+/// #486: a run the controller stops for making no progress fails with the
+/// `no_progress` class, whatever the stopped worker's record says.
+pub(super) fn stalls_fail_with_no_progress(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge {
+        stalled: true,
+        ..Judge::default()
+    }));
+    let clock = TestClock(Rc::new(std::cell::Cell::new(1000)));
+    let mut controller = open_runner(settings, root.path(), &judge, pace(10), clock.clone());
+    let mut allowances = tl3_config::Allowances::default();
+    allowances.agent_worker.silence_secs = 1;
+    allowances.agent_worker.no_progress_secs = 3;
+    controller.set_allowances(allowances);
+    share(settings, "1");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    assert_eq!(status(settings, "0")[0].0, "running");
+    controller.look_now().unwrap();
+    clock.0.set(10_000);
+    controller.look_due().unwrap();
+    drain(&mut controller);
+    assert_eq!(judge.borrow().stopped, 1);
+    let record = records(settings, "0")[0].clone();
+    assert_eq!(record.status, "failed");
+    let failure = Store::open(settings)
+        .unwrap()
+        .postmortem(record.id)
+        .unwrap()
+        .unwrap()
+        .failure;
+    assert_eq!(failure.as_deref(), Some("no_progress"));
+}
+
+/// #486: a result a look put in the inbox before tl3d stopped keeps its claim
+/// running across the restart, and is stored once after it, with no second run.
+pub(super) fn result_in_the_inbox_survives_a_restart(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let judge = Rc::new(RefCell::new(Judge::default()));
+    let mut controller = start(settings, root.path(), &judge);
+    share(settings, "1");
+    controller.intake(issue(42)).unwrap();
+    drain(&mut controller);
+    let run_key = status(settings, "0")[0]
+        .1
+        .clone()
+        .expect("the postmortem is running");
+    judge.borrow_mut().finished = true;
+    controller.look_now().unwrap();
+    let snapshot = controller.snapshot().unwrap();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" && row.value["Postmortem"]["key"] == run_key.as_str()),
+        "the look left the result in the inbox"
+    );
+    restart(controller, settings);
+    let mut controller = start(settings, root.path(), &judge);
+    assert_eq!(
+        status(settings, "0"),
+        [("running".to_string(), Some(run_key.clone()))],
+        "the claim stays running"
+    );
+    drain(&mut controller);
+    assert_eq!(status(settings, "0")[0].0, "done");
+    assert_eq!(judge.borrow().launched.get(&run_key), Some(&1));
+    assert_eq!(judge.borrow().launched.len(), 1);
 }

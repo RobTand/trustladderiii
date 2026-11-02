@@ -48,6 +48,7 @@ fn main() {
         ("reader_role", reader_role),
         ("postmortem_records", postmortem_records),
         ("postmortem_results", postmortem_results),
+        ("postmortem_retries_and_pace", postmortem_retries_and_pace),
         (
             "postmortem_migration_on_schema_12",
             postmortem_migration_on_schema_12,
@@ -2544,14 +2545,14 @@ fn postmortem_results(settings: &tl3_config::Store) {
         PostmortemUpdate::Failed {
             id: second.id,
             run_key: "postmortem:2:a".into(),
-            failure: "worker_failed".into(),
+            failure: "invalid_reply".into(),
         },
     )
     .unwrap();
     let failed = store.postmortem(second.id).unwrap().unwrap();
     assert_eq!(
         (failed.record.status.as_str(), failed.failure.as_deref()),
-        ("failed", Some("worker_failed"))
+        ("failed", Some("invalid_reply"))
     );
     let snapshot = store.load().unwrap();
     let mut change = Commit::new("third", json!("third"), &snapshot);
@@ -2590,4 +2591,139 @@ fn postmortem_results(settings: &tl3_config::Store) {
         ("owed", None)
     );
     assert_eq!(store.owed_postmortem().unwrap().unwrap().id, third.id);
+}
+
+/// #486: a run that failed for a reason worth retrying is owed again, at most
+/// twice, behind postmortems owed since. Claims count toward the UTC day they
+/// were made in, and failed runs since the last success make a streak.
+fn postmortem_retries_and_pace(settings: &tl3_config::Store) {
+    let mut store = Store::open(settings).unwrap();
+    let owed = |trigger: &str| OwedPostmortem {
+        node: "1".into(),
+        trigger: trigger.into(),
+        reason: "needed_fix".into(),
+        sample_share: None,
+        repo: "owner/sandbox".into(),
+        issue: 12,
+        title: "Fix greeting".into(),
+    };
+    let mut change = seed(&mut store);
+    change.postmortems = vec![owed("close")];
+    store.commit(&change).unwrap();
+    let start = store.load().unwrap().revision.get() as i64;
+    let update = |store: &mut Store, key: &str, update: PostmortemUpdate| {
+        let snapshot = store.load().unwrap();
+        let mut change = Commit::new(key, json!(key), &snapshot);
+        change.postmortem_updates = vec![update];
+        store.commit(&change).unwrap();
+    };
+    let run = |store: &mut Store, id: i64, key: &str, failure: Option<&str>| {
+        update(
+            store,
+            &format!("claim:{key}"),
+            PostmortemUpdate::Claim {
+                id,
+                run_key: key.into(),
+                rubric_version: 1,
+            },
+        );
+        update(
+            store,
+            &format!("end:{key}"),
+            match failure {
+                Some(failure) => PostmortemUpdate::Failed {
+                    id,
+                    run_key: key.into(),
+                    failure: failure.into(),
+                },
+                None => PostmortemUpdate::Done {
+                    id,
+                    run_key: key.into(),
+                    result: Box::new(judged(1)),
+                },
+            },
+        );
+    };
+    let first = store.owed_postmortem().unwrap().unwrap();
+    assert_eq!(first.attempts, 0);
+    run(
+        &mut store,
+        first.id,
+        "postmortem:1:a",
+        Some("worker_failed"),
+    );
+    let record = store.postmortem(first.id).unwrap().unwrap();
+    assert_eq!(
+        (
+            record.record.status.as_str(),
+            record.record.attempts,
+            record.record.run_key.as_deref(),
+            record.failure.as_deref()
+        ),
+        ("owed", 1, None, Some("worker_failed")),
+        "a worker failure is owed again"
+    );
+    // A postmortem owed later runs before the retry.
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("newer", json!("newer"), &snapshot);
+    change.postmortems = vec![owed("question:3")];
+    store.commit(&change).unwrap();
+    let next = store.owed_postmortem().unwrap().unwrap();
+    assert_eq!(
+        next.trigger, "question:3",
+        "the retry waits behind newer rows"
+    );
+    run(&mut store, next.id, "postmortem:2:a", Some("invalid_reply"));
+    assert_eq!(
+        store.postmortem(next.id).unwrap().unwrap().record.status,
+        "failed",
+        "an invalid reply is not retried"
+    );
+    let retry = store.owed_postmortem().unwrap().unwrap();
+    assert_eq!((retry.id, retry.attempts), (first.id, 1));
+    run(&mut store, first.id, "postmortem:1:b", Some("deadline"));
+    assert_eq!(
+        store.postmortem(first.id).unwrap().unwrap().record.attempts,
+        2,
+        "a deadline is retried"
+    );
+    let middle = store.load().unwrap().revision.get() as i64;
+    run(
+        &mut store,
+        first.id,
+        "postmortem:1:c",
+        Some("worker_failed"),
+    );
+    let record = store.postmortem(first.id).unwrap().unwrap();
+    assert_eq!(
+        (record.record.status.as_str(), record.record.attempts),
+        ("failed", 2),
+        "the third failure is final"
+    );
+    assert!(store.owed_postmortem().unwrap().is_none());
+    assert_eq!(store.postmortem_claims_today().unwrap(), 4);
+    assert_eq!(store.postmortem_failure_streak(start).unwrap(), 3);
+    assert_eq!(store.postmortem_failure_streak(middle).unwrap(), 1);
+    raw(settings)
+        .execute(
+            "UPDATE tl3_postmortem_claims SET claimed_at = claimed_at - interval '1 day' WHERE run_key = 'postmortem:1:a'",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        store.postmortem_claims_today().unwrap(),
+        3,
+        "yesterday's claim no longer counts"
+    );
+    let snapshot = store.load().unwrap();
+    let mut change = Commit::new("third", json!("third"), &snapshot);
+    change.postmortems = vec![owed("rob:7")];
+    store.commit(&change).unwrap();
+    let third = store.owed_postmortem().unwrap().unwrap();
+    run(&mut store, third.id, "postmortem:3:a", None);
+    assert_eq!(
+        store.postmortem_failure_streak(start).unwrap(),
+        0,
+        "a success ends the streak"
+    );
 }

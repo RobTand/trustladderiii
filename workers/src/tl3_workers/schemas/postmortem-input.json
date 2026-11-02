@@ -42,6 +42,7 @@
     },
     "release": {"type": "string"},
     "grade_model": {"type": "string", "minLength": 1},
+    "deadline_secs": {"type": "integer", "minimum": 1, "description": "The run's whole wall-clock allowance (#486)."},
     "trace_tags": {
       "type": "object",
       "properties": {
@@ -54,6 +55,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["record", "case", "rubric", "release", "grade_model", "trace_tags"],
+  "required": ["record", "case", "rubric", "release", "grade_model", "deadline_secs", "trace_tags"],
   "additionalProperties": false
 }

@@ -29,6 +29,7 @@ pub mod memory;
 mod narrowing;
 mod notices;
 mod postmortems;
+pub use postmortems::PostmortemPace;
 pub mod priority;
 pub mod production;
 pub mod prompts;
@@ -246,8 +247,13 @@ pub struct Controller {
     clock: Box<dyn clock::Clock>,
     held_effects: BTreeMap<executor::Upstream, BTreeMap<String, String>>,
     allowances: tl3_config::Allowances,
-    /// tl3d judges owed postmortems (#403); see `run_postmortems`.
-    postmortems: bool,
+    /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
+    postmortems: Option<PostmortemPace>,
+    /// The revision tl3d started at: failed postmortem runs before it never
+    /// pause the runner (#486).
+    postmortem_since: i64,
+    /// The runner paused after failed runs and said so once in the journal.
+    postmortem_paused: bool,
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
@@ -316,7 +322,9 @@ impl Controller {
             clock: Box::new(clock),
             held_effects: BTreeMap::new(),
             allowances: tl3_config::Allowances::default(),
-            postmortems: false,
+            postmortems: None,
+            postmortem_since: 0,
+            postmortem_paused: false,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
         };

@@ -471,7 +471,7 @@ fn a_postmortem_request_carries_a_valid_case_file() {
         crate::Bootstrap::from_config(&config).unwrap(),
     )
     .unwrap();
-    controller.run_postmortems();
+    controller.run_postmortems(crate::PostmortemPace::from_config(&config));
     let mut store = Store::open(&config.store).unwrap();
     postgres::Config::new()
         .host(&config.store.host)
@@ -535,6 +535,12 @@ fn a_postmortem_request_carries_a_valid_case_file() {
     assert_eq!(inputs["case"]["request"]["title"], "Fix the sandbox build");
     assert_eq!(inputs["rubric"]["version"], 1);
     assert_eq!(inputs["release"], inputs["case"]["release"]);
+    assert_eq!(
+        inputs["deadline_secs"], config.limits.postmortem_deadline_secs,
+        "the run's whole wall-clock allowance (#486)"
+    );
+    assert_eq!(config.limits.postmortem_deadline_secs, 1200);
+    assert_eq!(config.limits.postmortems_per_day, 10);
     assert!(
         inputs["case"]["grades"]
             .as_array()

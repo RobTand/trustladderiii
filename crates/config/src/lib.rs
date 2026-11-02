@@ -236,6 +236,13 @@ pub struct Limits {
     /// default, keeps the kernel's reserve of 3 for every request.
     #[serde(default)]
     pub priority_credit_reserve: BTreeMap<String, u8>,
+    /// #486: postmortems the spare-capacity runner may claim per UTC day.
+    #[serde(default = "default_postmortems_per_day")]
+    pub postmortems_per_day: u32,
+    /// #486: one postmortem run's whole wall-clock allowance, in seconds. A run
+    /// past it fails with the `deadline` class.
+    #[serde(default = "default_postmortem_deadline_secs")]
+    pub postmortem_deadline_secs: u32,
 }
 
 impl Limits {
@@ -249,6 +256,14 @@ impl Limits {
 
 fn default_agent_pool() -> u8 {
     1
+}
+
+fn default_postmortems_per_day() -> u32 {
+    10
+}
+
+fn default_postmortem_deadline_secs() -> u32 {
+    20 * 60
 }
 
 #[derive(Clone, Debug, Deserialize)]

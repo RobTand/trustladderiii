@@ -396,19 +396,43 @@ fn failure_class(failure: Option<&str>) -> &'static str {
     }
 }
 
+/// How fast the spare-capacity runner may spend model quota (#486).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PostmortemPace {
+    /// Claims per UTC day, so a backlog drains over days, not in one burst.
+    pub per_day: u32,
+    /// The postmortem ladder's models. While any of them has reported quota,
+    /// nothing is claimed: spare pool slots aren't spare quota.
+    pub models: Vec<String>,
+}
+
+impl PostmortemPace {
+    pub fn from_config(config: &tl3_config::Config) -> Self {
+        Self {
+            per_day: config.limits.postmortems_per_day,
+            models: config
+                .models
+                .postmortem
+                .iter()
+                .map(|model| model.name.clone())
+                .collect(),
+        }
+    }
+}
+
 impl crate::Controller {
-    /// Judge owed postmortems from now on. tl3d turns this on as it starts;
-    /// embedders and tests whose workers run no postmortem role leave it off,
-    /// and owed rows then wait.
-    pub fn run_postmortems(&mut self) {
-        self.postmortems = true;
+    /// Judge owed postmortems from now on, at `pace`. tl3d turns this on as it
+    /// starts; embedders and tests whose workers run no postmortem role leave
+    /// it off, and owed rows then wait.
+    pub fn run_postmortems(&mut self, pace: PostmortemPace) {
+        self.postmortems = Some(pace);
     }
 
     /// Claim the oldest owed postmortem when the pool has spare capacity, in
     /// the commit that creates its worker delivery.
     pub(crate) fn start_postmortem(&mut self, snapshot: &Snapshot) -> Result<bool> {
         let running = snapshot.rows.iter().filter(|row| row.table == JOBS).count();
-        if !self.postmortems || running > 0 {
+        if self.postmortems.is_none() || running > 0 {
             return Ok(false);
         }
         let world = crate::snapshot::decode(snapshot)?;

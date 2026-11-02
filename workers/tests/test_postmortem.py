@@ -26,7 +26,8 @@ RUBRIC = {"version": 1, "dimensions": {
     "fix round": {"grader": "judge", "grades": {"5": "Fixed all.", "1": "Fixed nothing."}},
 }}
 
-RECOMMENDATION = {"phase": "maker", "kind": "prompt", "target": "maker",
+MAKER_PROMPT = "workers/src/tl3_workers/prompts/maker.md"
+RECOMMENDATION = {"phase": "maker", "kind": "prompt", "target": MAKER_PROMPT,
                   "operation": "replace", "before": "Run the tests.",
                   "after": "Run the tests through PrismaBuild.",
                   "evidence": "tr-1 shows a local test run.", "effect": "No local runs."}
@@ -188,8 +189,19 @@ class FakeModel:
 def judge_environment(monkeypatch):
     # judges.configure sets these for its process; the test restores them.
     for name, value in [("OPENAI_API_KEY", "placeholder"), ("MLFLOW_DISABLE_TELEMETRY", "true"),
-                        ("DO_NOT_TRACK", "true")]:
+                        ("DO_NOT_TRACK", "true"), ("MLFLOW_JUDGE_MAX_ITERATIONS", "30")]:
         monkeypatch.setenv(name, value)
+
+
+@pytest.fixture(autouse=True)
+def release(tmp_path, monkeypatch):
+    """The files of the release the postmortem judges, as its recommendations target."""
+    root = tmp_path / "release"
+    prompt = root / MAKER_PROMPT
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("You are the maker.\nRun the tests.\nReply when done.\n")
+    monkeypatch.setattr(postmortem, "RELEASE_ROOT", root)
+    return root
 
 
 @pytest.fixture
@@ -223,7 +235,7 @@ def request(tmp_path, *, release="b" * 40):
         "key_file": str(key_file), "worktree": str(worktree),
         "inputs": {"record": {"id": 9, "trigger": "close", "reason": "needed_fix"},
                    "case": case, "rubric": RUBRIC, "release": release,
-                   "grade_model": "claude-sonnet-5-5",
+                   "grade_model": "claude-sonnet-5-5", "deadline_secs": 1200,
                    "trace_tags": {"node": "3", "request": "3", "repo": "RobTand/tl3-sandbox",
                                   "issue": "42"}},
     }
@@ -349,3 +361,67 @@ def test_the_escalation_seam_returns_feedback_and_logs_nothing(model, monkeypatc
     errored = Feedback(value="yes", error=RuntimeError("boom"))
     assert judges.unanimity([Feedback(value="yes"), errored]).value == "no consensus"
     assert judges.failed(errored)
+
+
+def test_judges_take_at_most_twelve_turns():
+    from mlflow.environment_variables import MLFLOW_JUDGE_MAX_ITERATIONS
+
+    judges.configure("http://proxy.invalid:8317/v1", KEY)
+    assert MLFLOW_JUDGE_MAX_ITERATIONS.get() == 12
+
+
+def test_a_run_past_its_deadline_fails_with_the_deadline_class(tmp_path, monkeypatch):
+    import time
+
+    from mlflow.genai.judges.adapters import gateway_adapter
+
+    def slow(endpoint, headers, payload, num_retries):
+        time.sleep(5)
+        raise RuntimeError("the proxy never answered")
+
+    monkeypatch.setattr(gateway_adapter, "send_chat_request", slow)
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
+    document = request(tmp_path)
+    document["inputs"]["deadline_secs"] = 1
+    started = time.monotonic()
+    with pytest.raises(postmortem.PostmortemDeadline) as error:
+        run(document)
+    assert time.monotonic() - started < 4
+    assert tracing.failure_tags(error.value)["failure_class"] == "PostmortemDeadline"
+    # The alarm is gone with the run.
+    import signal
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_a_recommendation_must_edit_text_its_target_holds_exactly_once(tmp_path, model,
+                                                                       monkeypatch, capsys,
+                                                                       release):
+    planner = release / "workers/src/tl3_workers/prompts/planner.md"
+    planner.write_text("Plan the work. Plan the work.\n")
+    model.postmortem = written(0)
+    model.postmortem["recommendations"] = [
+        dict(RECOMMENDATION, target="workers/src/tl3_workers/prompts/planner.md",
+             before="Plan the work."),
+        dict(RECOMMENDATION, target="crates/controller/src/lib.rs"),
+        RECOMMENDATION,
+    ]
+    monkeypatch.setattr(postmortem, "SOURCE", lambda settings: FakeTraces([]))
+    reply, _ = run(request(tmp_path))
+    assert reply["postmortem"]["recommendations"] == [RECOMMENDATION]
+    logged = capsys.readouterr().err
+    assert "workers/src/tl3_workers/prompts/planner.md: before appears 2 times" in logged
+    assert "crates/controller/src/lib.rs: not a file in the release" in logged
+
+
+@pytest.mark.parametrize("item, reason", [
+    (dict(RECOMMENDATION), None),
+    (dict(RECOMMENDATION, before="Not in the prompt."), "before appears 0 times"),
+    (dict(RECOMMENDATION, target="../outside.md"), "not a file in the release"),
+    (dict(RECOMMENDATION, target="/etc/hostname"), "not a file in the release"),
+    (dict(RECOMMENDATION, operation="add", before="", after="Check twice."), None),
+    (dict(RECOMMENDATION, target="workers/missing.md", operation="add", before="",
+          after="New."), "not a file in the release"),
+])
+def test_unusable_names_why_a_recommendation_cannot_apply(release, item, reason):
+    (release.parent / "outside.md").write_text("Run the tests.\n")
+    assert postmortem.unusable(item, release) == reason

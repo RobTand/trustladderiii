@@ -777,6 +777,18 @@ impl Store {
             .map(postmortem_record))
     }
 
+    /// Postmortem claims made since the start of the current UTC day (#403).
+    pub fn postmortem_claims_today(&mut self) -> Result<u32> {
+        todo!("postmortem claims today")
+    }
+
+    /// Failed postmortem runs since the last one that succeeded, counting only
+    /// claims committed after `since`, up to 3 (#403).
+    pub fn postmortem_failure_streak(&mut self, since: i64) -> Result<u32> {
+        let _ = since;
+        todo!("postmortem failure streak")
+    }
+
     /// Postmortems claimed by a runner and not yet finished.
     pub fn running_postmortems(&mut self) -> Result<Vec<PostmortemRecord>> {
         Ok(self
@@ -823,19 +835,19 @@ impl Store {
         tx.commit()?;
         Ok(Some(PostmortemDetail {
             record: postmortem_record(&row),
-            repo: row.get(7),
-            issue: row.get(8),
-            title: row.get(9),
-            model: row.get(10),
-            rubric_version: row.get(11),
-            failure: row.get(12),
-            cause: row.get(13),
-            summary: row.get(14),
-            timeline: row.get(15),
-            process_failures: row.get(16),
-            grades: row.get(17),
-            notes: row.get(18),
-            assessment_ids: row.get(19),
+            repo: row.get("repo"),
+            issue: row.get("issue"),
+            title: row.get("title"),
+            model: row.get("model"),
+            rubric_version: row.get("rubric_version"),
+            failure: row.get("failure"),
+            cause: row.get("cause"),
+            summary: row.get("summary"),
+            timeline: row.get("timeline"),
+            process_failures: row.get("process_failures"),
+            grades: row.get("grades"),
+            notes: row.get("notes"),
+            assessment_ids: row.get("assessment_ids"),
             recommendations,
         }))
     }
@@ -1119,7 +1131,8 @@ impl Reader {
     }
 }
 
-const POSTMORTEM_RECORD: &str = "id, node_id, trigger, reason, sample_share, status, run_key";
+const POSTMORTEM_RECORD: &str =
+    "id, node_id, trigger, reason, sample_share, status, run_key, attempts";
 
 fn postmortem_record(row: &Row) -> PostmortemRecord {
     PostmortemRecord {
@@ -1130,6 +1143,7 @@ fn postmortem_record(row: &Row) -> PostmortemRecord {
         sample_share: row.get(4),
         status: row.get(5),
         run_key: row.get(6),
+        attempts: row.get(7),
     }
 }
 
