@@ -10,46 +10,67 @@ includes startup. Custom binaries charge remaining work to `__tail__`.
 Libtest charges teardown to its last test. The runner samples the final
 zombie before reaping it, so process exit cannot erase the tail counters.
 
-`inventory.json` retains wall `seconds` and adds `cpu_seconds` and
-`cpu_platform`. CPU limits have no hosted multiplier. A scenario must meet
-both its CPU limit and a wall backstop of 10 times its existing effective
-wall limit, including the fixed runner multiplier below. For the default
-BuildBuddy budget this means 29 CPU seconds and a 165 wall second backstop.
+The runner also samples the embedded Postgres postmaster. It looks only in
+`tl3-store-pg-*` directories under the test's `TMPDIR`, selects fixtures whose
+`fixture.pid` names the test process, and reads `data/postmaster.pid`. Each
+postmaster sample sums the same four counters, including backends reaped by
+the postmaster. PID and process start ticks identify a server across markers.
+The postmaster delta is added to the scenario's CPU total. Receipt field
+`postgres_cpu_seconds` shows that contribution separately.
+
+`inventory.json` retains wall `seconds` and adds `cpu_seconds`, `cpu_platform`,
+and `cpu_sampling`. Receipts using this accounting have
+`cpu_sampling: proc-postmaster-v1`. CPU limits have no hosted multiplier. A
+scenario must meet both its CPU limit and a wall backstop of 10 times its
+existing effective wall limit, including the fixed runner multiplier below.
 Bazel's target timeout still stops binaries that never finish.
 
-The policy lists every wall-only exception and its reason.
-`tl3-store/postgres::*` and `tl3-store/fixture_lifecycle::*`, including their
-tails, keep their original effective wall limits because their primary work
-runs in daemonized Postgres processes. Darwin and Windows also retain wall
-limits because Linux procfs is unavailable. Other platforms and missing or
-invalid Linux samples fail closed. Controller tests budget their own logic
-and reaped workers. Their incidental Postgres work is outside CPU accounting
-and remains bounded by the wall backstop.
+For binaries using the embedded Postgres fixture, an unavailable postmaster
+PID, an unreadable sample, or a server disappearing between markers makes
+that scenario wall-only. `cpu_fallbacks` records the reason for every such
+scenario, including setup or cleanup markers without a live server. Its
+original effective wall limit applies. Calibration excludes these partial
+CPU samples. The policy's static `wall_only` scenario list is empty. Darwin
+and Windows retain wall limits because Linux procfs is unavailable. Other
+platforms and missing or invalid test-process CPU samples fail closed.
 
-Wall limits, CPU limits, their slow lists, and wall-only exception lists may
-only shrink against the target branch. Removing CPU enforcement also fails.
-CPU seconds can exceed wall seconds when children run in parallel, so the
-initial CPU calibration uses its own units. Two new publishing receipts set
-the default CPU cap and its observed slow caps to twice the maximum CPU
-sample, rounded up to a whole second, with a one second floor. The default
-retains at least the previous numerical default. Unmeasured slow caps retain
-their previous numerical limits. After initialization, CPU caps only shrink. This is a conservative
-initial ceiling, not a measured population percentile.
+CPU overruns and wall-only budget overruns can receive the Gate's one
+budget-only rerun. A wall-backstop overrun starts with
+`Per-test wall backstop exceeded` and never writes `budget-overrun.txt`, even
+if CPU also overran. A possible hang therefore does not consume a second run.
+
+Wall limits, CPU limits, their slow lists, and static wall-only exception
+lists may only shrink against the target branch. Removing CPU enforcement
+also fails. CPU seconds can exceed wall seconds when children run in parallel.
+CPU calibration takes per-scenario maxima from complete receipts, excluding
+fallbacks. Observed explicit CPU caps use twice the measured maximum, rounded
+up to a whole second with a one second floor, capped by the previous limit.
+The default uses twice the nearest-rank p95 of measured scenario maxima,
+excluding tails, with the same rounding, floor and shrink-only rule.
+Unmeasured explicit caps retain their previous numerical limits and are
+listed as uncalibrated. An empirical p95 from this small sample does not
+establish a population percentile.
+
+These CPU caps are calibrated on BuildBuddy amd64 only. GitHub-hosted x64
+and arm64 need their own CPU receipts before these caps can be trusted for
+those executors. The historical wall multipliers below remain on the wall
+backstop and on wall-only fallbacks.
 
 `docs/bazel-budget-calibration.json` records the receipts, input digests,
-method and results. Regenerate its numerical summary from downloaded
-`inventory.json` files with:
+measured coverage, uncalibrated caps and results. Regenerate its numerical
+summary from downloaded `inventory.json` files with:
 
 ```sh
 python3 tools/ci/bazel_budget_calibration.py --cpu-receipts run1.json run2.json
 ```
 
-Marker sampling attributes CPU at the time the runner reads each marker.
-Buffered markers can move CPU between adjacent scenarios. Counters have
-clock-tick resolution, so very short scenarios can record zero CPU seconds.
-CPU in living children is charged when they are reaped. Work in persistent
-servers cannot be attributed this way. Receipts preserve both measurements
-so these limits can be audited.
+Marker sampling attributes CPU when the runner reads each marker. Buffered
+markers can move CPU between adjacent scenarios. Counters have clock-tick
+resolution, so very short scenarios can record zero CPU seconds. CPU in
+living child processes or backends is charged when their parent reaps them.
+A postmaster that exits between markers loses its final unsampled CPU; the
+receipt records a wall fallback for that scenario. Receipts preserve both
+measurements so these limits can be audited.
 
 ## Historical wall tolerance
 
