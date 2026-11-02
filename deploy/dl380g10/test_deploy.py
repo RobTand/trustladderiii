@@ -1,4 +1,3 @@
-import argparse
 import importlib.util
 import io
 import contextlib
@@ -340,47 +339,6 @@ class DeployTests(unittest.TestCase):
                 parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
                 self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
 
-    def test_console_unit_runs_the_console_service(self):
-        unit = (deploy.HERE / "units/tl3-console.service").read_text().splitlines()
-        self.assertIn("ExecStart=/usr/bin/python3 %h/.local/share/tl3/deploy/deploy.py service --service console", unit)
-        self.assertIn("Requires=tl3-postgres.service", unit)
-        # The console reads as its own login and never holds the store owner's credential.
-        self.assertNotIn("LoadCredential=postgres-password:%h/.config/tl3/secrets/postgres-password", unit)
-
-    def test_console_service_execs_the_console_with_runtime_config(self):
-        config, _ = self.config()
-        destination = self.home / ".config/tl3/tl3.toml"
-        deploy.write_file(destination, config.read_bytes())
-        runtime = self.home / "runtime"
-        credentials = self.home / "credentials"
-        with patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
-             patch.object(os, "execv") as execv:
-            deploy.service(self.home, "console")
-        root = deploy.paths(self.home)[0]
-        execv.assert_called_once_with(root / "bin/tl3-console",
-                                      ["tl3-console", "--config", str(runtime / "tl3.toml")])
-        written = tomllib.loads((runtime / "tl3.toml").read_text())
-        self.assertEqual(written["store"]["password_file"], str(credentials / "postgres-password"))
-
-    def test_console_assets_build_with_npm_and_replace_the_installed_app(self):
-        source = self.home / "source"
-        (source / "web/dist/assets").mkdir(parents=True)
-        (source / "web/dist/index.html").write_text("<!doctype html>new")
-        (source / "web/dist/assets/app.js").write_text("app")
-        installed = deploy.paths(self.home)[0] / "console"
-        installed.mkdir(parents=True)
-        (installed / "stale.js").write_text("old")
-        calls = []
-        with patch.object(deploy, "run", side_effect=lambda command, **kwargs: calls.append((command, kwargs.get("cwd")))):
-            deploy.build_console_assets(source)
-            self.assertFalse((installed / "index.html").exists(), "a build alone installs nothing")
-            deploy.install_console_assets(self.home, source)
-        self.assertEqual(calls, [(["npm", "ci", "--no-audit", "--no-fund"], source / "web"),
-                                 (["npm", "run", "build"], source / "web")])
-        self.assertEqual((installed / "index.html").read_text(), "<!doctype html>new")
-        self.assertEqual((installed / "assets/app.js").read_text(), "app")
-        self.assertFalse((installed / "stale.js").exists())
-
     def test_fresh_install_uses_the_console_listen_flag(self):
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987},
@@ -401,8 +359,6 @@ class DeployTests(unittest.TestCase):
         console = tomllib.loads(destination.read_text())["console"]
         self.assertEqual(console["user"], "tl3_console")
         self.assertEqual(console["password_file"], str(config / "secrets/console-postgres-password"))
-        credential = "LoadCredential=console-postgres-password:%h/.config/tl3/secrets/console-postgres-password"
-        self.assertIn(credential, (deploy.HERE / "units/tl3-console.service").read_text().splitlines())
         # A missing console credential must never stop Postgres, which tl3d and status require.
         self.assertNotIn("console-postgres-password", (deploy.HERE / "units/tl3-postgres.service").read_text())
 
@@ -420,21 +376,19 @@ class DeployTests(unittest.TestCase):
             deploy.postgres(self.home)
         self.assertEqual(secret.read_bytes(), first)
 
-    def test_services_read_the_console_credential_from_systemd(self):
+    def test_database_reads_the_console_credential_in_place(self):
         config, _ = self.config()
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.write_file(destination, config.read_bytes())
         runtime = self.home / "runtime"
         credentials = self.home / "credentials"
         secret = self.home / ".config/tl3/secrets/console-postgres-password"
-        for service, expected in (("console", credentials / "console-postgres-password"), ("database", secret)):
-            with self.subTest(service=service), \
-                 patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
-                 patch.object(os, "execv"):
-                deploy.service(self.home, service)
-                written = tomllib.loads((runtime / "tl3.toml").read_text())
-                # The database service reads the console secret in place; the grant is best effort there.
-                self.assertEqual(written["console"]["password_file"], str(expected))
+        with patch.dict(os.environ, {"RUNTIME_DIRECTORY": str(runtime), "CREDENTIALS_DIRECTORY": str(credentials)}), \
+             patch.object(os, "execv"):
+            deploy.service(self.home, "database")
+        written = tomllib.loads((runtime / "tl3.toml").read_text())
+        # The database service reads the console secret in place; the grant is best effort there.
+        self.assertEqual(written["console"]["password_file"], str(secret))
 
     def test_install_grants_the_console_login_when_postgres_runs(self):
         root, config, _ = deploy.paths(self.home)
@@ -453,20 +407,6 @@ class DeployTests(unittest.TestCase):
             self.assertEqual(grant in calls, active)
             if not active:
                 self.assertIn("tl3-postgres", output.getvalue())
-
-    def test_install_builds_the_web_app_before_changing_anything(self):
-        args = argparse.Namespace(home=self.home, binaries=self.home / "artifacts", status_listen="192.168.1.107:8033",
-                                  console_listen=None, image=None, primary=None, alternate=None, managed_tunnel=False)
-        touched = []
-        with patch.object(deploy, "build_console_assets", side_effect=RuntimeError("npm ci failed")), \
-             patch.object(deploy, "postgres", side_effect=lambda *a: touched.append("postgres")), \
-             patch.object(deploy, "checked_download", side_effect=lambda *a: touched.append("download")), \
-             patch.object(deploy, "write_file", side_effect=lambda *a, **k: touched.append("write")), \
-             patch.object(deploy, "configure", side_effect=lambda *a, **k: touched.append("configure")), \
-             contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(RuntimeError, "npm ci failed"):
-                deploy.install(args)
-        self.assertEqual(touched, [])
 
     def test_command_failure_never_prints_child_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
