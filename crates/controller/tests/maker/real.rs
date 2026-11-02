@@ -19,6 +19,13 @@ impl Flow {
     }
 
     fn start_mode(settings: &tl3_config::Store, root: &Path, mode: &str, hold_queue: bool) -> Self {
+        let mut flow = Self::create(settings, root, mode, hold_queue);
+        flow.controller.intake(labelled()).unwrap();
+        flow.until(|phase| phase == Phase::Checking);
+        flow
+    }
+
+    fn create(settings: &tl3_config::Store, root: &Path, mode: &str, hold_queue: bool) -> Self {
         let (config, source, worktree, base) = repository_fixture(settings, root, mode);
         let remote = root.join("remote.git");
         let repository = root.join("served.git");
@@ -40,6 +47,32 @@ impl Flow {
                 repository.to_str().unwrap(),
             ],
         );
+        let flow = Self::open(settings, root, config, worktree, base, hold_queue);
+        if mode == "review-feedback" {
+            let mut store = Store::open(settings).unwrap();
+            let mut commit =
+                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
+            commit.rows.push(tl3_store::RowChange::Put {
+                table: "goals".into(),
+                id: "0".into(),
+                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
+            });
+            store.commit(&commit).unwrap();
+        }
+        flow
+    }
+
+    /// Open a controller over an existing fixture, as a restarted tl3d would.
+    fn open(
+        settings: &tl3_config::Store,
+        root: &Path,
+        config: tl3_config::Config,
+        worktree: PathBuf,
+        base: String,
+        hold_queue: bool,
+    ) -> Self {
+        let remote = root.join("remote.git");
+        let repository = root.join("served.git");
         let mut real = Real::new(&config.worktrees_root, 0)
             .unwrap()
             .with_repositories(&config.github.repos)
@@ -65,21 +98,10 @@ impl Flow {
             Bootstrap::from_config(&config).unwrap(),
         )
         .unwrap();
-        if mode == "review-feedback" {
-            let mut store = Store::open(settings).unwrap();
-            let mut commit =
-                tl3_store::Commit::new("review-goals", json!({}), &store.load().unwrap());
-            commit.rows.push(tl3_store::RowChange::Put {
-                table: "goals".into(),
-                id: "0".into(),
-                value: json!([{"id": "greeting", "description": "Return hello.", "verification": "test"}]),
-            });
-            store.commit(&commit).unwrap();
-        }
         let (sender, receiver) = mpsc::channel();
         let checks = checks_source.spawn(sender.clone());
         thread::spawn(move || source.run(sender).unwrap());
-        let mut flow = Self {
+        Self {
             controller,
             receiver,
             config,
@@ -88,10 +110,7 @@ impl Flow {
             worktree,
             base,
             _checks: checks,
-        };
-        flow.controller.intake(labelled()).unwrap();
-        flow.until(|phase| phase == Phase::Checking);
-        flow
+        }
     }
 
     fn until(&mut self, done: impl Fn(Phase) -> bool) {
@@ -764,4 +783,94 @@ pub(super) fn review_feedback(settings: &tl3_config::Store) {
                 && text.contains("greeting.py returns only hello.")
         })
     }));
+}
+
+/// The controller process of `survives_controller_restart`: start the maker run, then wait to be killed.
+pub(super) fn restart_child(settings: &tl3_config::Store, root: &Path) {
+    let mut flow = Flow::create(settings, root, "restart", false);
+    flow.controller.intake(labelled()).unwrap();
+    flow.until(|phase| phase == Phase::Making);
+    while flow.controller.drive_once().unwrap() {}
+    loop {
+        thread::park();
+    }
+}
+
+/// #372: a tl3d restart kills its whole cgroup. The maker run must outlive it,
+/// then finish under the restarted controller with no new attempt.
+pub(super) fn survives_controller_restart(settings: &tl3_config::Store) {
+    use std::os::unix::process::CommandExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let settings_path = root.path().join("settings.json");
+    fs::write(
+        &settings_path,
+        serde_json::to_vec(&json!({"host": settings.host, "port": settings.port,
+            "database": settings.database, "user": settings.user,
+            "password_file": settings.password_file,
+            "connect_timeout_secs": settings.connect_timeout_secs}))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut child = Command::new(env::current_exe().unwrap())
+        .arg("--maker-restart-child")
+        .arg(&settings_path)
+        .arg(root.path())
+        .process_group(0)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let runs = root.path().join("runs");
+    wait(|| runs.join("restart-entered").exists());
+    let worker = fs::read_to_string(runs.join("restart-entered"))
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    // KillMode=control-group: every process left in the controller's group dies with it.
+    let group = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+    rustix::process::kill_process_group(group, rustix::process::Signal::KILL).unwrap();
+    assert!(!child.wait().unwrap().success());
+    let alive = |pid: i32| {
+        fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            !matches!(
+                stat.rsplit_once(')').map(|(_, rest)| rest.trim_start().as_bytes()[0]),
+                Some(b'Z' | b'X')
+            )
+        })
+    };
+    assert!(
+        alive(worker),
+        "the maker worker must outlive the controller's process group"
+    );
+
+    let config = super::fixture_config(settings, root.path(), "restart");
+    let worktree = config
+        .worktrees_root
+        .join("726f6274616e64/746c332d73616e64626f78/issue-42-node-0");
+    let base = git(&root.path().join("repo"), &["rev-parse", "HEAD"]);
+    let mut flow = Flow::open(settings, root.path(), config, worktree, base, false);
+    let before = requests(&flow.config);
+    assert_eq!(before.len(), 1);
+    // The worker writes every turn and its reply after the first controller is gone.
+    fs::write(runs.join("restart-release"), "go").unwrap();
+    flow.until(|phase| phase == Phase::Checking);
+    assert_eq!(
+        requests(&flow.config),
+        before,
+        "the reply is accepted under the same key and generation, with no new attempt"
+    );
+    let attempts: Vec<_> = fs::read_dir(&runs)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_str().is_some_and(|name| name.bytes().all(|b| b.is_ascii_hexdigit())))
+        .flat_map(|run| fs::read_dir(run.path()).unwrap().flatten())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("attempt-"))
+        .filter(|attempt| {
+            fs::read(attempt.path().join("request.json")).is_ok_and(|request| {
+                serde_json::from_slice::<Value>(&request).unwrap()["role"] == "maker"
+            })
+        })
+        .collect();
+    assert_eq!(attempts.len(), 1, "one maker attempt, not a retry");
+    assert_ne!(git(&flow.worktree, &["rev-parse", "HEAD"]), flow.base);
 }

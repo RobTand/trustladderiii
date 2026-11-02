@@ -106,6 +106,10 @@ pub struct Workers {
     pub tiktoken_cache_dir: Option<PathBuf>,
     /// Arguments passed to the configured worker Python.
     pub command: Vec<String>,
+    /// A command that starts each attempt's supervisor outside the controller's
+    /// cgroup, such as `systemd-run --user --scope`. Empty starts it directly.
+    #[serde(default)]
+    pub launcher: Vec<String>,
 }
 
 impl Default for Workers {
@@ -115,6 +119,7 @@ impl Default for Workers {
             runs: PathBuf::from("/srv/tl3/worker-runs"),
             tiktoken_cache_dir: None,
             command: vec!["-m".into(), "tl3_workers".into(), "run".into()],
+            launcher: Vec::new(),
         }
     }
 }

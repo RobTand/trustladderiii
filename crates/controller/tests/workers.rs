@@ -342,6 +342,12 @@ fn main() {
             }
         }
     }
+    if args.get(1).is_some_and(|s| s == "--maker-restart-child") {
+        let settings: tl3_config::Store =
+            serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
+        maker::restart_child(&settings, Path::new(&args[3]));
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--retire-child") {
         let settings: tl3_config::Store =
             serde_json::from_slice(&fs::read(&args[2]).unwrap()).unwrap();
@@ -600,7 +606,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("80 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("81 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 fn quota_scenarios(database: &mut Database) {
