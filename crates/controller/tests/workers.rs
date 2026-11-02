@@ -500,6 +500,8 @@ fn main() {
     println!("test external_wait_persists_across_source_and_controller_restart ... ok");
     writer_prompt(&database.create("writer_prompt"));
     println!("test process_writer_sends_the_active_writer_prompt ... ok");
+    missing_prompt_holds_launch(&database.create("missing_prompt"));
+    println!("test missing_prompt_holds_the_launch_without_claiming_a_worker ... ok");
     finish_fixture(database, "worker_waits");
     let mut database = Database::start();
     for wrapped in [false, true] {
@@ -602,7 +604,7 @@ fn main() {
     let mut database = Database::start();
     maker::run(&mut database);
     finish_fixture(database, "maker");
-    println!("81 worker supervisor, planning and maker scenarios passed; no skips");
+    println!("82 worker supervisor, planning and maker scenarios passed; no skips");
 }
 
 /// PRD #327, C5: the writer drafts with the writer's active prompt version and
@@ -660,6 +662,94 @@ print(json.dumps({"event": "reply", "role": "writer", "reply": {"text": "The cha
             "the draft's version is recorded"
         );
     }
+    // Postgres drops every session but the owner's: the writer's next draft
+    // fails, drops its session, and the draft after it reconnects.
+    owner(settings)
+        .execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()",
+            &[],
+        )
+        .unwrap();
+    assert!(writer.draft("notice:9", &input).is_err());
+    fs::remove_file(&seen).unwrap();
+    writer.draft("notice:10", &input).unwrap();
+    let request: Value = serde_json::from_slice(&fs::read(&seen).unwrap()).unwrap();
+    assert_eq!(request["prompt"]["version"], robs);
+    let mut store = Store::open(settings).unwrap();
+    assert_eq!(
+        store.run_prompt("notice:10", "writer").unwrap().unwrap().id,
+        robs
+    );
+}
+
+fn owner(settings: &tl3_config::Store) -> postgres::Client {
+    postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap()
+}
+
+/// A role without an active prompt version is a TL3 fault: its launch is held,
+/// no worker is claimed, and the request spends no run retry.
+fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "normal");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let (registry, _source) = ingest_audit_simulation(&root.path().join("fakes"), &config).unwrap();
+    owner(settings)
+        .execute("DELETE FROM tl3_prompt_active WHERE role = 'ingest'", &[])
+        .unwrap();
+    let mut controller = Controller::open(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+    )
+    .unwrap();
+    controller.intake(labelled()).unwrap();
+    for _ in 0..50 {
+        if !controller.drive_once().unwrap() {
+            break;
+        }
+    }
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Ingesting);
+    assert_eq!(node.run_failures, 0, "a TL3 fault spends no run retry");
+    let start = store
+        .effects()
+        .unwrap()
+        .into_iter()
+        .find(|effect| effect.kind == "Workers")
+        .expect("the ingest launch");
+    // Held, not settled: the launch never reported a result.
+    assert!(
+        matches!(
+            start.state,
+            tl3_store::EffectState::Sent | tl3_store::EffectState::Uncertain
+        ),
+        "{start:?}"
+    );
+    assert!(
+        store.worker_progress(None).unwrap().is_empty(),
+        "no worker was claimed"
+    );
+    assert!(!root.path().join("entered").exists(), "no worker ran");
+    assert_eq!(
+        fs::read_dir(&config.workers.runs).unwrap().count(),
+        1,
+        "only the notification inbox exists"
+    );
+    let events = store.events_after(tl3_store::Revision::ZERO, 1000).unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| e.receipt.result["kernel_event"]["Reply"]["reply"] != "RunFailed"),
+        "no failed run was reported"
+    );
 }
 
 fn quota_scenarios(database: &mut Database) {
