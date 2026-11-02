@@ -126,7 +126,9 @@ wrapper exports it as `TIKTOKEN_CACHE_DIR` before launching the daemon.
 of 5,000 prompt tokens, 20,000 making tokens and 5,000 review tokens.
 `planning.overhead_tokens` is the calibration seam for later MLflow measurements.
 It must contain at least one named nonnegative estimate.
-`planning.protected_paths` can add patterns, but it must retain the defaults.
+`planning.protected_paths` adds patterns to the slice-one defaults, which always
+apply; nothing in the file removes one. The file needn't repeat the defaults. A
+load-time note names any defaults it doesn't list, and they stay protected (#388).
 Each `[[github.repos]]` entry may add `protected_paths = ["CHANGELOG.md"]`.
 A request protects the union of mandatory defaults, global patterns and its
 repository's patterns. Other repositories do not inherit that entry's additions.

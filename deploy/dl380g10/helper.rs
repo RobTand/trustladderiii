@@ -23,7 +23,17 @@ fn run() -> Result<()> {
     let text = fs::read_to_string(path).map_err(|_| "cannot read config")?;
     let config = tl3_config::Config::parse(&text)?;
     match command.as_str() {
-        "parse" => println!("config: valid offline"),
+        "parse" => {
+            println!("config: valid offline");
+            let unlisted = config.planning.defaults_not_listed();
+            if !unlisted.is_empty() {
+                // #388: the defaults are a floor; a newer release can add one.
+                println!(
+                    "note: planning.protected_paths omits the default protected paths {}; they stay protected",
+                    unlisted.join(", ")
+                );
+            }
+        }
         "validate" => {
             tl3_config::Config::load(path)?;
             println!("config: Config::load passed");

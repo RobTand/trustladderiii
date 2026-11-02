@@ -782,18 +782,13 @@ fn webhooks_require_a_loopback_address_and_fixed_port() {
 }
 
 #[test]
-fn planning_cannot_remove_protection_or_overhead_evidence() {
+fn planning_cannot_remove_overhead_evidence() {
     let config = Config::parse(EXAMPLE).unwrap();
     assert_eq!(
         config.planning.overhead_tokens.values().sum::<u32>(),
         30_000
     );
     let mut config = config;
-    config
-        .planning
-        .protected_paths
-        .retain(|p| p != "**/conftest.py");
-    assert!(config.validate().is_err());
     config.planning = tl3_config::Planning::default();
     config.planning.overhead_tokens.clear();
     assert!(config.validate().is_err());
@@ -1151,4 +1146,73 @@ fn console_connects_as_its_own_reader_when_configured() {
         .unwrap_or_default();
         assert!(error.contains(field), "{fields}: {error}");
     }
+}
+
+fn without_planning_paths(keep: impl Fn(&str) -> bool) -> String {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    let paths = document["planning"]["protected_paths"]
+        .as_array_mut()
+        .unwrap();
+    paths.retain(|path| keep(path.as_str().unwrap()));
+    toml::to_string(&document).unwrap()
+}
+
+#[test]
+fn config_missing_a_newer_default_loads_and_the_default_stays_protected() {
+    // #388: a live file written before .pytest.ini became a default.
+    let config = Config::parse(&without_planning_paths(|path| path != ".pytest.ini")).unwrap();
+    assert!(
+        !config
+            .planning
+            .protected_paths
+            .contains(&".pytest.ini".into())
+    );
+    assert_eq!(config.planning.defaults_not_listed(), [".pytest.ini"]);
+    assert!(
+        config
+            .planning
+            .effective_protected_paths()
+            .contains(&".pytest.ini".into())
+    );
+    assert!(
+        tl3_config::protected_paths(&config.planning.protected_paths, &[])
+            .contains(&".pytest.ini".into())
+    );
+}
+
+#[test]
+fn nothing_removes_a_default_protected_path() {
+    let config = Config::parse(&without_planning_paths(|_| false)).unwrap();
+    assert!(config.planning.protected_paths.is_empty());
+    let effective = config.planning.effective_protected_paths();
+    for default in tl3_config::Planning::default().protected_paths {
+        assert!(effective.contains(&default), "{default}");
+        assert!(
+            tl3_config::protected_paths(&[], &[]).contains(&default),
+            "{default}"
+        );
+    }
+}
+
+#[test]
+fn configured_extra_paths_are_protected() {
+    let mut config = Config::parse(EXAMPLE).unwrap();
+    config.planning.protected_paths.push("fleet/**".into());
+    config.validate().unwrap();
+    assert!(
+        config
+            .planning
+            .effective_protected_paths()
+            .contains(&"fleet/**".into())
+    );
+    let paths =
+        tl3_config::protected_paths(&config.planning.protected_paths, &["CHANGELOG.md".into()]);
+    for expected in ["fleet/**", "CHANGELOG.md", ".pytest.ini", ".github/**"] {
+        assert!(paths.contains(&expected.into()), "{expected}");
+    }
+    // Sorted and deduplicated, so every consumer sees one list.
+    let mut sorted = paths.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(paths, sorted);
 }

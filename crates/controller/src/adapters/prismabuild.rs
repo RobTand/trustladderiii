@@ -294,9 +294,7 @@ impl Adapter {
             .for_repository(repo, &self.global_protected)
             .unwrap_or_else(|_| {
                 // Only an adapter opened without repositories, such as a fixture's, lands here.
-                let mut paths = tl3_config::Planning::default().protected_paths;
-                paths.extend_from_slice(&self.global_protected);
-                paths
+                tl3_config::protected_paths(&self.global_protected, &[])
             })
     }
 

@@ -107,6 +107,7 @@ pub fn status() -> Result<()> {
     } else {
         let model = status::load(&mut Reader::open(&config.store)?)?;
         print!("{}", status::render_text(&model));
+        print!("{}", status::render_protected_paths(&config));
         Ok(())
     }
 }
@@ -122,6 +123,13 @@ pub fn daemon() -> Result<()> {
         console,
         ..
     } = arguments(true)?;
+    let unlisted = config.planning.defaults_not_listed();
+    if !unlisted.is_empty() {
+        eprintln!(
+            "note: planning.protected_paths omits the default protected paths {}; they stay protected",
+            unlisted.join(", ")
+        );
+    }
     let Some(simulation) = simulation else {
         if workers || github_listen.is_some() || github_api.is_some() || drain || console {
             return Err(Error::Invalid(
