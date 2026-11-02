@@ -282,6 +282,10 @@ pub struct Models {
     pub writer: Vec<Model>,
 }
 
+/// Rob, 2026-11-02: Fable is not used. TL3's shipped model defaults may name
+/// only these models. Config loading does not enforce the list yet.
+pub const ALLOWED_MODELS: &[&str] = &["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol"];
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
