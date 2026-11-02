@@ -310,6 +310,18 @@ class GateTests(unittest.TestCase):
                                            baseline=config)
             self.assertFalse(Path(outputs, bazel_gate.BUDGET_MARKER).exists())
 
+    def test_runner_reruns_cpu_overruns_but_never_wall_backstops(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bazel'))
+        import rust_runner
+        config = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 2, 'slow': {}}}
+        for wall, cpu, retry in [(1, 6, True), (166, .1, False), (166, 6, False)]:
+            with self.subTest(wall=wall, cpu=cpu), tempfile.TemporaryDirectory() as outputs:
+                with self.assertRaises(RuntimeError):
+                    rust_runner.enforce_budget({'b::scenario': wall}, config, 'buildbuddy-amd64',
+                                               outputs, cpu_seconds={'b::scenario': cpu})
+                self.assertEqual(Path(outputs, bazel_gate.BUDGET_MARKER).exists(), retry)
+
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')
         with self.assertRaisesRegex(bazel_gate.GateError, 'bazel-diff'):

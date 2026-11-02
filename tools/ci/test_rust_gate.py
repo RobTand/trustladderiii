@@ -12,6 +12,36 @@ import rust_gate
 
 
 class GateTests(unittest.TestCase):
+    def test_receipt_counts_a_live_postmaster_and_its_reaped_backend_cpu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / 'tl3-store-pg-budget'
+            (fixture / 'data').mkdir(parents=True)
+            child = 'import time; start=time.process_time(); exec("while time.process_time()-start < .3: pass")'
+            server = ('import subprocess, sys\n'
+                      + f'subprocess.run([sys.executable, "-c", {child!r}], check=True)\n'
+                      + 'print("ready", flush=True)\n'
+                      + 'sys.stdin.readline()\n')
+            with subprocess.Popen([sys.executable, '-c', server], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True) as postmaster:
+                try:
+                    self.assertEqual(postmaster.stdout.readline(), 'ready\n')
+                    (fixture / 'data/postmaster.pid').write_text(str(postmaster.pid))
+                    executable = root / 'fixture.py'
+                    executable.write_text('import os\nfrom pathlib import Path\n'
+                                          + f'Path({str(fixture / "fixture.pid")!r}).write_text(str(os.getpid()))\n'
+                                          + 'print("test query ... ok", flush=True)\n'
+                                          + 'print("1 fixture scenarios passed", flush=True)\n')
+                    cpu = {}
+                    with patch.dict(os.environ, {'TMPDIR': temporary}):
+                        rust_gate.execute_binary({'name': 'tl3-controller/publishing',
+                                                  'command': [sys.executable, str(executable)]},
+                                                 True, cpu_seconds=cpu)
+                    self.assertGreaterEqual(sum(cpu.values()), .3)
+                    self.assertIsNone(postmaster.poll(), 'server must still be alive and unreaped')
+                finally:
+                    postmaster.communicate('\n')
+
     def cpu_policy(self):
         return {'seconds': 10, 'slow': {'slow': 20},
                 'cpu': {'seconds': 2, 'slow': {'slow': 4}},
