@@ -268,6 +268,21 @@ class FailFastTests(unittest.TestCase):
         self.assertEqual(result['budget_reruns'], {})
         self.assertEqual(workspace.built, [])
 
+    def test_pr_finishes_naturally_within_grace_without_interrupt(self):
+        from unittest.mock import patch
+        workspace = bazel_gate.Workspace(mode='pr')
+        with patch.object(bazel_gate, 'BepStream') as stream, \
+                patch.object(bazel_gate.subprocess, 'Popen') as popen, \
+                patch.object(bazel_gate.time, 'sleep'):
+            stream.return_value.read.side_effect = [[self.result()], [self.result('//a:another')], []]
+            process = popen.return_value.__enter__.return_value
+            process.poll.side_effect = [None, 3]
+            workspace.budget_only = lambda labels: set()
+            workspace.test(['//a:failed', '//a:another'], 'remote', {}, 'pr')
+            process.send_signal.assert_not_called()
+        self.assertIsNone(workspace.aborted_early)
+        self.assertEqual(workspace.not_run, [])
+
     def test_workspace_interrupts_bazel_and_reaps_it(self):
         import signal
         from unittest.mock import patch
