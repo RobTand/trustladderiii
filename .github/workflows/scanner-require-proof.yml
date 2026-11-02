@@ -1,0 +1,32 @@
+name: Scanner require proof
+
+on:
+  push:
+    branches: [t3/scanner-require]
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    name: Fake-secret regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - run: python3 tools/ci/child_env.py python3 -m pip install PyYAML==6.0.3
+      - name: Exercise upload and runner scans with fake secrets only
+        run: >-
+          python3 tools/ci/child_env.py python3 -m unittest discover
+          -s tools/ci -p test_secret_scans.py -v
+      - name: Nearby CI regressions
+        if: always()
+        run: |
+          python3 tools/ci/child_env.py python3 -m unittest discover -s tools/ci -p test_check.py -v
+          python3 tools/ci/child_env.py python3 -m unittest discover -s tools/ci -p test_bazel_gate.py -v
+          python3 tools/ci/child_env.py python3 -m unittest discover -s tools/ci -p test_remote_gate.py -v
