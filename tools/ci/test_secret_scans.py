@@ -26,6 +26,11 @@ def workflows():
         yield path, yaml.safe_load(path.read_text())
 
 
+def is_scan(step):
+    return re.search(r'\bpython3?\s+tools/ci/(before_upload|check_no_secret_leak)\.py\b',
+                     step.get('run', '')) is not None
+
+
 def enabled(step, *, fork=False, outcomes=None):
     expression = str(step.get('if', 'true')).removeprefix('${{').removesuffix('}}').strip()
     values = {'always()': True, 'github.event_name': 'pull_request',
@@ -49,7 +54,7 @@ class WorkflowScanTests(unittest.TestCase):
                     uploads += 1
                     with self.subTest(workflow=path.name, artifact=upload['with']['name']):
                         scan = steps[index - 1]
-                        self.assertRegex(scan['run'], r'(before_upload|check_no_secret_leak)\.py')
+                        self.assertTrue(is_scan(scan))
                         for name in REQUIRED:
                             self.assertIn(f'--require {name}', scan['run'])
                             self.assertEqual(scan['env'][name], '${{ secrets.' + name + ' }}')
@@ -73,15 +78,14 @@ class WorkflowScanTests(unittest.TestCase):
                     self.assertTrue(enabled(notices[0], fork=True))
                     self.assertFalse(enabled(notices[0], fork=False))
                     for step in steps:
-                        if step in uploads or re.search(
-                                r'(before_upload|check_no_secret_leak)\.py', step.get('run', '')):
+                        if step in uploads or is_scan(step):
                             self.assertFalse(enabled(step, fork=True, outcomes={'secret-check': 'success'}))
 
     def test_workflow_upload_commands_fail_on_missing_or_planted_secrets(self):
         for path, workflow in workflows():
             for job in workflow['jobs'].values():
                 for step in job.get('steps', []):
-                    if not re.search(r'(before_upload|check_no_secret_leak)\.py', step.get('run', '')):
+                    if not is_scan(step):
                         continue
                     for missing in (*REQUIRED, None):
                         for empty in (False, True) if missing else (False,):
