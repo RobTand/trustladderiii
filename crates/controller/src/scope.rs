@@ -37,12 +37,7 @@ impl ProtectedPaths {
                 .ok_or(Error::Invalid(
                     "repository protected paths are not configured",
                 ))?;
-        let mut paths = tl3_config::Planning::default().protected_paths;
-        paths.extend_from_slice(global);
-        paths.extend_from_slice(extra);
-        paths.sort();
-        paths.dedup();
-        Ok(paths)
+        Ok(tl3_config::protected_paths(global, extra))
     }
 }
 

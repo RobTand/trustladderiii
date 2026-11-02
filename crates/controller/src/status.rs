@@ -205,8 +205,20 @@ pub fn render_text(status: &Status) -> String {
 }
 
 /// The protected paths in force for each served repository (#388).
-pub fn render_protected_paths(_config: &tl3_config::Config) -> String {
-    String::new()
+pub fn render_protected_paths(config: &tl3_config::Config) -> String {
+    let mut text = String::new();
+    for repo in &config.github.repos {
+        let paths =
+            tl3_config::protected_paths(&config.planning.protected_paths, &repo.protected_paths);
+        let _ = writeln!(
+            text,
+            "Protected paths for {}/{}: {}",
+            repo.owner,
+            repo.name,
+            paths.join(", ")
+        );
+    }
+    text
 }
 
 pub fn render_html(status: &Status) -> String {
