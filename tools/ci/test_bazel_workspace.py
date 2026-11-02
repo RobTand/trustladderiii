@@ -91,11 +91,11 @@ class BuildBuddySuggestionsTests(unittest.TestCase):
                      '--remote_grpc_log=bazel-remote-grpc.log',
                      '--execution_log_compact_file=execution_log.binpb.zst']:
             self.assertIn(f'common {flag}', config)
-        self.assertIn('build:remote --jobs=80', config)
-        self.assertNotIn('build --jobs=80', config)
+        self.assertIn('build:remote --jobs=16', config)
+        self.assertNotIn('build --jobs=16', config)
         for mode in ['remote', 'remote-arm64']:
             for flag in ['--remote_download_minimal', '--remote_cache=grpcs://remote.buildbuddy.io',
-                         '--bes_backend=grpcs://remote.buildbuddy.io', '--jobs=80',
+                         '--bes_backend=grpcs://remote.buildbuddy.io', '--jobs=16',
                          '--remote_executor=grpcs://remote.buildbuddy.io', '--remote_local_fallback=false']:
                 self.assertIn(f'build:{mode} {flag}', config)
         for flag in ['--platforms', '--extra_execution_platforms', '--host_platform']:
