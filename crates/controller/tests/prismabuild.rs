@@ -1612,6 +1612,7 @@ fn quiet_alive_job_is_not_a_failed_read(settings: &tl3_config::Store, unreadable
             title: "PrismaBuild fixture".into(),
             actor: 1,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     while controller.drive_once().unwrap() {}
