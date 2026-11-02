@@ -42,5 +42,26 @@ class PythonRuntimeTests(unittest.TestCase):
         self.assertNotEqual(self.run_child(prepare=False), 0)
 
 
+class PythonRunnerTests(unittest.TestCase):
+    def run_module(self, source):
+        sys.path.insert(0, str(HERE))
+        import python_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            Path(temporary, 'test_probe_module.py').write_text(source)
+            sys.path.insert(0, temporary)
+            try:
+                return python_runner.run_unittest('test_probe_module')
+            finally:
+                sys.path.remove(temporary)
+                sys.modules.pop('test_probe_module', None)
+
+    def test_a_module_without_tests_fails_like_pytest_exit_5(self):
+        self.assertEqual(self.run_module('VALUE = 1\n'), 5)
+
+    def test_a_passing_module_succeeds(self):
+        source = 'import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n'
+        self.assertEqual(self.run_module(source), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
