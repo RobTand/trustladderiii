@@ -4,7 +4,7 @@ use super::record::Records;
 use crate::executor::Output as Out;
 use crate::{
     Result,
-    executor::{Completion, Delivery, Executor, Observation, Reconciliation},
+    executor::{Completion, Delivery, Executor, Look, Observation, Reconciliation},
 };
 use std::path::Path;
 use tl3_kernel::{Ack, EffectKind};
@@ -746,22 +746,38 @@ impl Executor for Adapter {
         }
     }
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        // Reads retain the original effect's epoch, including after a controller upgrade.
-        match self.completion(delivery) {
-            Ok(Reconciliation::Found(completion)) => {
-                if completion.ack == Ack::Confirmed
-                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
-                {
-                    // This receipt writes no upstream state and may name an older epoch.
-                    self.records
-                        .remember(delivery, Completion::confirmed(vec![]))?;
-                }
-                Ok(Reconciliation::Found(completion))
-            }
-            Ok(result) => Ok(result),
+        match self.read_enqueue(delivery) {
             Err(error) if error.is_github_not_found() => Err(error),
             Err(_) => Ok(Reconciliation::Pending),
+            result => result,
         }
+    }
+    /// #356: an enqueue Mergify hasn't acknowledged yet is a wait, and the
+    /// no-progress allowance catches one that never comes. Only a read that
+    /// errors is a failed look.
+    fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        Ok(match self.read_enqueue(delivery)? {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Alive {
+                progress: "mergify:awaiting-acknowledgement".into(),
+            },
+        })
+    }
+}
+impl Adapter {
+    fn read_enqueue(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        // Reads retain the original effect's epoch, including after a controller upgrade.
+        let result = self.completion(delivery)?;
+        if let Reconciliation::Found(completion) = &result
+            && completion.ack == Ack::Confirmed
+            && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
+        {
+            // This receipt writes no upstream state and may name an older epoch.
+            self.records
+                .remember(delivery, Completion::confirmed(vec![]))?;
+        }
+        Ok(result)
     }
 }
 fn enqueue(delivery: &Delivery) -> Result<(u64, &str)> {
