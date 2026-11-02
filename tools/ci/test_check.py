@@ -1,14 +1,63 @@
+import contextlib
+import hashlib
+import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+import before_upload
 import check
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_shared_checker_matches_the_coordinator_pin(self):
+        expected = '69c01d79c50edd90a15e0b85e21917eefccc38dbddae5695b1d5e1eeebfcb526'
+        pin = Path(__file__).with_name('check_no_secret_leak.sha256')
+        scanner = pin.with_suffix('.py')
+        self.assertTrue(pin.is_file(), 'shared checker hash receipt is missing')
+        self.assertEqual(pin.read_text().split()[0], expected)
+        self.assertEqual(hashlib.sha256(scanner.read_bytes()).hexdigest(), expected)
+
+    def test_upload_hook_rejects_a_leak_without_printing_its_value(self):
+        secret = 'synthetic-fixture-secret-for-upload'
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory, 'gate.log')
+            log.write_text(secret)
+            output = io.StringIO()
+            with patch.dict(os.environ, {'BUILDBUDDY_API_KEY': secret}), \
+                 patch.object(sys, 'argv', ['before_upload.py', '--env', 'BUILDBUDDY_API_KEY', directory]), \
+                 contextlib.redirect_stdout(output):
+                status = before_upload.main()
+        self.assertEqual(status, 1)
+        self.assertFalse(secret in output.getvalue())
+        self.assertIn('gate.log', output.getvalue())
+
+    def test_allowlist_preserves_runtime_settings_and_rejects_unknown_names(self):
+        source = {'PATH': '/usr/bin', 'HOME': '/tmp/fixture',
+                  'TEST_TMPDIR': '/tmp/test', 'TEST_FIXTURE_TOKEN': 'synthetic-fixture',
+                  'RUNFILES_API_KEY': 'synthetic-fixture', 'UNKNOWN_SETTING': 'discard',
+                  'RUSTC_BOOTSTRAP': '1', 'BUILDBUDDY_ARTIFACTS_DIRECTORY': '/tmp/artifacts'}
+        env = check.child_env(source)
+        for name in ['PATH', 'HOME', 'TEST_TMPDIR', 'RUSTC_BOOTSTRAP',
+                     'BUILDBUDDY_ARTIFACTS_DIRECTORY']:
+            self.assertEqual(env.get(name), source[name])
+        for name in ['TEST_FIXTURE_TOKEN', 'RUNFILES_API_KEY', 'UNKNOWN_SETTING']:
+            self.assertFalse(name in env, name)
+
+    def test_python_children_do_not_inherit_runner_credentials(self):
+        names = ['BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN',
+                 'OTHER_API_KEY', 'OTHER_TOKEN']
+        code = ('import json, os; print(json.dumps([name for name in os.environ '
+                'if name.endswith(("_API_KEY", "_TOKEN"))]))')
+        with patch.dict(os.environ, {name: 'synthetic-fixture' for name in names}):
+            present = json.loads(check.run(sys.executable, '-c', code, capture=True))
+        self.assertEqual(present, [])
+
     def test_workers_use_four_isolated_pytest_processes_and_other_projects_stay_serial(self):
         files = list(map(Path, [
             "workers/pyproject.toml", "workers/uv.lock", "workers/tests/test_workers.py",

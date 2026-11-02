@@ -32,8 +32,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
-          rustup default 1.99.1
+          python3 tools/ci/child_env.py rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          python3 tools/ci/child_env.py rustup default 1.99.1
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -41,8 +41,8 @@ jobs:
           shared-key: hosted-${{ runner.arch }}
       - name: Build lint and compile-check artifacts
         run: |
-          cargo clippy --workspace --all-targets --locked
-          python3 tools/ci/feature_gate.py features
+          python3 tools/ci/child_env.py cargo clippy --workspace --all-targets --locked
+          python3 tools/ci/child_env.py python3 tools/ci/feature_gate.py features
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           key: kani-0.68.0-${{ runner.os }}-${{ runner.arch }}
@@ -54,6 +54,6 @@ jobs:
       - name: Warm pinned Kani compiler without running proofs
         run: |
           if ! command -v cargo-kani >/dev/null; then
-            cargo install --locked kani-verifier --version 0.68.0
+            python3 tools/ci/child_env.py cargo install --locked kani-verifier --version 0.68.0
           fi
-          cargo kani setup
+          python3 tools/ci/child_env.py cargo kani setup
