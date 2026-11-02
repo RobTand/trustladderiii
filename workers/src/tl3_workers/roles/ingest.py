@@ -46,7 +46,7 @@ ROLE = Role(
         "list": "List repository directories to locate evidence for the request.",
         "read": "Read repository text to check the request against its implementation.",
         "glob": "Find repository paths using relative glob patterns. The path must be a directory.",
-        "grep": "Find literal references in repository text to check the request. The path may be a file or a directory, and the pattern is literal text, not a regular expression.",
+        "grep": "Find references in repository text to check the request. The pattern is a Python regular expression matched per line; set literal to true to search text as written. The path may be a file or a directory.",
     },
     check_reply=check_memory_ids,
 )

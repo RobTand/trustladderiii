@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import PurePosixPath
 import re
+import re._constants as sre
+import re._parser as sre_parse
 import stat
 from threading import Lock
 
@@ -72,7 +74,7 @@ def _parts(path):
     return parts
 
 
-def _matching_lines(stream, pattern):
+def _matching_lines(stream, pattern, regex=None):
     number = 1
     prefix, tail = "", ""
     length, found = 0, False
@@ -87,9 +89,12 @@ def _matching_lines(stream, pattern):
                 stream.seek(position)
         prefix = (prefix + chunk)[:cap + 1]
         length += len(chunk)
-        found |= pattern in tail + chunk
-        tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
+        if regex is None:
+            found |= pattern in tail + chunk
+            tail = (tail + chunk)[-(len(pattern) - 1):] if len(pattern) > 1 else ""
         if chunk.endswith(("\r", "\n")):
+            if regex is not None:
+                found = regex.search(prefix.rstrip("\r\n")[:cap]) is not None
             if found:
                 text = _clip(prefix.rstrip("\r\n"), cap)
                 ending = len(chunk) - len(chunk.rstrip("\r\n"))
@@ -97,6 +102,8 @@ def _matching_lines(stream, pattern):
             number += 1
             prefix, tail = "", ""
             length, found = 0, False
+    if regex is not None and length:
+        found = regex.search(prefix[:cap]) is not None
     if length and found:
         text = _clip(prefix, cap)
         yield number, text, length > len(text)
@@ -142,6 +149,83 @@ def _path_error(name, error, path):
         return f"{path} is too long. Use a shorter path."
     return (f"{name} could not be used on {path} ({code or 'no error code'}). "
             "Use list to check that the path exists and names what you meant.")
+
+
+# grep reads its pattern as a Python regular expression. Python's re has no timeout,
+# so a pattern that can backtrack catastrophically is refused before it runs, and a
+# line is searched only up to line_bytes characters, which bounds the polynomial cases.
+REGEX_LIMITS = {"pattern_chars": 500, "unbounded_repeats": 4, "repeat_count": 100}
+# Characters that mean something else as a regular expression than as written. A bare
+# dot is left out: it matches itself too, so it cannot hide a literal match.
+REGEX_SYNTAX = re.compile(r"[\\\[\](){}*+?^$|]")
+_REPEATS = (sre.MAX_REPEAT, sre.MIN_REPEAT, sre.POSSESSIVE_REPEAT)
+_REFUSED = ("Pattern refused: {reason}, so it could take exponential or very long time. "
+            "Simplify it, or set literal=true to search the text as written.")
+
+
+def _regex_problem(parsed):
+    """Why a parsed pattern could backtrack catastrophically, or None."""
+    unbounded = 0
+
+    def visit(items, repeated):
+        nonlocal unbounded
+        previous = None  # an unbounded repeat just before this item: True if it matches anything
+        for op, value in items:
+            current = None
+            if op in (sre.GROUPREF, sre.GROUPREF_EXISTS):
+                return "it has a backreference"
+            if op in (sre.ASSERT, sre.ASSERT_NOT):
+                return "it has a lookaround"
+            if op is sre.BRANCH and repeated:
+                return "it has an alternation inside a repeat"
+            if op in _REPEATS:
+                low, high, body = value
+                if high != sre.MAXREPEAT and high > REGEX_LIMITS["repeat_count"]:
+                    return f"it has a repeat count above {REGEX_LIMITS['repeat_count']}"
+                if high > 1 and repeated:
+                    return "it has a nested repeat"
+                if high == sre.MAXREPEAT:
+                    unbounded += 1
+                    current = any(inner[0] is sre.ANY for inner in body)
+                    if previous is not None and (current or previous):
+                        return "it has two adjacent repeats, one of them on any character"
+                problem = visit(body, repeated or high > 1)
+            elif op is sre.SUBPATTERN:
+                problem = visit(value[3], repeated)
+            elif op is sre.ATOMIC_GROUP:
+                problem = visit(value, repeated)
+            elif op is sre.BRANCH:
+                problem = next(filter(None, (visit(branch, repeated) for branch in value[1])), None)
+            else:
+                problem = None
+            if problem:
+                return problem
+            previous = current
+        return None
+
+    problem = visit(parsed, False)
+    if problem is None and unbounded > REGEX_LIMITS["unbounded_repeats"]:
+        return f"it has too many repeats (more than {REGEX_LIMITS['unbounded_repeats']} unbounded ones)"
+    return problem
+
+
+def _regex(pattern):
+    """The compiled pattern and a note for the model; (None, note) means search it as text."""
+    if len(pattern) > REGEX_LIMITS["pattern_chars"]:
+        raise ValueError(_REFUSED.format(
+            reason=f"it is too long ({len(pattern)} characters; the limit is {REGEX_LIMITS['pattern_chars']})"))
+    try:
+        compiled = re.compile(pattern)
+        problem = _regex_problem(sre_parse.parse(pattern))
+    except re.error as exc:
+        return None, (f"Pattern is not a valid regular expression ({exc}), so it was searched as literal "
+                      "text. Escape special characters with a backslash to search them as a regular "
+                      "expression, or set literal=true.")
+    except (OverflowError, RecursionError):
+        problem = "it has a repeat count or nesting that is too large"
+    if problem:
+        raise ValueError(_REFUSED.format(reason=problem))
+    return compiled, ""
 
 
 def _selectors_json(selectors):
@@ -403,10 +487,12 @@ class Worktree:
             return stat.S_ISREG(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False).st_mode)
 
     def grep(self, pattern: str, path: str = ".", offset: int = 0, literal: bool = False) -> dict:
-        """Find bounded literal matches in a file, or below a directory. Offset counts matches; text previews may truncate."""
+        """Find bounded matches of a regular expression, or of literal text with literal=true. Offset counts matches."""
+        regex, note = (None, "") if literal else _regex(pattern)
+
         def in_file(relative):
             with self._file(relative) as stream:
-                for number, preview, truncated in _matching_lines(stream, pattern):
+                for number, preview, truncated in _matching_lines(stream, pattern, regex):
                     if truncated:
                         preview += f" [Truncated. Use read offset={number - 1}, column=0.]"
                     yield {"path": relative, "line": number, "text": preview}
@@ -422,9 +508,15 @@ class Worktree:
         parts = _parts(path)
         if self._is_file(parts):
             # A named file that is not text is an error, not an empty result.
-            return _page(in_file(path), offset, OUTPUT_LIMITS["grep_matches"], "matches")
-        with self._directory(parts) as directory:
-            return _page(below(directory), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+            result = _page(in_file(path), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+        else:
+            with self._directory(parts) as directory:
+                result = _page(below(directory), offset, OUTPUT_LIMITS["grep_matches"], "matches")
+        if regex is not None and not offset and not result["matches"] and REGEX_SYNTAX.search(pattern):
+            # The same text may have been meant as written: vars(digests) is a regex group.
+            note = "No matches for the regular expression. To search for the text as written, set literal=true."
+        result["message"] = " ".join(filter(None, [note, result["message"]]))
+        return result
 
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text, creating parent directories as needed."""

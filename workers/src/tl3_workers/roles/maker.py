@@ -432,7 +432,7 @@ ROLE = Role(
         "list": "List worktree files needed to implement the declared plan.",
         "read": "Read worktree text to implement or self-check a goal.",
         "glob": "Find relative worktree paths relevant to the declared plan. The path must be a directory.",
-        "grep": "Find literal references in worktree text while implementing a goal. The path may be a file or a directory, and the pattern is literal text, not a regular expression.",
+        "grep": "Find references in worktree text while implementing a goal. The pattern is a Python regular expression matched per line; set literal to true to search text as written. The path may be a file or a directory.",
         "write": "Create or overwrite a declared file with UTF-8 text.",
         "edit": "Replace exact text in a declared file. Read it first and use a unique match.",
         "run_tests": "Run named pytest tests or the suite through PrismaBuild. No shell or commands.",
