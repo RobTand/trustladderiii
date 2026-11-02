@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import errno
 import json
 import os
 
@@ -467,3 +468,140 @@ def test_concurrent_enumerations_each_see_every_entry(tree):
                 assert listed == sorted(names + ["src"])
                 assert globbed == names
                 assert grepped == set(names)
+
+
+def call(tool, **args):
+    return tool.invoke({"name": tool.name, "args": args, "id": "fixture", "type": "tool_call"})
+
+
+def test_grep_searches_a_single_file_given_as_path(tree):
+    # prismaquant#2629: 16 grep calls with a file as path were all rejected.
+    root, _ = tree
+    (root / "src/other.py").write_text("hello elsewhere\n")
+    with Worktree(root) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert call(tool, pattern="hello", path="src/code.py") == {
+            "matches": [{"path": "src/code.py", "line": 1, "text": "hello"},
+                        {"path": "src/code.py", "line": 2, "text": "hello again"}],
+            "next_offset": None, "message": "",
+        }
+        assert call(tool, pattern="absent", path="src/code.py")["matches"] == []
+        assert call(tool, pattern="again", path="src/code.py", offset=0)["matches"] == [
+            {"path": "src/code.py", "line": 2, "text": "hello again"},
+        ]
+
+
+def test_grep_on_a_file_pages_and_truncates_like_a_directory(tree):
+    root, _ = tree
+    total = OUTPUT_LIMITS["grep_matches"] + 5
+    (root / "many.txt").write_text("hit\n" * total)
+    cap = OUTPUT_LIMITS["line_bytes"]
+    (root / "wide.txt").write_text("needle " + "x" * (cap * 2) + "\n")
+    with Worktree(root) as worktree:
+        first = worktree.grep("hit", "many.txt")
+        assert len(first["matches"]) == OUTPUT_LIMITS["grep_matches"]
+        assert first["next_offset"] == OUTPUT_LIMITS["grep_matches"]
+        second = worktree.grep("hit", "many.txt", offset=first["next_offset"])
+        assert [match["line"] for match in second["matches"]] == list(range(101, total + 1))
+        assert second["next_offset"] is None
+        wide, = worktree.grep("needle", "wide.txt")["matches"]
+        assert wide["path"] == "wide.txt"
+        assert wide["text"].endswith("[Truncated. Use read offset=0, column=0.]")
+
+
+def test_grep_on_a_file_reports_non_utf8_instead_of_an_empty_result(tree):
+    root, _ = tree
+    (root / "binary.dat").write_bytes(b"\xff\xfe needle\n")
+    with Worktree(root) as worktree:
+        tool = tools_for(worktree)["grep"]
+        assert call(tool, pattern="needle", path=".")["matches"] == []
+        result = call(tool, pattern="needle", path="binary.dat")
+    assert result.status == "error"
+    assert result.text == "Expected valid UTF-8 text."
+
+
+def test_grep_on_a_missing_path_is_still_not_found(tree):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)["grep"], pattern="x", path="src/missing.py")
+    assert result.status == "error"
+    assert result.text == "File or directory not found."
+
+
+@pytest.mark.parametrize("name,args", [
+    ("glob", {"pattern": "*"}), ("list", {}),
+])
+def test_directory_tools_name_the_file_they_were_given(tree, name, args):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], path="src/code.py", **args)
+    assert result.status == "error"
+    assert "src/code.py is a file, not a directory" in result.text
+    assert "grep" in result.text and "read" in result.text
+    assert "rejected" not in result.text
+
+
+@pytest.mark.parametrize("name,args", [
+    ("read", {"path": "src/code.py/x"}),
+    ("write", {"path": "src/code.py/x", "content": "z"}),
+    ("grep", {"pattern": "hello", "path": "src/code.py/x"}),
+])
+def test_a_file_inside_the_path_is_named(tree, name, args):
+    root, _ = tree
+    with Worktree(root) as worktree:
+        result = call(tools_for(worktree)[name], **args)
+        assert not worktree.evidence.tool_errors
+    assert result.status == "error"
+    assert "src/code.py/x" in result.text
+    assert "a file, not a directory" in result.text
+    assert "rejected" not in result.text
+
+
+@pytest.mark.parametrize("code,wording", [
+    (errno.EISDIR, "is a directory, not a file"),
+    (errno.ELOOP, "symbolic link"),
+    (errno.ENAMETOOLONG, "too long"),
+    (errno.EINVAL, "EINVAL"),
+    (None, "could not be used"),
+])
+def test_model_caused_os_errors_name_the_path_and_the_fix(tree, monkeypatch, code, wording):
+    root, _ = tree
+
+    def factory(worktree):
+        def read(path: str) -> str:
+            """Fail like the model's own input."""
+            raise OSError(code, "detail /controller/private") if code else OSError("no errno")
+        return read
+
+    monkeypatch.setitem(TOOL_FACTORIES, "read", factory)
+    with Worktree(root) as worktree:
+        result = call(build_tools(worktree, {"read": "Read."})[0], path="src/code.py")
+        assert not worktree.evidence.tool_errors
+    assert result.status == "error"
+    assert "src/code.py" in result.text
+    assert wording in result.text
+    assert "rejected" not in result.text
+    assert "/controller" not in result.text
+
+
+@pytest.mark.parametrize("code", [
+    errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOSPC, errno.EDQUOT,
+    errno.EIO, errno.EMFILE, errno.ENFILE, errno.ENOMEM,
+])
+def test_environment_errors_keep_the_infrastructure_message(tree, monkeypatch, code):
+    root, _ = tree
+
+    def factory(worktree):
+        def read(path: str) -> str:
+            """Fail like the environment."""
+            raise OSError(code, "detail /controller/private")
+        return read
+
+    monkeypatch.setitem(TOOL_FACTORIES, "read", factory)
+    with Worktree(root) as worktree:
+        result = call(build_tools(worktree, {"read": "Read."})[0], path="src/code.py")
+        assert worktree.evidence.tool_errors == {
+            "tool-error-1": {"tool": "read", "class": errno.errorcode[code], "selectors": None},
+        }
+    assert result.status == "error"
+    assert result.text == "Worktree tool rejected the path or operation. Tool error id: tool-error-1."
