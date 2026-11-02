@@ -223,9 +223,11 @@ fn linked_materials(settings: &tl3_config::Store, wrapped: bool) {
         "linked issues must replace the selected role's original issue"
     );
     assert_eq!(request["inputs"]["issue"]["title"], "Correct the greeting");
+    let log = root_for(&config, &delivery.key).join("attempt-00000000/trace.jsonl");
     assert_eq!(
         request["trace"],
-        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0}),
+        json!({"repo": "RobTand/tl3-sandbox", "issue": 1000, "request": "1", "attempt": 1, "round": 0,
+               "log": log}),
         "worker metadata must identify its request without changing role inputs"
     );
     assert_eq!(

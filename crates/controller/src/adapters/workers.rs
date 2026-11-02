@@ -14,6 +14,9 @@ pub(crate) mod review;
 mod source;
 #[cfg(test)]
 mod startup_tests;
+mod trace;
+#[cfg(test)]
+mod trace_tests;
 pub use fake::Fake;
 pub use source::WorkerOutputSource;
 
