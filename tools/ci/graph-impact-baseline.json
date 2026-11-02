@@ -1,0 +1,36 @@
+{
+  "edge_groups": {
+    "conftest_source": [],
+    "test_to_test": [
+      "//deploy/ci-runners:test_fleet -> //deploy/ci-runners:test_runners",
+      "//workers/tests:test_blocked -> //workers/tests:test_maker",
+      "//workers/tests:test_exploration -> //workers/tests:test_workers",
+      "//workers/tests:test_large_files -> //workers/tests:test_maker",
+      "//workers/tests:test_large_files -> //workers/tests:test_planner",
+      "//workers/tests:test_large_files -> //workers/tests:test_workers",
+      "//workers/tests:test_planner -> //workers/tests:test_sizing",
+      "//workers/tests:test_prompt_cache -> //workers/tests:test_maker",
+      "//workers/tests:test_prompt_cache -> //workers/tests:test_workers",
+      "//workers/tests:test_replies -> //workers/tests:test_maker",
+      "//workers/tests:test_replies -> //workers/tests:test_workers",
+      "//workers/tests:test_sizing -> //workers/tests:test_workers",
+      "//workers/tests:test_tracing -> //workers/tests:test_workers",
+      "//workers/tests:test_turns -> //workers/tests:test_maker",
+      "//workers/tests:test_turns -> //workers/tests:test_prompt_cache",
+      "//workers/tests:test_turns -> //workers/tests:test_reviewer",
+      "//workers/tests:test_turns -> //workers/tests:test_workers"
+    ]
+  },
+  "figures": {
+    "loc_u_pct": 30.586039117079057,
+    "scc_max": 1,
+    "u_pct": 31.068524970963995
+  },
+  "reach_budget": 173,
+  "schema": "graph-impact.v1",
+  "tolerances": {
+    "loc_u_pct": 0.1,
+    "scc_max": 0,
+    "u_pct": 0.1
+  }
+}
