@@ -366,6 +366,7 @@ fn a_postmortem_request_carries_a_valid_case_file() {
             title: "Fix the sandbox build".into(),
             actor: config.github.rob.id,
             label: "tl3".into(),
+            labels: Vec::new(),
         })
         .unwrap();
     let mut delivery = None;
