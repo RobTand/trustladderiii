@@ -636,7 +636,8 @@ impl Controller {
             }
             result => result,
         };
-        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending)) {
+        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending | Look::Alive { .. }))
+        {
             state.read_failures = 0;
         }
         if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
@@ -752,6 +753,16 @@ impl Controller {
             }
             Ok(Look::Alive { progress }) => {
                 let changed = state.progress.as_ref() != Some(&progress);
+                // An unacknowledged effect that stopped moving keeps its failure
+                // count, so a stall past the allowance can escalate (#356).
+                if changed
+                    || !self
+                        .store
+                        .effect(&state.delivery.key)?
+                        .is_some_and(|effect| effect.state.is_pending())
+                {
+                    state.read_failures = 0;
+                }
                 state.progress = Some(progress);
                 if self.look_alive(state, changed)? {
                     return Ok(());

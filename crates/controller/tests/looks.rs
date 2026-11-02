@@ -2734,20 +2734,27 @@ fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
     );
     registry.register(Upstream::PrismaBuild, waits::adapter(root.path()));
     waits::record(root.path(), "claimed");
-    let mut c =
-        Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock)
-            .unwrap();
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
     c.intake(labelled()).unwrap();
     drain(&mut c);
     let path = root
         .path()
         .join(format!("queue/claimed/{}.json", waits::key()));
+    // #356: failed looks count once per silence allowance, so space them by one.
+    let silence = u64::from(tl3_config::Allowances::default().agent_worker.silence_secs);
     for success in [false, true, false] {
         if success {
             waits::record(root.path(), "claimed");
         } else {
             std::fs::write(&path, "broken JSON").unwrap();
         }
+        clock.advance(silence);
         c.look_now().unwrap();
         assert!(
             !c.snapshot()
@@ -2758,6 +2765,7 @@ fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
             "nonconsecutive wait read failures must not open an incident"
         );
     }
+    clock.advance(silence);
     c.look_now().unwrap();
     assert_eq!(
         c.snapshot()
