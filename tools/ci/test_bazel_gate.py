@@ -110,6 +110,23 @@ class PlanTests(unittest.TestCase):
     def test_gazelle_settings_force_everything(self):
         self.assertEqual(plan(['gazelle_python.yaml'])['selection'], 'fallback')
 
+    def test_adding_a_python_test_with_generated_build_files_selects_it(self):
+        # The documented flow: add workers/tests/test_turns.py, run tools/bazel/generate.sh.
+        used = USED | {'workers/tests/test_turns.py', 'workers/tests/BUILD.bazel', 'workers/src/BUILD.bazel'}
+        tests = TESTS | {'//workers/tests:test_turns'}
+        decision = bazel_gate.plan(
+            {'workers/tests/test_turns.py', 'workers/tests/BUILD.bazel', 'workers/src/BUILD.bazel'}, set(),
+            {'//workers/tests:test_turns'}, used, tests)
+        self.assertEqual(decision['selected'], ['//workers/tests:test_turns'])
+
+    def test_a_build_file_edit_bazel_diff_cannot_see_tests_everything(self):
+        used = USED | {'crates/kernel/BUILD.bazel', 'tools/bazel/rust.bzl'}
+        for path in ['crates/kernel/BUILD.bazel', 'tools/bazel/rust.bzl']:
+            with self.subTest(path=path):
+                decision = bazel_gate.plan({path}, set(), set(), used, TESTS)
+                self.assertEqual(decision['selection'], 'fallback')
+                self.assertEqual(decision['selected'], sorted(TESTS))
+
     def test_empty_diff_fails(self):
         with self.assertRaisesRegex(bazel_gate.GateError, 'empty diff'):
             plan([])
@@ -211,6 +228,15 @@ class GateTests(unittest.TestCase):
             bazel_gate.write_result({'mode': 'pr'}, Path(output), root=Path(root))
             self.assertEqual(sorted(path.name for path in Path(output).iterdir()),
                              sorted(names + [bazel_gate.RESULT]))
+
+    def test_used_sources_include_the_build_files_bazel_reads(self):
+        workspace = bazel_gate.Workspace(bazel='bazel')
+        answers = {'kind("source file", deps(//...))': ['//workers/tests:test_turns.py', '@pip//x:y.py'],
+                   'buildfiles(//...)': ['//workers/tests:BUILD.bazel', '//tools/bazel:python.bzl',
+                                         '@rules_python//python:defs.bzl']}
+        workspace.query = lambda expression: answers[expression]
+        self.assertEqual(workspace.used_sources(), {'workers/tests/test_turns.py', 'workers/tests/BUILD.bazel',
+                                                    'tools/bazel/python.bzl'})
 
     def test_bazel_diff_error_fails_the_gate(self):
         workspace = FakeWorkspace(['crates/kernel/src/lib.rs'], [], {}, diff_error='bazel-diff exited 1')
