@@ -578,11 +578,15 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{case}: {error}"));
             let last = case["stdout"].as_array().unwrap().last().unwrap();
             match observation {
-                Observation::WorkerReply { reply, generation, .. } => {
+                Observation::WorkerReply {
+                    reply, generation, ..
+                } => {
                     assert_eq!(reply, last["reply"]);
                     assert_eq!(generation, 3);
                 }
-                Observation::Quota { reset_ms, .. } => assert_eq!(Some(reset_ms), last["reset_ms"].as_u64()),
+                Observation::Quota { reset_ms, .. } => {
+                    assert_eq!(Some(reset_ms), last["reset_ms"].as_u64())
+                }
                 other => panic!("{case}: unexpected {other:?}"),
             }
         }

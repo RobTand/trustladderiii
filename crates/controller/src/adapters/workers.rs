@@ -1176,7 +1176,11 @@ mod release_tests {
     fn launch_pins_the_release_a_switched_link_names() {
         let root = tempfile::tempdir().unwrap();
         for release in ["one", "two"] {
-            let bin = root.path().join("releases").join(release).join("workers/.venv/bin");
+            let bin = root
+                .path()
+                .join("releases")
+                .join(release)
+                .join("workers/.venv/bin");
             fs::create_dir_all(&bin).unwrap();
             std::os::unix::fs::symlink("/usr/bin/python3", bin.join("python")).unwrap();
         }

@@ -846,7 +846,12 @@ pub(super) fn survives_controller_restart(settings: &tl3_config::Store) {
     let attempts: Vec<_> = fs::read_dir(&runs)
         .unwrap()
         .flatten()
-        .filter(|entry| entry.file_name().to_str().is_some_and(|name| name.bytes().all(|b| b.is_ascii_hexdigit())))
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.bytes().all(|b| b.is_ascii_hexdigit()))
+        })
         .flat_map(|run| fs::read_dir(run.path()).unwrap().flatten())
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("attempt-"))
         .filter(|attempt| {
