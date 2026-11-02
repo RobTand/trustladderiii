@@ -1,1 +1,109 @@
-{"version": 1, "dimensions": {}}
+{
+  "version": 1,
+  "about": "TL3's rubric (Q32), ported from TL1's src/trustladder/rubric.toml version 1. Every grade records this version. Raise it with any change that could change a grade; regrading under a new version adds grades and leaves the old ones as they are. Code grades whatever the facts settle; the judge grades the rest and cites its evidence. A later fact adds a grade and never changes one.",
+  "dimensions": {
+    "reliability": {
+      "grader": "code",
+      "fact": "fix rounds, later attempts and replans before the node merged; a node that closed without merging earns 1",
+      "grades": {
+        "5": "Merged first time: no fix round, later attempt or replan.",
+        "4": "Merged after one fix round, later attempt or replan.",
+        "3": "Merged after two.",
+        "2": "Merged after three.",
+        "1": "Merged after four or more, or closed without merging."
+      }
+    },
+    "escalation": {
+      "grader": "code",
+      "fact": "questions to Rob plus incidents that needed him",
+      "grades": {
+        "5": "TL3 never needed Rob.",
+        "4": "TL3 needed Rob once.",
+        "3": "TL3 needed Rob twice.",
+        "2": "TL3 needed Rob three times.",
+        "1": "TL3 needed Rob four or more times."
+      }
+    },
+    "queue": {
+      "grader": "code",
+      "fact": "times the merge queue sent the change back, or a merge with failing checks; ungraded when it didn't merge",
+      "grades": {
+        "5": "Merged on its first pass through the queue.",
+        "4": "Merged after the queue sent it back once.",
+        "3": "Merged after the queue sent it back twice.",
+        "2": "Merged after the queue sent it back three or more times.",
+        "1": "Merged with failing checks: CI failure escaped."
+      }
+    },
+    "credit": {
+      "grader": "code",
+      "fact": "the credit ledger at close: start, earned, added, spent and balance; recorded, not graded"
+    },
+    "questions": {
+      "grader": "code",
+      "fact": "the kinds of the questions TL3 asked Rob; recorded, not graded"
+    },
+    "incidents": {
+      "grader": "code",
+      "fact": "the cause classes of the node's incidents, and how many needed Rob; recorded, not graded"
+    },
+    "phase_time": {
+      "grader": "code",
+      "fact": "seconds spent in each phase, from the phase history; recorded, not graded"
+    },
+    "fidelity to the request": {
+      "grader": "judge",
+      "grades": {
+        "5": "The brief asks for exactly what the request asks, reading any ambiguity the way Rob meant.",
+        "4": "The brief covers the request, with a minor gap or addition that changes nothing important.",
+        "3": "The brief covers the request's core but misses or adds a part a careful reader would notice.",
+        "2": "The brief misses a main part of the request, or adds work it didn't ask for.",
+        "1": "The brief solves a different problem from the request's."
+      }
+    },
+    "correctness": {
+      "grader": "judge",
+      "grades": {
+        "5": "The change does what its goals say, with no defect a careful reviewer would find.",
+        "4": "The change is right, with a minor flaw that changes nothing important.",
+        "3": "The change mostly works but has a defect a careful reviewer would notice.",
+        "2": "The change has a defect that defeats a main goal.",
+        "1": "The change does not do what its goals say."
+      }
+    },
+    "forecast accuracy": {
+      "grader": "judge",
+      "grades": {
+        "5": "The forecast came within a tenth of the actual peak context.",
+        "4": "Within a quarter.",
+        "3": "Within a half.",
+        "2": "Within a factor of two.",
+        "1": "Off by more than a factor of two, or the node ran out of room."
+      }
+    },
+    "fix round": {
+      "grader": "judge",
+      "grades": {
+        "5": "The fix round fixed every reported problem and introduced none.",
+        "3": "The fix round fixed some reported problems.",
+        "1": "The fix round fixed nothing, or made it worse."
+      }
+    },
+    "raised effort": {
+      "grader": "judge",
+      "grades": {
+        "5": "The raised-effort attempt rescued the work.",
+        "3": "It made progress but needed a later step.",
+        "1": "It changed nothing."
+      }
+    },
+    "escalation report": {
+      "grader": "judge",
+      "grades": {
+        "5": "The question or report led Rob to the right decision on its own.",
+        "3": "Rob needed more evidence than it gave.",
+        "1": "It misled Rob or hid the decision."
+      }
+    }
+  }
+}
